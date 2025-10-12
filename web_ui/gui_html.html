@@ -48,7 +48,16 @@
                 распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
 
-            <p class="muted">Совет: формулируйте задачу конкретно.</p>
+            <h3 style="margin-top:16px;">Закреплённый контекст</h3>
+            <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
+            <div class="buttons" style="margin-top:8px;">
+                <button class="secondary" id="btnSaveContext">Сохранить контекст</button>
+                <button class="secondary" id="btnPinFromPrompt">Из запроса → контекст</button>
+                <button class="warn" id="btnClearPinnedContext">Очистить контекст</button>
+            </div>
+            <div class="muted" id="contextStatus"></div>
+
+            <!-- <p class="muted">Совет: формулируйте задачу конкретно.</p> -->
             <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
         </section>
 
@@ -79,6 +88,13 @@
         const API_BASE = "http://127.0.0.1:8000";
         const el = (id) => document.getElementById(id);
         const historyKey = "localgpt_history_v1";
+        // Персистентная сессия для памяти на бэкенде
+        const sessionKey = "localgpt_session_id";
+        let sessionId = localStorage.getItem(sessionKey);
+        if (!sessionId) {
+            sessionId = "sess_" + Math.random().toString(36).slice(2);
+            localStorage.setItem(sessionKey, sessionId);
+        }
 
         const modelSelect = el("modelSelect");
         const modelKey = "localgpt_whisper_model_v1";
@@ -108,6 +124,14 @@
         const fileInput = el("fileInput");
         const btnTranscribe = el("btnTranscribe");
         const transcribeStatus = el("transcribeStatus");
+
+        // Контекст (закрепляемый)
+        const contextText = el("contextText");
+        const btnSaveContext = el("btnSaveContext");
+        const btnPinFromPrompt = el("btnPinFromPrompt");
+        const btnClearPinnedContext = el("btnClearPinnedContext");
+        const contextStatus = el("contextStatus");
+        const pinnedContextKey = "localgpt_pinned_context_v1";
 
         // --- Health check ---
         async function checkHealth() {
@@ -143,21 +167,37 @@
             const items = loadHistory();
             historyList.innerHTML = items.length
                 ? items.map(item => `
-          <div class="history-item">
-            <div class="muted">${tsFmt(item.ts)}</div>
-            <strong>Запрос:</strong>
-            <pre>${escapeHtml(item.q)}</pre>
-            <strong>Ответ:</strong>
-            <pre>${escapeHtml(item.a)}</pre>
-          </div>
-        `).join("")
+              <div class="history-item" data-ts="${item.ts}">
+                <div class="muted" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                  <span>${tsFmt(item.ts)}</span>
+                  <button class="secondary btn-delete" data-ts="${item.ts}" title="Удалить запись">Удалить</button>
+                </div>
+                <strong>Запрос:</strong>
+                <pre>${escapeHtml(item.q)}</pre>
+                <strong>Ответ:</strong>
+                <pre>${escapeHtml(item.a)}</pre>
+              </div>
+            `).join("")
                 : '<div class="muted">История пуста.</div>';
+        }
+
+        function deleteFromHistory(ts) {
+            const items = loadHistory();
+            const filtered = items.filter(it => it.ts !== ts);
+            saveHistory(filtered);
         }
         function escapeHtml(s) {
             return (s ?? "").toString()
                 .replaceAll("&", "&amp;")
                 .replaceAll("<", "&lt;")
                 .replaceAll(">", "&gt;");
+        }
+
+        // --- Pinned context helpers ---
+        function updateContextStatus() {
+            const pc = (localStorage.getItem(pinnedContextKey) || "").trim();
+            const len = pc.length;
+            contextStatus.textContent = len ? `Контекст закреплён (${len} символов)` : "Контекст не закреплён";
         }
 
         // --- Chat call ---
@@ -168,10 +208,15 @@
             setBusy(true);
             answerEl.value = "Думаю…";
             try {
+                const payload = { query: q, session_id: sessionId };
+                try {
+                    const pc = (localStorage.getItem(pinnedContextKey) || "").trim();
+                    if (pc) payload.context = pc;
+                } catch { }
                 const r = await fetch(`${API_BASE}/chat`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ query: q })
+                    body: JSON.stringify(payload)
                 });
                 if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 const j = await r.json();
@@ -261,6 +306,47 @@
         btnClearStorage.addEventListener("click", () => {
             localStorage.removeItem(historyKey);
             renderHistory();
+        });
+
+        historyList.addEventListener("click", (e) => {
+            const btn = e.target.closest(".btn-delete");
+            if (!btn) return;
+            const ts = Number(btn.dataset.ts);
+            if (!Number.isFinite(ts)) return;
+            // Подтверждение, чтобы не удалить случайно
+            if (!confirm("Удалить эту запись из истории?")) return;
+            deleteFromHistory(ts);
+            renderHistory();
+        });
+
+        // Контекст: инициализация и события
+        try {
+            const pcInit = localStorage.getItem(pinnedContextKey) || "";
+            if (contextText) contextText.value = pcInit;
+        } catch { }
+        updateContextStatus();
+
+        btnSaveContext?.addEventListener("click", () => {
+            try {
+                const val = (contextText?.value || "").trim();
+                localStorage.setItem(pinnedContextKey, val);
+                updateContextStatus();
+            } catch { }
+        });
+        btnPinFromPrompt?.addEventListener("click", () => {
+            const val = (promptEl?.value || "").trim();
+            try {
+                if (contextText) contextText.value = val;
+                localStorage.setItem(pinnedContextKey, val);
+                updateContextStatus();
+            } catch { }
+        });
+        btnClearPinnedContext?.addEventListener("click", () => {
+            try {
+                localStorage.removeItem(pinnedContextKey);
+                if (contextText) contextText.value = "";
+                updateContextStatus();
+            } catch { }
         });
 
         // Кнопка транскрипции

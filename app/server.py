@@ -18,31 +18,75 @@ API_KEY  = os.getenv("LOCAL_API_KEY", "LOCAL-KEY")
 MODEL    = os.getenv("LOCAL_MODEL", "qwen2.5:7b-instruct")
 TEMP     = float(os.getenv("TEMP", "0.25"))
 MAX_TOK  = int(os.getenv("MAX_TOKENS", "512"))
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+MEM_TURNS = int(os.getenv("MEM_TURNS", "6"))  # сколько пар (user+assistant) храним в памяти на сессию
 UI_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web_ui"))
 
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
 app = FastAPI(title="LocalGPT HR API")
 
+# Память чата по сессиям (in-memory)
+SESSIONS: dict[str, list[dict]] = {}
+
 class ChatReq(BaseModel):
     query: str
     context: str | None = None
+    session_id: str | None = None
 
 def _system_prompt() -> str:
     with open(os.path.join(os.path.dirname(__file__), "prompts", "system_hr.md"), "r") as f:
         base_prompt = f.read()
     return base_prompt + "\n\nТребование: отвечай ТОЛЬКО на русском языке. Не используй другие языки."
 
+# Helper: удаляем повторы и случайные куски на других языках
+def _sanitize(text: str) -> str:
+    """Убираем явные повторы и случайные куски на других языках."""
+    import re
+    # удаляем явные китайские блоки/фразы
+    text = re.sub(r"[\u4e00-\u9fff]{2,}.*?(?:[.!?。！？]|$)", "", text)
+    # убираем подряд идущие идентичные строки
+    lines, out = text.splitlines(), []
+    for ln in lines:
+        if not out or out[-1].strip() != ln.strip():
+            out.append(ln)
+    return "\n".join(out).strip()
+
 @app.post("/chat")
 def chat(req: ChatReq):
     try:
-        messages = [{"role":"system","content":_system_prompt()}]
+        # session memory
+        sid = (req.session_id or "default").strip()
+        history = SESSIONS.get(sid, [])
+
+        messages = [{"role": "system", "content": _system_prompt()}]
         if req.context:
-            messages.append({"role":"user","content":f"Контекст:\n{req.context}"})
-        messages.append({"role":"user","content":req.query})
+            messages.append({"role": "user", "content": f"Контекст:\n{req.context}"})
+        # добавляем прошлые реплики (user/assistant) если есть
+        if history:
+            messages.extend(history)
+        # текущий запрос
+        messages.append({"role": "user", "content": req.query})
+
         resp = client.chat.completions.create(
-            model=MODEL, messages=messages, temperature=TEMP, max_tokens=MAX_TOK
+            model=MODEL,
+            messages=messages,
+            temperature=TEMP,
+            max_tokens=MAX_TOK,
+            stop=["\n\n\n", "\n\n—", "\n\n1."],  # мягкие ограничители списков/абзацев
+            presence_penalty=0.2,
+            frequency_penalty=0.2,
         )
-        return {"reply": resp.choices[0].message.content}
+        text = resp.choices[0].message.content or ""
+        text = _sanitize(text)
+
+        # обновляем память для сессии: храним последние MEM_TURNS пар (user/assistant)
+        new_history = history + [
+            {"role": "user", "content": req.query},
+            {"role": "assistant", "content": text},
+        ]
+        SESSIONS[sid] = new_history[-2 * MEM_TURNS:]
+
+        return {"reply": text}
     except Exception as e:
         # Возвращаем понятную ошибку, если Ollama/LLM недоступны
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
@@ -71,9 +115,23 @@ def health():
 
 
 # Lightweight version endpoint to introspect config
+# Lightweight version endpoint to introspect config
 @app.get("/version")
 def version():
     return {"env": ENV, "model": MODEL, "base_url": BASE_URL}
+
+
+# Reset session endpoint and request model
+class ResetReq(BaseModel):
+    session_id: str
+    admin_token: str | None = None
+
+@app.post("/session/reset")
+def reset_session(req: ResetReq):
+    if ADMIN_TOKEN and req.admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="forbidden")
+    SESSIONS.pop(req.session_id.strip(), None)
+    return {"ok": True}
 
 
 from fastapi.middleware.cors import CORSMiddleware
