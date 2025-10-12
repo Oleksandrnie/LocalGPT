@@ -13,15 +13,64 @@
 
 ```
 LocalGPT/
-├── app/
-│   ├── server.py            # FastAPI-сервер
-│   ├── asr_whisper.py       # модуль ASR (Whisper)
+├── .cache/                         # Кэш whisper/ctranslate2
+│   └── .gitkeep
+│
+├── .env                            # Конфигурация окружения
+├── .gitattributes
+├── .gitignore
+│
+├── app/                            # Основное FastAPI-приложение
+│   ├── __init__.py
+│   ├── asr_whisper.py              # Транскрибация (Whisper)
+│   ├── requirements.txt            # Зависимости Python
+│   ├── server.py                   # Точка входа FastAPI
 │   ├── prompts/
-│   │   └── system_hr.md     # системный промпт HR-бота
-│   └── __init__.py
-├── .env                     # настройки
-├── venv/                    # виртуальное окружение Python
-└── README.md
+│   │   ├── system_hr.md            # Системный промпт
+│   │   └── .gitkeep
+│   └── .gitkeep
+│
+├── hf_cache/                       # Hugging Face cache (весов нет, только структура)
+│   ├── hub/
+│   ├── xet/
+│   └── .gitkeep
+│
+├── ollama_models/                  # Локальные модели Ollama и Whisper
+│   ├── id_ed25519
+│   ├── id_ed25519.pub
+│   ├── models/
+│   │   ├── blobs/
+│   │   └── manifests/registry.ollama.ai/library/qwen2.5-7b-instruct
+│   ├── qwen2.5-7b-long/
+│   │   ├── Modelfile
+│   │   └── .gitkeep
+│   └── whisper/
+│       ├── medium/
+│       │   ├── models--Systran--faster-whisper-medium/
+│       │   │   ├── blobs/
+│       │   │   ├── refs/
+│       │   │   └── snapshots/
+│       │   └── .gitkeep
+│       └── .gitkeep
+│
+├── venv/                           # Виртуальное окружение Python
+│   ├── bin/
+│   ├── lib/
+│   ├── include/
+│   ├── share/
+│   ├── pyvenv.cfg
+│   └── .gitkeep
+│
+├── web_ui/                         # Веб-интерфейс
+│   ├── gui_html.html
+│   ├── style.css
+│   └── .gitkeep
+│
+├── first_run.py                    # Автоматическая установка и настройка
+├── Instructions_for_GPT.md         # Инструкция для LLM
+├── License                         # Лицензия проекта
+├── README.md                       # Этот файл
+└── run_localgpt.sh                 # Скрипт запуска
 ```
 
 ---
