@@ -117,17 +117,19 @@ venv.bak/
 .DS_Store
 
 # LocalGPT specific
-hf_cache/
-.cache/
+hf_cache/**
+!hf_cache/**/.gitkeep
+.cache/**
+!.cache/**/.gitkeep
 __pycache__/
 *.pyc
 *.log
 *.tmp
 *.env.backup
-ollama_models/*
+# Ollama models: keep only structure (.gitkeep) and Modelfile; ignore everything else
+ollama_models/**
 !ollama_models/**/.gitkeep
 !ollama_models/**/Modelfile
-!ollama_models/Modelfile
 *.wav
 *.mp3
 *.m4a
@@ -142,21 +144,7 @@ ollama_models/*
 
 # Hugging Face cache (полностью исключаем)
 hf_cache/**
-!hf_cache/.gitkeep
-
-# Ollama models (исключаем веса, кэш и бинарники)
-ollama_models/**/blobs/
-ollama_models/**/snapshots/
-ollama_models/**/refs/
-ollama_models/**/models--*/
-ollama_models/**/model.bin
-ollama_models/**/tokenizer.json
-ollama_models/**/vocabulary.txt
-ollama_models/**/config.json
-ollama_models/**/*.lock
-ollama_models/**/.DS_Store
-!ollama_models/**/.gitkeep
-!ollama_models/**/Modelfile
+!hf_cache/**/.gitkeep
 
 # Allow committing project structure and instructions
 !INSTRUCTIONS_FOR_GPT.md
@@ -167,3 +155,11 @@ ollama_models/**/.DS_Store
 # Editor settings
 .vscode/
 .idea/
+
+# Keep project structure with .gitkeep files
+!app/.gitkeep
+!web_ui/.gitkeep
+!hf_cache/**/.gitkeep
+!.cache/**/.gitkeep
+!ollama_models/**/.gitkeep
+!venv/.gitkeep
