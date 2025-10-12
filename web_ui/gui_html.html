@@ -1,0 +1,273 @@
+<!-- # Copyright (c) 2025 Oleksandr Niemchenko. All Rights Reserved. -->
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <title>LocalGPT — Web UI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Внешний CSS -->
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <header>
+        <h1>LocalGPT — Web UI</h1>
+        <span class="status" id="healthStatus">проверка сервера…</span>
+        <span class="right">
+            <button class="secondary" id="btnHistory">История</button>
+        </span>
+    </header>
+
+    <main class="split">
+        <section class="card">
+            <h3>Запрос</h3>
+            <textarea id="prompt" placeholder="Введите промпт…"></textarea>
+            <div class="buttons" style="margin-top:10px;">
+                <button id="btnSend">Отправить</button>
+                <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
+            </div>
+            <div class="row" style="margin-top:10px;">
+                <div style="flex:1 1 200px;">
+                    <label class="muted" for="modelSelect">Модель Whisper</label>
+                    <select id="modelSelect"
+                        style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;">
+                        <option value="tiny">tiny</option>
+                        <option value="base">base</option>
+                        <option value="small">small</option>
+                        <option value="medium" selected>medium</option>
+                        <option value="large">large</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Блок загрузки и транскрибации -->
+            <div class="row" style="margin-top:10px;">
+                <input type="file" id="fileInput" accept="audio/*,video/*" />
+                <button class="secondary" id="btnTranscribe">Транскрибировать файл</button>
+            </div>
+            <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и
+                распознать речь локально.</p>
+            <div class="status" id="transcribeStatus"></div>
+
+            <p class="muted">Совет: формулируйте задачу конкретно.</p>
+            <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
+        </section>
+
+        <section class="card">
+            <h3>Ответ</h3>
+            <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
+            <div class="buttons" style="margin-top:10px;">
+                <button class="secondary" id="btnCopy">Скопировать ответ</button>
+                <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
+            </div>
+        </section>
+    </main>
+
+    <!-- Модалка истории -->
+    <div class="overlay" id="overlay">
+        <div class="modal" style="max-height: 80vh; overflow-y: auto;">
+            <h3>История (localStorage)</h3>
+            <div id="historyList"></div>
+            <div class="buttons" style="margin-top:10px;">
+                <button id="btnCloseModal">Закрыть</button>
+                <button class="warn" id="btnClearStorage">Очистить localStorage</button>
+            </div>
+            <p class="muted">Хранится только локально в браузере этого устройства.</p>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "http://127.0.0.1:8000";
+        const el = (id) => document.getElementById(id);
+        const historyKey = "localgpt_history_v1";
+
+        const modelSelect = el("modelSelect");
+        const modelKey = "localgpt_whisper_model_v1";
+        try {
+            const saved = localStorage.getItem(modelKey);
+            if (saved && modelSelect) modelSelect.value = saved;
+        } catch { }
+        modelSelect?.addEventListener("change", () => {
+            try { localStorage.setItem(modelKey, modelSelect.value); } catch { }
+        });
+
+        // UI elements
+        const promptEl = el("prompt");
+        const answerEl = el("answer");
+        const btnSend = el("btnSend");
+        const btnCopy = el("btnCopy");
+        const btnClearPrompt = el("btnClearPrompt");
+        const btnClearAnswer = el("btnClearAnswer");
+        const btnHistory = el("btnHistory");
+        const overlay = el("overlay");
+        const btnCloseModal = el("btnCloseModal");
+        const btnClearStorage = el("btnClearStorage");
+        const historyList = el("historyList");
+        const healthStatus = el("healthStatus");
+
+        // Новые элементы для транскрибации
+        const fileInput = el("fileInput");
+        const btnTranscribe = el("btnTranscribe");
+        const transcribeStatus = el("transcribeStatus");
+
+        // --- Health check ---
+        async function checkHealth() {
+            try {
+                const r = await fetch(`${API_BASE}/health`, { method: "GET" });
+                const j = await r.json();
+                healthStatus.textContent = `сервер: OK • модель: ${j.model}`;
+            } catch (e) {
+                healthStatus.textContent = "сервер недоступен";
+            }
+        }
+
+        // --- History helpers ---
+        function loadHistory() {
+            try {
+                const raw = localStorage.getItem(historyKey);
+                return raw ? JSON.parse(raw) : [];
+            } catch { return []; }
+        }
+        function saveHistory(items) {
+            localStorage.setItem(historyKey, JSON.stringify(items));
+        }
+        function addToHistory(q, a) {
+            const items = loadHistory();
+            items.unshift({ ts: Date.now(), q, a });
+            saveHistory(items);
+        }
+        function tsFmt(ts) {
+            const d = new Date(ts);
+            return d.toLocaleString();
+        }
+        function renderHistory() {
+            const items = loadHistory();
+            historyList.innerHTML = items.length
+                ? items.map(item => `
+          <div class="history-item">
+            <div class="muted">${tsFmt(item.ts)}</div>
+            <strong>Запрос:</strong>
+            <pre>${escapeHtml(item.q)}</pre>
+            <strong>Ответ:</strong>
+            <pre>${escapeHtml(item.a)}</pre>
+          </div>
+        `).join("")
+                : '<div class="muted">История пуста.</div>';
+        }
+        function escapeHtml(s) {
+            return (s ?? "").toString()
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;");
+        }
+
+        // --- Chat call ---
+        async function sendPrompt() {
+            const q = promptEl.value.trim();
+            if (!q) { promptEl.focus(); return; }
+
+            setBusy(true);
+            answerEl.value = "Думаю…";
+            try {
+                const r = await fetch(`${API_BASE}/chat`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ query: q })
+                });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const j = await r.json();
+                const text = j.reply ?? "";
+                answerEl.value = text;
+                addToHistory(q, text);
+
+                // Очистка поля запроса после успешной отправки
+                promptEl.value = "";
+            } catch (e) {
+                answerEl.value = `Ошибка: ${e.message || e}`;
+            } finally {
+                setBusy(false);
+            }
+        }
+
+        function setBusy(b) {
+            btnSend.disabled = b;
+            btnSend.textContent = b ? "Отправка…" : "Отправить";
+        }
+
+        // --- Транскрибация файла ---
+        async function transcribeFile() {
+            const f = fileInput?.files?.[0];
+            if (!f) {
+                transcribeStatus.textContent = "выберите аудио/видео файл";
+                return;
+            }
+            try {
+                transcribeStatus.textContent = "транскрибирую…";
+
+                const fd = new FormData();
+                fd.append("file", f, f.name);
+                const ms = (modelSelect?.value || "medium").trim();
+                fd.append("model", ms);
+                fd.append("language", "ru");
+
+                const r = await fetch(`${API_BASE}/transcribe`, {
+                    method: "POST",
+                    body: fd
+                });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const j = await r.json();
+
+                const text = j.text || j.transcript || j.result || "";
+                if (!text) throw new Error("пустая транскрипция");
+
+                const prefix = "Отредактируй результат транскрибации (исправь ошибки распознавания, пунктуацию, убери повторы, раздели на роли кто когда говорит). Опредили ценности и пожелания. Покажи результат к чему удалось прийти:\n\n";
+                promptEl.value = prefix + text;
+                promptEl.focus();
+
+                transcribeStatus.textContent = `✅ Транскрипция готова — модель: ${ms}`;
+            } catch (e) {
+                transcribeStatus.textContent = `❌ ошибка: ${e.message || e}`;
+            }
+        }
+
+        // --- Modal controls ---
+        function openHistory() {
+            renderHistory();
+            overlay.style.display = "flex";
+        }
+        function closeHistory() {
+            overlay.style.display = "none";
+        }
+
+        // --- Wire events ---
+        btnSend.addEventListener("click", sendPrompt);
+
+        // Enter — отправка; Shift+Enter — новая строка
+        promptEl.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendPrompt();
+            }
+        });
+
+        btnCopy.addEventListener("click", async () => {
+            try { await navigator.clipboard.writeText(answerEl.value || ""); }
+            catch { }
+        });
+        btnClearPrompt.addEventListener("click", () => promptEl.value = "");
+        btnClearAnswer.addEventListener("click", () => answerEl.value = "");
+        btnHistory.addEventListener("click", openHistory);
+        btnCloseModal.addEventListener("click", closeHistory);
+        overlay.addEventListener("click", (e) => { if (e.target === overlay) closeHistory(); });
+        btnClearStorage.addEventListener("click", () => {
+            localStorage.removeItem(historyKey);
+            renderHistory();
+        });
+
+        // Кнопка транскрипции
+        btnTranscribe?.addEventListener("click", transcribeFile);
+
+        // Init
+        checkHealth();
+    </script>
+</body>
+</html>
