@@ -158,7 +158,7 @@ uvicorn app.server:app --host 127.0.0.1 --port 8000 --log-level info
 - Если модель отвечает странно или частично на китайском/английском — перезапусти сервер.  
 - Для быстрой работы ASR можно в `.env` заменить:
   ```
-  WHISPER_MODEL_SIZE=small
+  WHISPER_MODEL_SIZE=medium
   ```
 
 ---
@@ -223,19 +223,33 @@ pip install -r ./app/requirements.txt
 ### 2) Конфигурация `.env`
 Создай файл `.env` (или скопируй из репозитория, если он есть) и проверь ключевые переменные:
 ```env
+# Copyright (c) 2025 Oleksandr Niemchenko. All Rights Reserved.
 ENV=local
+
+# OpenAI-совместимый эндпоинт Ollama
 LOCAL_BASE_URL=http://localhost:11434/v1
 LOCAL_API_KEY=LOCAL-KEY
-# базовая модель (можно оставить оригинальную)
-LOCAL_MODEL=qwen2.5:7b-instruct
-# длина ответа по умолчанию (можно поднять до 4096)
-MAX_TOKENS=4096
-TEMP=0.25
 
-# Локальные модели Whisper (ASR)
+# Модель по умолчанию
+# Если уже собрал long-модель — оставь строку ниже как есть.
+# Если ещё нет — временно поставь qwen2.5:7b-instruct.
+LOCAL_MODEL=qwen2.5-7b-long
+
+# Параметры генерации
+TEMP=0.2
+MAX_TOKENS=1200
+MEM_TURNS=6  
+# MEM_TURNS=6  сколько пар (user+assistant) хранить в памяти на сессию
+
+# Whisper (ASR)
+WHISPER_MODEL_SIZE=medium   # варианты: tiny/base/small/medium/large-v3
+WHISPER_COMPUTE_TYPE=int8   # экономный режим на Mac
+
+# для перезапуска модели через web ui
+ADMIN_TOKEN=local-admin-123
+
+# локальные модели Whisper
 WHISPER_MODELS_DIR=./ollama_models/whisper
-WHISPER_MODEL_SIZE=medium
-WHISPER_COMPUTE_TYPE=int8
 WHISPER_DEVICE=cpu
 ```
 > Проект должен быть самодостаточным: все файлы (модели, кэш, Whisper, Ollama long) располагаются внутри папки `LocalGPT/`.
@@ -247,11 +261,24 @@ WHISPER_DEVICE=cpu
 mkdir -p ollama_models/qwen2.5-7b-long
 cat > ollama_models/qwen2.5-7b-long/Modelfile <<'EOF'
 FROM qwen2.5:7b-instruct
+
+# Контекст/вывод
 PARAMETER num_ctx 32768
-PARAMETER num_predict 4096
-PARAMETER temperature 0.25
+PARAMETER num_predict 1024   
+# PARAMETER num_predict 1024    было 4096 — слишком длинно → провоцирует «залипание»
+
+# Стабильная генерация
+PARAMETER temperature 0.2
 PARAMETER top_p 0.9
-PARAMETER repeat_penalty 1.05
+PARAMETER repeat_penalty 1.2
+PARAMETER repeat_last_n 1024
+
+# Mirostat — сильно уменьшает повторы/утечки
+PARAMETER mirostat 2
+PARAMETER mirostat_tau 5.0
+PARAMETER mirostat_eta 0.1
+
+# Шаблон
 TEMPLATE """{{ .System }}
 {{ .Prompt }}"""
 EOF

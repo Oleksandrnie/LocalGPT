@@ -18,6 +18,7 @@ API_KEY  = os.getenv("LOCAL_API_KEY", "LOCAL-KEY")
 MODEL    = os.getenv("LOCAL_MODEL", "qwen2.5:7b-instruct")
 TEMP     = float(os.getenv("TEMP", "0.25"))
 MAX_TOK  = int(os.getenv("MAX_TOKENS", "512"))
+NUM_CTX = int(os.getenv("NUM_CTX", "32768"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 MEM_TURNS = int(os.getenv("MEM_TURNS", "6"))  # сколько пар (user+assistant) храним в памяти на сессию
 UI_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web_ui"))
@@ -111,7 +112,13 @@ def transcribe(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "env": ENV, "model": MODEL}
+    return {
+        "status": "ok",
+        "env": ENV,
+        "model": MODEL,
+        "num_ctx": NUM_CTX,
+        "max_tokens": MAX_TOK,
+    }
 
 
 # Lightweight version endpoint to introspect config

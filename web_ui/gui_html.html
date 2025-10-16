@@ -21,6 +21,7 @@
         <section class="card">
             <h3>Запрос</h3>
             <textarea id="prompt" placeholder="Введите промпт…"></textarea>
+            <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
             <div class="buttons" style="margin-top:10px;">
                 <button id="btnSend">Отправить</button>
                 <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
@@ -50,12 +51,15 @@
 
             <h3 style="margin-top:16px;">Закреплённый контекст</h3>
             <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
+            <div class="muted" id="contextStats">Символы: 0 • Токены≈ 0</div>
             <div class="buttons" style="margin-top:8px;">
                 <button class="secondary" id="btnSaveContext">Сохранить контекст</button>
                 <button class="secondary" id="btnPinFromPrompt">Из запроса → контекст</button>
                 <button class="warn" id="btnClearPinnedContext">Очистить контекст</button>
             </div>
             <div class="muted" id="contextStatus"></div>
+            <div class="status" id="budgetStats" style="margin-top:8px;">Входные токены: 0 • Резерв на ответ: — • Лимит
+                контекста: —</div>
 
             <!-- <p class="muted">Совет: формулируйте задачу конкретно.</p> -->
             <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
@@ -133,14 +137,59 @@
         const contextStatus = el("contextStatus");
         const pinnedContextKey = "localgpt_pinned_context_v1";
 
+        // --- Limits received from backend ---
+        let LIMITS = { num_ctx: null, max_tokens: null };
+
+        // --- Token estimation ---
+        function estTokens(s) { return Math.ceil(((s || '').length) / 4.2); }
+
+        function recalcStats() {
+            const prompt = (el("prompt")?.value || "");
+            const ctx = (el("contextText")?.value || "");
+            const pt = estTokens(prompt);
+            const ct = estTokens(ctx);
+            const inputToks = pt + ct;
+
+            const ps = el("promptStats");
+            if (ps) ps.textContent = `Символы: ${prompt.length} • Токены≈ ${pt}`;
+            const cs = el("contextStats");
+            if (cs) cs.textContent = `Символы: ${ctx.length} • Токены≈ ${ct}`;
+
+            const numCtx = LIMITS.num_ctx ?? "—";
+            const maxOut = LIMITS.max_tokens ?? "—";
+            const bs = el("budgetStats");
+            if (bs) {
+                let line = `Входные токены: ${inputToks} • Резерв на ответ: ${maxOut} • Лимит контекста: ${numCtx}`;
+                if (LIMITS.num_ctx && LIMITS.max_tokens) {
+                    const total = inputToks + LIMITS.max_tokens;
+                    if (total > LIMITS.num_ctx) {
+                        line += " • ⚠️ не влезет — сократите вход или ответ";
+                        bs.style.color = "#f87171"; // красный
+                    } else if (total > 0.9 * LIMITS.num_ctx) {
+                        line += " • ⚠️ на грани — лучше сократить";
+                        bs.style.color = "#fbbf24"; // жёлтый
+                    } else {
+                        bs.style.color = ""; // по умолчанию
+                    }
+                }
+                bs.textContent = line;
+            }
+        }
+
+        function debounce(fn, ms = 150) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); } }
+
         // --- Health check ---
         async function checkHealth() {
             try {
                 const r = await fetch(`${API_BASE}/health`, { method: "GET" });
                 const j = await r.json();
                 healthStatus.textContent = `сервер: OK • модель: ${j.model}`;
+                if (j.num_ctx) LIMITS.num_ctx = Number(j.num_ctx) || null;
+                if (j.max_tokens) LIMITS.max_tokens = Number(j.max_tokens) || null;
             } catch (e) {
                 healthStatus.textContent = "сервер недоступен";
+            } finally {
+                recalcStats();
             }
         }
 
@@ -269,6 +318,7 @@
                 promptEl.focus();
 
                 transcribeStatus.textContent = `✅ Транскрипция готова — модель: ${ms}`;
+                recalcStats();
             } catch (e) {
                 transcribeStatus.textContent = `❌ ошибка: ${e.message || e}`;
             }
@@ -284,6 +334,8 @@
         }
 
         // --- Wire events ---
+        promptEl.addEventListener("input", debounce(recalcStats, 100));
+        contextText.addEventListener("input", debounce(recalcStats, 100));
         btnSend.addEventListener("click", sendPrompt);
 
         // Enter — отправка; Shift+Enter — новая строка
@@ -354,6 +406,7 @@
 
         // Init
         checkHealth();
+        recalcStats();
     </script>
 </body>
 </html>
