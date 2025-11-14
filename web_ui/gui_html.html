@@ -61,13 +61,6 @@
                 </button>
             </div>
 
-            <div class="timeline-controls">
-                <button class="icon-button" id="btnOpenTimeline" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
-                    <span aria-hidden="true">🕒</span>
-                    <span class="sr-only">Открыть таймлайн</span>
-                </button>
-            </div>
-
             <div id="timelineLegend" class="muted timeline-legend"></div>
             <div id="timelineContainer" class="timeline-grid"></div>
 
@@ -117,8 +110,8 @@
                 <h3 id="timelineTitle">Таймлайн беседы</h3>
                 <button class="secondary" id="btnCloseTimeline">Закрыть</button>
             </div>
-            <div id="timelineLegend" class="muted timeline-legend"></div>
-            <div id="timelineContainer" class="timeline-grid"></div>
+            <div id="timelineLegendModal" class="muted timeline-legend"></div>
+            <div id="timelineContainerModal" class="timeline-grid"></div>
         </div>
     </div>
 
@@ -165,6 +158,8 @@
         const transcribeStatus = el("transcribeStatus");
         const timelineContainer = el("timelineContainer");
         const timelineLegend = el("timelineLegend");
+        const timelineContainerModal = el("timelineContainerModal");
+        const timelineLegendModal = el("timelineLegendModal");
 
         const btnOpenTimeline = el("btnOpenTimeline");
         const timelineOverlay = el("timelineOverlay");
@@ -257,18 +252,20 @@
                 : "Таймлайн появится после транскрибации";
         }
 
-        function renderTimeline(items) {
+        function renderTimeline(items = []) {
             const hasItems = Array.isArray(items) && items.length > 0;
             updateTimelineButton(hasItems);
-            if (!timelineContainer) return;
-            if (!hasItems) {
 
-        function renderTimeline(items) {
-            if (!timelineContainer) return;
-            if (!items || !items.length) {
-                timelineContainer.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
+            const containers = [timelineContainer, timelineContainerModal].filter(Boolean);
+            if (!containers.length) return;
+
+            if (!hasItems) {
+                containers.forEach((node) => {
+                    node.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
+                });
                 return;
             }
+
             const html = items.map((item) => {
                 const role = (item?.speaker || "unknown").toLowerCase();
                 const label = speakerLabels[role] || role.toUpperCase();
@@ -283,15 +280,23 @@
                     </div>
                 `;
             }).join("");
-            timelineContainer.innerHTML = html;
+
+            containers.forEach((node) => {
+                node.innerHTML = html;
+            });
         }
 
         function renderRoleLegend(keywords) {
-            if (!timelineLegend) return;
+            const legends = [timelineLegend, timelineLegendModal].filter(Boolean);
+            if (!legends.length) return;
+
             if (!keywords || typeof keywords !== "object") {
-                timelineLegend.textContent = "Словарь ролей: по умолчанию (HR / Кандидат).";
+                legends.forEach((node) => {
+                    node.textContent = "Словарь ролей: по умолчанию (HR / Кандидат).";
+                });
                 return;
             }
+
             const parts = Object.entries(keywords)
                 .filter(([role]) => typeof role === "string")
                 .map(([role, words]) => {
@@ -300,9 +305,12 @@
                     return `${label}: ${list}`.trim();
                 })
                 .filter(Boolean);
-            timelineLegend.textContent = parts.length
+
+            const text = parts.length
                 ? `Словарь ролей • ${parts.join(" • ")}`
                 : "Словарь ролей: по умолчанию (HR / Кандидат).";
+
+            legends.forEach((node) => { node.textContent = text; });
         }
 
         renderTimeline();
@@ -429,10 +437,6 @@
             try {
                 setTranscribeBusy(true);
                 transcribeStatus.textContent = "транскрибирую…";
-                closeTimelineModal();
-                renderTimeline();
-                renderRoleLegend();
-
                 closeTimelineModal();
                 renderTimeline();
                 renderRoleLegend();
