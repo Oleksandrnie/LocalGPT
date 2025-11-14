@@ -1,7 +1,9 @@
 # Copyright (c) 2025 Oleksandr Niemchenko. All Rights Reserved.
+import logging
 import os
 import tempfile
 import re
+from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
@@ -11,6 +13,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
 from .asr_whisper import transcribe_with_fallback
+
+LOGGER = logging.getLogger(__name__)
+PROMPT_PATH = Path(__file__).with_name("prompts") / "system_hr.md"
+FALLBACK_SYSTEM_PROMPT = (
+    "Ты — локальный HR-ассистент. Работай строго по фактам, не выдумывай данные и"
+    " отвечай кратко на русском языке. Если информации не хватает, прямо укажи на"
+    " это и предложи следующий шаг."
+)
+PROMPT_LANGUAGE_SUFFIX = (
+    "\n\nТребование: отвечай ТОЛЬКО на русском языке. Не используй другие языки."
+)
 
 load_dotenv()
 
@@ -37,9 +50,13 @@ class ChatReq(BaseModel):
     session_id: str | None = None
 
 def _system_prompt() -> str:
-    with open(os.path.join(os.path.dirname(__file__), "prompts", "system_hr.md"), "r") as f:
-        base_prompt = f.read()
-    return base_prompt + "\n\nТребование: отвечай ТОЛЬКО на русском языке. Не используй другие языки."
+    try:
+        with PROMPT_PATH.open("r", encoding="utf-8") as f:
+            base_prompt = f.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        LOGGER.warning("Failed to read system prompt from %s: %s", PROMPT_PATH, exc)
+        base_prompt = FALLBACK_SYSTEM_PROMPT
+    return base_prompt + PROMPT_LANGUAGE_SUFFIX
 
 # Helper: удаляем повторы и случайные куски на других языках
 def _sanitize(text: str) -> str:
