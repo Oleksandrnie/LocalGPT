@@ -1,5 +1,7 @@
+import json
 import os
 from pathlib import Path
+from typing import Any, Iterable
 
 # --- Whisper models root config ---
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +14,33 @@ DEFAULT_FALLBACK_LANGUAGE = (
 )
 FALLBACK_USE_PROMPT = os.getenv("WHISPER_FALLBACK_USE_PROMPT", "true").strip().lower()
 FALLBACK_USE_PROMPT = FALLBACK_USE_PROMPT not in {"0", "false", "no"}
+
+DEFAULT_ROLE_KEYWORDS = {
+    "hr": [
+        "компания",
+        "коллег",
+        "зарплат",
+        "ваканси",
+        "обязанн",
+        "тестовое",
+        "условия",
+        "расскажите",
+        "задач",
+        "офер",
+    ],
+    "candidate": [
+        "меня зовут",
+        "мой опыт",
+        "работал",
+        "учился",
+        "занимался",
+        "команда",
+        "портфолио",
+        "проживаю",
+        "ищу",
+        "готов",
+    ],
+}
 
 RU_PRESET_PROMPT = (
     "корректная пунктуация, нормальная орфография, числа, даты, проценты, имена, "
@@ -61,6 +90,130 @@ def _normalize_language(value: str | None) -> str | None:
     return normalized
 
 
+def _normalize_role_keywords(data: dict[str, Iterable[str]] | None) -> dict[str, list[str]]:
+    if not data:
+        return {k: list(v) for k, v in DEFAULT_ROLE_KEYWORDS.items()}
+
+    normalized: dict[str, list[str]] = {}
+    for role, raw_keywords in data.items():
+        if not isinstance(role, str):
+            continue
+        if isinstance(raw_keywords, str):
+            candidates = [raw_keywords]
+        elif isinstance(raw_keywords, Iterable):
+            candidates = list(raw_keywords)
+        else:
+            continue
+        cleaned: list[str] = []
+        for item in candidates:
+            if not isinstance(item, str):
+                continue
+            kw = item.strip().lower()
+            if kw and kw not in cleaned:
+                cleaned.append(kw)
+        if cleaned:
+            normalized[role.strip().lower() or role] = cleaned
+
+    if not normalized:
+        return {k: list(v) for k, v in DEFAULT_ROLE_KEYWORDS.items()}
+    return normalized
+
+
+def _load_role_keywords(audio_path: Path) -> dict[str, list[str]]:
+    """Загружает словарь ключевых слов для определения ролей."""
+
+    env_inline = os.getenv("WHISPER_ROLE_KEYWORDS")
+    if env_inline:
+        try:
+            parsed = json.loads(env_inline)
+            if isinstance(parsed, dict):
+                return _normalize_role_keywords(parsed)
+        except json.JSONDecodeError:
+            pass
+
+    env_path = os.getenv("WHISPER_ROLE_KEYWORDS_PATH")
+    if env_path:
+        path = Path(env_path)
+        if path.exists():
+            try:
+                parsed = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(parsed, dict):
+                    return _normalize_role_keywords(parsed)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                pass
+
+    local_file = audio_path.parent / "role_keywords.json"
+    if local_file.exists():
+        try:
+            parsed = json.loads(local_file.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                return _normalize_role_keywords(parsed)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
+
+    module_default = Path(__file__).with_name("role_keywords.json")
+    if module_default.exists():
+        try:
+            parsed = json.loads(module_default.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                return _normalize_role_keywords(parsed)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
+
+    return {k: list(v) for k, v in DEFAULT_ROLE_KEYWORDS.items()}
+
+
+def _annotate_speakers(
+    segments: list[dict[str, Any]],
+    role_keywords: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    """Присваивает каждому сегменту роль собеседника (HR/кандидат)."""
+
+    if not segments:
+        return []
+
+    speakers = list(role_keywords.keys()) or list(DEFAULT_ROLE_KEYWORDS.keys())
+    default_speaker = speakers[0] if speakers else "hr"
+    alt_speaker = speakers[1] if len(speakers) > 1 else default_speaker
+
+    annotated: list[dict[str, Any]] = []
+    last_speaker = None
+
+    for seg in segments:
+        text = (seg.get("text") or "").lower()
+        best_speaker = None
+        best_score = 0
+
+        for speaker, keywords in role_keywords.items():
+            score = 0
+            for keyword in keywords:
+                if keyword and keyword in text:
+                    score += 1
+            if score > best_score:
+                best_score = score
+                best_speaker = speaker
+            elif score == best_score and score > 0:
+                # Ничья по ключевым словам — не меняем говорящего
+                best_speaker = last_speaker
+
+        if not best_speaker:
+            if last_speaker is None:
+                best_speaker = default_speaker
+            elif best_score == 0:
+                best_speaker = alt_speaker if last_speaker == default_speaker else default_speaker
+            else:
+                best_speaker = last_speaker
+
+        annotated_segment = {
+            **seg,
+            "speaker": best_speaker or default_speaker,
+        }
+        annotated.append(annotated_segment)
+        last_speaker = annotated_segment["speaker"]
+
+    return annotated
+
+
 def transcribe_with_fallback(
     audio_path: str,
     model_name: str,
@@ -69,14 +222,15 @@ def transcribe_with_fallback(
     compute_type: str | None = None,
     device: str | None = None,
     beam_size: int = 5,
-) -> str:
-    """Транскрибирует файл с двумя проходами:
+) -> dict[str, Any]:
+    """Транскрибирует файл с двумя проходами и возвращает текст и сегменты.
 
     1) язык auto + VAD + initial_prompt (если есть),
     2) фолбэк: VAD выключен, язык берётся из preferred_language или системного
        значения, initial_prompt задаётся по настройкам.
 
-    Возвращает полученный текст (может быть пустой строкой при полной ошибке).
+    Возвращает словарь с итоговым текстом и списком сегментов вида
+    {"start": float, "end": float, "text": str, "speaker": str}.
     """
     from faster_whisper import WhisperModel  # локальный импорт, чтобы не ломать существующие импорты
 
@@ -106,7 +260,11 @@ def transcribe_with_fallback(
         # Пробрасываем специальную ошибку, чтобы сервер и UI могли показать подсказку по скачиванию модели
         raise RuntimeError(f"WHISPER_MODEL_NOT_FOUND::{model_name}") from e
 
-    def run_once(language: str | None, use_vad: bool, prompt: str | None) -> str:
+    role_keywords = _load_role_keywords(path)
+
+    def run_once(
+        language: str | None, use_vad: bool, prompt: str | None
+    ) -> tuple[str, list[dict[str, Any]], Any]:
         segments, info = model.transcribe(
             str(path),
             language=language,
@@ -114,17 +272,44 @@ def transcribe_with_fallback(
             beam_size=beam_size,
             initial_prompt=prompt,
         )
-        return "".join(segment.text for segment in segments).strip()
+        collected_segments: list[dict[str, Any]] = []
+        text_parts: list[str] = []
+
+        for segment in segments:
+            segment_text = (segment.text or "").strip()
+            if not segment_text:
+                continue
+            text_parts.append(segment.text)
+            collected_segments.append(
+                {
+                    "start": float(segment.start),
+                    "end": float(segment.end),
+                    "text": segment_text,
+                }
+            )
+
+        return "".join(text_parts).strip(), collected_segments, info
 
     # 1) Умный прогон: автоопределение языка (language=None) + VAD + initial_prompt (если есть)
-    text = run_once(language=None, use_vad=True, prompt=full_prompt)
+    text, segments_data, info = run_once(language=None, use_vad=True, prompt=full_prompt)
 
     # 2) Фолбэк: управляемый язык (если задан) + отключённый VAD + контролируемый промпт
     if not text:
-        text = run_once(
+        text, segments_data, info = run_once(
             language=fallback_language,
             use_vad=False,
             prompt=fallback_prompt,
         )
 
-    return text
+    annotated_segments = _annotate_speakers(segments_data, role_keywords)
+
+    result: dict[str, Any] = {
+        "text": text,
+        "segments": annotated_segments,
+        "role_keywords": role_keywords,
+    }
+    language_result = getattr(info, "language", None)
+    if language_result:
+        result["language"] = language_result
+
+    return result
