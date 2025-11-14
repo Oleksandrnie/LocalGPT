@@ -151,12 +151,12 @@ startLocalLLM
 
 Основной алиас:
 ```bash
-alias startLocalLLM='cd ~/my_personal_files/LocalGPT && source venv/bin/activate && export PYTHONPATH="$(pwd)" && uvicorn app.server:app --host 127.0.0.1 --port 8000 --log-level info --reload --reload-dir app --reload-exclude "venv/*" --reload-exclude "*.pyc"'
+alias myllm='cd ~/my_personal_files/LocalGPT && source venv/bin/activate && export PYTHONPATH="$(pwd)" && uvicorn app.server:app --host 127.0.0.1 --port 8000 --log-level info --reload --reload-dir app --reload-exclude "venv/*" --reload-exclude "*.pyc"'
 ```
 
 Полный запуск (Ollama + UI + API):
 ```bash
-alias localgpt='~/my_personal_files/LocalGPT/run_localgpt.sh'
+alias myllm='~/my_personal_files/LocalGPT/run_localgpt.sh'
 ```
 
 ---
