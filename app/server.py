@@ -1,9 +1,14 @@
 # Copyright (c) 2025 Oleksandr Niemchenko. All Rights Reserved.
+import csv
+import io
 import logging
 import os
-import tempfile
 import re
+import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path
+from typing import Iterable
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
@@ -43,11 +48,17 @@ app = FastAPI(title="LocalGPT HR API")
 
 # Память чата по сессиям (in-memory)
 SESSIONS: dict[str, list[dict]] = {}
+# Кэш критериев, загруженных пользователем (по session_id)
+SESSION_CRITERIA: dict[str, list[str]] = {}
+# Последний транскрипт на сессию (можно использовать при повторном анализе)
+SESSION_TRANSCRIPTS: dict[str, str] = {}
 
 class ChatReq(BaseModel):
     query: str
     context: str | None = None
     session_id: str | None = None
+    transcript: str | None = None
+    criteria: list[str] | None = None
 
 def _system_prompt() -> str:
     try:
@@ -57,6 +68,111 @@ def _system_prompt() -> str:
         LOGGER.warning("Failed to read system prompt from %s: %s", PROMPT_PATH, exc)
         base_prompt = FALLBACK_SYSTEM_PROMPT
     return base_prompt + PROMPT_LANGUAGE_SUFFIX
+
+# --- Критерии и источники данных -------------------------------------------------
+
+MAX_CRITERIA = 200
+
+def _normalize_criterion(raw: str) -> str:
+    if not raw:
+        return ""
+    text = re.sub(r"[\u200b\u200c\u200d]", "", raw)
+    text = text.strip()
+    text = re.sub(r"^[-•*\d\)\].\s]+", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+def _criteria_from_lines(lines: Iterable[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        cleaned = _normalize_criterion(line)
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+        if len(result) >= MAX_CRITERIA:
+            break
+    return result
+
+def _decode_bytes(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="ignore")
+
+def _parse_csv(text: str) -> list[str]:
+    stream = io.StringIO(text)
+    reader = csv.reader(stream)
+    lines: list[str] = []
+    for row in reader:
+        if not row:
+            continue
+        for cell in row:
+            if cell and cell.strip():
+                lines.append(cell)
+                break
+    return _criteria_from_lines(lines)
+
+def _parse_xlsx(data: bytes) -> list[str]:
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:  # pragma: no cover - зависит от окружения
+        raise RuntimeError("openpyxl_not_available") from exc
+
+    workbook = load_workbook(filename=io.BytesIO(data), read_only=True, data_only=True)
+    sheet = workbook.active
+    lines: list[str] = []
+    for row in sheet.iter_rows(values_only=True):
+        if not row:
+            continue
+        for cell in row:
+            if isinstance(cell, str) and cell.strip():
+                lines.append(cell)
+                break
+            if isinstance(cell, (int, float)):
+                lines.append(str(cell))
+                break
+        if len(lines) >= MAX_CRITERIA:
+            break
+    return _criteria_from_lines(lines)
+
+def _parse_text_block(text: str) -> list[str]:
+    if not text:
+        return []
+    raw_lines = re.split(r"[\r\n]+", text)
+    return _criteria_from_lines(raw_lines)
+
+def _extract_sheet_id(raw: str) -> tuple[str, str | None]:
+    value = (raw or "").strip()
+    if not value:
+        raise ValueError("google_sheet_id_required")
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", value)
+    gid = None
+    if match:
+        sheet_id = match.group(1)
+        gid_match = re.search(r"gid=([0-9]+)", value)
+        if gid_match:
+            gid = gid_match.group(1)
+        return sheet_id, gid
+    return value, None
+
+def _load_google_sheet_csv(sheet_id: str, gid: str | None = None) -> str:
+    if not sheet_id:
+        raise ValueError("google_sheet_id_required")
+    params = {"format": "csv"}
+    if gid:
+        params["gid"] = gid
+    query = urllib.parse.urlencode(params)
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?{query}"
+    with urllib.request.urlopen(url, timeout=15) as response:  # type: ignore[call-arg]
+        data = response.read()
+    return _decode_bytes(data)
 
 # Helper: удаляем повторы и случайные куски на других языках
 def _sanitize(text: str) -> str:
@@ -107,6 +223,82 @@ def _sanitize(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+@app.post("/criteria/parse")
+def parse_criteria(
+    session_id: str = Form(default=""),
+    google_sheet_id: str = Form(default=""),
+    google_gid: str = Form(default=""),
+    raw_text: str = Form(default=""),
+    file: UploadFile | None = File(default=None),
+):
+    sid = (session_id or "default").strip() or "default"
+    criteria: list[str] | None = None
+    source = None
+    try:
+        if file is not None:
+            content = file.file.read()
+            if not content:
+                raise ValueError("empty_file")
+            suffix = Path(file.filename or "").suffix.lower()
+            if suffix == ".csv":
+                criteria = _parse_csv(_decode_bytes(content))
+                source = "file:csv"
+            elif suffix in {".xlsx", ".xlsm"}:
+                criteria = _parse_xlsx(content)
+                source = "file:xlsx"
+            else:
+                raise ValueError("unsupported_file")
+        elif google_sheet_id.strip():
+            sheet_id, gid = _extract_sheet_id(google_sheet_id)
+            csv_text = _load_google_sheet_csv(sheet_id, gid or (google_gid.strip() or None))
+            criteria = _parse_csv(csv_text)
+            source = "google_sheets"
+        elif raw_text.strip():
+            criteria = _parse_text_block(raw_text)
+            source = "text"
+        else:
+            raise ValueError("no_source")
+    except ValueError as exc:
+        code = str(exc)
+        if code == "unsupported_file":
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "unsupported_file", "message": "Разрешены только CSV и XLSX"},
+            ) from exc
+        if code == "empty_file":
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "empty_file", "message": "Файл критериев пустой"},
+            ) from exc
+        if code == "google_sheet_id_required":
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "google_sheet_id_required", "message": "Укажите ID таблицы Google Sheets"},
+            ) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "criteria_source_missing", "message": "Не указан источник критериев"},
+        ) from exc
+    except RuntimeError as exc:
+        if str(exc) == "openpyxl_not_available":
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "openpyxl_missing", "message": "Установите зависимость openpyxl для чтения XLSX"},
+            ) from exc
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "criteria_fetch_failed", "message": str(exc)},
+        ) from exc
+    if not criteria:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "criteria_not_found", "message": "Не удалось выделить критерии"},
+        )
+    SESSION_CRITERIA[sid] = criteria
+    return {"criteria": criteria, "count": len(criteria), "session_id": sid, "source": source}
+
 def _build_timeline(segments: list[dict]) -> list[dict]:
     """Объединяет соседние сегменты одного говорящего в таймлайн."""
 
@@ -146,14 +338,33 @@ def chat(req: ChatReq):
         sid = (req.session_id or "default").strip()
         history = SESSIONS.get(sid, [])
 
+        request_criteria = [c for c in (req.criteria or []) if isinstance(c, str)]
+        cleaned_criteria = _criteria_from_lines(request_criteria) if request_criteria else []
+        if cleaned_criteria:
+            SESSION_CRITERIA[sid] = cleaned_criteria
+        active_criteria = cleaned_criteria or SESSION_CRITERIA.get(sid, []) or []
+
+        transcript_text = (req.transcript or "").strip()
+        if transcript_text:
+            SESSION_TRANSCRIPTS[sid] = transcript_text
+        else:
+            transcript_text = (SESSION_TRANSCRIPTS.get(sid) or "").strip()
+
         messages = [{"role": "system", "content": _system_prompt()}]
         if req.context:
             messages.append({"role": "user", "content": f"Контекст:\n{req.context}"})
+        if transcript_text:
+            label = "Транскрипт из запроса" if (req.transcript or "").strip() else "Транскрипт из памяти сессии"
+            messages.append({"role": "user", "content": f"{label}:\n{transcript_text}"})
+        if active_criteria:
+            criteria_block = "\n".join(f"- {item}" for item in active_criteria)
+            messages.append({"role": "user", "content": f"Критерии оценки:\n{criteria_block}"})
         # добавляем прошлые реплики (user/assistant) если есть
         if history:
             messages.extend(history)
         # текущий запрос
-        messages.append({"role": "user", "content": req.query})
+        user_query = (req.query or "").strip() or "проанализируй"
+        messages.append({"role": "user", "content": user_query})
 
         resp = client.chat.completions.create(
             model=MODEL,
@@ -169,7 +380,7 @@ def chat(req: ChatReq):
 
         # обновляем память для сессии: храним последние MEM_TURNS пар (user/assistant)
         new_history = history + [
-            {"role": "user", "content": req.query},
+            {"role": "user", "content": user_query},
             {"role": "assistant", "content": text},
         ]
         SESSIONS[sid] = new_history[-2 * MEM_TURNS:]
@@ -188,6 +399,7 @@ def transcribe(
     model: str = Form(default="small"),
     prompt_preset: str = Form(default="none"),
     language: str = Form(default="auto"),
+    session_id: str = Form(default=""),
 ):
     """Транскрибация аудио/видео через faster-whisper.
 
@@ -232,6 +444,8 @@ def transcribe(
         )
     preferred_language = None if language_raw == "auto" else language_raw
 
+    sid = (session_id or "").strip()
+
     try:
         transcription = transcribe_with_fallback(
             audio_path=tmp_path,
@@ -252,6 +466,9 @@ def transcribe(
         role_keywords = {}
         if isinstance(transcription, dict):
             role_keywords = transcription.get("role_keywords") or {}
+        if sid:
+            SESSION_TRANSCRIPTS[sid] = text
+
         return {
             "text": text,
             "model": model_name,
@@ -317,7 +534,10 @@ class ResetReq(BaseModel):
 def reset_session(req: ResetReq):
     if ADMIN_TOKEN and req.admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="forbidden")
-    SESSIONS.pop(req.session_id.strip(), None)
+    sid = req.session_id.strip()
+    SESSIONS.pop(sid, None)
+    SESSION_CRITERIA.pop(sid, None)
+    SESSION_TRANSCRIPTS.pop(sid, None)
     return {"ok": True}
 
 
