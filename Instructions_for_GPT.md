@@ -1,4 +1,4 @@
-<file name=Instructions_for_GPT.md path=/Users/oleksandrniemchenko/my_personal_files/LocalGPT/Instructions_for_GPT.md># 🧠 LocalGPT — локальный HR‑ и ASR‑бот
+# 🧠 LocalGPT — локальный HR‑ и ASR‑бот
 
 LocalGPT — полностью локальный HR‑бот и помощник для транскрибации, работающий **без интернета** и **без внешних API**. 
 Поддерживает чат, анализ текста, транскрибацию аудио/видео и работу с локальными LLM через Ollama.
