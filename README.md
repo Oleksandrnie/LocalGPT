@@ -16,7 +16,7 @@ LocalGPT/
 └── .env                # Конфигурация
 ```
 
-В каталоге `ollama_models/qwen2.5-7b-long/Modelfile` хранится Modelfile — параметры локальной LLM (контекст, длина ответа, температура и др.).
+В каталоге `ollama_models/qwen2.5-7b-long/Modelfile` хранится Modelfile — параметры локальной LLM (`NUM_CTX`, `MAX_TOKENS`, `TEMP` и др.).
 
 ---
 
@@ -37,13 +37,16 @@ cd LocalGPT
 py run_localgpt.py
 ```
 
-Скрипт `run_localgpt.py` автоматически:
-- создаёт виртуальное окружение;
-- ставит зависимости;
-- запускает Ollama;
-- скачивает модель `qwen2.5:7b-instruct`, если её нет;
-- поднимает API по адресу `http://127.0.0.1:8000/`;
-- открывает UI.
+Скрипт `run_localgpt.py` ведёт пошаговый лог в stdout. Он показывает, какой шаг выполняется:
+- путь до проекта и используемый venv;
+- создание виртуального окружения (если его нет);
+- установку зависимостей из `app/requirements.txt`;
+- проверку запуска Ollama и старт `ollama serve` при необходимости;
+- проверку наличия модели `qwen2.5:7b-instruct` (`ollama pull` при первом запуске);
+- открытие UI по адресу `http://127.0.0.1:8000/`;
+- запуск FastAPI через `uvicorn app.server:app`.
+
+По этим сообщениям можно быстро понять, где запуск остановился.
 
 ---
 
@@ -57,6 +60,42 @@ ollama pull qwen2.5:7b-instruct
 export PYTHONPATH="$(pwd)"  # Windows: set PYTHONPATH=%cd%
 uvicorn app.server:app --host 127.0.0.1 --port 8000
 ```
+
+---
+
+## 🧾 Примеры `.env`
+
+**Стандартная (короткий контекст) конфигурация:**
+```env
+LOCAL_MODEL=qwen2.5:7b-instruct
+LOCAL_BASE_URL=http://127.0.0.1:11434/v1
+LOCAL_API_KEY=LOCAL-KEY
+TEMP=0.25
+MAX_TOKENS=512
+NUM_CTX=32768
+MEM_TURNS=6
+WHISPER_MODEL_SIZE=medium
+WHISPER_COMPUTE_TYPE=int8
+WHISPER_DEVICE=cpu
+ADMIN_TOKEN=local-admin-123
+```
+
+**Long-контекст (`qwen2.5-7b-long`):**
+```env
+LOCAL_MODEL=qwen2.5-7b-long
+LOCAL_BASE_URL=http://127.0.0.1:11434/v1
+LOCAL_API_KEY=LOCAL-KEY
+TEMP=0.2
+MAX_TOKENS=2048
+NUM_CTX=65536
+MEM_TURNS=8
+WHISPER_MODEL_SIZE=medium
+WHISPER_COMPUTE_TYPE=int8
+WHISPER_DEVICE=cpu
+ADMIN_TOKEN=local-admin-123
+```
+
+Если Ollama или OpenAI-совместимый API работает на другой машине, укажите её адрес и ключ в `LOCAL_BASE_URL` и `LOCAL_API_KEY`.
 
 ---
 
@@ -97,6 +136,21 @@ WHISPER_MODELS_DIR=ollama_models/whisper
 **Whisper (ASR):**
 - При первом запуске транскрибации с выбранной моделью (`small` или `medium`) `faster-whisper` скачивает веса из Hugging Face (если есть интернет) и сохраняет их в каталог `LocalGPT/ollama_models/whisper/` (или в путь из `WHISPER_MODELS_DIR`).
 - При отсутствии интернета модели Whisper можно заранее скачать на другой машине и скопировать в этот каталог вручную — после этого транскрибация будет работать офлайн.
+
+---
+
+## 📦 Подготовка к офлайн-режиму
+
+1. **LLM (Ollama):**
+   - На машине с интернетом выполните `ollama pull qwen2.5:7b-instruct` (и при необходимости `ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile`).
+   - Скопируйте каталог `~/.ollama/models` на офлайн-машину (в тот же путь) или в `LocalGPT/ollama_models/` внутри проекта.
+   - Убедитесь, что на офлайн-машине запущен `ollama serve`, а `LOCAL_MODEL` в `.env` указывает на нужную локальную модель.
+2. **Whisper:**
+   - Скачайте архивы весов (`small`, `medium` и т.д.) из репозиториев `Systran/faster-whisper-*` на Hugging Face.
+   - Распакуйте их в `LocalGPT/ollama_models/whisper/<model-name>` или в директорию, указанную `WHISPER_MODELS_DIR`.
+3. **Конфигурация и зависимости:**
+   - В `.env` выставьте локальные `LOCAL_BASE_URL` и `LOCAL_API_KEY` (по умолчанию `http://127.0.0.1:11434/v1` и `LOCAL-KEY`).
+   - При полном отсутствии интернета заранее соберите виртуальное окружение (запустите `run_localgpt.py` на машине с доступом в сеть или сохраните wheel-файлы зависимостей).
 
 ---
 
