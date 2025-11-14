@@ -128,6 +128,7 @@ __pycache__/
 *.env.backup
 # Ollama models: keep only structure (.gitkeep) and Modelfile; ignore everything else
 ollama_models/**
+!ollama_models/qwen2.5-7b-long/
 !ollama_models/**/.gitkeep
 !ollama_models/**/Modelfile
 *.wav

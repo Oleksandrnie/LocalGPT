@@ -43,6 +43,7 @@ py run_localgpt.py
 - установку зависимостей из `app/requirements.txt`;
 - проверку запуска Ollama и старт `ollama serve` при необходимости;
 - проверку наличия модели `qwen2.5:7b-instruct` (`ollama pull` при первом запуске);
+- чтение `.env`, проверку модели `LOCAL_MODEL` через `ollama show` и автоматический фолбэк (создание по Modelfile или переключение на доступную модель);
 - открытие UI по адресу `http://127.0.0.1:8000/`;
 - запуск FastAPI через `uvicorn app.server:app`.
 
@@ -134,9 +135,9 @@ WHISPER_FALLBACK_USE_PROMPT=true        # использовать тот же i
 ## 📥 Как загружаются модели
 
 **LLM (Qwen 2.5):**
-- При запуске `run_localgpt.py` проверяется наличие базовой модели `qwen2.5:7b-instruct` в Ollama.
-- Если её нет, лаунчер выполняет `ollama pull qwen2.5:7b-instruct` и скачивает модель один раз.
-- Кастомный вариант `qwen2.5-7b-long` собирается по Modelfile в `ollama_models/qwen2.5-7b-long/Modelfile` командой:
+- При запуске `run_localgpt.py` читается `LOCAL_MODEL` из `.env`, выполняется `ollama show <model>` и, при необходимости, запускается автоматическая подготовка (создание по Modelfile либо переключение `.env` на существующую модель).
+- Если модель из `.env` недоступна, лаунчер пытается подтянуть fallback `qwen2.5:7b-instruct` (`ollama pull`) или выбрать любую другую установленную модель.
+- Кастомный вариант `qwen2.5-7b-long` собирается по Modelfile `ollama_models/qwen2.5-7b-long/Modelfile` командой:
   ```bash
   ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile
   ```
@@ -144,6 +145,15 @@ WHISPER_FALLBACK_USE_PROMPT=true        # использовать тот же i
 **Whisper (ASR):**
 - При первом запуске транскрибации с выбранной моделью (`small` или `medium`) `faster-whisper` скачивает веса из Hugging Face (если есть интернет) и сохраняет их в каталог `LocalGPT/ollama_models/whisper/` (или в путь из `WHISPER_MODELS_DIR`).
 - При отсутствии интернета модели Whisper можно заранее скачать на другой машине и скопировать в этот каталог вручную — после этого транскрибация будет работать офлайн.
+
+---
+
+### 🔍 Диагностика long-модели
+
+1. Посмотрите, установлена ли модель, командой `ollama list`. В списке должна появиться строка `qwen2.5-7b-long` с ожидаемым размером.
+2. Проверьте, что Ollama может её загрузить: `ollama show qwen2.5-7b-long`. Успешный вывод означает, что модель доступна для инференса.
+3. Убедитесь в размере контекста: `ollama show qwen2.5-7b-long --config | grep context`. Для long-сборки ожидается `"context_length": 65536`.
+4. Если модель отсутствует, соберите её заново по Modelfile: `ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile`.
 
 ---
 
