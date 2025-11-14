@@ -1,6 +1,8 @@
 # Copyright (c) 2025 Oleksandr Niemchenko. All Rights Reserved.
 import os
 import tempfile
+import re
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from openai import OpenAI
@@ -92,18 +94,21 @@ def chat(req: ChatReq):
         # Возвращаем понятную ошибку, если Ollama/LLM недоступны
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
+LANGUAGE_RE = re.compile(r"^[a-z0-9]{2,8}(?:-[a-z0-9]{2,8})?$")
+
+
 @app.post("/transcribe")
 def transcribe(
     file: UploadFile = File(...),
     model: str = Form(default="small"),
     prompt_preset: str = Form(default="none"),
-    language: str = Form(default="ru"),  # оставляем для совместимости со старыми клиентами
+    language: str = Form(default="auto"),
 ):
     """Транскрибация аудио/видео через faster-whisper.
 
     - model — размер модели whisper (tiny/base/small/medium/large).
     - prompt_preset — режим промпта: none / ru / en.
-    - language сейчас игнорируется, но параметр оставлен, чтобы не ломать старых клиентов.
+    - language — `auto` (по умолчанию) или BCP-47 код (`ru`, `en`, `pt-br`...), влияет на второй проход Whisper.
     """
     # сохраняем файл во временный путь
     with tempfile.NamedTemporaryFile(
@@ -116,21 +121,44 @@ def transcribe(
     # модель по умолчанию, если в форме пришло пусто
     model_name = (model or os.getenv("WHISPER_MODEL_SIZE", "medium")).strip()
 
-    preset = (prompt_preset or "none").strip()
-    if preset not in {"none", "ru", "en"}:
+    preset = (prompt_preset or "none").strip().lower()
+    if not preset:
         preset = "none"
+    if preset not in {"none", "ru", "en"}:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_prompt_preset",
+                "message": "prompt_preset must be one of: none, ru, en.",
+            },
+        )
     preset_value = None if preset == "none" else preset
+
+    language_raw = (language or "auto").strip().lower()
+    if language_raw == "":
+        language_raw = "auto"
+    if language_raw != "auto" and not LANGUAGE_RE.fullmatch(language_raw):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_language",
+                "message": "language must be 'auto' или BCP-47 код (например, 'ru', 'en', 'pt-br').",
+            },
+        )
+    preferred_language = None if language_raw == "auto" else language_raw
 
     try:
         text = transcribe_with_fallback(
             audio_path=tmp_path,
             model_name=model_name,
             prompt_preset=preset_value,
+            preferred_language=preferred_language,
         )
         return {
             "text": text,
             "model": model_name,
             "prompt_preset": preset,
+            "language": language_raw,
         }
     except RuntimeError as e:
         msg = str(e)
