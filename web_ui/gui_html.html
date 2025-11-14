@@ -61,6 +61,17 @@
                 </button>
             </div>
 
+            <div class="timeline-controls">
+                <button class="icon-button" id="btnOpenTimeline" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
+                    <span aria-hidden="true">🕒</span>
+                    <span class="sr-only">Открыть таймлайн</span>
+                </button>
+            </div>
+
+            <div id="timelineLegend" class="muted timeline-legend"></div>
+            <div id="timelineContainer" class="timeline-grid"></div>
+
+
             <h3 style="margin-top:16px;">Закреплённый контекст</h3>
             <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
             <div class="muted" id="contextStats">Символы: 0 • Токены≈ 0</div>
@@ -152,9 +163,9 @@
         const fileInput = el("fileInput");
         const btnTranscribe = el("btnTranscribe");
         const transcribeStatus = el("transcribeStatus");
-        const transcribeButtonLabel = btnTranscribe?.textContent?.trim() || "Транскрибировать файл";
         const timelineContainer = el("timelineContainer");
         const timelineLegend = el("timelineLegend");
+
         const btnOpenTimeline = el("btnOpenTimeline");
         const timelineOverlay = el("timelineOverlay");
         const btnCloseTimeline = el("btnCloseTimeline");
@@ -246,17 +257,15 @@
                 : "Таймлайн появится после транскрибации";
         }
 
-        function setTranscribeBusy(busy) {
-            if (!btnTranscribe) return;
-            btnTranscribe.disabled = busy;
-            btnTranscribe.textContent = busy ? "Транскрибирую…" : transcribeButtonLabel;
-        }
-
         function renderTimeline(items) {
             const hasItems = Array.isArray(items) && items.length > 0;
             updateTimelineButton(hasItems);
             if (!timelineContainer) return;
             if (!hasItems) {
+
+        function renderTimeline(items) {
+            if (!timelineContainer) return;
+            if (!items || !items.length) {
                 timelineContainer.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
                 return;
             }
@@ -420,6 +429,10 @@
             try {
                 setTranscribeBusy(true);
                 transcribeStatus.textContent = "транскрибирую…";
+                closeTimelineModal();
+                renderTimeline();
+                renderRoleLegend();
+
                 closeTimelineModal();
                 renderTimeline();
                 renderRoleLegend();
