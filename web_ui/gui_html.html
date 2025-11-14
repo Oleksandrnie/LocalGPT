@@ -165,6 +165,11 @@
         const timelineOverlay = el("timelineOverlay");
         const btnCloseTimeline = el("btnCloseTimeline");
 
+        const transcribeBusyState = {
+            defaultLabel: null,
+            timelineState: null
+        };
+
         // Контекст (закрепляемый)
         const contextText = el("contextText");
         const btnSaveContext = el("btnSaveContext");
@@ -427,6 +432,64 @@
             btnSend.textContent = b ? "Отправка…" : "Отправить";
         }
 
+        function setTranscribeBusy(isBusy, { label, timelineUpdated } = {}) {
+            if (btnTranscribe) {
+                const defaultLabel = transcribeBusyState.defaultLabel
+                    || btnTranscribe.dataset.defaultLabel
+                    || btnTranscribe.textContent
+                    || "Транскрибировать файл";
+                transcribeBusyState.defaultLabel = defaultLabel;
+                btnTranscribe.dataset.defaultLabel = defaultLabel;
+
+                btnTranscribe.disabled = Boolean(isBusy);
+                btnTranscribe.textContent = label
+                    || (isBusy ? "Транскрибирую…" : defaultLabel);
+            }
+
+            if (fileInput) fileInput.disabled = Boolean(isBusy);
+
+            if (!btnOpenTimeline) {
+                transcribeBusyState.timelineState = null;
+                return;
+            }
+
+            if (isBusy) {
+                if (!transcribeBusyState.timelineState) {
+                    transcribeBusyState.timelineState = {
+                        disabled: btnOpenTimeline.disabled,
+                        ariaDisabled: btnOpenTimeline.getAttribute("aria-disabled"),
+                        title: btnOpenTimeline.title
+                    };
+                }
+                btnOpenTimeline.disabled = true;
+                btnOpenTimeline.setAttribute("aria-disabled", "true");
+                return;
+            }
+
+            if (timelineUpdated) {
+                // renderTimeline уже обновил состояние кнопки; просто очистим сохранённое
+                transcribeBusyState.timelineState = null;
+                return;
+            }
+
+            const prev = transcribeBusyState.timelineState;
+            if (prev) {
+                btnOpenTimeline.disabled = prev.disabled;
+                if (prev.ariaDisabled != null) {
+                    btnOpenTimeline.setAttribute("aria-disabled", prev.ariaDisabled);
+                } else {
+                    btnOpenTimeline.removeAttribute("aria-disabled");
+                }
+                if (prev.title != null) {
+                    btnOpenTimeline.title = prev.title;
+                }
+            } else {
+                btnOpenTimeline.disabled = true;
+                btnOpenTimeline.setAttribute("aria-disabled", "true");
+            }
+            transcribeBusyState.timelineState = null;
+        }
+
         // --- Транскрибация файла ---
         async function transcribeFile() {
             const f = fileInput?.files?.[0];
@@ -434,8 +497,10 @@
                 transcribeStatus.textContent = "выберите аудио/видео файл";
                 return;
             }
+
+            setTranscribeBusy(true);
+            let timelineUpdated = false;
             try {
-                setTranscribeBusy(true);
                 transcribeStatus.textContent = "транскрибирую…";
                 closeTimelineModal();
                 renderTimeline();
@@ -488,13 +553,14 @@
 
                 renderTimeline(timeline);
                 renderRoleLegend(roleKeywords);
+                timelineUpdated = true;
 
                 transcribeStatus.textContent = `✅ Транскрипция готова — модель: ${ms}`;
                 recalcStats();
             } catch (e) {
                 transcribeStatus.textContent = `❌ ошибка: ${e.message || e}`;
             } finally {
-                setTranscribeBusy(false);
+                setTranscribeBusy(false, { timelineUpdated });
             }
         }
 
