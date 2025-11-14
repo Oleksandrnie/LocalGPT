@@ -71,6 +71,39 @@ def _sanitize(text: str) -> str:
             out.append(ln)
     return "\n".join(out).strip()
 
+
+def _build_timeline(segments: list[dict]) -> list[dict]:
+    """Объединяет соседние сегменты одного говорящего в таймлайн."""
+
+    timeline: list[dict] = []
+    if not segments:
+        return timeline
+
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        text = (segment.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(segment.get("start", 0.0))
+        end = float(segment.get("end", start))
+        speaker = (segment.get("speaker") or "unknown").strip().lower() or "unknown"
+
+        if timeline and timeline[-1]["speaker"] == speaker and start <= timeline[-1]["end"] + 0.6:
+            timeline[-1]["end"] = max(timeline[-1]["end"], end)
+            timeline[-1]["text"] = (timeline[-1]["text"] + " " + text).strip()
+        else:
+            timeline.append(
+                {
+                    "speaker": speaker,
+                    "start": start,
+                    "end": end,
+                    "text": text,
+                }
+            )
+
+    return timeline
+
 @app.post("/chat")
 def chat(req: ChatReq):
     try:
@@ -165,17 +198,34 @@ def transcribe(
     preferred_language = None if language_raw == "auto" else language_raw
 
     try:
-        text = transcribe_with_fallback(
+        transcription = transcribe_with_fallback(
             audio_path=tmp_path,
             model_name=model_name,
             prompt_preset=preset_value,
             preferred_language=preferred_language,
         )
+        text = transcription.get("text", "") if isinstance(transcription, dict) else str(transcription)
+        segments = []
+        if isinstance(transcription, dict):
+            segments = list(transcription.get("segments") or [])
+        if not text:
+            raise RuntimeError("empty_transcription")
+        timeline = _build_timeline(segments)
+        detected_language = None
+        if isinstance(transcription, dict):
+            detected_language = transcription.get("language")
+        role_keywords = {}
+        if isinstance(transcription, dict):
+            role_keywords = transcription.get("role_keywords") or {}
         return {
             "text": text,
             "model": model_name,
             "prompt_preset": preset,
             "language": language_raw,
+            "detected_language": detected_language,
+            "segments": segments,
+            "timeline": timeline,
+            "role_keywords": role_keywords,
         }
     except RuntimeError as e:
         msg = str(e)
@@ -187,6 +237,14 @@ def transcribe(
                     "code": "whisper_model_missing",
                     "model": missing_model,
                     "message": f'Whisper model "{missing_model}" is not available locally.',
+                },
+            )
+        if msg == "empty_transcription":
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "empty_transcription",
+                    "message": "Whisper вернул пустую транскрипцию.",
                 },
             )
         # остальные ошибки пробрасываем дальше как 500
