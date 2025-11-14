@@ -7,6 +7,12 @@ WHISPER_MODELS_DIR = os.getenv("WHISPER_MODELS_DIR", "ollama_models/whisper")
 WHISPER_DOWNLOAD_ROOT = ROOT / WHISPER_MODELS_DIR
 WHISPER_DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
+DEFAULT_FALLBACK_LANGUAGE = (
+    os.getenv("WHISPER_FALLBACK_LANGUAGE", "ru").strip().lower() or "ru"
+)
+FALLBACK_USE_PROMPT = os.getenv("WHISPER_FALLBACK_USE_PROMPT", "true").strip().lower()
+FALLBACK_USE_PROMPT = FALLBACK_USE_PROMPT not in {"0", "false", "no"}
+
 RU_PRESET_PROMPT = (
     "корректная пунктуация, нормальная орфография, числа, даты, проценты, имена, "
     "названия компаний; не искажать слова; сохранять смысл речи"
@@ -44,10 +50,22 @@ def build_whisper_prompt(audio_path: Path, prompt_preset: str | None) -> str | N
         return None
     return "; ".join(parts)
 
+def _normalize_language(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"auto", "auto-detect", "detect"}:
+        return None
+    return normalized
+
+
 def transcribe_with_fallback(
     audio_path: str,
     model_name: str,
     prompt_preset: str | None = None,
+    preferred_language: str | None = None,
     compute_type: str | None = None,
     device: str | None = None,
     beam_size: int = 5,
@@ -55,7 +73,8 @@ def transcribe_with_fallback(
     """Транскрибирует файл с двумя проходами:
 
     1) язык auto + VAD + initial_prompt (если есть),
-    2) фолбэк: язык ru, без VAD и без промпта.
+    2) фолбэк: VAD выключен, язык берётся из preferred_language или системного
+       значения, initial_prompt задаётся по настройкам.
 
     Возвращает полученный текст (может быть пустой строкой при полной ошибке).
     """
@@ -70,6 +89,11 @@ def transcribe_with_fallback(
         device = os.getenv("WHISPER_DEVICE", "cpu")
 
     full_prompt = build_whisper_prompt(path, prompt_preset)
+
+    fallback_language = _normalize_language(preferred_language) or _normalize_language(
+        DEFAULT_FALLBACK_LANGUAGE
+    )
+    fallback_prompt = full_prompt if FALLBACK_USE_PROMPT else None
 
     try:
         model = WhisperModel(
@@ -95,8 +119,12 @@ def transcribe_with_fallback(
     # 1) Умный прогон: автоопределение языка (language=None) + VAD + initial_prompt (если есть)
     text = run_once(language=None, use_vad=True, prompt=full_prompt)
 
-    # 2) Фолбэк: язык ru, без VAD и без промпта
+    # 2) Фолбэк: управляемый язык (если задан) + отключённый VAD + контролируемый промпт
     if not text:
-        text = run_once(language="ru", use_vad=False, prompt=None)
+        text = run_once(
+            language=fallback_language,
+            use_vad=False,
+            prompt=fallback_prompt,
+        )
 
     return text

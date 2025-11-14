@@ -105,9 +105,11 @@ ADMIN_TOKEN=local-admin-123
 - выбор Whisper‑модели (`small` — быстрее, `medium` — качественнее),
 - выбор пресета промпта: `none`, `ru`, `en`.
 
-Backend использует `transcribe_with_fallback`:
-1. **Первый проход:** auto‑language + VAD + промпт (preset + `whisper_prompt.txt`).
-2. **Фолбэк:** language=`ru`, без VAD и без промпта.
+Backend использует `transcribe_with_fallback` и делает два прохода:
+1. **Первый проход:** автоопределение языка (language=`auto`) + VAD + промпт (preset + `whisper_prompt.txt`).
+2. **Фолбэк:** VAD отключён, язык берётся из запроса (`language` в `/transcribe`) либо из `WHISPER_FALLBACK_LANGUAGE`, промпт сохраняется, если не отключён переменной `WHISPER_FALLBACK_USE_PROMPT`.
+
+Поле `language` принимает `auto` (значение по умолчанию) или BCP‑47 код (`ru`, `en`, `pt-br` и т.д.). Некорректные значения отклоняются с ошибкой 422.
 
 Файл `whisper_prompt.txt`, лежащий рядом с аудиофайлом, автоматически подмешивается в промпт.
 
@@ -119,6 +121,12 @@ LocalGPT/ollama_models/whisper/
 Путь можно переопределить переменной в `.env`:
 ```
 WHISPER_MODELS_DIR=ollama_models/whisper
+```
+
+Для настройки фолбэка доступны дополнительные переменные окружения:
+```
+WHISPER_FALLBACK_LANGUAGE=ru            # язык второго прогона, если клиент не прислал свой
+WHISPER_FALLBACK_USE_PROMPT=true        # использовать тот же initial_prompt во втором проходе
 ```
 
 ---
