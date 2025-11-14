@@ -49,11 +49,17 @@
             <!-- Блок загрузки и транскрибации -->
             <div class="row" style="margin-top:10px;">
                 <input type="file" id="fileInput" accept="audio/*,video/*" />
-                <button class="secondary" id="btnTranscribe">Транскрибировать файл</button>
+                <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
             </div>
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и
                 распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
+            <div class="timeline-controls">
+                <button class="icon-button" id="btnOpenTimeline" type="button" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
+                    <span aria-hidden="true">🕒</span>
+                    <span class="sr-only">Открыть таймлайн</span>
+                </button>
+            </div>
 
             <div class="timeline-controls">
                 <button class="icon-button" id="btnOpenTimeline" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
@@ -421,7 +427,11 @@
                 return;
             }
             try {
+                setTranscribeBusy(true);
                 transcribeStatus.textContent = "транскрибирую…";
+                closeTimelineModal();
+                renderTimeline();
+                renderRoleLegend();
 
                 closeTimelineModal();
                 renderTimeline();
@@ -479,6 +489,8 @@
                 recalcStats();
             } catch (e) {
                 transcribeStatus.textContent = `❌ ошибка: ${e.message || e}`;
+            } finally {
+                setTranscribeBusy(false);
             }
         }
 
@@ -580,7 +592,10 @@
         });
 
         // Кнопка транскрипции
-        btnTranscribe?.addEventListener("click", transcribeFile);
+        btnTranscribe?.addEventListener("click", (event) => {
+            event?.preventDefault();
+            transcribeFile();
+        });
 
         // Init
         checkHealth();
