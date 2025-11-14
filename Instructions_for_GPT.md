@@ -1,292 +1,256 @@
+<file name=Instructions_for_GPT.md path=/Users/oleksandrniemchenko/my_personal_files/LocalGPT/Instructions_for_GPT.md># 🧠 LocalGPT — локальный HR‑ и ASR‑бот
+
+LocalGPT — полностью локальный HR‑бот и помощник для транскрибации, работающий **без интернета** и **без внешних API**. 
+Поддерживает чат, анализ текста, транскрибацию аудио/видео и работу с локальными LLM через Ollama.
+
+---
+
+## ⚙️ Структура проекта
+```
+LocalGPT/
+├── app/                # FastAPI backend
+├── web_ui/             # Лёгкий веб‑интерфейс
+├── ollama_models/      # Локальные модели (LLM + Whisper)
+├── venv/               # Виртуальное окружение Python
+├── run_localgpt.py     # Универсальный запуск (macOS / Linux / Windows)
+└── .env                # Конфигурация
+```
+
+В каталоге `ollama_models/qwen2.5-7b-long/Modelfile` хранится Modelfile — параметры локальной LLM (контекст, длина ответа, температура и др.).
+
+---
+
+## 🚀 Запуск
+
+### macOS / Linux
+```
+git clone <URL> LocalGPT
+cd LocalGPT
+python3 run_localgpt.py
+```
+
+### Windows
+```
+powershell
+git clone <URL> LocalGPT
+cd LocalGPT
+py run_localgpt.py
+```
+
+Скрипт `run_localgpt.py` автоматически:
+- создаёт виртуальное окружение;
+- ставит зависимости;
+- запускает Ollama;
+- скачивает модель `qwen2.5:7b-instruct`, если её нет;
+- поднимает API по адресу `http://127.0.0.1:8000/`;
+- открывает UI.
+
+---
+
+## 🔧 Ручной запуск (альтернатива)
+```
+python -m venv venv
+source venv/bin/activate     # Windows: venv\Scripts\activate
+pip install -r app/requirements.txt
+ollama serve &               # Windows: ollama serve
+ollama pull qwen2.5:7b-instruct
+export PYTHONPATH="$(pwd)"  # Windows: set PYTHONPATH=%cd%
+uvicorn app.server:app --host 127.0.0.1 --port 8000
+```
+
+---
+
+## 🗣 Транскрибация (Whisper)
+
+В UI теперь доступны:
+- выбор Whisper‑модели (`small` — быстрее, `medium` — качественнее),
+- выбор пресета промпта: `none`, `ru`, `en`.
+
+Backend использует `transcribe_with_fallback`:
+1. **Первый проход:** auto‑language + VAD + промпт (preset + `whisper_prompt.txt`).
+2. **Фолбэк:** language=`ru`, без VAD и без промпта.
+
+Файл `whisper_prompt.txt`, лежащий рядом с аудиофайлом, автоматически подмешивается в промпт.
+
+Whisper‑модели хранятся внутри проекта по пути:
+```
+LocalGPT/ollama_models/whisper/
+```
+При первом использовании выбранной модели она будет загружена (если доступен интернет) и помещена в этот каталог.
+Путь можно изменить в `.env` с помощью переменной:
+```
+WHISPER_MODELS_DIR=ollama_models/whisper
+```
+
+---
+
+## 📌 Примечание
+Все модели, кэш и конфигурации хранятся **внутри проекта**.
 # 📘 INSTRUCTIONS_FOR_GPT.md
 _Инструкция для ChatGPT (или другого LLM-помощника), работающего с проектом LocalGPT._
 
 ---
 
 ## 🎯 Цель
-Проект **LocalGPT** — это полностью локальный HR-бот и ASR-помощник, который работает на Mac M1 Pro без внешних API.  
-Всё должно находиться **в одной папке**:
-```
-/Users/oleksandrniemchenko/my_personal_files/LocalGPT
-```
+Проект **LocalGPT** — полностью локальный HR‑ и ASR‑бот. Всё должно находиться в директории проекта `LocalGPT/`.
 
 ---
 
 ## 🧱 Структура проекта
 ```
 LocalGPT/
-├── .env                         # Конфигурация окружения
-├── INSTRUCTIONS_FOR_GPT.md      # ← этот файл
-├── README.md                    # Основная документация
-├── run_localgpt.sh              # Скрипт запуска стека (Ollama + API + UI)
+├── .env
+├── INSTRUCTIONS_FOR_GPT.md
+├── Instructions_for_GPT_Short.md
+├── README.md
+├── run_localgpt.py
 │
-├── app/                         # Основное приложение FastAPI
-│   ├── __init__.py
-│   ├── server.py                # Точка входа FastAPI, подключает Ollama
-│   ├── asr_whisper.py           # Модуль транскрибации (faster-whisper)
-│   ├── prompts/
-│   │   └── system_hr.md         # Системный промпт HR-бота
-│   └── requirements.txt         # Зависимости Python
+├── app/
+│   ├── server.py
+│   ├── asr_whisper.py
+│   ├── prompts/system_hr.md
+│   └── requirements.txt
 │
-├── venv/                        # Виртуальное окружение Python
+├── web_ui/
+│   └── gui_html.html
 │
-├── web_ui/                      # Веб-интерфейс (HTML + JS)
-│   └── gui_html.html            # Простое GUI-приложение для общения с LLM
+├── ollama_models/
+│   └── qwen2.5-7b-long/Modelfile
+│       - Настройки модели: num_ctx, num_predict, temperature, mirostat…
 │
-├── ollama_models/               # Каталог локальных моделей (через симлинк ~/.ollama)
-│   └── qwen2.5-7b-long/
-│       └── Modelfile           # Кастомный Modelfile для управления параметрами LLM
-    - `ollama_models/qwen2.5-7b-long/Modelfile`  
-      Файл Modelfile позволяет гибко управлять параметрами локальной LLM-модели — такими как `num_ctx` (размер контекста), `num_predict` (максимальная длина вывода), `temperature` (стохастичность) и другими.  
-      **Пример содержимого файла:**
-      ```
-      FROM qwen2.5:7b-instruct
-
-      # Контекст/вывод
-      PARAMETER num_ctx 32768
-      PARAMETER num_predict 1024   
-      # PARAMETER num_predict 1024    было 4096 — слишком длинно → провоцирует «залипание»
-
-      # Стабильная генерация
-      PARAMETER temperature 0.2
-      PARAMETER top_p 0.9
-      PARAMETER repeat_penalty 1.2
-      PARAMETER repeat_last_n 1024
-
-      # Mirostat — сильно уменьшает повторы/утечки
-      PARAMETER mirostat 2
-      PARAMETER mirostat_tau 5.0
-      PARAMETER mirostat_eta 0.1
-
-      # Шаблон
-      TEMPLATE """{{ .System }}
-      {{ .Prompt }}"""
-      ```
-│
-├── hf_cache/                    # Кэш Hugging Face (эмбеддинги, ASR-модели)
-├── .cache/ctranslate2/          # Кэш Whisper (ASR)
-└── .gitignore                   # Исключения Git (если используется)
+├── hf_cache/
+└── .cache/ctranslate2/
 ```
 
 ---
 
 ## 🧩 Основные компоненты
 | Компонент | Назначение |
-|------------|-------------|
-| **FastAPI (app/server.py)** | Основной REST API, маршруты `/chat`, `/transcribe`, `/health`, `/version` |
-| **Ollama** | Локальный LLM-сервис (через OpenAI-совместимый API) |
-| **faster-whisper** | Распознавание речи (ASR) |
-| **ollama_models/qwen2.5-7b-long** | Локальная кастомная LLM-модель (через Ollama, с настраиваемым Modelfile) |
-| **web_ui/gui_html.html** | Веб-интерфейс: ввод запроса, ответ, история |
-| **.env** | Настройки API, модель, температура, ключ и т.д. |
-| **run_localgpt.sh** | Единая команда запуска всего стека |
-| **venv/** | Изолированное окружение Python |
-> При работе с моделями Ollama: все кастомные модели должны храниться в `LocalGPT/ollama_models`, и не использовать глобальный кеш `~/.ollama` напрямую.
----
-## ✅ Контрольная проверка перед изменениями
-### Проверка параметров кастомной модели Ollama
-Для просмотра текущих параметров модели (например, контекста, длины вывода, температуры) используйте:
-```bash
-ollama show qwen2.5-7b-long | grep -i -E 'num_ctx|num_predict|temperature|top_p|repeat|mirostat'
-```
-## ⚙️ Правила работы с проектом
-
-### 📂 Где находятся файлы
-Все файлы **всегда** должны находиться в папке `/Users/oleksandrniemchenko/my_personal_files/LocalGPT`.  
-GPT или любой другой помощник **не должен создавать файлы вне этой директории**.
-
-### 🧠 При редактировании:
-1. **Редактировать только существующие файлы**, не менять их структуру без причины.  
-2. Если нужно создать новый файл — размещать в логичном разделе:
-   - Backend (Python, FastAPI) → `app/`
-   - Веб-интерфейс (HTML, JS) → `web_ui/`
-   - Скрипты запуска → корень проекта.
-3. **Никогда не изменять `venv/` вручную** — только через `pip install`.
-4. Все пути в коде должны быть **относительными от корня проекта**, либо через `os.path.join`.
-
-### 🧩 При добавлении зависимостей:
-- Записывать их в `app/requirements.txt`.
-- После обновления зависимостей выполнять:
-  ```bash
-  source venv/bin/activate
-  pip install -r app/requirements.txt
-  ```
-
-### 🚀 Запуск проекта:
-Из терминала:
-```bash
-~/my_personal_files/LocalGPT/run_localgpt.sh
-```
-Откроется браузер с адресом:
-```
-http://127.0.0.1:8000/
-```
-
-Если нужно только сервер:
-```bash
-startLocalLLM
-```
+|----------|------------|
+| FastAPI | `/chat`, `/transcribe`, `/health`, `/version` |
+| Ollama | Локальный LLM‑сервис |
+| faster-whisper | Транскрибация |
+| asr_whisper.py | Логика fallback‑транскрибации |
+| web_ui | GUI |
+| .env | Конфигурация |
+| run_localgpt.py | Единый запуск |
 
 ---
 
-## 🧠 Как GPT должен взаимодействовать с проектом
-
-1. **Понимать структуру:**  
-   - `app/` = backend,  
-   - `web_ui/` = frontend,  
-   - `ollama_models/` = хранилище моделей,  
-   - `venv/` = окружение (не трогать).
-2. **При изменениях** использовать точечные инструкции (`edit_file`).
-3. **Проверять корректность путей** и помогать пользователю, если что-то находится не в той папке.
-4. **Не создавать лишних уровней вложенности** — всё живёт в `LocalGPT`.
-5. Если добавляется новая логика (например, RAG или OCR), GPT должен предложить:
-   - новый модуль в `app/` (например, `app/rag_utils.py`);
-   - обновление маршрутов в `app/server.py`;
-   - при необходимости — кнопку в `web_ui/gui_html.html`.
-6. **Учитывать переменную окружения `MEM_TURNS`**, которая задаёт количество пар сообщений, хранимых в памяти. GPT должен следить за объёмом контекста и при необходимости обрезать историю диалога, чтобы не перегружать модель.
+## ⚙️ Правила
+- Все файлы только внутри `LocalGPT/`.
+- Редактировать существующие файлы, новые — класть в `app/`, `web_ui/` или корень.
+- Не трогать `venv/`.
+- Пути только относительные.
+- Зависимости в `app/requirements.txt`.
 
 ---
 
-## 🧰 Алиасы и запуск
-
-Основной алиас:
-```bash
-alias myllm='cd ~/my_personal_files/LocalGPT && source venv/bin/activate && export PYTHONPATH="$(pwd)" && uvicorn app.server:app --host 127.0.0.1 --port 8000 --log-level info --reload --reload-dir app --reload-exclude "venv/*" --reload-exclude "*.pyc"'
+## 🚀 Запуск
 ```
-
-Полный запуск (Ollama + UI + API):
-```bash
-alias myllm='~/my_personal_files/LocalGPT/run_localgpt.sh'
+cd /путь/к/LocalGPT
+python3 run_localgpt.py
 ```
+UI → `http://127.0.0.1:8000/`
 
 ---
 
-## ✅ Контрольная проверка перед изменениями
+## 🗣 ASR / Whisper
 
-GPT должен:
-1. Проверять, что структура проекта не нарушена.
-2. Проверять, что все пути начинаются с `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/`.
-3. Если что-то не найдено — предложить путь создания.
-4. При необходимости — проверять через `curl` работу `/health` и `/version`.
+Функция `transcribe_with_fallback`:
+1. auto‑language + VAD + initial_prompt (preset + `whisper_prompt.txt`)
+2. fallback: ru, без VAD, без промпта.
 
----
+Эндпоинт `/transcribe` принимает:
+- `file` — аудио,
+- `model` — tiny/base/small/medium/large,
+- `prompt_preset` — none/ru/en.
 
-## 🧾 Пример: добавление нового эндпоинта
-Если GPT создаёт новый API-метод:
-- Поместить код в `app/server.py`.
-- Не дублировать `app = FastAPI(...)` (использовать существующий объект).
-- Проверить, что импорт корректен.
-- Перезапуск не требуется, если сервер запущен с `--reload`.
+UI содержит два селекта: **модель** и **preset**.
 
 ---
 
-## 🧩 Быстрая диагностика (если GPT помогает искать проблему)
-
-| Что проверить | Команда |
-|----------------|----------|
+## 🧰 Диагностика
+| Что | Команда |
+|-----|---------|
 | Ollama работает? | `curl -s http://127.0.0.1:11434/v1/models` |
-| FastAPI жив? | `curl -s http://127.0.0.1:8000/health` |
-| Версия конфигурации | `curl -s http://127.0.0.1:8000/version` |
-| Модель установлена? | `ollama list` |
-| UI доступен? | `open http://127.0.0.1:8000/` |
+| API жив? | `curl -s http://127.0.0.1:8000/health` |
+| Версия | `curl -s http://127.0.0.1:8000/version` |
 
 ---
 
-## 📦 Рекомендованные места для добавления новых модулей
-
-| Назначение | Файл/папка |
-|-------------|-------------|
-| Основная логика API | `app/server.py` |
-| Новые функции (RAG, OCR и т.д.) | `app/utils_*.py` или `app/modules/` |
-| Промпты и шаблоны | `app/prompts/` |
-| HTML/JS UI | `web_ui/` |
-| Конфигурация | `.env`, `README.md`, `run_localgpt.sh` |
-
----
-
-## 🔒 Важные ограничения
-- Никаких внешних API (OpenAI, HuggingFace API и т.д.) — всё локально.  
-- Все пути и зависимости **должны быть совместимы с macOS ARM (M1/M2)**.
-- GPT должен предупреждать, если команда или путь указывает за пределы проекта.
-
----
-
-_Если GPT работает с этим проектом — он должен использовать эту инструкцию как контекст перед любыми изменениями файлов._
-
----
-
-## 🔧 Настройка контекста и длины вывода
-
-### Изменение параметров кастомной модели Ollama
-
-1. **Редактирование параметров**
-   - Откройте файл `ollama_models/qwen2.5-7b-long/Modelfile`.
-   - Измените значения параметров, например:
-     ```
-     FROM qwen2.5:7b-instruct
-
-     # Контекст/вывод
-     PARAMETER num_ctx 32768
-     PARAMETER num_predict 1024   
-     # PARAMETER num_predict 1024    было 4096 — слишком длинно → провоцирует «залипание»
-
-     # Стабильная генерация
-     PARAMETER temperature 0.2
-     PARAMETER top_p 0.9
-     PARAMETER repeat_penalty 1.2
-     PARAMETER repeat_last_n 1024
-
-     # Mirostat — сильно уменьшает повторы/утечки
-     PARAMETER mirostat 2
-     PARAMETER mirostat_tau 5.0
-     PARAMETER mirostat_eta 0.1
-
-     # Шаблон
-     TEMPLATE """{{ .System }}
-     {{ .Prompt }}"""
-     ```
-   - `num_ctx` — максимальный размер контекста (кол-во токенов, которые модель "видит").
-   - `num_predict` — максимальная длина генерируемого ответа (токенов).
-   - `temperature` — степень случайности (0.0 = строго, 1.0 = креативно).
-
-2. **Пересоздание модели**
-   После изменения Modelfile необходимо пересобрать модель:
-   ```bash
-   ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile
-   ```
-   Это применит новые параметры.
-
-3. **Рекомендации по размеру контекста**
-   - Большие значения `num_ctx` (например, 32768) значительно увеличивают потребление RAM.
-   - Для Mac M1 Pro оптимально использовать диапазон 16384–32768.
-   - Если не хватает памяти — уменьшите `num_ctx`.
-
----
-
-## 🧩 Конфигурация `.env`
-
-Файл `.env` содержит настройки окружения. Пример:
-
+## 🔧 Настройка модели (Modelfile)
+После обновления Modelfile →
 ```
-API_KEY=local-api-key
+ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile
+```
+
+---
+
+## 📄 .env
+```
 MODEL=qwen2.5-7b-long
 TEMPERATURE=0.2
-
-MEM_TURNS=6               # Количество пар сообщений, которые хранятся в памяти (контексте)
-WHISPER_COMPUTE_TYPE=int8 # Опция для faster-whisper, экономит память на Mac
-ADMIN_TOKEN=local-admin-123  # Токен для перезапуска модели через web UI
+MEM_TURNS=6
+WHISPER_MODEL_SIZE=medium
+WHISPER_COMPUTE_TYPE=int8
+WHISPER_DEVICE=cpu
+ADMIN_TOKEN=local-admin-123
 ```
 
-- `MEM_TURNS` — задаёт, сколько последних пар сообщений (вопрос-ответ) хранить в контексте для модели, чтобы не перегружать память.
-- `WHISPER_COMPUTE_TYPE` — влияет на использование памяти ASR-модели (рекомендуется `int8` для Mac).
-- `ADMIN_TOKEN` — используется для защиты административных операций, например, перезапуска модели через веб-интерфейс.
+---
+# 🧠 Инструкция (короткая версия)
+
+## Цель
+LocalGPT — полностью локальный HR‑ и ASR‑бот. Все файлы внутри директории `LocalGPT/`.
 
 ---
 
-## 🧩 Оптимизация качества ответов
+## Структура
+```
+LocalGPT/
+├── app/
+├── web_ui/
+├── ollama_models/
+├── venv/
+├── run_localgpt.py
+└── .env
+```
 
-1. Всегда поддерживайте приоритет системного промпта и корректного контекста для модели.
-2. Используйте `temperature=0.2` для стабильных и логичных ответов без излишней случайности.
-3. Применяйте настройки `mirostat` для предотвращения повторов и «залипаний» во время генерации.
-4. Сокращайте историю диалога, если количество пар сообщений превышает `MEM_TURNS`, чтобы не перегружать контекст.
-5. Запрещайте генерацию слишком длинных ответов (больше 1200 токенов), чтобы избежать заторможенности и потери качества.
+---
+
+## Компоненты
+- FastAPI — `/chat`, `/transcribe`.
+- Ollama — LLM.
+- faster‑whisper — ASR.
+- web_ui — интерфейс.
+- Modelfile — параметры LLM.
+
+---
+
+## Запуск
+```
+cd LocalGPT
+python3 run_localgpt.py
+```
+UI → http://127.0.0.1:8000/
+
+---
+
+## Работа GPT
+- Редактировать только файлы внутри проекта.
+- Новые файлы класть в app/, web_ui/ или корень.
+- Не трогать venv/.
+- Проверять пути.
+- НЕ вызывать внешние API.
+- Для транскрибации использовать `/transcribe` с параметрами:
+  - `file`,
+  - `model`: tiny/base/small/medium/large,
+  - `prompt_preset`: none/ru/en.
+
+---
+
+## Диагностика
+- `curl -s http://127.0.0.1:8000/health`
+- `curl -s http://127.0.0.1:8000/version`
+</file>

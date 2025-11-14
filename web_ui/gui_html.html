@@ -26,16 +26,22 @@
                 <button id="btnSend">Отправить</button>
                 <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
             </div>
-            <div class="row" style="margin-top:10px;">
+            <div class="row" style="margin-top:10px; gap:10px;">
                 <div style="flex:1 1 200px;">
                     <label class="muted" for="modelSelect">Модель Whisper</label>
                     <select id="modelSelect"
                         style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;">
-                        <option value="tiny">tiny</option>
-                        <option value="base">base</option>
-                        <option value="small">small</option>
-                        <option value="medium" selected>medium</option>
-                        <option value="large">large</option>
+                        <option value="small">small — быстрее, но немного хуже по качеству</option>
+                        <option value="medium" selected>medium — выше качество, но медленнее</option>
+                    </select>
+                </div>
+                <div style="flex:1 1 200px;">
+                    <label class="muted" for="promptPresetSelect">Промпт для распознавания</label>
+                    <select id="promptPresetSelect"
+                        style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;">
+                        <option value="none">Без промпта</option>
+                        <option value="ru">Универсальный (русский)</option>
+                        <option value="en">Универсальный (английский)</option>
                     </select>
                 </div>
             </div>
@@ -109,6 +115,7 @@
         modelSelect?.addEventListener("change", () => {
             try { localStorage.setItem(modelKey, modelSelect.value); } catch { }
         });
+        const promptPresetSelect = el("promptPresetSelect");
 
         // UI elements
         const promptEl = el("prompt");
@@ -301,16 +308,39 @@
                 fd.append("file", f, f.name);
                 const ms = (modelSelect?.value || "medium").trim();
                 fd.append("model", ms);
-                fd.append("language", "ru");
+                const preset = (promptPresetSelect?.value || "none").trim();
+                fd.append("prompt_preset", preset);
 
                 const r = await fetch(`${API_BASE}/transcribe`, {
                     method: "POST",
                     body: fd
                 });
-                if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                const j = await r.json();
 
-                const text = j.text || j.transcript || j.result || "";
+                let j = null;
+                try {
+                    j = await r.json();
+                } catch {
+                    j = null;
+                }
+
+                if (!r.ok) {
+                    // Специальный случай: нет локальной модели Whisper
+                    const detail = j && j.detail ? j.detail : null;
+                    if (detail && detail.code === "whisper_model_missing") {
+                        const mdl = detail.model || ms;
+                        const msg =
+                            `Модель Whisper "${mdl}" не найдена локально.\n\n` +
+                            `Скачайте или скопируйте её в каталог ollama_models/whisper ` +
+                            `внутри проекта LocalGPT и повторите попытку.`;
+                        alert(msg);
+                        transcribeStatus.textContent = `❌ ${msg}`;
+                        return;
+                    }
+
+                    throw new Error(`HTTP ${r.status}`);
+                }
+
+                const text = (j && (j.text || j.transcript || j.result)) || "";
                 if (!text) throw new Error("пустая транскрипция");
 
                 const prefix = "Отредактируй результат транскрибации (исправь ошибки распознавания, пунктуацию, убери повторы, раздели на роли кто когда говорит). Опредили ценности и пожелания. Покажи результат к чему удалось прийти:\n\n";

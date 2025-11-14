@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
-from .asr_whisper import transcribe_file  # ← фиксированный импорт
+from .asr_whisper import transcribe_with_fallback
 
 load_dotenv()
 
@@ -95,15 +95,57 @@ def chat(req: ChatReq):
 @app.post("/transcribe")
 def transcribe(
     file: UploadFile = File(...),
-    model: str | None = Form(default=None),
-    language: str = Form(default="ru")
+    model: str = Form(default="small"),
+    prompt_preset: str = Form(default="none"),
+    language: str = Form(default="ru"),  # оставляем для совместимости со старыми клиентами
 ):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or '')[-1]) as tmp:
+    """Транскрибация аудио/видео через faster-whisper.
+
+    - model — размер модели whisper (tiny/base/small/medium/large).
+    - prompt_preset — режим промпта: none / ru / en.
+    - language сейчас игнорируется, но параметр оставлен, чтобы не ломать старых клиентов.
+    """
+    # сохраняем файл во временный путь
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=os.path.splitext(file.filename or "")[-1],
+    ) as tmp:
         tmp.write(file.file.read())
         tmp_path = tmp.name
+
+    # модель по умолчанию, если в форме пришло пусто
+    model_name = (model or os.getenv("WHISPER_MODEL_SIZE", "medium")).strip()
+
+    preset = (prompt_preset or "none").strip()
+    if preset not in {"none", "ru", "en"}:
+        preset = "none"
+    preset_value = None if preset == "none" else preset
+
     try:
-        text = transcribe_file(path=tmp_path, language=language, model_size=model)
-        return {"text": text, "model": model, "language": language}
+        text = transcribe_with_fallback(
+            audio_path=tmp_path,
+            model_name=model_name,
+            prompt_preset=preset_value,
+        )
+        return {
+            "text": text,
+            "model": model_name,
+            "prompt_preset": preset,
+        }
+    except RuntimeError as e:
+        msg = str(e)
+        if msg.startswith("WHISPER_MODEL_NOT_FOUND::"):
+            missing_model = msg.split("::", 1)[1] if "::" in msg else model_name
+            raise HTTPException(
+                status_code=424,
+                detail={
+                    "code": "whisper_model_missing",
+                    "model": missing_model,
+                    "message": f'Whisper model "{missing_model}" is not available locally.',
+                },
+            )
+        # остальные ошибки пробрасываем дальше как 500
+        raise
     finally:
         try:
             os.remove(tmp_path)
