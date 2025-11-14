@@ -61,13 +61,6 @@
                 </button>
             </div>
 
-            <div class="timeline-controls">
-                <button class="icon-button" id="btnOpenTimeline" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
-                    <span aria-hidden="true">🕒</span>
-                    <span class="sr-only">Открыть таймлайн</span>
-                </button>
-            </div>
-
             <div id="timelineLegend" class="muted timeline-legend"></div>
             <div id="timelineContainer" class="timeline-grid"></div>
 
@@ -117,8 +110,8 @@
                 <h3 id="timelineTitle">Таймлайн беседы</h3>
                 <button class="secondary" id="btnCloseTimeline">Закрыть</button>
             </div>
-            <div id="timelineLegend" class="muted timeline-legend"></div>
-            <div id="timelineContainer" class="timeline-grid"></div>
+            <div id="timelineLegendModal" class="muted timeline-legend"></div>
+            <div id="timelineContainerModal" class="timeline-grid"></div>
         </div>
     </div>
 
@@ -165,10 +158,17 @@
         const transcribeStatus = el("transcribeStatus");
         const timelineContainer = el("timelineContainer");
         const timelineLegend = el("timelineLegend");
+        const timelineContainerModal = el("timelineContainerModal");
+        const timelineLegendModal = el("timelineLegendModal");
 
         const btnOpenTimeline = el("btnOpenTimeline");
         const timelineOverlay = el("timelineOverlay");
         const btnCloseTimeline = el("btnCloseTimeline");
+
+        const transcribeBusyState = {
+            defaultLabel: null,
+            timelineState: null
+        };
 
         // Контекст (закрепляемый)
         const contextText = el("contextText");
@@ -257,18 +257,20 @@
                 : "Таймлайн появится после транскрибации";
         }
 
-        function renderTimeline(items) {
+        function renderTimeline(items = []) {
             const hasItems = Array.isArray(items) && items.length > 0;
             updateTimelineButton(hasItems);
-            if (!timelineContainer) return;
-            if (!hasItems) {
 
-        function renderTimeline(items) {
-            if (!timelineContainer) return;
-            if (!items || !items.length) {
-                timelineContainer.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
+            const containers = [timelineContainer, timelineContainerModal].filter(Boolean);
+            if (!containers.length) return;
+
+            if (!hasItems) {
+                containers.forEach((node) => {
+                    node.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
+                });
                 return;
             }
+
             const html = items.map((item) => {
                 const role = (item?.speaker || "unknown").toLowerCase();
                 const label = speakerLabels[role] || role.toUpperCase();
@@ -283,15 +285,23 @@
                     </div>
                 `;
             }).join("");
-            timelineContainer.innerHTML = html;
+
+            containers.forEach((node) => {
+                node.innerHTML = html;
+            });
         }
 
         function renderRoleLegend(keywords) {
-            if (!timelineLegend) return;
+            const legends = [timelineLegend, timelineLegendModal].filter(Boolean);
+            if (!legends.length) return;
+
             if (!keywords || typeof keywords !== "object") {
-                timelineLegend.textContent = "Словарь ролей: по умолчанию (HR / Кандидат).";
+                legends.forEach((node) => {
+                    node.textContent = "Словарь ролей: по умолчанию (HR / Кандидат).";
+                });
                 return;
             }
+
             const parts = Object.entries(keywords)
                 .filter(([role]) => typeof role === "string")
                 .map(([role, words]) => {
@@ -300,9 +310,12 @@
                     return `${label}: ${list}`.trim();
                 })
                 .filter(Boolean);
-            timelineLegend.textContent = parts.length
+
+            const text = parts.length
                 ? `Словарь ролей • ${parts.join(" • ")}`
                 : "Словарь ролей: по умолчанию (HR / Кандидат).";
+
+            legends.forEach((node) => { node.textContent = text; });
         }
 
         renderTimeline();
@@ -419,6 +432,64 @@
             btnSend.textContent = b ? "Отправка…" : "Отправить";
         }
 
+        function setTranscribeBusy(isBusy, { label, timelineUpdated } = {}) {
+            if (btnTranscribe) {
+                const defaultLabel = transcribeBusyState.defaultLabel
+                    || btnTranscribe.dataset.defaultLabel
+                    || btnTranscribe.textContent
+                    || "Транскрибировать файл";
+                transcribeBusyState.defaultLabel = defaultLabel;
+                btnTranscribe.dataset.defaultLabel = defaultLabel;
+
+                btnTranscribe.disabled = Boolean(isBusy);
+                btnTranscribe.textContent = label
+                    || (isBusy ? "Транскрибирую…" : defaultLabel);
+            }
+
+            if (fileInput) fileInput.disabled = Boolean(isBusy);
+
+            if (!btnOpenTimeline) {
+                transcribeBusyState.timelineState = null;
+                return;
+            }
+
+            if (isBusy) {
+                if (!transcribeBusyState.timelineState) {
+                    transcribeBusyState.timelineState = {
+                        disabled: btnOpenTimeline.disabled,
+                        ariaDisabled: btnOpenTimeline.getAttribute("aria-disabled"),
+                        title: btnOpenTimeline.title
+                    };
+                }
+                btnOpenTimeline.disabled = true;
+                btnOpenTimeline.setAttribute("aria-disabled", "true");
+                return;
+            }
+
+            if (timelineUpdated) {
+                // renderTimeline уже обновил состояние кнопки; просто очистим сохранённое
+                transcribeBusyState.timelineState = null;
+                return;
+            }
+
+            const prev = transcribeBusyState.timelineState;
+            if (prev) {
+                btnOpenTimeline.disabled = prev.disabled;
+                if (prev.ariaDisabled != null) {
+                    btnOpenTimeline.setAttribute("aria-disabled", prev.ariaDisabled);
+                } else {
+                    btnOpenTimeline.removeAttribute("aria-disabled");
+                }
+                if (prev.title != null) {
+                    btnOpenTimeline.title = prev.title;
+                }
+            } else {
+                btnOpenTimeline.disabled = true;
+                btnOpenTimeline.setAttribute("aria-disabled", "true");
+            }
+            transcribeBusyState.timelineState = null;
+        }
+
         // --- Транскрибация файла ---
         async function transcribeFile() {
             const f = fileInput?.files?.[0];
@@ -426,13 +497,11 @@
                 transcribeStatus.textContent = "выберите аудио/видео файл";
                 return;
             }
-            try {
-                setTranscribeBusy(true);
-                transcribeStatus.textContent = "транскрибирую…";
-                closeTimelineModal();
-                renderTimeline();
-                renderRoleLegend();
 
+            setTranscribeBusy(true);
+            let timelineUpdated = false;
+            try {
+                transcribeStatus.textContent = "транскрибирую…";
                 closeTimelineModal();
                 renderTimeline();
                 renderRoleLegend();
@@ -484,13 +553,14 @@
 
                 renderTimeline(timeline);
                 renderRoleLegend(roleKeywords);
+                timelineUpdated = true;
 
                 transcribeStatus.textContent = `✅ Транскрипция готова — модель: ${ms}`;
                 recalcStats();
             } catch (e) {
                 transcribeStatus.textContent = `❌ ошибка: ${e.message || e}`;
             } finally {
-                setTranscribeBusy(false);
+                setTranscribeBusy(false, { timelineUpdated });
             }
         }
 
