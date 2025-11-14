@@ -54,6 +54,10 @@
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и
                 распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
+            <h3 style="margin-top:16px;">Префикс HR-подсказки</h3>
+            <input id="hrPrefix" type="text" placeholder="Например: Нейро-HR"
+                style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;" />
+            <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
             <h3 style="margin-top:16px;">Закреплённый контекст</h3>
             <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
             <div class="muted" id="contextStats">Символы: 0 • Токены≈ 0</div>
@@ -154,6 +158,9 @@
         const btnClearPinnedContext = el("btnClearPinnedContext");
         const contextStatus = el("contextStatus");
         const pinnedContextKey = "localgpt_pinned_context_v1";
+        const hrPrefixInput = el("hrPrefix");
+        const hrPrefixKey = "localgpt_hr_prefix_v1";
+        const DEFAULT_HR_PREFIX = "Нейро-HR";
 
         // --- Limits received from backend ---
         let LIMITS = { num_ctx: null, max_tokens: null };
@@ -192,6 +199,12 @@
                 }
                 bs.textContent = line;
             }
+        }
+
+        function getHrPrefix() {
+            const raw = hrPrefixInput?.value ?? "";
+            const trimmed = raw.trim();
+            return trimmed || DEFAULT_HR_PREFIX;
         }
 
         const speakerLabels = {
@@ -469,8 +482,15 @@
                 const roleKeywords = j?.role_keywords;
                 if (!text) throw new Error("пустая транскрипция");
 
-                const prefix = "Отредактируй результат транскрибации (исправь ошибки распознавания, пунктуацию, убери повторы, раздели на роли кто когда говорит). Опредили ценности и пожелания. Покажи результат к чему удалось прийти:\n\n";
-                promptEl.value = prefix + text;
+                const hrPrefix = getHrPrefix();
+                const analysisPrompt = `${hrPrefix}. Проанализируй транскрипцию собеседования для HR.\n` +
+                    "Исправь ошибки распознавания, оформи диалог по ролям HR и кандидата, убери повторы.\n" +
+                    "Выяви компетенции, мотивацию, ожидания и риски кандидата.\n" +
+                    "Подготовь вывод для HR с разделами:\n" +
+                    "1. Краткое резюме.\n" +
+                    "2. Ключевые наблюдения (компетенции, мотивация, интересы).\n" +
+                    "3. Риски и рекомендации (тревожные сигналы, вопросы на уточнение, дальнейшие шаги).\n\n";
+                promptEl.value = analysisPrompt + text;
                 promptEl.focus();
 
                 renderTimeline(timeline);
@@ -566,6 +586,23 @@
                 updateContextStatus();
             } catch { }
         });
+
+        // Префикс HR-подсказки
+        try {
+            const savedPrefix = localStorage.getItem(hrPrefixKey);
+            if (hrPrefixInput) {
+                hrPrefixInput.value = savedPrefix ? savedPrefix : DEFAULT_HR_PREFIX;
+            }
+        } catch {
+            if (hrPrefixInput) hrPrefixInput.value = DEFAULT_HR_PREFIX;
+        }
+
+        hrPrefixInput?.addEventListener("input", debounce(() => {
+            try {
+                const value = hrPrefixInput.value.trim() || DEFAULT_HR_PREFIX;
+                localStorage.setItem(hrPrefixKey, value);
+            } catch { }
+        }, 200));
 
         // Кнопка транскрипции
         btnTranscribe?.addEventListener("click", (event) => {
