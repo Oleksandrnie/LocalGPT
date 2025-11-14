@@ -54,17 +54,6 @@
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и
                 распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
-            <div class="timeline-controls">
-                <button class="icon-button" id="btnOpenTimeline" type="button" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
-                    <span aria-hidden="true">🕒</span>
-                    <span class="sr-only">Открыть таймлайн</span>
-                </button>
-            </div>
-
-            <div id="timelineLegend" class="muted timeline-legend"></div>
-            <div id="timelineContainer" class="timeline-grid"></div>
-
-
             <h3 style="margin-top:16px;">Закреплённый контекст</h3>
             <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
             <div class="muted" id="contextStats">Символы: 0 • Токены≈ 0</div>
@@ -89,6 +78,12 @@
                 <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
             </div>
         </section>
+
+        <section class="card timeline-card">
+            <h3>Таймлайн</h3>
+            <div id="timelineLegend" class="muted timeline-legend"></div>
+            <div id="timelineContainer" class="timeline-grid"></div>
+        </section>
     </main>
 
     <!-- Модалка истории -->
@@ -101,17 +96,6 @@
                 <button class="warn" id="btnClearStorage">Очистить localStorage</button>
             </div>
             <p class="muted">Хранится только локально в браузере этого устройства.</p>
-        </div>
-    </div>
-
-    <div class="overlay" id="timelineOverlay" aria-hidden="true">
-        <div class="modal timeline-modal" role="dialog" aria-modal="true" aria-labelledby="timelineTitle" style="max-height: 80vh; overflow-y: auto;">
-            <div class="modal-header">
-                <h3 id="timelineTitle">Таймлайн беседы</h3>
-                <button class="secondary" id="btnCloseTimeline">Закрыть</button>
-            </div>
-            <div id="timelineLegendModal" class="muted timeline-legend"></div>
-            <div id="timelineContainerModal" class="timeline-grid"></div>
         </div>
     </div>
 
@@ -158,16 +142,9 @@
         const transcribeStatus = el("transcribeStatus");
         const timelineContainer = el("timelineContainer");
         const timelineLegend = el("timelineLegend");
-        const timelineContainerModal = el("timelineContainerModal");
-        const timelineLegendModal = el("timelineLegendModal");
-
-        const btnOpenTimeline = el("btnOpenTimeline");
-        const timelineOverlay = el("timelineOverlay");
-        const btnCloseTimeline = el("btnCloseTimeline");
 
         const transcribeBusyState = {
-            defaultLabel: null,
-            timelineState: null
+            defaultLabel: null
         };
 
         // Контекст (закрепляемый)
@@ -247,21 +224,9 @@
                 .replace(/'/g, "&#39;");
         }
 
-        function updateTimelineButton(hasTimeline) {
-            if (!btnOpenTimeline) return;
-            const enabled = Boolean(hasTimeline);
-            btnOpenTimeline.disabled = !enabled;
-            btnOpenTimeline.setAttribute("aria-disabled", enabled ? "false" : "true");
-            btnOpenTimeline.title = enabled
-                ? "Таймлайн беседы"
-                : "Таймлайн появится после транскрибации";
-        }
-
         function renderTimeline(items = []) {
             const hasItems = Array.isArray(items) && items.length > 0;
-            updateTimelineButton(hasItems);
-
-            const containers = [timelineContainer, timelineContainerModal].filter(Boolean);
+            const containers = [timelineContainer].filter(Boolean);
             if (!containers.length) return;
 
             if (!hasItems) {
@@ -292,7 +257,7 @@
         }
 
         function renderRoleLegend(keywords) {
-            const legends = [timelineLegend, timelineLegendModal].filter(Boolean);
+            const legends = [timelineLegend].filter(Boolean);
             if (!legends.length) return;
 
             if (!keywords || typeof keywords !== "object") {
@@ -432,7 +397,7 @@
             btnSend.textContent = b ? "Отправка…" : "Отправить";
         }
 
-        function setTranscribeBusy(isBusy, { label, timelineUpdated } = {}) {
+        function setTranscribeBusy(isBusy, { label } = {}) {
             if (btnTranscribe) {
                 const defaultLabel = transcribeBusyState.defaultLabel
                     || btnTranscribe.dataset.defaultLabel
@@ -447,47 +412,6 @@
             }
 
             if (fileInput) fileInput.disabled = Boolean(isBusy);
-
-            if (!btnOpenTimeline) {
-                transcribeBusyState.timelineState = null;
-                return;
-            }
-
-            if (isBusy) {
-                if (!transcribeBusyState.timelineState) {
-                    transcribeBusyState.timelineState = {
-                        disabled: btnOpenTimeline.disabled,
-                        ariaDisabled: btnOpenTimeline.getAttribute("aria-disabled"),
-                        title: btnOpenTimeline.title
-                    };
-                }
-                btnOpenTimeline.disabled = true;
-                btnOpenTimeline.setAttribute("aria-disabled", "true");
-                return;
-            }
-
-            if (timelineUpdated) {
-                // renderTimeline уже обновил состояние кнопки; просто очистим сохранённое
-                transcribeBusyState.timelineState = null;
-                return;
-            }
-
-            const prev = transcribeBusyState.timelineState;
-            if (prev) {
-                btnOpenTimeline.disabled = prev.disabled;
-                if (prev.ariaDisabled != null) {
-                    btnOpenTimeline.setAttribute("aria-disabled", prev.ariaDisabled);
-                } else {
-                    btnOpenTimeline.removeAttribute("aria-disabled");
-                }
-                if (prev.title != null) {
-                    btnOpenTimeline.title = prev.title;
-                }
-            } else {
-                btnOpenTimeline.disabled = true;
-                btnOpenTimeline.setAttribute("aria-disabled", "true");
-            }
-            transcribeBusyState.timelineState = null;
         }
 
         // --- Транскрибация файла ---
@@ -499,10 +423,8 @@
             }
 
             setTranscribeBusy(true);
-            let timelineUpdated = false;
             try {
                 transcribeStatus.textContent = "транскрибирую…";
-                closeTimelineModal();
                 renderTimeline();
                 renderRoleLegend();
 
@@ -553,14 +475,13 @@
 
                 renderTimeline(timeline);
                 renderRoleLegend(roleKeywords);
-                timelineUpdated = true;
 
                 transcribeStatus.textContent = `✅ Транскрипция готова — модель: ${ms}`;
                 recalcStats();
             } catch (e) {
                 transcribeStatus.textContent = `❌ ошибка: ${e.message || e}`;
             } finally {
-                setTranscribeBusy(false, { timelineUpdated });
+                setTranscribeBusy(false);
             }
         }
 
@@ -571,17 +492,6 @@
         }
         function closeHistory() {
             overlay.style.display = "none";
-        }
-
-        function openTimelineModal() {
-            if (!timelineOverlay || btnOpenTimeline?.disabled) return;
-            timelineOverlay.style.display = "flex";
-            timelineOverlay.setAttribute("aria-hidden", "false");
-        }
-        function closeTimelineModal() {
-            if (!timelineOverlay) return;
-            timelineOverlay.style.display = "none";
-            timelineOverlay.setAttribute("aria-hidden", "true");
         }
 
         // --- Wire events ---
@@ -606,14 +516,10 @@
         btnHistory.addEventListener("click", openHistory);
         btnCloseModal.addEventListener("click", closeHistory);
         overlay.addEventListener("click", (e) => { if (e.target === overlay) closeHistory(); });
-        btnOpenTimeline?.addEventListener("click", openTimelineModal);
-        btnCloseTimeline?.addEventListener("click", closeTimelineModal);
-        timelineOverlay?.addEventListener("click", (e) => { if (e.target === timelineOverlay) closeTimelineModal(); });
 
         document.addEventListener("keydown", (e) => {
             if (e.key !== "Escape") return;
             if (overlay?.style.display === "flex") closeHistory();
-            if (timelineOverlay?.style.display === "flex") closeTimelineModal();
         });
         btnClearStorage.addEventListener("click", () => {
             localStorage.removeItem(historyKey);

@@ -29,7 +29,7 @@ header h1 {
 }
 
 main {
-    max-width: 960px;
+    max-width: 1240px;
     margin: 24px auto;
     padding: 0 16px;
 }
@@ -109,6 +109,12 @@ button.warn {
 @media (min-width: 900px) {
     .split {
         grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (min-width: 1200px) {
+    .split {
+        grid-template-columns: 1fr 1fr 1fr;
     }
 }
 
@@ -231,6 +237,21 @@ a.link:hover {
     border: 1px solid #334155;
     border-radius: 10px;
     background: #0b1220;
+}
+
+.timeline-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.timeline-card .timeline-grid {
+    flex: 1 1 auto;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.timeline-card .timeline-legend {
+    margin-top: 0;
 }
 
 .timeline-empty {
