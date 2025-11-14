@@ -54,12 +54,17 @@
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и
                 распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
+
             <div class="timeline-controls">
                 <button class="icon-button" id="btnOpenTimeline" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
                     <span aria-hidden="true">🕒</span>
                     <span class="sr-only">Открыть таймлайн</span>
                 </button>
             </div>
+
+            <div id="timelineLegend" class="muted timeline-legend"></div>
+            <div id="timelineContainer" class="timeline-grid"></div>
+
 
             <h3 style="margin-top:16px;">Закреплённый контекст</h3>
             <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
@@ -154,6 +159,7 @@
         const transcribeStatus = el("transcribeStatus");
         const timelineContainer = el("timelineContainer");
         const timelineLegend = el("timelineLegend");
+
         const btnOpenTimeline = el("btnOpenTimeline");
         const timelineOverlay = el("timelineOverlay");
         const btnCloseTimeline = el("btnCloseTimeline");
@@ -250,6 +256,10 @@
             updateTimelineButton(hasItems);
             if (!timelineContainer) return;
             if (!hasItems) {
+
+        function renderTimeline(items) {
+            if (!timelineContainer) return;
+            if (!items || !items.length) {
                 timelineContainer.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
                 return;
             }
@@ -412,6 +422,7 @@
             }
             try {
                 transcribeStatus.textContent = "транскрибирую…";
+
                 closeTimelineModal();
                 renderTimeline();
                 renderRoleLegend();
