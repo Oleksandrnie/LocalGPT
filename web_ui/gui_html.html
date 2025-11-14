@@ -54,6 +54,12 @@
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и
                 распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
+            <div class="timeline-controls">
+                <button class="icon-button" id="btnOpenTimeline" title="Таймлайн появится после транскрибации" disabled aria-disabled="true">
+                    <span aria-hidden="true">🕒</span>
+                    <span class="sr-only">Открыть таймлайн</span>
+                </button>
+            </div>
 
             <h3 style="margin-top:16px;">Закреплённый контекст</h3>
             <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
@@ -91,6 +97,17 @@
                 <button class="warn" id="btnClearStorage">Очистить localStorage</button>
             </div>
             <p class="muted">Хранится только локально в браузере этого устройства.</p>
+        </div>
+    </div>
+
+    <div class="overlay" id="timelineOverlay" aria-hidden="true">
+        <div class="modal timeline-modal" role="dialog" aria-modal="true" aria-labelledby="timelineTitle" style="max-height: 80vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3 id="timelineTitle">Таймлайн беседы</h3>
+                <button class="secondary" id="btnCloseTimeline">Закрыть</button>
+            </div>
+            <div id="timelineLegend" class="muted timeline-legend"></div>
+            <div id="timelineContainer" class="timeline-grid"></div>
         </div>
     </div>
 
@@ -135,6 +152,11 @@
         const fileInput = el("fileInput");
         const btnTranscribe = el("btnTranscribe");
         const transcribeStatus = el("transcribeStatus");
+        const timelineContainer = el("timelineContainer");
+        const timelineLegend = el("timelineLegend");
+        const btnOpenTimeline = el("btnOpenTimeline");
+        const timelineOverlay = el("timelineOverlay");
+        const btnCloseTimeline = el("btnCloseTimeline");
 
         // Контекст (закрепляемый)
         const contextText = el("contextText");
@@ -182,6 +204,93 @@
                 bs.textContent = line;
             }
         }
+
+        const speakerLabels = {
+            hr: "HR",
+            candidate: "Кандидат",
+            unknown: "Собеседник",
+        };
+
+        function formatTime(seconds) {
+            if (!Number.isFinite(seconds)) return "0:00";
+            const safe = Math.max(0, Number(seconds) || 0);
+            const total = Math.round(safe);
+            const hours = Math.floor(total / 3600);
+            const minutes = Math.floor((total % 3600) / 60);
+            const secs = total % 60;
+            const mm = minutes.toString().padStart(2, "0");
+            const ss = secs.toString().padStart(2, "0");
+            if (hours > 0) {
+                return `${hours}:${mm}:${ss}`;
+            }
+            return `${mm}:${ss}`;
+        }
+
+        function sanitizeHTML(str) {
+            return String(str || "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function updateTimelineButton(hasTimeline) {
+            if (!btnOpenTimeline) return;
+            const enabled = Boolean(hasTimeline);
+            btnOpenTimeline.disabled = !enabled;
+            btnOpenTimeline.setAttribute("aria-disabled", enabled ? "false" : "true");
+            btnOpenTimeline.title = enabled
+                ? "Таймлайн беседы"
+                : "Таймлайн появится после транскрибации";
+        }
+
+        function renderTimeline(items) {
+            const hasItems = Array.isArray(items) && items.length > 0;
+            updateTimelineButton(hasItems);
+            if (!timelineContainer) return;
+            if (!hasItems) {
+                timelineContainer.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
+                return;
+            }
+            const html = items.map((item) => {
+                const role = (item?.speaker || "unknown").toLowerCase();
+                const label = speakerLabels[role] || role.toUpperCase();
+                const start = formatTime(item?.start);
+                const end = formatTime(item?.end ?? item?.start);
+                const text = sanitizeHTML(item?.text || "");
+                return `
+                    <div class="timeline-row timeline-${role}">
+                        <div class="timeline-speaker">${label}</div>
+                        <div class="timeline-time">${start}–${end}</div>
+                        <div class="timeline-text">${text}</div>
+                    </div>
+                `;
+            }).join("");
+            timelineContainer.innerHTML = html;
+        }
+
+        function renderRoleLegend(keywords) {
+            if (!timelineLegend) return;
+            if (!keywords || typeof keywords !== "object") {
+                timelineLegend.textContent = "Словарь ролей: по умолчанию (HR / Кандидат).";
+                return;
+            }
+            const parts = Object.entries(keywords)
+                .filter(([role]) => typeof role === "string")
+                .map(([role, words]) => {
+                    const label = speakerLabels[role] || role.toUpperCase();
+                    const list = Array.isArray(words) ? words.join(", ") : "";
+                    return `${label}: ${list}`.trim();
+                })
+                .filter(Boolean);
+            timelineLegend.textContent = parts.length
+                ? `Словарь ролей • ${parts.join(" • ")}`
+                : "Словарь ролей: по умолчанию (HR / Кандидат).";
+        }
+
+        renderTimeline();
+        renderRoleLegend();
 
         function debounce(fn, ms = 150) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); } }
 
@@ -303,6 +412,9 @@
             }
             try {
                 transcribeStatus.textContent = "транскрибирую…";
+                closeTimelineModal();
+                renderTimeline();
+                renderRoleLegend();
 
                 const fd = new FormData();
                 fd.append("file", f, f.name);
@@ -341,11 +453,16 @@
                 }
 
                 const text = (j && (j.text || j.transcript || j.result)) || "";
+                const timeline = Array.isArray(j?.timeline) ? j.timeline : [];
+                const roleKeywords = j?.role_keywords;
                 if (!text) throw new Error("пустая транскрипция");
 
                 const prefix = "Отредактируй результат транскрибации (исправь ошибки распознавания, пунктуацию, убери повторы, раздели на роли кто когда говорит). Опредили ценности и пожелания. Покажи результат к чему удалось прийти:\n\n";
                 promptEl.value = prefix + text;
                 promptEl.focus();
+
+                renderTimeline(timeline);
+                renderRoleLegend(roleKeywords);
 
                 transcribeStatus.textContent = `✅ Транскрипция готова — модель: ${ms}`;
                 recalcStats();
@@ -361,6 +478,17 @@
         }
         function closeHistory() {
             overlay.style.display = "none";
+        }
+
+        function openTimelineModal() {
+            if (!timelineOverlay || btnOpenTimeline?.disabled) return;
+            timelineOverlay.style.display = "flex";
+            timelineOverlay.setAttribute("aria-hidden", "false");
+        }
+        function closeTimelineModal() {
+            if (!timelineOverlay) return;
+            timelineOverlay.style.display = "none";
+            timelineOverlay.setAttribute("aria-hidden", "true");
         }
 
         // --- Wire events ---
@@ -385,6 +513,15 @@
         btnHistory.addEventListener("click", openHistory);
         btnCloseModal.addEventListener("click", closeHistory);
         overlay.addEventListener("click", (e) => { if (e.target === overlay) closeHistory(); });
+        btnOpenTimeline?.addEventListener("click", openTimelineModal);
+        btnCloseTimeline?.addEventListener("click", closeTimelineModal);
+        timelineOverlay?.addEventListener("click", (e) => { if (e.target === timelineOverlay) closeTimelineModal(); });
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key !== "Escape") return;
+            if (overlay?.style.display === "flex") closeHistory();
+            if (timelineOverlay?.style.display === "flex") closeTimelineModal();
+        });
         btnClearStorage.addEventListener("click", () => {
             localStorage.removeItem(historyKey);
             renderHistory();

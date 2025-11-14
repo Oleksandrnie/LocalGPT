@@ -117,6 +117,18 @@ button.warn {
     color: #93c5fd;
 }
 
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* Modal */
 .overlay {
     position: fixed;
@@ -141,6 +153,18 @@ button.warn {
     margin-top: 0;
 }
 
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.timeline-modal {
+    width: min(920px, 100%);
+}
+
 .history-item {
     border: 1px solid #334155;
     border-radius: 10px;
@@ -161,6 +185,34 @@ button.warn {
     margin-left: auto;
 }
 
+.timeline-controls {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
+.icon-button {
+    background: #334155;
+    color: #e2e8f0;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 18px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
+}
+
+.icon-button:not([disabled]):hover {
+    background: #1d4ed8;
+}
+
+.icon-button[disabled] {
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+
 a.link {
     color: #93c5fd;
     text-decoration: none;
@@ -168,4 +220,54 @@ a.link {
 
 a.link:hover {
     text-decoration: underline;
+}
+
+.timeline-legend {
+    margin-top: 6px;
+}
+
+.timeline-grid {
+    margin-top: 8px;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    background: #0b1220;
+}
+
+.timeline-empty {
+    padding: 10px;
+}
+
+.timeline-row {
+    display: grid;
+    grid-template-columns: minmax(70px, 90px) minmax(90px, 110px) 1fr;
+    gap: 10px;
+    padding: 10px;
+    border-bottom: 1px solid #1e293b;
+}
+
+.timeline-row:last-child {
+    border-bottom: none;
+}
+
+.timeline-speaker {
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.timeline-time {
+    font-variant-numeric: tabular-nums;
+    color: #cbd5f5;
+}
+
+.timeline-text {
+    white-space: pre-wrap;
+    line-height: 1.35;
+}
+
+.timeline-hr .timeline-speaker {
+    color: #38bdf8;
+}
+
+.timeline-candidate .timeline-speaker {
+    color: #facc15;
 }
