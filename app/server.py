@@ -62,14 +62,49 @@ def _system_prompt() -> str:
 def _sanitize(text: str) -> str:
     """Убираем явные повторы и случайные куски на других языках."""
     import re
+
     # удаляем явные китайские блоки/фразы
     text = re.sub(r"[\u4e00-\u9fff]{2,}.*?(?:[.!?。！？]|$)", "", text)
-    # убираем подряд идущие идентичные строки
-    lines, out = text.splitlines(), []
-    for ln in lines:
-        if not out or out[-1].strip() != ln.strip():
-            out.append(ln)
-    return "\n".join(out).strip()
+
+    # вырезаем служебные секции-инструкции, которые модель иногда копирует в ответ
+    def _drop_section(src: str, heading: str) -> str:
+        pattern = re.compile(rf"(^##\s*{heading}.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
+        return re.sub(pattern, "", src)
+
+    for meta_heading in (
+        "Минимальный набор фактов",
+        "Чеклист перед отправкой",
+        "Checklist before sending",
+    ):
+        text = _drop_section(text, meta_heading)
+
+    # удаляем строки с типовыми подсказками вроде «Теперь вы можете…»
+    text = re.sub(r"^.*Теперь вы можете.*$", "", text, flags=re.MULTILINE)
+
+    lines: list[str] = []
+    seen_headings: set[str] = set()
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if not stripped:
+            if lines and lines[-1] == "":
+                continue
+            lines.append("")
+            continue
+
+        if stripped.startswith("### "):
+            key = stripped.lower()
+            if key in seen_headings:
+                continue
+            seen_headings.add(key)
+
+        if lines and lines[-1].strip() == stripped:
+            continue
+
+        lines.append(line)
+
+    return "\n".join(lines).strip()
 
 
 def _build_timeline(segments: list[dict]) -> list[dict]:
