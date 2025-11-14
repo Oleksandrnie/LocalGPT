@@ -9,6 +9,7 @@ Cross-platform launcher for LocalGPT (macOS / Linux / Windows).
 - Opens web UI in browser
 """
 
+import hashlib
 import os
 import sys
 import time
@@ -21,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / "venv"
 REQUIREMENTS = ROOT / "app" / "requirements.txt"
+REQUIREMENTS_MARKER = VENV_DIR / ".requirements.sha256"
 UI_URL = "http://127.0.0.1:8000/"
 
 
@@ -56,13 +58,47 @@ def ensure_venv() -> str:
     return str(python)
 
 
-def install_requirements(python: str) -> None:
-    """Install backend dependencies from requirements.txt."""
+def install_requirements(python: str) -> bool:
+    """Install backend dependencies from requirements.txt.
+
+    Returns True if installation was performed, False if skipped.
+    """
     if not REQUIREMENTS.exists():
         print(f"[!] {REQUIREMENTS} not found, skipping pip install.")
-        return
+        return False
+
+    current_hash = hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+    if REQUIREMENTS_MARKER.exists():
+        previous_hash = REQUIREMENTS_MARKER.read_text().strip()
+        if previous_hash == current_hash:
+            print("[i] Requirements unchanged, skipping pip install.")
+            return False
+
     print("[*] Installing dependencies from app/requirements.txt ...")
     run([python, "-m", "pip", "install", "-r", str(REQUIREMENTS)])
+    REQUIREMENTS_MARKER.write_text(current_hash)
+    return True
+
+
+def verify_python_multipart(python: str) -> None:
+    """Check that python-multipart is importable and warn if missing."""
+
+    result = subprocess.run(
+        [python, "-c", "import multipart"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        print("[i] Verified python-multipart is available.")
+        return
+
+    print("[!] python-multipart is not available in the virtual environment.")
+    if result.stderr:
+        print(result.stderr.strip())
+    print(
+        "[i] Try rerunning this script or install it manually with "
+        f"'{python} -m pip install python-multipart'."
+    )
 
 
 def ensure_ollama_running() -> None:
@@ -174,6 +210,7 @@ def main() -> None:
 
     py = ensure_venv()
     install_requirements(py)
+    verify_python_multipart(py)
     ensure_ollama_running()
     ensure_model()
     open_browser()
