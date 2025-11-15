@@ -174,8 +174,6 @@ def _annotate_speakers(
 
     speakers = list(role_keywords.keys()) or list(DEFAULT_ROLE_KEYWORDS.keys())
     default_speaker = speakers[0] if speakers else "hr"
-    alt_speaker = speakers[1] if len(speakers) > 1 else default_speaker
-
     annotated: list[dict[str, Any]] = []
     last_speaker = None
 
@@ -200,7 +198,8 @@ def _annotate_speakers(
             if last_speaker is None:
                 best_speaker = default_speaker
             elif best_score == 0:
-                best_speaker = alt_speaker if last_speaker == default_speaker else default_speaker
+                # Без явных подсказок считаем, что говорит тот же собеседник.
+                best_speaker = last_speaker
             else:
                 best_speaker = last_speaker
 

@@ -5,7 +5,7 @@
     <meta charset="utf-8" />
     <title>LocalGPT — Web UI</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
     <header class="app-header">
@@ -22,6 +22,7 @@
             <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
             <div class="buttons mt-sm">
                 <button id="btnSend">Отправить</button>
+                <button class="warn" id="btnStop" type="button" hidden>Остановить</button>
                 <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
             </div>
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка.</p>
@@ -50,6 +51,19 @@
                         <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
                     </div>
                     <div class="status" id="transcribeStatus"></div>
+                    <section class="transcript-manager">
+                        <h4>Работа с транскриптами</h4>
+                        <div class="field-group">
+                            <label class="muted" for="manualTranscriptInput">Вставьте готовый текст транскрипта</label>
+                            <textarea id="manualTranscriptInput" class="input-control" placeholder="Вставьте или отредактируйте текст транскрипта…"></textarea>
+                            <div class="buttons mt-xs">
+                                <button class="secondary" id="btnUseManualTranscript" type="button">Использовать текст</button>
+                                <button class="secondary" id="btnSaveManualTranscript" type="button">Сохранить и использовать</button>
+                            </div>
+                        </div>
+                        <div class="status" id="transcriptStatus"></div>
+                        <div id="transcriptList" class="transcript-list muted">Сохранённых транскриптов пока нет.</div>
+                    </section>
                     <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу критериев.</p>
                     <div class="row mt-sm">
                         <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
@@ -100,7 +114,23 @@
                     </div>
                 </section>
                 <section class="tab-panel" id="panel-timeline" data-panel="timeline" role="tabpanel" aria-labelledby="tab-timeline" hidden>
+                    <div class="timeline-toolbar">
+                        <div class="timeline-names">
+                            <label class="timeline-name-field">Имя HR
+                                <input id="timelineHrName" data-role="hr" type="text" class="input-control" placeholder="Например: Юлия, third_party" />
+                            </label>
+                            <label class="timeline-name-field">Имя кандидата
+                                <input id="timelineCandidateName" data-role="candidate" type="text" class="input-control" placeholder="Например: Юрий" />
+                            </label>
+                        </div>
+                        <div class="timeline-actions">
+                            <button class="secondary" id="btnEditTimeline" type="button">Редактировать таймлайн</button>
+                            <button class="secondary" id="btnSaveTimeline" type="button" hidden>Сохранить изменения</button>
+                            <button class="secondary" id="btnCancelTimeline" type="button" hidden>Отмена</button>
+                        </div>
+                    </div>
                     <div id="timelineLegend" class="muted timeline-legend"></div>
+                    <div id="timelineNotice" class="status timeline-notice"></div>
                     <div id="timelineContainer" class="timeline-grid"></div>
                 </section>
             </div>
