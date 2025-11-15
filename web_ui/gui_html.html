@@ -49,22 +49,8 @@
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
 
-            <h3 class="mt-lg">Префикс HR-подсказки</h3>
-            <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
-            <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
-
-            <h3 class="mt-lg">Закреплённый контекст</h3>
-            <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
-            <div class="muted" id="contextStats">Символы: 0 • Токены≈ 0</div>
-            <div class="buttons mt-sm">
-                <button class="secondary" id="btnSaveContext">Сохранить контекст</button>
-                <button class="secondary" id="btnPinFromPrompt">Из запроса → контекст</button>
-                <button class="warn" id="btnClearPinnedContext">Очистить контекст</button>
-            </div>
-            <div class="status" id="contextStatus"></div>
-
             <h3 class="mt-lg">Критерии оценки</h3>
-            <p class="muted">Загрузите таблицу критериев (CSV/XLSX/Google Sheets) или извлеките их из закреплённого контекста. Критерии сохраняются в рамках текущей сессии.</p>
+            <p class="muted">Загрузите таблицу критериев (CSV/XLSX/Google Sheets) или добавьте их вручную. Критерии сохраняются в рамках текущей сессии.</p>
             <div class="row mt-sm">
                 <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
                 <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
@@ -73,14 +59,26 @@
                 <input id="googleSheetInput" type="text" class="input-control" placeholder="ID или ссылка на Google Sheets" />
                 <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google Sheets</button>
             </div>
+            <div class="criteria-add mt-sm">
+                <button class="secondary" id="btnToggleManualCriterion" type="button">Добавить критерий</button>
+                <div class="criteria-add__panel" id="manualCriterionPanel" hidden>
+                    <input id="manualCriterionInput" type="text" class="input-control" placeholder="Например: Необходим опыт продаж от 3 лет" />
+                    <div class="buttons">
+                        <button id="btnSaveManualCriterion" type="button">Сохранить</button>
+                        <button class="secondary" id="btnCancelManualCriterion" type="button">Отмена</button>
+                    </div>
+                </div>
+            </div>
             <div class="buttons mt-sm">
-                <button class="secondary" id="btnCriteriaFromContext" type="button">Из контекста</button>
                 <button class="secondary" id="btnClearCriteria" type="button">Очистить критерии</button>
             </div>
             <div class="status" id="criteriaStatus"></div>
             <ol id="criteriaList" class="criteria-list"></ol>
             <div class="status mt-sm" id="budgetStats">Входные токены: 0 • Резерв на ответ: — • Лимит контекста: —</div>
             <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
+            <h3 class="mt-xl" title="Префикс помогает быстро напоминать модели, что запрос подготовлен HR и какие действия ожидать.">Префикс HR-подсказки</h3>
+            <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
+            <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
         </lgpt-card>
 
         <lgpt-card title="Ответ" data-card="answer">

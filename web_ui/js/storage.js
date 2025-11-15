@@ -4,7 +4,6 @@ export const STORAGE_KEYS = {
   history: "localgpt_history_v1",
   session: "localgpt_session_id",
   whisperModel: "localgpt_whisper_model_v1",
-  pinnedContext: "localgpt_pinned_context_v1",
   hrPrefix: "localgpt_hr_prefix_v1",
   criteria: "localgpt_criteria_list_v1",
 };
@@ -57,18 +56,6 @@ export function getHrPrefix(defaultValue) {
 
 export function setHrPrefix(value) {
   safeSet(STORAGE_KEYS.hrPrefix, value);
-}
-
-export function getPinnedContext() {
-  return safeGet(STORAGE_KEYS.pinnedContext) || "";
-}
-
-export function setPinnedContext(value) {
-  safeSet(STORAGE_KEYS.pinnedContext, value);
-}
-
-export function clearPinnedContext() {
-  safeSet(STORAGE_KEYS.pinnedContext, null);
 }
 
 function parseJson(raw, fallback) {
