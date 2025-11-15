@@ -98,11 +98,8 @@ const elements = {
   criteriaStatus: getElement("criteriaStatus"),
   criteriaList: getElement("criteriaList"),
   budgetStats: getElement("budgetStats"),
-  btnToggleManualCriterion: getElement("btnToggleManualCriterion"),
-  manualCriterionPanel: getElement("manualCriterionPanel"),
-  manualCriterionInput: getElement("manualCriterionInput"),
-  btnSaveManualCriterion: getElement("btnSaveManualCriterion"),
-  btnCancelManualCriterion: getElement("btnCancelManualCriterion"),
+  quickCriterionInput: getElement("quickCriterionInput"),
+  btnQuickAddCriterion: getElement("btnQuickAddCriterion"),
 };
 
 const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
@@ -376,44 +373,12 @@ async function transcribeFile() {
   }
 }
 
-function showManualCriterionPanel({ focus = true } = {}) {
-  const panel = elements.manualCriterionPanel;
-  if (!panel) return;
-  panel.classList.add("visible");
-  panel.removeAttribute("hidden");
-  if (focus) {
-    window.requestAnimationFrame(() => {
-      elements.manualCriterionInput?.focus();
-    });
-  }
-}
-
-function hideManualCriterionPanel() {
-  const panel = elements.manualCriterionPanel;
-  if (!panel) return;
-  panel.classList.remove("visible");
-  panel.setAttribute("hidden", "");
-  if (elements.manualCriterionInput) {
-    elements.manualCriterionInput.value = "";
-  }
-}
-
-function toggleManualCriterionPanel() {
-  const panel = elements.manualCriterionPanel;
-  if (!panel) return;
-  if (panel.hasAttribute("hidden")) {
-    showManualCriterionPanel();
-  } else {
-    hideManualCriterionPanel();
-  }
-}
-
-function saveManualCriterion() {
-  const value = elements.manualCriterionInput?.value || "";
+function addQuickCriterion() {
+  const value = elements.quickCriterionInput?.value || "";
   const saved = criteriaManager.addManualCriterion(value);
-  if (saved && elements.manualCriterionInput) {
-    elements.manualCriterionInput.value = "";
-    elements.manualCriterionInput.focus();
+  if (saved && elements.quickCriterionInput) {
+    elements.quickCriterionInput.value = "";
+    elements.quickCriterionInput.focus();
     recalcStats();
   }
   return saved;
@@ -540,28 +505,14 @@ function attachEvents() {
     }
   });
 
-  elements.btnToggleManualCriterion?.addEventListener("click", () => {
-    toggleManualCriterionPanel();
-    if (!elements.manualCriterionPanel?.hasAttribute("hidden")) {
-      elements.manualCriterionInput?.focus();
-    }
+  elements.btnQuickAddCriterion?.addEventListener("click", () => {
+    addQuickCriterion();
   });
 
-  elements.btnSaveManualCriterion?.addEventListener("click", () => {
-    saveManualCriterion();
-  });
-
-  elements.btnCancelManualCriterion?.addEventListener("click", () => {
-    hideManualCriterionPanel();
-  });
-
-  elements.manualCriterionInput?.addEventListener("keydown", (event) => {
+  elements.quickCriterionInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      saveManualCriterion();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      hideManualCriterionPanel();
+      addQuickCriterion();
     }
   });
 
