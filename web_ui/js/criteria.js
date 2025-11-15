@@ -17,11 +17,13 @@ function normalizeCriterion(value) {
 
 function applyTone(statusNode, tone) {
   if (!statusNode) return;
-  statusNode.classList.remove("status--error", "status--success");
+  statusNode.classList.remove("status--error", "status--success", "status--warning");
   if (tone === "error") {
     statusNode.classList.add("status--error");
   } else if (tone === "success") {
     statusNode.classList.add("status--success");
+  } else if (tone === "warning") {
+    statusNode.classList.add("status--warning");
   }
 }
 
@@ -109,6 +111,31 @@ export class CriteriaManager {
     this.renderCriteria();
     saveCriteriaToStorage([]);
     this.updateStatus("Критерии не выбраны.");
+  }
+
+  addManualCriterion(value) {
+    const normalized = normalizeCriterion(value);
+    if (!normalized) {
+      this.updateStatus("Введите текст критерия перед сохранением.", "error");
+      return false;
+    }
+
+    const lower = normalized.toLowerCase();
+    if (this.criteria.some((item) => item.toLowerCase() === lower)) {
+      this.updateStatus("Такой критерий уже есть в списке.", "warning");
+      return false;
+    }
+
+    if (this.criteria.length >= this.maxItems) {
+      this.updateStatus(`Нельзя добавить больше ${this.maxItems} критериев.`, "error");
+      return false;
+    }
+
+    this.criteria = [...this.criteria, normalized];
+    this.renderCriteria();
+    saveCriteriaToStorage(this.criteria);
+    this.updateStatus(`Критериев: ${this.criteria.length} • источник: вручную`, "success");
+    return true;
   }
 
   parseGoogleSheetInput(raw) {

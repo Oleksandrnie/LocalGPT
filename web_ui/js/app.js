@@ -1,16 +1,13 @@
 import {
   API_BASE,
   addHistoryEntry,
-  clearPinnedContext,
   deleteHistoryEntry,
   ensureSessionId,
   getHrPrefix,
-  getPinnedContext,
   getSavedModel,
   loadHistory,
   saveHistory,
   setHrPrefix,
-  setPinnedContext,
   setSavedModel,
 } from "./storage.js";
 import { renderRoleLegend, renderTimeline } from "./timeline.js";
@@ -75,7 +72,6 @@ const elements = {
   prompt: getElement("prompt"),
   answer: getElement("answer"),
   promptStats: getElement("promptStats"),
-  contextStats: getElement("contextStats"),
   btnSend: getElement("btnSend"),
   btnCopy: getElement("btnCopy"),
   btnClearPrompt: getElement("btnClearPrompt"),
@@ -91,23 +87,22 @@ const elements = {
   transcribeStatus: getElement("transcribeStatus"),
   timelineContainer: getElement("timelineContainer"),
   timelineLegend: getElement("timelineLegend"),
-  contextText: getElement("contextText"),
-  btnSaveContext: getElement("btnSaveContext"),
-  btnPinFromPrompt: getElement("btnPinFromPrompt"),
-  btnClearPinnedContext: getElement("btnClearPinnedContext"),
-  contextStatus: getElement("contextStatus"),
   hrPrefixInput: getElement("hrPrefix"),
   modelSelect: getElement("modelSelect"),
   promptPresetSelect: getElement("promptPresetSelect"),
   criteriaFileInput: getElement("criteriaFile"),
   btnLoadCriteriaFile: getElement("btnLoadCriteriaFile"),
   btnLoadCriteriaSheet: getElement("btnLoadCriteriaSheet"),
-  btnCriteriaFromContext: getElement("btnCriteriaFromContext"),
   btnClearCriteria: getElement("btnClearCriteria"),
   googleSheetInput: getElement("googleSheetInput"),
   criteriaStatus: getElement("criteriaStatus"),
   criteriaList: getElement("criteriaList"),
   budgetStats: getElement("budgetStats"),
+  btnToggleManualCriterion: getElement("btnToggleManualCriterion"),
+  manualCriterionPanel: getElement("manualCriterionPanel"),
+  manualCriterionInput: getElement("manualCriterionInput"),
+  btnSaveManualCriterion: getElement("btnSaveManualCriterion"),
+  btnCancelManualCriterion: getElement("btnCancelManualCriterion"),
 };
 
 const sessionId = ensureSessionId();
@@ -121,22 +116,26 @@ const criteriaManager = new CriteriaManager({
 
 function recalcStats() {
   const prompt = elements.prompt?.value || "";
-  const ctx = elements.contextText?.value || "";
   const promptTokens = estTokens(prompt);
-  const contextTokens = estTokens(ctx);
-  const inputTokens = promptTokens + contextTokens;
+  const criteriaTokens = estTokens(criteriaManager.getCriteria().join(" "));
+  const inputTokens = promptTokens + criteriaTokens;
 
   if (elements.promptStats) {
     elements.promptStats.textContent = `Символы: ${prompt.length} • Токены≈ ${promptTokens}`;
-  }
-  if (elements.contextStats) {
-    elements.contextStats.textContent = `Символы: ${ctx.length} • Токены≈ ${contextTokens}`;
   }
 
   if (elements.budgetStats) {
     const numCtx = LIMITS.num_ctx ?? "—";
     const maxOut = LIMITS.max_tokens ?? "—";
     let line = `Входные токены: ${inputTokens} • Резерв на ответ: ${maxOut} • Лимит контекста: ${numCtx}`;
+    const details = [];
+    details.push(`запрос: ${promptTokens}`);
+    if (criteriaTokens) {
+      details.push(`критерии: ${criteriaTokens}`);
+    }
+    if (details.length) {
+      line += ` (${details.join(" • ")})`;
+    }
     elements.budgetStats.classList.remove("status--error", "status--warning", "status--success");
 
     if (LIMITS.num_ctx && LIMITS.max_tokens) {
@@ -231,16 +230,6 @@ function setTranscribeBusy(isBusy, { label } = {}) {
   }
 }
 
-function updateContextStatus() {
-  const value = (getPinnedContext() || "").trim();
-  const length = value.length;
-  if (length) {
-    updateStatus(elements.contextStatus, `Контекст закреплён (${length} символов)`, "success");
-  } else {
-    updateStatus(elements.contextStatus, "Контекст не закреплён");
-  }
-}
-
 async function sendPrompt() {
   const rawQuery = elements.prompt?.value || "";
   const finalQuery = rawQuery.trim() || "проанализируй";
@@ -252,10 +241,6 @@ async function sendPrompt() {
 
   try {
     const payload = { query: finalQuery, session_id: sessionId };
-    const pinnedContext = getPinnedContext().trim();
-    if (pinnedContext) {
-      payload.context = pinnedContext;
-    }
     const transcript = currentTranscript.trim();
     if (transcript) {
       payload.transcript = transcript;
@@ -367,9 +352,51 @@ async function transcribeFile() {
   }
 }
 
+function showManualCriterionPanel({ focus = true } = {}) {
+  const panel = elements.manualCriterionPanel;
+  if (!panel) return;
+  panel.classList.add("visible");
+  panel.removeAttribute("hidden");
+  if (focus) {
+    window.requestAnimationFrame(() => {
+      elements.manualCriterionInput?.focus();
+    });
+  }
+}
+
+function hideManualCriterionPanel() {
+  const panel = elements.manualCriterionPanel;
+  if (!panel) return;
+  panel.classList.remove("visible");
+  panel.setAttribute("hidden", "");
+  if (elements.manualCriterionInput) {
+    elements.manualCriterionInput.value = "";
+  }
+}
+
+function toggleManualCriterionPanel() {
+  const panel = elements.manualCriterionPanel;
+  if (!panel) return;
+  if (panel.hasAttribute("hidden")) {
+    showManualCriterionPanel();
+  } else {
+    hideManualCriterionPanel();
+  }
+}
+
+function saveManualCriterion() {
+  const value = elements.manualCriterionInput?.value || "";
+  const saved = criteriaManager.addManualCriterion(value);
+  if (saved && elements.manualCriterionInput) {
+    elements.manualCriterionInput.value = "";
+    elements.manualCriterionInput.focus();
+    recalcStats();
+  }
+  return saved;
+}
+
 function attachEvents() {
   elements.prompt?.addEventListener("input", debounce(recalcStats, 100));
-  elements.contextText?.addEventListener("input", debounce(recalcStats, 100));
 
   elements.btnSend?.addEventListener("click", sendPrompt);
   elements.prompt?.addEventListener("keydown", (event) => {
@@ -429,31 +456,6 @@ function attachEvents() {
     renderHistory();
   });
 
-  elements.btnSaveContext?.addEventListener("click", () => {
-    const value = (elements.contextText?.value || "").trim();
-    setPinnedContext(value);
-    updateContextStatus();
-  });
-
-  elements.btnPinFromPrompt?.addEventListener("click", () => {
-    const value = (elements.prompt?.value || "").trim();
-    if (elements.contextText) {
-      elements.contextText.value = value;
-    }
-    setPinnedContext(value);
-    updateContextStatus();
-    recalcStats();
-  });
-
-  elements.btnClearPinnedContext?.addEventListener("click", () => {
-    clearPinnedContext();
-    if (elements.contextText) {
-      elements.contextText.value = "";
-    }
-    updateContextStatus();
-    recalcStats();
-  });
-
   elements.btnLoadCriteriaFile?.addEventListener("click", async () => {
     const file = elements.criteriaFileInput?.files?.[0];
     if (!file) {
@@ -462,6 +464,7 @@ function attachEvents() {
     }
     try {
       await criteriaManager.requestFromBackend({ apiBase: API_BASE, sessionId, file });
+      recalcStats();
     } catch (error) {
       console.warn("criteria file load failed", error);
     }
@@ -484,6 +487,7 @@ function attachEvents() {
         googleSheetId: parsed.sheetId,
         googleGid: parsed.gid,
       });
+      recalcStats();
     } catch (error) {
       console.warn("criteria sheet load failed", error);
     }
@@ -496,21 +500,34 @@ function attachEvents() {
     }
   });
 
-  elements.btnCriteriaFromContext?.addEventListener("click", async () => {
-    const ctx = (elements.contextText?.value || "").trim();
-    if (!ctx) {
-      criteriaManager.updateStatus("Контекст пустой — нечего извлекать.", "error");
-      return;
-    }
-    try {
-      await criteriaManager.requestFromBackend({ apiBase: API_BASE, sessionId, rawText: ctx });
-    } catch (error) {
-      console.warn("criteria from context failed", error);
+  elements.btnClearCriteria?.addEventListener("click", () => {
+    criteriaManager.clear();
+    recalcStats();
+  });
+
+  elements.btnToggleManualCriterion?.addEventListener("click", () => {
+    toggleManualCriterionPanel();
+    if (!elements.manualCriterionPanel?.hasAttribute("hidden")) {
+      elements.manualCriterionInput?.focus();
     }
   });
 
-  elements.btnClearCriteria?.addEventListener("click", () => {
-    criteriaManager.clear();
+  elements.btnSaveManualCriterion?.addEventListener("click", () => {
+    saveManualCriterion();
+  });
+
+  elements.btnCancelManualCriterion?.addEventListener("click", () => {
+    hideManualCriterionPanel();
+  });
+
+  elements.manualCriterionInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      saveManualCriterion();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      hideManualCriterionPanel();
+    }
   });
 
   elements.hrPrefixInput?.addEventListener(
@@ -540,12 +557,6 @@ function init() {
     // placeholder for future logic if needed
   }
 
-  const storedContext = getPinnedContext();
-  if (elements.contextText) {
-    elements.contextText.value = storedContext;
-  }
-  updateContextStatus();
-
   const savedPrefix = getHrPrefix(DEFAULT_HR_PREFIX);
   if (elements.hrPrefixInput) {
     elements.hrPrefixInput.value = savedPrefix || DEFAULT_HR_PREFIX;
@@ -553,8 +564,6 @@ function init() {
 
   renderTimeline(elements.timelineContainer);
   renderRoleLegend(elements.timelineLegend);
-  criteriaManager.renderCriteria();
-  criteriaManager.updateStatus("Критерии не выбраны.");
   criteriaManager.loadFromStorage();
 
   attachEvents();
