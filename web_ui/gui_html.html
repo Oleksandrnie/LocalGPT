@@ -5,40 +5,36 @@
     <meta charset="utf-8" />
     <title>LocalGPT — Web UI</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Внешний CSS -->
     <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <header>
+    <header class="app-header">
         <h1>LocalGPT — Web UI</h1>
         <span class="status" id="healthStatus">проверка сервера…</span>
-        <span class="right">
+        <div class="header-actions">
             <button class="secondary" id="btnHistory">История</button>
-        </span>
+        </div>
     </header>
 
     <main class="split">
-        <section class="card">
-            <h3>Запрос</h3>
+        <lgpt-card title="Запрос" data-card="request">
             <textarea id="prompt" placeholder="Введите промпт…"></textarea>
             <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
-            <div class="buttons" style="margin-top:10px;">
+            <div class="buttons mt-sm">
                 <button id="btnSend">Отправить</button>
                 <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
             </div>
-            <div class="row" style="margin-top:10px; gap:10px;">
-                <div style="flex:1 1 200px;">
+            <div class="row row--gutter mt-sm">
+                <div class="field-group">
                     <label class="muted" for="modelSelect">Модель Whisper</label>
-                    <select id="modelSelect"
-                        style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;">
+                    <select id="modelSelect" class="input-control">
                         <option value="small">small — быстрее, но немного хуже по качеству</option>
                         <option value="medium" selected>medium — выше качество, но медленнее</option>
                     </select>
                 </div>
-                <div style="flex:1 1 200px;">
+                <div class="field-group">
                     <label class="muted" for="promptPresetSelect">Промпт для распознавания</label>
-                    <select id="promptPresetSelect"
-                        style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;">
+                    <select id="promptPresetSelect" class="input-control">
                         <option value="none">Без промпта</option>
                         <option value="ru">Универсальный (русский)</option>
                         <option value="en">Универсальный (английский)</option>
@@ -46,73 +42,66 @@
                 </div>
             </div>
 
-            <!-- Блок загрузки и транскрибации -->
-            <div class="row" style="margin-top:10px;">
+            <div class="row mt-sm">
                 <input type="file" id="fileInput" accept="audio/*,video/*" />
                 <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
             </div>
-            <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и
-                распознать речь локально.</p>
+            <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и распознать речь локально.</p>
             <div class="status" id="transcribeStatus"></div>
-            <h3 style="margin-top:16px;">Префикс HR-подсказки</h3>
-            <input id="hrPrefix" type="text" placeholder="Например: Нейро-HR"
-                style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;" />
+
+            <h3 class="mt-lg">Префикс HR-подсказки</h3>
+            <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
             <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
-            <h3 style="margin-top:16px;">Закреплённый контекст</h3>
+
+            <h3 class="mt-lg">Закреплённый контекст</h3>
             <textarea id="contextText" placeholder="Текст, который будет добавляться к каждому запросу…"></textarea>
             <div class="muted" id="contextStats">Символы: 0 • Токены≈ 0</div>
-            <div class="buttons" style="margin-top:8px;">
+            <div class="buttons mt-sm">
                 <button class="secondary" id="btnSaveContext">Сохранить контекст</button>
                 <button class="secondary" id="btnPinFromPrompt">Из запроса → контекст</button>
                 <button class="warn" id="btnClearPinnedContext">Очистить контекст</button>
             </div>
-            <div class="muted" id="contextStatus"></div>
-            <h3 style="margin-top:16px;">Критерии оценки</h3>
+            <div class="status" id="contextStatus"></div>
+
+            <h3 class="mt-lg">Критерии оценки</h3>
             <p class="muted">Загрузите таблицу критериев (CSV/XLSX/Google Sheets) или извлеките их из закреплённого контекста. Критерии сохраняются в рамках текущей сессии.</p>
-            <div class="row" style="margin-top:10px;">
+            <div class="row mt-sm">
                 <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
                 <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
             </div>
-            <div class="row" style="margin-top:8px;">
-                <input id="googleSheetInput" type="text" placeholder="ID или ссылка на Google Sheets"
-                    style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;" />
+            <div class="row mt-sm">
+                <input id="googleSheetInput" type="text" class="input-control" placeholder="ID или ссылка на Google Sheets" />
                 <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google Sheets</button>
             </div>
-            <div class="buttons" style="margin-top:8px;">
+            <div class="buttons mt-sm">
                 <button class="secondary" id="btnCriteriaFromContext" type="button">Из контекста</button>
                 <button class="secondary" id="btnClearCriteria" type="button">Очистить критерии</button>
             </div>
-            <div class="muted" id="criteriaStatus"></div>
+            <div class="status" id="criteriaStatus"></div>
             <ol id="criteriaList" class="criteria-list"></ol>
-            <div class="status" id="budgetStats" style="margin-top:8px;">Входные токены: 0 • Резерв на ответ: — • Лимит
-                контекста: —</div>
-
-            <!-- <p class="muted">Совет: формулируйте задачу конкретно.</p> -->
+            <div class="status mt-sm" id="budgetStats">Входные токены: 0 • Резерв на ответ: — • Лимит контекста: —</div>
             <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
-        </section>
+        </lgpt-card>
 
-        <section class="card">
-            <h3>Ответ</h3>
+        <lgpt-card title="Ответ" data-card="answer">
             <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
-            <div class="buttons" style="margin-top:10px;">
+            <div class="buttons mt-sm">
                 <button class="secondary" id="btnCopy">Скопировать ответ</button>
                 <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
             </div>
-        </section>
+        </lgpt-card>
 
-        <section class="card timeline-card">
-            <h3>Таймлайн</h3>
+        <lgpt-card title="Таймлайн" data-card="timeline">
             <div id="timelineLegend" class="muted timeline-legend"></div>
             <div id="timelineContainer" class="timeline-grid"></div>
-        </section>
+        </lgpt-card>
     </main>
 
-    <!-- Модалка истории -->
-    <div class="overlay" id="overlay">
-        <div class="modal" style="max-height: 80vh; overflow-y: auto;">
+    <div class="overlay" id="overlay" role="dialog" aria-modal="true">
+        <div class="modal modal--history">
             <h3>История (localStorage)</h3>
             <div id="historyList"></div>
-            <div class="buttons" style="margin-top:10px;">
+            <div class="buttons mt-sm">
                 <button id="btnCloseModal">Закрыть</button>
                 <button class="warn" id="btnClearStorage">Очистить localStorage</button>
             </div>
@@ -120,758 +109,6 @@
         </div>
     </div>
 
-    <script>
-        const API_BASE = "http://127.0.0.1:8000";
-        const el = (id) => document.getElementById(id);
-        const historyKey = "localgpt_history_v1";
-        // Персистентная сессия для памяти на бэкенде
-        const sessionKey = "localgpt_session_id";
-        let sessionId = localStorage.getItem(sessionKey);
-        if (!sessionId) {
-            sessionId = "sess_" + Math.random().toString(36).slice(2);
-            localStorage.setItem(sessionKey, sessionId);
-        }
-
-        const modelSelect = el("modelSelect");
-        const modelKey = "localgpt_whisper_model_v1";
-        try {
-            const saved = localStorage.getItem(modelKey);
-            if (saved && modelSelect) modelSelect.value = saved;
-        } catch { }
-        modelSelect?.addEventListener("change", () => {
-            try { localStorage.setItem(modelKey, modelSelect.value); } catch { }
-        });
-        const promptPresetSelect = el("promptPresetSelect");
-
-        // UI elements
-        const promptEl = el("prompt");
-        const answerEl = el("answer");
-        const btnSend = el("btnSend");
-        const btnCopy = el("btnCopy");
-        const btnClearPrompt = el("btnClearPrompt");
-        const btnClearAnswer = el("btnClearAnswer");
-        const btnHistory = el("btnHistory");
-        const overlay = el("overlay");
-        const btnCloseModal = el("btnCloseModal");
-        const btnClearStorage = el("btnClearStorage");
-        const historyList = el("historyList");
-        const healthStatus = el("healthStatus");
-
-        // Новые элементы для транскрибации
-        const fileInput = el("fileInput");
-        const btnTranscribe = el("btnTranscribe");
-        const transcribeStatus = el("transcribeStatus");
-        const timelineContainer = el("timelineContainer");
-        const timelineLegend = el("timelineLegend");
-
-        const transcribeBusyState = {
-            defaultLabel: null
-        };
-
-        // Контекст (закрепляемый)
-        const contextText = el("contextText");
-        const btnSaveContext = el("btnSaveContext");
-        const btnPinFromPrompt = el("btnPinFromPrompt");
-        const btnClearPinnedContext = el("btnClearPinnedContext");
-        const contextStatus = el("contextStatus");
-        const pinnedContextKey = "localgpt_pinned_context_v1";
-        const hrPrefixInput = el("hrPrefix");
-        const hrPrefixKey = "localgpt_hr_prefix_v1";
-        const DEFAULT_HR_PREFIX = "Нейро-HR";
-        const criteriaFileInput = el("criteriaFile");
-        const btnLoadCriteriaFile = el("btnLoadCriteriaFile");
-        const btnLoadCriteriaSheet = el("btnLoadCriteriaSheet");
-        const btnCriteriaFromContext = el("btnCriteriaFromContext");
-        const btnClearCriteria = el("btnClearCriteria");
-        const googleSheetInput = el("googleSheetInput");
-        const criteriaStatus = el("criteriaStatus");
-        const criteriaList = el("criteriaList");
-        const criteriaStorageKey = "localgpt_criteria_list_v1";
-        const MAX_CRITERIA = 200;
-
-        let currentTranscript = "";
-        let currentCriteria = [];
-        let criteriaBusy = false;
-
-        // --- Limits received from backend ---
-        let LIMITS = { num_ctx: null, max_tokens: null };
-
-        // --- Token estimation ---
-        function estTokens(s) { return Math.ceil(((s || '').length) / 4.2); }
-
-        function recalcStats() {
-            const prompt = (el("prompt")?.value || "");
-            const ctx = (el("contextText")?.value || "");
-            const pt = estTokens(prompt);
-            const ct = estTokens(ctx);
-            const inputToks = pt + ct;
-
-            const ps = el("promptStats");
-            if (ps) ps.textContent = `Символы: ${prompt.length} • Токены≈ ${pt}`;
-            const cs = el("contextStats");
-            if (cs) cs.textContent = `Символы: ${ctx.length} • Токены≈ ${ct}`;
-
-            const numCtx = LIMITS.num_ctx ?? "—";
-            const maxOut = LIMITS.max_tokens ?? "—";
-            const bs = el("budgetStats");
-            if (bs) {
-                let line = `Входные токены: ${inputToks} • Резерв на ответ: ${maxOut} • Лимит контекста: ${numCtx}`;
-                if (LIMITS.num_ctx && LIMITS.max_tokens) {
-                    const total = inputToks + LIMITS.max_tokens;
-                    if (total > LIMITS.num_ctx) {
-                        line += " • ⚠️ не влезет — сократите вход или ответ";
-                        bs.style.color = "#f87171"; // красный
-                    } else if (total > 0.9 * LIMITS.num_ctx) {
-                        line += " • ⚠️ на грани — лучше сократить";
-                        bs.style.color = "#fbbf24"; // жёлтый
-                    } else {
-                        bs.style.color = ""; // по умолчанию
-                    }
-                }
-                bs.textContent = line;
-            }
-        }
-
-        function normalizeCriterion(value) {
-            if (typeof value !== "string") {
-                value = value == null ? "" : String(value);
-            }
-            return value
-                .replace(/[\u200b\u200c\u200d]/g, "")
-                .trim()
-                .replace(/^[-•*0-9\)\].]+\s*/u, "")
-                .replace(/\s+/g, " ")
-                .trim();
-        }
-
-        function updateCriteriaStatus(message, { tone = "info" } = {}) {
-            if (!criteriaStatus) return;
-            criteriaStatus.textContent = message || "";
-            if (tone === "error") {
-                criteriaStatus.style.color = "#f87171";
-            } else if (tone === "success") {
-                criteriaStatus.style.color = "#bbf7d0";
-            } else {
-                criteriaStatus.style.color = "";
-            }
-        }
-
-        function renderCriteria(list = currentCriteria) {
-            if (!criteriaList) return;
-            const items = Array.isArray(list) ? list : [];
-            if (!items.length) {
-                criteriaList.innerHTML = '<li class="criteria-empty muted">Критерии не выбраны.</li>';
-                return;
-            }
-            const html = items.map((item, idx) => `
-                <li>
-                    <span class="criteria-index">${idx + 1}.</span>
-                    <span class="criteria-text">${sanitizeHTML(item)}</span>
-                </li>
-            `).join("");
-            criteriaList.innerHTML = html;
-        }
-
-        function persistCriteria() {
-            try {
-                if (currentCriteria.length) {
-                    localStorage.setItem(criteriaStorageKey, JSON.stringify(currentCriteria));
-                } else {
-                    localStorage.removeItem(criteriaStorageKey);
-                }
-            } catch { }
-        }
-
-        function setCriteria(list, { persist = true, source = "" } = {}) {
-            const seen = new Set();
-            const items = [];
-            (Array.isArray(list) ? list : []).forEach((value) => {
-                const normalized = normalizeCriterion(value);
-                if (!normalized) return;
-                const key = normalized.toLowerCase();
-                if (seen.has(key)) return;
-                seen.add(key);
-                if (items.length < MAX_CRITERIA) {
-                    items.push(normalized);
-                }
-            });
-            currentCriteria = items;
-            renderCriteria(currentCriteria);
-            if (persist) {
-                persistCriteria();
-            }
-            if (currentCriteria.length) {
-                const suffix = source ? ` • источник: ${source}` : "";
-                updateCriteriaStatus(`Критериев: ${currentCriteria.length}${suffix}`, { tone: "success" });
-            } else {
-                updateCriteriaStatus("Критерии не выбраны.");
-            }
-        }
-
-        function loadCriteriaFromStorage() {
-            try {
-                const raw = localStorage.getItem(criteriaStorageKey);
-                if (!raw) {
-                    renderCriteria();
-                    updateCriteriaStatus("Критерии не выбраны.");
-                    return;
-                }
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed) && parsed.length) {
-                    setCriteria(parsed, { persist: false, source: "localStorage" });
-                } else {
-                    renderCriteria();
-                    updateCriteriaStatus("Критерии не выбраны.");
-                }
-            } catch {
-                renderCriteria();
-                updateCriteriaStatus("Критерии не выбраны.");
-            }
-        }
-
-        function getHrPrefix() {
-            const raw = hrPrefixInput?.value ?? "";
-            const trimmed = raw.trim();
-            return trimmed || DEFAULT_HR_PREFIX;
-        }
-
-        const speakerLabels = {
-            hr: "HR",
-            candidate: "Кандидат",
-            unknown: "Собеседник",
-        };
-
-        function formatTime(seconds) {
-            if (!Number.isFinite(seconds)) return "0:00";
-            const safe = Math.max(0, Number(seconds) || 0);
-            const total = Math.round(safe);
-            const hours = Math.floor(total / 3600);
-            const minutes = Math.floor((total % 3600) / 60);
-            const secs = total % 60;
-            const mm = minutes.toString().padStart(2, "0");
-            const ss = secs.toString().padStart(2, "0");
-            if (hours > 0) {
-                return `${hours}:${mm}:${ss}`;
-            }
-            return `${mm}:${ss}`;
-        }
-
-        function sanitizeHTML(str) {
-            return String(str || "")
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#39;");
-        }
-
-        function renderTimeline(items = []) {
-            const hasItems = Array.isArray(items) && items.length > 0;
-            const containers = [timelineContainer].filter(Boolean);
-            if (!containers.length) return;
-
-            if (!hasItems) {
-                containers.forEach((node) => {
-                    node.innerHTML = '<div class="timeline-empty muted">Таймлайн появится после транскрибации.</div>';
-                });
-                return;
-            }
-
-            const html = items.map((item) => {
-                const role = (item?.speaker || "unknown").toLowerCase();
-                const label = speakerLabels[role] || role.toUpperCase();
-                const start = formatTime(item?.start);
-                const end = formatTime(item?.end ?? item?.start);
-                const text = sanitizeHTML(item?.text || "");
-                return `
-                    <div class="timeline-row timeline-${role}">
-                        <div class="timeline-speaker">${label}</div>
-                        <div class="timeline-time">${start}–${end}</div>
-                        <div class="timeline-text">${text}</div>
-                    </div>
-                `;
-            }).join("");
-
-            containers.forEach((node) => {
-                node.innerHTML = html;
-            });
-        }
-
-        function renderRoleLegend(keywords) {
-            const legends = [timelineLegend].filter(Boolean);
-            if (!legends.length) return;
-
-            if (!keywords || typeof keywords !== "object") {
-                legends.forEach((node) => {
-                    node.textContent = "Словарь ролей: по умолчанию (HR / Кандидат).";
-                });
-                return;
-            }
-
-            const parts = Object.entries(keywords)
-                .filter(([role]) => typeof role === "string")
-                .map(([role, words]) => {
-                    const label = speakerLabels[role] || role.toUpperCase();
-                    const list = Array.isArray(words) ? words.join(", ") : "";
-                    return `${label}: ${list}`.trim();
-                })
-                .filter(Boolean);
-
-            const text = parts.length
-                ? `Словарь ролей • ${parts.join(" • ")}`
-                : "Словарь ролей: по умолчанию (HR / Кандидат).";
-
-            legends.forEach((node) => { node.textContent = text; });
-        }
-
-        function parseGoogleSheetInput(raw) {
-            const value = (raw || "").trim();
-            if (!value) return null;
-            try {
-                const url = new URL(value);
-                if (url.hostname.includes("docs.google.com")) {
-                    const idMatch = url.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-                    const gidMatch = url.searchParams.get("gid") || url.hash.match(/gid=(\d+)/)?.[1] || "";
-                    if (idMatch) {
-                        return { sheetId: idMatch[1], gid: gidMatch };
-                    }
-                }
-            } catch { }
-            const idMatch = value.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-            if (idMatch) {
-                const gidMatch = value.match(/gid=(\d+)/);
-                return { sheetId: idMatch[1], gid: gidMatch ? gidMatch[1] : "" };
-            }
-            return { sheetId: value, gid: "" };
-        }
-
-        async function requestCriteriaFromBackend({ file, googleSheetId, googleGid, rawText }) {
-            if (criteriaBusy) return;
-            criteriaBusy = true;
-            updateCriteriaStatus("Загружаю критерии…");
-            try {
-                const fd = new FormData();
-                fd.append("session_id", sessionId);
-                if (file) {
-                    fd.append("file", file, file.name || "criteria");
-                }
-                if (googleSheetId) {
-                    fd.append("google_sheet_id", googleSheetId);
-                }
-                if (googleGid) {
-                    fd.append("google_gid", googleGid);
-                }
-                if (rawText) {
-                    fd.append("raw_text", rawText);
-                }
-                const resp = await fetch(`${API_BASE}/criteria/parse`, {
-                    method: "POST",
-                    body: fd,
-                });
-                let data = null;
-                try {
-                    data = await resp.json();
-                } catch {
-                    data = null;
-                }
-                if (!resp.ok) {
-                    const detail = data?.detail;
-                    const message = typeof detail === "string"
-                        ? detail
-                        : detail?.message || `HTTP ${resp.status}`;
-                    throw new Error(message);
-                }
-                const criteria = Array.isArray(data?.criteria) ? data.criteria : [];
-                const rawSource = typeof data?.source === "string" ? data.source : "backend";
-                const source = ({
-                    "file:csv": "CSV",
-                    "file:xlsx": "XLSX",
-                    "google_sheets": "Google Sheets",
-                    "text": "контекст",
-                })[rawSource] || (rawSource === "backend" ? "" : rawSource);
-                setCriteria(criteria, { source });
-            } catch (error) {
-                const message = error?.message || "Не удалось загрузить критерии";
-                updateCriteriaStatus(`❌ ${message}`, { tone: "error" });
-                throw error;
-            } finally {
-                criteriaBusy = false;
-            }
-        }
-
-        renderTimeline();
-        renderRoleLegend();
-        renderCriteria();
-        updateCriteriaStatus("Критерии не выбраны.");
-        loadCriteriaFromStorage();
-
-        function debounce(fn, ms = 150) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); } }
-
-        // --- Health check ---
-        async function checkHealth() {
-            try {
-                const r = await fetch(`${API_BASE}/health`, { method: "GET" });
-                const j = await r.json();
-                healthStatus.textContent = `сервер: OK • модель: ${j.model}`;
-                if (j.num_ctx) LIMITS.num_ctx = Number(j.num_ctx) || null;
-                if (j.max_tokens) LIMITS.max_tokens = Number(j.max_tokens) || null;
-            } catch (e) {
-                healthStatus.textContent = "сервер недоступен";
-            } finally {
-                recalcStats();
-            }
-        }
-
-        // --- History helpers ---
-        function loadHistory() {
-            try {
-                const raw = localStorage.getItem(historyKey);
-                return raw ? JSON.parse(raw) : [];
-            } catch { return []; }
-        }
-        function saveHistory(items) {
-            localStorage.setItem(historyKey, JSON.stringify(items));
-        }
-        function addToHistory(q, a) {
-            const items = loadHistory();
-            items.unshift({ ts: Date.now(), q, a });
-            saveHistory(items);
-        }
-        function tsFmt(ts) {
-            const d = new Date(ts);
-            return d.toLocaleString();
-        }
-        function renderHistory() {
-            const items = loadHistory();
-            historyList.innerHTML = items.length
-                ? items.map(item => `
-              <div class="history-item" data-ts="${item.ts}">
-                <div class="muted" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                  <span>${tsFmt(item.ts)}</span>
-                  <button class="secondary btn-delete" data-ts="${item.ts}" title="Удалить запись">Удалить</button>
-                </div>
-                <strong>Запрос:</strong>
-                <pre>${escapeHtml(item.q)}</pre>
-                <strong>Ответ:</strong>
-                <pre>${escapeHtml(item.a)}</pre>
-              </div>
-            `).join("")
-                : '<div class="muted">История пуста.</div>';
-        }
-
-        function deleteFromHistory(ts) {
-            const items = loadHistory();
-            const filtered = items.filter(it => it.ts !== ts);
-            saveHistory(filtered);
-        }
-        function escapeHtml(s) {
-            return (s ?? "").toString()
-                .replaceAll("&", "&amp;")
-                .replaceAll("<", "&lt;")
-                .replaceAll(">", "&gt;");
-        }
-
-        // --- Pinned context helpers ---
-        function updateContextStatus() {
-            const pc = (localStorage.getItem(pinnedContextKey) || "").trim();
-            const len = pc.length;
-            contextStatus.textContent = len ? `Контекст закреплён (${len} символов)` : "Контекст не закреплён";
-        }
-
-        // --- Chat call ---
-        async function sendPrompt() {
-            const rawQuery = promptEl.value || "";
-            const finalQuery = rawQuery.trim() || "проанализируй";
-
-            setBusy(true);
-            answerEl.value = "Думаю…";
-            try {
-                const payload = { query: finalQuery, session_id: sessionId };
-                try {
-                    const pc = (localStorage.getItem(pinnedContextKey) || "").trim();
-                    if (pc) payload.context = pc;
-                } catch { }
-                const transcript = currentTranscript.trim();
-                if (transcript) {
-                    payload.transcript = transcript;
-                }
-                if (currentCriteria.length) {
-                    payload.criteria = currentCriteria;
-                }
-                const r = await fetch(`${API_BASE}/chat`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                });
-                if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                const j = await r.json();
-                const text = j.reply ?? "";
-                answerEl.value = text;
-                addToHistory(finalQuery, text);
-
-                promptEl.value = "";
-                recalcStats();
-            } catch (e) {
-                answerEl.value = `Ошибка: ${e.message || e}`;
-            } finally {
-                setBusy(false);
-            }
-        }
-
-        function setBusy(b) {
-            btnSend.disabled = b;
-            btnSend.textContent = b ? "Отправка…" : "Отправить";
-        }
-
-        function setTranscribeBusy(isBusy, { label } = {}) {
-            if (btnTranscribe) {
-                const defaultLabel = transcribeBusyState.defaultLabel
-                    || btnTranscribe.dataset.defaultLabel
-                    || btnTranscribe.textContent
-                    || "Транскрибировать файл";
-                transcribeBusyState.defaultLabel = defaultLabel;
-                btnTranscribe.dataset.defaultLabel = defaultLabel;
-
-                btnTranscribe.disabled = Boolean(isBusy);
-                btnTranscribe.textContent = label
-                    || (isBusy ? "Транскрибирую…" : defaultLabel);
-            }
-
-            if (fileInput) fileInput.disabled = Boolean(isBusy);
-        }
-
-        // --- Транскрибация файла ---
-        async function transcribeFile() {
-            const f = fileInput?.files?.[0];
-            if (!f) {
-                transcribeStatus.textContent = "выберите аудио/видео файл";
-                return;
-            }
-
-            setTranscribeBusy(true);
-            try {
-                transcribeStatus.textContent = "транскрибирую…";
-                renderTimeline();
-                renderRoleLegend();
-
-                const fd = new FormData();
-                fd.append("file", f, f.name);
-                const ms = (modelSelect?.value || "medium").trim();
-                fd.append("model", ms);
-                const preset = (promptPresetSelect?.value || "none").trim();
-                fd.append("prompt_preset", preset);
-                fd.append("session_id", sessionId);
-
-                const r = await fetch(`${API_BASE}/transcribe`, {
-                    method: "POST",
-                    body: fd
-                });
-
-                let j = null;
-                try {
-                    j = await r.json();
-                } catch {
-                    j = null;
-                }
-
-                if (!r.ok) {
-                    // Специальный случай: нет локальной модели Whisper
-                    const detail = j && j.detail ? j.detail : null;
-                    if (detail && detail.code === "whisper_model_missing") {
-                        const mdl = detail.model || ms;
-                        const msg =
-                            `Модель Whisper "${mdl}" не найдена локально.\n\n` +
-                            `Скачайте или скопируйте её в каталог ollama_models/whisper ` +
-                            `внутри проекта LocalGPT и повторите попытку.`;
-                        alert(msg);
-                        transcribeStatus.textContent = `❌ ${msg}`;
-                        return;
-                    }
-
-                    throw new Error(`HTTP ${r.status}`);
-                }
-
-                const text = (j && (j.text || j.transcript || j.result)) || "";
-                const timeline = Array.isArray(j?.timeline) ? j.timeline : [];
-                const roleKeywords = j?.role_keywords;
-                if (!text) throw new Error("пустая транскрипция");
-
-                currentTranscript = text;
-                const hrPrefix = getHrPrefix();
-                promptEl.value = `${hrPrefix}. Проанализируй собеседование по критериям.`;
-                promptEl.focus();
-
-                renderTimeline(timeline);
-                renderRoleLegend(roleKeywords);
-
-                transcribeStatus.textContent = `✅ Транскрипция готова — модель: ${ms}, символов: ${text.length}`;
-                recalcStats();
-            } catch (e) {
-                transcribeStatus.textContent = `❌ ошибка: ${e.message || e}`;
-            } finally {
-                setTranscribeBusy(false);
-            }
-        }
-
-        // --- Modal controls ---
-        function openHistory() {
-            renderHistory();
-            overlay.style.display = "flex";
-        }
-        function closeHistory() {
-            overlay.style.display = "none";
-        }
-
-        // --- Wire events ---
-        promptEl.addEventListener("input", debounce(recalcStats, 100));
-        contextText.addEventListener("input", debounce(recalcStats, 100));
-        btnSend.addEventListener("click", sendPrompt);
-
-        // Enter — отправка; Shift+Enter — новая строка
-        promptEl.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendPrompt();
-            }
-        });
-
-        btnCopy.addEventListener("click", async () => {
-            try { await navigator.clipboard.writeText(answerEl.value || ""); }
-            catch { }
-        });
-        btnClearPrompt.addEventListener("click", () => promptEl.value = "");
-        btnClearAnswer.addEventListener("click", () => answerEl.value = "");
-        btnHistory.addEventListener("click", openHistory);
-        btnCloseModal.addEventListener("click", closeHistory);
-        overlay.addEventListener("click", (e) => { if (e.target === overlay) closeHistory(); });
-
-        document.addEventListener("keydown", (e) => {
-            if (e.key !== "Escape") return;
-            if (overlay?.style.display === "flex") closeHistory();
-        });
-        btnClearStorage.addEventListener("click", () => {
-            localStorage.removeItem(historyKey);
-            renderHistory();
-        });
-
-        historyList.addEventListener("click", (e) => {
-            const btn = e.target.closest(".btn-delete");
-            if (!btn) return;
-            const ts = Number(btn.dataset.ts);
-            if (!Number.isFinite(ts)) return;
-            // Подтверждение, чтобы не удалить случайно
-            if (!confirm("Удалить эту запись из истории?")) return;
-            deleteFromHistory(ts);
-            renderHistory();
-        });
-
-        // Контекст: инициализация и события
-        try {
-            const pcInit = localStorage.getItem(pinnedContextKey) || "";
-            if (contextText) contextText.value = pcInit;
-        } catch { }
-        updateContextStatus();
-
-        btnSaveContext?.addEventListener("click", () => {
-            try {
-                const val = (contextText?.value || "").trim();
-                localStorage.setItem(pinnedContextKey, val);
-                updateContextStatus();
-            } catch { }
-        });
-        btnPinFromPrompt?.addEventListener("click", () => {
-            const val = (promptEl?.value || "").trim();
-            try {
-                if (contextText) contextText.value = val;
-                localStorage.setItem(pinnedContextKey, val);
-                updateContextStatus();
-            } catch { }
-        });
-        btnClearPinnedContext?.addEventListener("click", () => {
-            try {
-                localStorage.removeItem(pinnedContextKey);
-                if (contextText) contextText.value = "";
-                updateContextStatus();
-            } catch { }
-        });
-
-        btnLoadCriteriaFile?.addEventListener("click", async () => {
-            const file = criteriaFileInput?.files?.[0];
-            if (!file) {
-                updateCriteriaStatus("Выберите CSV или XLSX файл для загрузки.", { tone: "error" });
-                return;
-            }
-            try {
-                await requestCriteriaFromBackend({ file });
-            } catch { }
-            if (criteriaFileInput) {
-                criteriaFileInput.value = "";
-            }
-        });
-
-        btnLoadCriteriaSheet?.addEventListener("click", async () => {
-            const raw = googleSheetInput?.value || "";
-            const parsed = parseGoogleSheetInput(raw);
-            if (!parsed || !parsed.sheetId) {
-                updateCriteriaStatus("Укажите ID или ссылку на Google Sheets.", { tone: "error" });
-                return;
-            }
-            try {
-                await requestCriteriaFromBackend({
-                    googleSheetId: parsed.sheetId,
-                    googleGid: parsed.gid,
-                });
-            } catch { }
-        });
-
-        googleSheetInput?.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                btnLoadCriteriaSheet?.click();
-            }
-        });
-
-        btnCriteriaFromContext?.addEventListener("click", async () => {
-            const ctx = (contextText?.value || "").trim();
-            if (!ctx) {
-                updateCriteriaStatus("Контекст пустой — нечего извлекать.", { tone: "error" });
-                return;
-            }
-            try {
-                await requestCriteriaFromBackend({ rawText: ctx });
-            } catch { }
-        });
-
-        btnClearCriteria?.addEventListener("click", () => {
-            setCriteria([], { persist: true });
-        });
-
-        // Префикс HR-подсказки
-        try {
-            const savedPrefix = localStorage.getItem(hrPrefixKey);
-            if (hrPrefixInput) {
-                hrPrefixInput.value = savedPrefix ? savedPrefix : DEFAULT_HR_PREFIX;
-            }
-        } catch {
-            if (hrPrefixInput) hrPrefixInput.value = DEFAULT_HR_PREFIX;
-        }
-
-        hrPrefixInput?.addEventListener("input", debounce(() => {
-            try {
-                const value = hrPrefixInput.value.trim() || DEFAULT_HR_PREFIX;
-                localStorage.setItem(hrPrefixKey, value);
-            } catch { }
-        }, 200));
-
-        // Кнопка транскрипции
-        btnTranscribe?.addEventListener("click", (event) => {
-            event?.preventDefault();
-            transcribeFile();
-        });
-
-        // Init
-        checkHealth();
-        recalcStats();
-    </script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>
