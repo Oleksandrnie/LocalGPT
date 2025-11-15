@@ -55,34 +55,42 @@
                         <h4>Работа с транскриптами</h4>
                         <div class="field-group">
                             <label class="muted" for="manualTranscriptInput">Вставьте готовый текст транскрипта</label>
-                            <textarea id="manualTranscriptInput" class="input-control" placeholder="Вставьте или отредактируйте текст транскрипта…"></textarea>
+                            <textarea id="manualTranscriptInput" class="input-control"
+                                placeholder="Вставьте или отредактируйте текст транскрипта…"></textarea>
                             <div class="buttons mt-xs">
-                                <button class="secondary" id="btnUseManualTranscript" type="button">Использовать текст</button>
-                                <button class="secondary" id="btnSaveManualTranscript" type="button">Сохранить и использовать</button>
+                                <button class="secondary" id="btnUseManualTranscript" type="button">Использовать
+                                    текст</button>
+                                <button class="secondary" id="btnSaveManualTranscript" type="button">Сохранить и
+                                    использовать</button>
                             </div>
                         </div>
                         <div class="status" id="transcriptStatus"></div>
                         <div id="transcriptList" class="transcript-list muted">Сохранённых транскриптов пока нет.</div>
                     </section>
-                    <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу критериев.</p>
+                    <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу
+                        критериев.</p>
                     <div class="row mt-sm">
                         <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
                         <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
                     </div>
                     <div class="row mt-sm">
-                        <input id="googleSheetInput" type="text" class="input-control" placeholder="ID или ссылка на Google Sheets" />
-                        <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google Sheets</button>
+                        <input id="googleSheetInput" type="text" class="input-control"
+                            placeholder="ID или ссылка на Google Sheets" />
+                        <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google
+                            Sheets</button>
                     </div>
                     <hr class="collapse-divider" />
                     <div class="field-group">
                         <label class="muted" for="hrPrefix">Префикс HR-подсказки</label>
                         <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
-                        <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
+                        <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в
+                            вашем браузере.</p>
                     </div>
                     <div class="field-group">
                         <label class="muted" for="quickCriterionInput">Быстро добавить критерий</label>
                         <div class="quick-criteria">
-                            <input id="quickCriterionInput" type="text" class="input-control" placeholder="Например: Необходим опыт продаж от 3 лет" />
+                            <input id="quickCriterionInput" type="text" class="input-control"
+                                placeholder="Например: Необходим опыт продаж от 3 лет" />
                             <button class="secondary" id="btnQuickAddCriterion" type="button">Добавить</button>
                         </div>
                         <p class="muted">Критерий сразу появится в списке ниже и сохранится в рамках сессии.</p>
@@ -90,7 +98,8 @@
                 </div>
             </details>
             <h3 class="mt-lg">Критерии оценки</h3>
-            <p class="muted">Добавьте критерии вручную или загрузите их из файла/таблицы. Критерии сохраняются в рамках текущей сессии.</p>
+            <p class="muted">Добавьте критерии вручную или загрузите их из файла/таблицы. Критерии сохраняются в рамках
+                текущей сессии.</p>
             <div class="buttons mt-sm">
                 <button class="secondary" id="btnClearCriteria" type="button">Очистить критерии</button>
             </div>
@@ -102,33 +111,38 @@
 
         <lgpt-card title="Результаты" data-card="results">
             <div class="tabs" role="tablist" aria-label="Результаты анализа">
-                <button class="tab is-active" type="button" id="tab-answer" data-tab-target="answer" role="tab" aria-selected="true" aria-controls="panel-answer">Ответ</button>
-                <button class="tab" type="button" id="tab-timeline" data-tab-target="timeline" role="tab" aria-selected="false" aria-controls="panel-timeline">Таймлайн</button>
+                <button class="tab is-active" type="button" id="tab-answer" data-tab-target="answer" role="tab"
+                    aria-selected="true" aria-controls="panel-answer">Ответ</button>
+                <button class="tab" type="button" id="tab-timeline" data-tab-target="timeline" role="tab"
+                    aria-selected="false" aria-controls="panel-timeline">Таймлайн</button>
             </div>
             <div class="tab-panels">
-                <section class="tab-panel is-active" id="panel-answer" data-panel="answer" role="tabpanel" aria-labelledby="tab-answer">
+                <section class="tab-panel is-active" id="panel-answer" data-panel="answer" role="tabpanel"
+                    aria-labelledby="tab-answer">
                     <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
                     <div class="buttons mt-sm">
                         <button class="secondary" id="btnCopy">Скопировать ответ</button>
                         <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
                     </div>
                 </section>
-                <section class="tab-panel" id="panel-timeline" data-panel="timeline" role="tabpanel" aria-labelledby="tab-timeline" hidden>
-                    <div class="timeline-toolbar">
-                        <div class="timeline-names">
+                <section class="tab-panel" id="panel-timeline" data-panel="timeline" role="tabpanel"
+                    aria-labelledby="tab-timeline" hidden>
+                    <!-- <div class="timeline-toolbar"> -->
+                    <!-- <div class="timeline-names">
                             <label class="timeline-name-field">Имя HR
                                 <input id="timelineHrName" data-role="hr" type="text" class="input-control" placeholder="Например: Юлия, third_party" />
                             </label>
                             <label class="timeline-name-field">Имя кандидата
                                 <input id="timelineCandidateName" data-role="candidate" type="text" class="input-control" placeholder="Например: Юрий" />
                             </label>
-                        </div>
-                        <div class="timeline-actions">
+                        </div> -->
+                    <!-- <div class="timeline-actions">
                             <button class="secondary" id="btnEditTimeline" type="button">Редактировать таймлайн</button>
-                            <button class="secondary" id="btnSaveTimeline" type="button" hidden>Сохранить изменения</button>
+                            <button class="secondary" id="btnSaveTimeline" type="button" hidden>Сохранить
+                                изменения</button>
                             <button class="secondary" id="btnCancelTimeline" type="button" hidden>Отмена</button>
-                        </div>
-                    </div>
+                        </div> -->
+                    <!-- </div> -->
                     <div id="timelineLegend" class="muted timeline-legend"></div>
                     <div id="timelineNotice" class="status timeline-notice"></div>
                     <div id="timelineContainer" class="timeline-grid"></div>
