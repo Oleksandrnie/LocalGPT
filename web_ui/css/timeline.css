@@ -1,0 +1,119 @@
+.timeline-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.timeline-legend {
+    margin: 0;
+}
+
+.timeline-notice {
+    margin: var(--space-xs) 0 var(--space-sm);
+}
+
+.timeline-grid {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-muted);
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.timeline-grid--text .timeline-row {
+    grid-template-columns: minmax(90px, 140px) 1fr;
+}
+
+.timeline-grid--text .timeline-row--editing {
+    grid-template-columns: minmax(120px, 160px) 1fr;
+}
+
+.timeline-grid--text .timeline-time {
+    display: none;
+}
+
+.timeline-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.timeline-names {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: flex-end;
+}
+
+.timeline-name-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.timeline-name-field input {
+    min-width: 220px;
+}
+
+.timeline-actions {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: flex-end;
+}
+
+.timeline-empty {
+    padding: var(--space-md);
+}
+
+.timeline-row {
+    display: grid;
+    grid-template-columns: minmax(70px, 90px) minmax(90px, 110px) 1fr;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    border-bottom: 1px solid #1e293b;
+}
+
+.timeline-row:last-child {
+    border-bottom: none;
+}
+
+.timeline-speaker {
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.timeline-row--editing .timeline-speaker {
+    text-transform: none;
+}
+
+.timeline-row--editing select {
+    width: 100%;
+}
+
+.timeline-row--editing textarea {
+    width: 100%;
+    min-height: 72px;
+    resize: vertical;
+}
+
+.timeline-time {
+    font-variant-numeric: tabular-nums;
+    color: #cbd5f5;
+}
+
+.timeline-text {
+    white-space: pre-wrap;
+    line-height: 1.35;
+}
+
+.timeline-hr .timeline-speaker {
+    color: #38bdf8;
+}
+
+.timeline-candidate .timeline-speaker {
+    color: #facc15;
+}

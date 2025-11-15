@@ -6,7 +6,9 @@ import {
   getHrPrefix,
   getSavedModel,
   loadHistory,
+  loadTranscripts,
   saveHistory,
+  saveTranscripts,
   setHrPrefix,
   setSavedModel,
 } from "./storage.js";
@@ -16,6 +18,7 @@ import { CriteriaManager } from "./criteria.js";
 const DEFAULT_HR_PREFIX = "Нейро-HR";
 
 const LIMITS = { num_ctx: null, max_tokens: null };
+const TRANSCRIPT_LIBRARY_LIMIT = 20;
 
 function estTokens(value) {
   return Math.ceil(((value || "").length) / 4.2);
@@ -73,6 +76,7 @@ const elements = {
   answer: getElement("answer"),
   promptStats: getElement("promptStats"),
   btnSend: getElement("btnSend"),
+  btnStop: getElement("btnStop"),
   btnCopy: getElement("btnCopy"),
   btnClearPrompt: getElement("btnClearPrompt"),
   btnClearAnswer: getElement("btnClearAnswer"),
@@ -85,8 +89,19 @@ const elements = {
   fileInput: getElement("fileInput"),
   btnTranscribe: getElement("btnTranscribe"),
   transcribeStatus: getElement("transcribeStatus"),
+  transcriptStatus: getElement("transcriptStatus"),
+  manualTranscriptInput: getElement("manualTranscriptInput"),
+  btnUseManualTranscript: getElement("btnUseManualTranscript"),
+  btnSaveManualTranscript: getElement("btnSaveManualTranscript"),
+  transcriptList: getElement("transcriptList"),
   timelineContainer: getElement("timelineContainer"),
   timelineLegend: getElement("timelineLegend"),
+  timelineNotice: getElement("timelineNotice"),
+  btnEditTimeline: getElement("btnEditTimeline"),
+  btnSaveTimeline: getElement("btnSaveTimeline"),
+  btnCancelTimeline: getElement("btnCancelTimeline"),
+  timelineHrName: getElement("timelineHrName"),
+  timelineCandidateName: getElement("timelineCandidateName"),
   hrPrefixInput: getElement("hrPrefix"),
   modelSelect: getElement("modelSelect"),
   promptPresetSelect: getElement("promptPresetSelect"),
@@ -107,7 +122,15 @@ const tabPanels = Array.from(document.querySelectorAll("[data-panel]"));
 
 const sessionId = ensureSessionId();
 let currentTranscript = "";
+let currentTimeline = [];
+let originalTimeline = [];
+let timelineEditMode = false;
+let currentRoleKeywords = {};
+let timelineLabels = {};
 const transcribeBusyState = { defaultLabel: null };
+const chatState = { controller: null };
+let activeTranscriptId = null;
+let transcriptLibrary = [];
 
 const criteriaManager = new CriteriaManager({
   listEl: elements.criteriaList,
@@ -152,6 +175,284 @@ function recalcStats() {
   }
 }
 
+function normalizeTimelineItem(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const hasStart = item.start !== undefined && item.start !== null && item.start !== "";
+  const hasEnd = item.end !== undefined && item.end !== null && item.end !== "";
+  const start = hasStart && Number.isFinite(Number(item.start)) ? Number(item.start) : null;
+  const end = hasEnd && Number.isFinite(Number(item.end)) ? Number(item.end) : start;
+  const speaker = (item.speaker || "unknown").toString().trim().toLowerCase() || "unknown";
+  const text = (item.text || "").toString();
+  return { start, end, speaker, text };
+}
+
+function cloneTimeline(items) {
+  return Array.isArray(items) ? items.map((item) => ({ ...item })) : [];
+}
+
+function cloneLabels(source) {
+  if (!source || typeof source !== "object") return {};
+  const result = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof key !== "string") continue;
+    if (typeof value === "string") {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function cloneRoleKeywords(source) {
+  if (!source || typeof source !== "object") return {};
+  const result = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof key !== "string") continue;
+    if (Array.isArray(value)) {
+      result[key] = value.filter((item) => typeof item === "string");
+      continue;
+    }
+    if (typeof value === "string") {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function hasTimelineTiming(items = []) {
+  return items.some((item) => Number.isFinite(item?.start) || Number.isFinite(item?.end));
+}
+
+function buildTextTimelineFromTranscript(transcript) {
+  const text = (transcript || "").toString().trim();
+  if (!text) return [];
+  let chunks = text.split(/\n{2,}/).map((chunk) => chunk.trim()).filter(Boolean);
+  if (chunks.length <= 1) {
+    chunks = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  }
+  return chunks.map((chunk) => ({ start: null, end: null, speaker: "unknown", text: chunk }));
+}
+
+function createTranscriptId() {
+  return `tr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeTranscriptEntry(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const timeline = Array.isArray(entry.timeline)
+    ? entry.timeline.map((item) => normalizeTimelineItem(item)).filter(Boolean)
+    : [];
+  const text = (entry.text || "").toString();
+  const title = (entry.title || "").toString().trim();
+  const ts = Number(entry.ts) || Date.now();
+  const updatedAt = Number(entry.updatedAt) || ts;
+  return {
+    id: typeof entry.id === "string" ? entry.id : createTranscriptId(),
+    title: title || `Транскрипт ${new Date(ts).toLocaleString()}`,
+    text,
+    timeline,
+    roleKeywords: cloneRoleKeywords(entry.roleKeywords),
+    labels: cloneLabels(entry.labels),
+    ts,
+    updatedAt,
+  };
+}
+
+function newTranscriptEntry({ title, text, timeline, roleKeywords, labels }) {
+  return normalizeTranscriptEntry({
+    id: createTranscriptId(),
+    title,
+    text,
+    timeline,
+    roleKeywords,
+    labels,
+    ts: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+function suggestTranscriptTitle({ fileName, manual = false } = {}) {
+  if (fileName && typeof fileName === "string") {
+    return fileName;
+  }
+  const stamp = new Date().toLocaleString();
+  return manual ? `Ручной текст ${stamp}` : `Транскрипт ${stamp}`;
+}
+
+function updateTimelineButtons() {
+  const hasTimeline = currentTimeline.length > 0;
+  if (elements.btnEditTimeline) {
+    elements.btnEditTimeline.hidden = !hasTimeline || timelineEditMode;
+  }
+  if (elements.btnSaveTimeline) {
+    elements.btnSaveTimeline.hidden = !timelineEditMode;
+    elements.btnSaveTimeline.disabled = !timelineEditMode;
+  }
+  if (elements.btnCancelTimeline) {
+    elements.btnCancelTimeline.hidden = !timelineEditMode;
+    elements.btnCancelTimeline.disabled = !timelineEditMode;
+  }
+  if (elements.timelineHrName) {
+    elements.timelineHrName.disabled = !hasTimeline;
+  }
+  if (elements.timelineCandidateName) {
+    elements.timelineCandidateName.disabled = !hasTimeline;
+  }
+}
+
+function updateTimelineNameInputs() {
+  if (elements.timelineHrName) {
+    elements.timelineHrName.value = timelineLabels.hr || "";
+  }
+  if (elements.timelineCandidateName) {
+    elements.timelineCandidateName.value = timelineLabels.candidate || "";
+  }
+}
+
+function updateTimelineLegend() {
+  renderRoleLegend(elements.timelineLegend, currentRoleKeywords, timelineLabels);
+}
+
+function updateTimelineView() {
+  renderTimeline(elements.timelineContainer, currentTimeline, {
+    editable: timelineEditMode,
+    labels: timelineLabels,
+  });
+  updateTimelineNotice();
+}
+
+function updateTimelineNotice() {
+  if (!elements.timelineNotice) return;
+  if (!currentTimeline.length) {
+    updateStatus(elements.timelineNotice, "", "info");
+    return;
+  }
+  if (hasTimelineTiming(currentTimeline)) {
+    updateStatus(elements.timelineNotice, "", "info");
+  } else {
+    updateStatus(
+      elements.timelineNotice,
+      "Таймлайн без таймингов: отображается только текст.",
+      "warning",
+    );
+  }
+}
+
+function clearTimelineState() {
+  currentTimeline = [];
+  originalTimeline = [];
+  timelineEditMode = false;
+  currentRoleKeywords = {};
+  timelineLabels = {};
+  activeTranscriptId = null;
+  updateTimelineView();
+  updateTimelineButtons();
+  updateTimelineNameInputs();
+  updateTimelineLegend();
+}
+
+function setTimelineData(items, keywords = null, { resetLabels = false, labels = null } = {}) {
+  const normalized = Array.isArray(items)
+    ? items.map((item) => normalizeTimelineItem(item)).filter(Boolean)
+    : [];
+  currentTimeline = normalized;
+  originalTimeline = cloneTimeline(normalized);
+  timelineEditMode = false;
+  currentRoleKeywords = cloneRoleKeywords(keywords);
+  if (resetLabels) {
+    timelineLabels = {};
+  }
+  if (labels && typeof labels === "object") {
+    timelineLabels = cloneLabels(labels);
+  }
+  updateTimelineView();
+  updateTimelineButtons();
+  updateTimelineNameInputs();
+  updateTimelineLegend();
+}
+
+function rebuildTranscriptFromTimeline() {
+  const merged = currentTimeline.map((item) => item.text || "").join("\n").trim();
+  currentTranscript = merged;
+  if (elements.manualTranscriptInput) {
+    elements.manualTranscriptInput.value = merged;
+  }
+}
+
+function enterTimelineEditMode() {
+  if (!currentTimeline.length || timelineEditMode) return;
+  originalTimeline = cloneTimeline(currentTimeline);
+  timelineEditMode = true;
+  updateTimelineView();
+  updateTimelineButtons();
+}
+
+function cancelTimelineEdit() {
+  if (!timelineEditMode) return;
+  currentTimeline = cloneTimeline(originalTimeline);
+  timelineEditMode = false;
+  updateTimelineView();
+  updateTimelineButtons();
+}
+
+function saveTimelineEdit() {
+  if (!timelineEditMode) return false;
+  originalTimeline = cloneTimeline(currentTimeline);
+  timelineEditMode = false;
+  updateTimelineView();
+  updateTimelineButtons();
+  rebuildTranscriptFromTimeline();
+  updateActiveTranscriptEntry(
+    { timeline: currentTimeline, text: currentTranscript },
+    { silent: true },
+  );
+  return true;
+}
+
+function handleTimelineInput(event) {
+  if (!timelineEditMode) return;
+  const target = event.target;
+  if (!target || typeof target.dataset?.index === "undefined") return;
+  const index = Number(target.dataset.index);
+  if (!Number.isInteger(index) || !currentTimeline[index]) return;
+
+  if (target.classList.contains("timeline-textarea")) {
+    currentTimeline[index].text = target.value;
+    return;
+  }
+
+  if (target.classList.contains("timeline-speaker-select")) {
+    const value = (target.value || "unknown").toString().trim().toLowerCase() || "unknown";
+    currentTimeline[index].speaker = value;
+    const row = target.closest(".timeline-row");
+    if (row) {
+      Array.from(row.classList).forEach((cls) => {
+        if (cls.startsWith("timeline-") && cls !== "timeline-row" && cls !== "timeline-row--editing") {
+          row.classList.remove(cls);
+        }
+      });
+      row.classList.add(`timeline-${value}`);
+    }
+  }
+}
+
+function handleTimelineNameInput(event) {
+  const role = event.target?.dataset?.role;
+  if (!role) return;
+  const value = event.target.value.trim();
+  if (value) {
+    timelineLabels[role] = value;
+  } else {
+    delete timelineLabels[role];
+  }
+  if (!timelineEditMode) {
+    updateTimelineView();
+  }
+  updateTimelineLegend();
+  updateActiveTranscriptEntry({ labels: timelineLabels }, { silent: true });
+}
+
 function activateTab(target) {
   if (!target) return;
   tabButtons.forEach((button) => {
@@ -193,6 +494,249 @@ function escapeHtml(value) {
   return (value ?? "").toString().replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+function setTranscriptStatus(message, tone = "info") {
+  if (!elements.transcriptStatus) return;
+  updateStatus(elements.transcriptStatus, message, tone);
+}
+
+function persistTranscriptLibrary() {
+  if (!Array.isArray(transcriptLibrary)) {
+    transcriptLibrary = [];
+  }
+  if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
+    transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
+  }
+  saveTranscripts(transcriptLibrary);
+}
+
+function renderTranscriptLibrary() {
+  if (!elements.transcriptList) return;
+  if (!Array.isArray(transcriptLibrary) || !transcriptLibrary.length) {
+    elements.transcriptList.classList.add("muted");
+    elements.transcriptList.innerHTML = '<div class="muted">Сохранённых транскриптов пока нет.</div>';
+    return;
+  }
+
+  elements.transcriptList.classList.remove("muted");
+  const html = transcriptLibrary
+    .map((entry) => {
+      const activeClass = entry.id === activeTranscriptId ? " transcript-item--active" : "";
+      const hasTiming = hasTimelineTiming(entry.timeline);
+      const badge = hasTiming
+        ? '<span class="badge badge--success">с таймингами</span>'
+        : '<span class="badge badge--warning">без таймингов</span>';
+      const rawPreview = (entry.text || "").replace(/\s+/g, " ").trim();
+      const previewText = rawPreview.slice(0, 180);
+      const preview = escapeHtml(previewText + (rawPreview.length > 180 ? "…" : ""));
+      const timestamp = escapeHtml(tsFmt(entry.updatedAt || entry.ts));
+      return `
+        <article class="transcript-item${activeClass}" data-id="${escapeHtml(entry.id)}">
+          <header class="transcript-item__header">
+            <div>
+              <div class="transcript-item__title">${escapeHtml(entry.title)}</div>
+              <div class="transcript-item__meta muted">${timestamp}</div>
+            </div>
+            <div class="transcript-item__badges">${badge}</div>
+          </header>
+          <div class="transcript-item__preview muted">${preview || "—"}</div>
+          <div class="transcript-item__actions buttons mt-xs">
+            <button class="secondary" type="button" data-action="use">Загрузить</button>
+            <button type="button" data-action="analyze">Анализ</button>
+            <button class="warn" type="button" data-action="delete">Удалить</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  elements.transcriptList.innerHTML = html;
+}
+
+function sortTranscriptLibrary() {
+  transcriptLibrary.sort((a, b) => (b.updatedAt || b.ts) - (a.updatedAt || a.ts));
+}
+
+function loadTranscriptLibrary() {
+  const stored = loadTranscripts();
+  const items = Array.isArray(stored)
+    ? stored
+        .map((entry) => normalizeTranscriptEntry(entry))
+        .filter(Boolean)
+    : [];
+  transcriptLibrary = items;
+  sortTranscriptLibrary();
+  if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
+    transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
+  }
+  renderTranscriptLibrary();
+}
+
+function addTranscriptEntry(entry, { makeActive = false, announce = true } = {}) {
+  const normalized = normalizeTranscriptEntry(entry);
+  if (!normalized) return null;
+  transcriptLibrary = [normalized, ...transcriptLibrary.filter((item) => item.id !== normalized.id)];
+  sortTranscriptLibrary();
+  if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
+    transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
+  }
+  persistTranscriptLibrary();
+  if (makeActive) {
+    activeTranscriptId = normalized.id;
+  }
+  renderTranscriptLibrary();
+  if (announce) {
+    setTranscriptStatus(`Транскрипт «${normalized.title}» сохранён.`, "success");
+  }
+  return normalized;
+}
+
+function updateActiveTranscriptEntry(patch = {}, { silent = false } = {}) {
+  if (!activeTranscriptId) return;
+  const index = transcriptLibrary.findIndex((item) => item.id === activeTranscriptId);
+  if (index === -1) return;
+  const base = transcriptLibrary[index];
+  const next = normalizeTranscriptEntry({
+    ...base,
+    ...patch,
+    id: base.id,
+    ts: base.ts,
+    updatedAt: Date.now(),
+  });
+  transcriptLibrary[index] = next;
+  sortTranscriptLibrary();
+  persistTranscriptLibrary();
+  renderTranscriptLibrary();
+  if (!silent) {
+    setTranscriptStatus(`Транскрипт «${next.title}» обновлён.`, "success");
+  }
+}
+
+function deleteTranscriptEntry(id) {
+  if (!id) return;
+  const index = transcriptLibrary.findIndex((item) => item.id === id);
+  if (index === -1) return;
+  const [removed] = transcriptLibrary.splice(index, 1);
+  persistTranscriptLibrary();
+  if (activeTranscriptId === id) {
+    activeTranscriptId = null;
+  }
+  renderTranscriptLibrary();
+  setTranscriptStatus(`Транскрипт «${removed.title}» удалён.`, "warning");
+}
+
+function applyTranscriptEntry(entry, { focusTimeline = true, announce = true } = {}) {
+  if (!entry) return false;
+  activeTranscriptId = entry.id;
+  currentTranscript = entry.text || "";
+  setTimelineData(entry.timeline, entry.roleKeywords, { resetLabels: true, labels: entry.labels });
+  if (elements.manualTranscriptInput) {
+    elements.manualTranscriptInput.value = currentTranscript;
+  }
+  if (elements.prompt && !elements.prompt.value.trim()) {
+    const hrPrefix = getHrPrefix(DEFAULT_HR_PREFIX);
+    elements.prompt.value = `${hrPrefix}. Проанализируй собеседование по критериям.`;
+  }
+  if (focusTimeline) {
+    activateTab("timeline");
+  }
+  recalcStats();
+  renderTranscriptLibrary();
+  if (announce) {
+    setTranscriptStatus(`Транскрипт «${entry.title}» загружен.`, "success");
+  }
+  return true;
+}
+
+function findTranscriptEntry(id) {
+  if (!id) return null;
+  return transcriptLibrary.find((item) => item.id === id) || null;
+}
+
+function useManualTranscript({ save = false } = {}) {
+  if (!elements.manualTranscriptInput) return;
+  const rawValue = elements.manualTranscriptInput.value || "";
+  const text = rawValue.trim();
+  if (!text) {
+    setTranscriptStatus("Вставьте текст транскрипта перед использованием.", "error");
+    return;
+  }
+
+  activeTranscriptId = null;
+  currentTranscript = text;
+  const timeline = buildTextTimelineFromTranscript(text);
+  setTimelineData(timeline, {}, { resetLabels: true });
+
+  if (elements.prompt && !elements.prompt.value.trim()) {
+    const hrPrefix = getHrPrefix(DEFAULT_HR_PREFIX);
+    elements.prompt.value = `${hrPrefix}. Проанализируй собеседование по критериям.`;
+  }
+
+  if (save) {
+    const firstLine = text.split(/\n/).map((line) => line.trim()).find(Boolean);
+    const titleBase = firstLine ? firstLine.slice(0, 80) : null;
+    const title = titleBase ? (titleBase.length < firstLine.length ? `${titleBase}…` : titleBase) : suggestTranscriptTitle({ manual: true });
+    const entry = newTranscriptEntry({
+      title,
+      text,
+      timeline: currentTimeline,
+      roleKeywords: currentRoleKeywords,
+      labels: timelineLabels,
+    });
+    addTranscriptEntry(entry, { makeActive: true, announce: true });
+  } else {
+    renderTranscriptLibrary();
+    setTranscriptStatus("Текст прикреплён. Можно запускать анализ.", "success");
+  }
+
+  activateTab("timeline");
+  recalcStats();
+}
+
+function handleTranscriptListClick(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  event.preventDefault();
+  const item = button.closest(".transcript-item");
+  if (!item) return;
+  const id = item.dataset.id;
+  if (!id) return;
+  const action = button.dataset.action;
+
+  if (action === "delete") {
+    const confirmed = window.confirm("Удалить сохранённый транскрипт?");
+    if (confirmed) {
+      deleteTranscriptEntry(id);
+    }
+    return;
+  }
+
+  const entry = findTranscriptEntry(id);
+  if (!entry) {
+    setTranscriptStatus("Не удалось найти транскрипт.", "error");
+    return;
+  }
+
+  if (action === "use") {
+    applyTranscriptEntry(entry, { focusTimeline: true, announce: true });
+    return;
+  }
+
+  if (action === "analyze") {
+    const applied = applyTranscriptEntry(entry, { focusTimeline: true, announce: true });
+    if (applied) {
+      activateTab("answer");
+      sendPrompt();
+      setTranscriptStatus("Запрос отправлен на анализ сохранённого транскрипта.");
+    }
+  }
+}
+
+function stopCurrentChat() {
+  if (chatState.controller) {
+    chatState.controller.abort();
+  }
+}
+
 function renderHistory() {
   const items = loadHistory();
   elements.historyList.innerHTML = items.length
@@ -225,9 +769,14 @@ function closeHistory() {
 }
 
 function setBusy(isBusy) {
-  if (!elements.btnSend) return;
-  elements.btnSend.disabled = Boolean(isBusy);
-  elements.btnSend.textContent = isBusy ? "Отправка…" : "Отправить";
+  if (elements.btnSend) {
+    elements.btnSend.disabled = Boolean(isBusy);
+    elements.btnSend.textContent = isBusy ? "Отправка…" : "Отправить";
+  }
+  if (elements.btnStop) {
+    elements.btnStop.hidden = !isBusy;
+    elements.btnStop.disabled = !isBusy;
+  }
 }
 
 function setTranscribeBusy(isBusy, { label } = {}) {
@@ -250,15 +799,21 @@ function setTranscribeBusy(isBusy, { label } = {}) {
 }
 
 async function sendPrompt() {
+  if (chatState.controller) {
+    return;
+  }
   const rawQuery = elements.prompt?.value || "";
   const finalQuery = rawQuery.trim() || "проанализируй";
 
+  const controller = new AbortController();
+  chatState.controller = controller;
   setBusy(true);
   activateTab("answer");
   if (elements.answer) {
     elements.answer.value = "Думаю…";
   }
 
+  let aborted = false;
   try {
     const payload = { query: finalQuery, session_id: sessionId };
     const transcript = currentTranscript.trim();
@@ -274,6 +829,7 @@ async function sendPrompt() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -289,11 +845,20 @@ async function sendPrompt() {
     }
     recalcStats();
   } catch (error) {
-    if (elements.answer) {
+    if (error?.name === "AbortError") {
+      aborted = true;
+      if (elements.answer) {
+        elements.answer.value = "Ответ остановлен пользователем.";
+      }
+    } else if (elements.answer) {
       elements.answer.value = `Ошибка: ${error.message || error}`;
     }
   } finally {
+    chatState.controller = null;
     setBusy(false);
+    if (aborted && elements.prompt) {
+      elements.prompt.focus();
+    }
   }
 }
 
@@ -307,8 +872,8 @@ async function transcribeFile() {
   setTranscribeBusy(true);
   try {
     updateStatus(elements.transcribeStatus, "транскрибирую…");
-    renderTimeline(elements.timelineContainer);
-    renderRoleLegend(elements.timelineLegend);
+    setTranscriptStatus("", "info");
+    clearTimelineState();
 
     const formData = new FormData();
     formData.append("file", file, file.name);
@@ -356,14 +921,35 @@ async function transcribeFile() {
       elements.prompt.focus();
     }
 
-    renderTimeline(elements.timelineContainer, timeline);
-    renderRoleLegend(elements.timelineLegend, roleKeywords);
+    const preparedTimeline = timeline.length ? timeline : buildTextTimelineFromTranscript(transcript);
+    setTimelineData(preparedTimeline, roleKeywords || {}, { resetLabels: true });
+    if (elements.manualTranscriptInput) {
+      elements.manualTranscriptInput.value = transcript;
+    }
+
+    const entry = newTranscriptEntry({
+      title: suggestTranscriptTitle({ fileName: file?.name }),
+      text: transcript,
+      timeline: currentTimeline,
+      roleKeywords: currentRoleKeywords,
+      labels: timelineLabels,
+    });
+    addTranscriptEntry(entry, { makeActive: true, announce: false });
+    const hasTiming = hasTimelineTiming(currentTimeline);
+    setTranscriptStatus(
+      hasTiming
+        ? `Сохранён новый транскрипт «${entry.title}».`
+        : `Сохранён новый транскрипт «${entry.title}» (тайминги отсутствуют).`,
+      hasTiming ? "success" : "warning",
+    );
     activateTab("timeline");
 
+    const statusTone = hasTiming ? "success" : "warning";
+    const timelineNote = hasTiming ? "" : " • тайминги не найдены";
     updateStatus(
       elements.transcribeStatus,
-      `✅ Транскрипция готова — модель: ${model}, символов: ${transcript.length}`,
-      "success",
+      `✅ Транскрипция готова — модель: ${model}, символов: ${transcript.length}${timelineNote}`,
+      statusTone,
     );
     recalcStats();
   } catch (error) {
@@ -388,10 +974,13 @@ function attachEvents() {
   elements.prompt?.addEventListener("input", debounce(recalcStats, 100));
 
   elements.btnSend?.addEventListener("click", sendPrompt);
+  elements.btnStop?.addEventListener("click", stopCurrentChat);
   elements.prompt?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      sendPrompt();
+      if (!chatState.controller) {
+        sendPrompt();
+      }
     }
   });
 
@@ -529,6 +1118,29 @@ function attachEvents() {
     transcribeFile();
   });
 
+  elements.btnUseManualTranscript?.addEventListener("click", () => {
+    useManualTranscript({ save: false });
+  });
+
+  elements.btnSaveManualTranscript?.addEventListener("click", () => {
+    useManualTranscript({ save: true });
+  });
+
+  elements.transcriptList?.addEventListener("click", handleTranscriptListClick);
+
+  elements.btnEditTimeline?.addEventListener("click", enterTimelineEditMode);
+  elements.btnCancelTimeline?.addEventListener("click", cancelTimelineEdit);
+  elements.btnSaveTimeline?.addEventListener("click", () => {
+    if (saveTimelineEdit()) {
+      updateStatus(elements.transcribeStatus, "Изменения таймлайна сохранены.", "success");
+    }
+  });
+  elements.timelineContainer?.addEventListener("input", handleTimelineInput);
+  elements.timelineContainer?.addEventListener("change", handleTimelineInput);
+  [elements.timelineHrName, elements.timelineCandidateName].forEach((input) => {
+    input?.addEventListener("input", handleTimelineNameInput);
+  });
+
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => {
       activateTab(button.dataset.tabTarget);
@@ -554,8 +1166,9 @@ function init() {
     elements.hrPrefixInput.value = savedPrefix || DEFAULT_HR_PREFIX;
   }
 
-  renderTimeline(elements.timelineContainer);
-  renderRoleLegend(elements.timelineLegend);
+  loadTranscriptLibrary();
+  setTranscriptStatus("", "info");
+  clearTimelineState();
   criteriaManager.loadFromStorage();
 
   attachEvents();

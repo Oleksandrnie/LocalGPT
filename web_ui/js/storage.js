@@ -6,6 +6,7 @@ export const STORAGE_KEYS = {
   whisperModel: "localgpt_whisper_model_v1",
   hrPrefix: "localgpt_hr_prefix_v1",
   criteria: "localgpt_criteria_list_v1",
+  transcripts: "localgpt_transcripts_v1",
 };
 
 function safeGet(key) {
@@ -100,4 +101,17 @@ export function saveCriteriaToStorage(criteriaList) {
     return;
   }
   safeSet(STORAGE_KEYS.criteria, JSON.stringify(criteriaList));
+}
+
+export function loadTranscripts() {
+  const raw = safeGet(STORAGE_KEYS.transcripts);
+  return parseJson(raw, []);
+}
+
+export function saveTranscripts(list) {
+  if (!Array.isArray(list) || !list.length) {
+    safeSet(STORAGE_KEYS.transcripts, null);
+    return;
+  }
+  safeSet(STORAGE_KEYS.transcripts, JSON.stringify(list));
 }
