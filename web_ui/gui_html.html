@@ -59,20 +59,24 @@
                         <input id="googleSheetInput" type="text" class="input-control" placeholder="ID или ссылка на Google Sheets" />
                         <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google Sheets</button>
                     </div>
+                    <hr class="collapse-divider" />
+                    <div class="field-group">
+                        <label class="muted" for="hrPrefix">Префикс HR-подсказки</label>
+                        <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
+                        <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
+                    </div>
+                    <div class="field-group">
+                        <label class="muted" for="quickCriterionInput">Быстро добавить критерий</label>
+                        <div class="quick-criteria">
+                            <input id="quickCriterionInput" type="text" class="input-control" placeholder="Например: Необходим опыт продаж от 3 лет" />
+                            <button class="secondary" id="btnQuickAddCriterion" type="button">Добавить</button>
+                        </div>
+                        <p class="muted">Критерий сразу появится в списке ниже и сохранится в рамках сессии.</p>
+                    </div>
                 </div>
             </details>
             <h3 class="mt-lg">Критерии оценки</h3>
             <p class="muted">Добавьте критерии вручную или загрузите их из файла/таблицы. Критерии сохраняются в рамках текущей сессии.</p>
-            <div class="criteria-add mt-sm">
-                <button class="secondary" id="btnToggleManualCriterion" type="button">Добавить критерий</button>
-                <div class="criteria-add__panel" id="manualCriterionPanel" hidden>
-                    <input id="manualCriterionInput" type="text" class="input-control" placeholder="Например: Необходим опыт продаж от 3 лет" />
-                    <div class="buttons">
-                        <button id="btnSaveManualCriterion" type="button">Сохранить</button>
-                        <button class="secondary" id="btnCancelManualCriterion" type="button">Отмена</button>
-                    </div>
-                </div>
-            </div>
             <div class="buttons mt-sm">
                 <button class="secondary" id="btnClearCriteria" type="button">Очистить критерии</button>
             </div>
@@ -80,9 +84,6 @@
             <ol id="criteriaList" class="criteria-list"></ol>
             <div class="status mt-sm" id="budgetStats">Входные токены: 0 • Резерв на ответ: — • Лимит контекста: —</div>
             <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
-            <h3 class="mt-xl" title="Префикс помогает быстро напоминать модели, что запрос подготовлен HR и какие действия ожидать.">Префикс HR-подсказки</h3>
-            <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
-            <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
         </lgpt-card>
 
         <lgpt-card title="Результаты" data-card="results">

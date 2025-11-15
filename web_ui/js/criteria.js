@@ -2,6 +2,8 @@ import { loadCriteriaFromStorage, saveCriteriaToStorage } from "./storage.js";
 import { sanitizeHTML } from "./timeline.js";
 
 const DEFAULT_MAX_CRITERIA = 200;
+const EMPTY_HINT =
+  'Критерии не выбраны. Откройте «Транскрибация и дополнительные настройки», чтобы добавить или загрузить критерии.';
 
 function normalizeCriterion(value) {
   if (typeof value !== "string") {
@@ -46,7 +48,7 @@ export class CriteriaManager {
     if (!this.listEl) return;
     const items = Array.isArray(list) ? list : [];
     if (!items.length) {
-      this.listEl.innerHTML = '<li class="criteria-empty muted">Критерии не выбраны.</li>';
+      this.listEl.innerHTML = `<li class="criteria-empty muted">${EMPTY_HINT}</li>`;
       return;
     }
 
@@ -98,7 +100,7 @@ export class CriteriaManager {
       const suffix = source ? ` • источник: ${source}` : "";
       this.updateStatus(`Критериев: ${this.criteria.length}${suffix}`, "success");
     } else {
-      this.updateStatus("Критерии не выбраны.");
+      this.updateStatus(EMPTY_HINT);
     }
   }
 
@@ -108,7 +110,7 @@ export class CriteriaManager {
       this.setCriteria(stored, { persist: false, source: "localStorage" });
     } else {
       this.renderCriteria();
-      this.updateStatus("Критерии не выбраны.");
+      this.updateStatus(EMPTY_HINT);
     }
   }
 
@@ -120,7 +122,7 @@ export class CriteriaManager {
     this.criteria = [];
     this.renderCriteria();
     saveCriteriaToStorage([]);
-    this.updateStatus("Критерии не выбраны.");
+    this.updateStatus(EMPTY_HINT);
   }
 
   removeCriterion(index) {
@@ -136,7 +138,7 @@ export class CriteriaManager {
     if (this.criteria.length) {
       this.updateStatus(`Критериев: ${this.criteria.length}`, "success");
     } else {
-      this.updateStatus("Критерии не выбраны.");
+      this.updateStatus(EMPTY_HINT);
     }
 
     return true;
