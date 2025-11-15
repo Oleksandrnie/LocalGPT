@@ -56,6 +56,16 @@ export class CriteriaManager {
           <li>
             <span class="criteria-index">${index + 1}.</span>
             <span class="criteria-text">${sanitizeHTML(item)}</span>
+            <button
+              class="secondary criteria-remove"
+              type="button"
+              data-action="remove-criterion"
+              data-index="${index}"
+              title="Удалить критерий"
+              aria-label="Удалить критерий"
+            >
+              Удалить
+            </button>
           </li>
         `,
       )
@@ -111,6 +121,25 @@ export class CriteriaManager {
     this.renderCriteria();
     saveCriteriaToStorage([]);
     this.updateStatus("Критерии не выбраны.");
+  }
+
+  removeCriterion(index) {
+    const idx = Number(index);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= this.criteria.length) {
+      return false;
+    }
+
+    this.criteria = this.criteria.filter((_, itemIndex) => itemIndex !== idx);
+    this.renderCriteria();
+    saveCriteriaToStorage(this.criteria);
+
+    if (this.criteria.length) {
+      this.updateStatus(`Критериев: ${this.criteria.length}`, "success");
+    } else {
+      this.updateStatus("Критерии не выбраны.");
+    }
+
+    return true;
   }
 
   addManualCriterion(value) {

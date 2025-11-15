@@ -105,6 +105,9 @@ const elements = {
   btnCancelManualCriterion: getElement("btnCancelManualCriterion"),
 };
 
+const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
+const tabPanels = Array.from(document.querySelectorAll("[data-panel]"));
+
 const sessionId = ensureSessionId();
 let currentTranscript = "";
 const transcribeBusyState = { defaultLabel: null };
@@ -150,6 +153,25 @@ function recalcStats() {
     }
     elements.budgetStats.textContent = line;
   }
+}
+
+function activateTab(target) {
+  if (!target) return;
+  tabButtons.forEach((button) => {
+    const isActive = button.dataset.tabTarget === target;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+
+  tabPanels.forEach((panel) => {
+    const isActive = panel.dataset.panel === target;
+    panel.classList.toggle("is-active", isActive);
+    if (isActive) {
+      panel.removeAttribute("hidden");
+    } else {
+      panel.setAttribute("hidden", "");
+    }
+  });
 }
 
 async function checkHealth() {
@@ -235,6 +257,7 @@ async function sendPrompt() {
   const finalQuery = rawQuery.trim() || "проанализируй";
 
   setBusy(true);
+  activateTab("answer");
   if (elements.answer) {
     elements.answer.value = "Думаю…";
   }
@@ -338,6 +361,7 @@ async function transcribeFile() {
 
     renderTimeline(elements.timelineContainer, timeline);
     renderRoleLegend(elements.timelineLegend, roleKeywords);
+    activateTab("timeline");
 
     updateStatus(
       elements.transcribeStatus,
@@ -505,6 +529,17 @@ function attachEvents() {
     recalcStats();
   });
 
+  elements.criteriaList?.addEventListener("click", (event) => {
+    const button = event.target.closest('[data-action="remove-criterion"]');
+    if (!button) return;
+    const index = Number(button.dataset.index);
+    if (!Number.isInteger(index)) return;
+    const removed = criteriaManager.removeCriterion(index);
+    if (removed) {
+      recalcStats();
+    }
+  });
+
   elements.btnToggleManualCriterion?.addEventListener("click", () => {
     toggleManualCriterionPanel();
     if (!elements.manualCriterionPanel?.hasAttribute("hidden")) {
@@ -542,6 +577,12 @@ function attachEvents() {
     event.preventDefault();
     transcribeFile();
   });
+
+  tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activateTab(button.dataset.tabTarget);
+    });
+  });
 }
 
 function init() {
@@ -568,6 +609,7 @@ function init() {
 
   attachEvents();
   checkHealth();
+  activateTab("answer");
   recalcStats();
 }
 

@@ -24,41 +24,45 @@
                 <button id="btnSend">Отправить</button>
                 <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
             </div>
-            <div class="row row--gutter mt-sm">
-                <div class="field-group">
-                    <label class="muted" for="modelSelect">Модель Whisper</label>
-                    <select id="modelSelect" class="input-control">
-                        <option value="small">small — быстрее, но немного хуже по качеству</option>
-                        <option value="medium" selected>medium — выше качество, но медленнее</option>
-                    </select>
+            <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка.</p>
+            <details class="collapse mt-sm" id="advancedControls">
+                <summary>Транскрибация и дополнительные настройки</summary>
+                <div class="collapse__content">
+                    <div class="row row--gutter">
+                        <div class="field-group">
+                            <label class="muted" for="modelSelect">Модель Whisper</label>
+                            <select id="modelSelect" class="input-control">
+                                <option value="small">small — быстрее, но немного хуже по качеству</option>
+                                <option value="medium" selected>medium — выше качество, но медленнее</option>
+                            </select>
+                        </div>
+                        <div class="field-group">
+                            <label class="muted" for="promptPresetSelect">Промпт для распознавания</label>
+                            <select id="promptPresetSelect" class="input-control">
+                                <option value="none">Без промпта</option>
+                                <option value="ru">Универсальный (русский)</option>
+                                <option value="en">Универсальный (английский)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row mt-sm">
+                        <input type="file" id="fileInput" accept="audio/*,video/*" />
+                        <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
+                    </div>
+                    <div class="status" id="transcribeStatus"></div>
+                    <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу критериев.</p>
+                    <div class="row mt-sm">
+                        <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
+                        <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
+                    </div>
+                    <div class="row mt-sm">
+                        <input id="googleSheetInput" type="text" class="input-control" placeholder="ID или ссылка на Google Sheets" />
+                        <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google Sheets</button>
+                    </div>
                 </div>
-                <div class="field-group">
-                    <label class="muted" for="promptPresetSelect">Промпт для распознавания</label>
-                    <select id="promptPresetSelect" class="input-control">
-                        <option value="none">Без промпта</option>
-                        <option value="ru">Универсальный (русский)</option>
-                        <option value="en">Универсальный (английский)</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="row mt-sm">
-                <input type="file" id="fileInput" accept="audio/*,video/*" />
-                <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
-            </div>
-            <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка. Можно загрузить аудио/видео и распознать речь локально.</p>
-            <div class="status" id="transcribeStatus"></div>
-
+            </details>
             <h3 class="mt-lg">Критерии оценки</h3>
-            <p class="muted">Загрузите таблицу критериев (CSV/XLSX/Google Sheets) или добавьте их вручную. Критерии сохраняются в рамках текущей сессии.</p>
-            <div class="row mt-sm">
-                <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
-                <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
-            </div>
-            <div class="row mt-sm">
-                <input id="googleSheetInput" type="text" class="input-control" placeholder="ID или ссылка на Google Sheets" />
-                <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google Sheets</button>
-            </div>
+            <p class="muted">Добавьте критерии вручную или загрузите их из файла/таблицы. Критерии сохраняются в рамках текущей сессии.</p>
             <div class="criteria-add mt-sm">
                 <button class="secondary" id="btnToggleManualCriterion" type="button">Добавить критерий</button>
                 <div class="criteria-add__panel" id="manualCriterionPanel" hidden>
@@ -81,17 +85,24 @@
             <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем браузере.</p>
         </lgpt-card>
 
-        <lgpt-card title="Ответ" data-card="answer">
-            <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
-            <div class="buttons mt-sm">
-                <button class="secondary" id="btnCopy">Скопировать ответ</button>
-                <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
+        <lgpt-card title="Результаты" data-card="results">
+            <div class="tabs" role="tablist" aria-label="Результаты анализа">
+                <button class="tab is-active" type="button" id="tab-answer" data-tab-target="answer" role="tab" aria-selected="true" aria-controls="panel-answer">Ответ</button>
+                <button class="tab" type="button" id="tab-timeline" data-tab-target="timeline" role="tab" aria-selected="false" aria-controls="panel-timeline">Таймлайн</button>
             </div>
-        </lgpt-card>
-
-        <lgpt-card title="Таймлайн" data-card="timeline">
-            <div id="timelineLegend" class="muted timeline-legend"></div>
-            <div id="timelineContainer" class="timeline-grid"></div>
+            <div class="tab-panels">
+                <section class="tab-panel is-active" id="panel-answer" data-panel="answer" role="tabpanel" aria-labelledby="tab-answer">
+                    <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
+                    <div class="buttons mt-sm">
+                        <button class="secondary" id="btnCopy">Скопировать ответ</button>
+                        <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
+                    </div>
+                </section>
+                <section class="tab-panel" id="panel-timeline" data-panel="timeline" role="tabpanel" aria-labelledby="tab-timeline" hidden>
+                    <div id="timelineLegend" class="muted timeline-legend"></div>
+                    <div id="timelineContainer" class="timeline-grid"></div>
+                </section>
+            </div>
         </lgpt-card>
     </main>
 
