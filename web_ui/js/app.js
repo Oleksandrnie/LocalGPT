@@ -505,6 +505,17 @@ function attachEvents() {
     recalcStats();
   });
 
+  elements.criteriaList?.addEventListener("click", (event) => {
+    const button = event.target.closest('[data-action="remove-criterion"]');
+    if (!button) return;
+    const index = Number(button.dataset.index);
+    if (!Number.isInteger(index)) return;
+    const removed = criteriaManager.removeCriterion(index);
+    if (removed) {
+      recalcStats();
+    }
+  });
+
   elements.btnToggleManualCriterion?.addEventListener("click", () => {
     toggleManualCriterionPanel();
     if (!elements.manualCriterionPanel?.hasAttribute("hidden")) {
