@@ -20,11 +20,27 @@
         <lgpt-card title="Запрос" data-card="request">
             <textarea id="prompt" placeholder="Введите промпт…"></textarea>
             <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
+            <div class="field-group mt-sm">
+                <label class="muted" for="llmModelSelect">Модель LLM (Ollama)</label>
+                <div class="model-select-row">
+                    <select id="llmModelSelect" class="input-control"></select>
+                    <button class="secondary" id="btnRefreshModels" type="button">Обновить</button>
+                    <button class="warn" id="btnDeleteModel" type="button">Удалить</button>
+                </div>
+                <div class="status" id="modelStatus">Загружаю список моделей…</div>
+                <div id="modelSuggestions" class="model-suggestions muted"></div>
+            </div>
             <div class="buttons mt-sm">
                 <button id="btnSend">Отправить</button>
                 <button class="warn" id="btnStop" type="button" hidden>Остановить</button>
                 <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
             </div>
+            <details class="collapse mt-sm" id="downloadsPanel" open>
+                <summary>Загрузки моделей Ollama</summary>
+                <div class="collapse__content">
+                    <div id="downloadList" class="download-list muted">Активных загрузок нет.</div>
+                </div>
+            </details>
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка.</p>
             <details class="collapse mt-sm" id="advancedControls">
                 <summary>Транскрибация и дополнительные настройки</summary>

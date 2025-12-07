@@ -4,6 +4,7 @@ export const STORAGE_KEYS = {
   history: "localgpt_history_v1",
   session: "localgpt_session_id",
   whisperModel: "localgpt_whisper_model_v1",
+  llmModel: "localgpt_llm_model_v1",
   hrPrefix: "localgpt_hr_prefix_v1",
   criteria: "localgpt_criteria_list_v1",
   transcripts: "localgpt_transcripts_v1",
@@ -46,6 +47,15 @@ export function getSavedModel(defaultValue = "medium") {
 
 export function setSavedModel(model) {
   safeSet(STORAGE_KEYS.whisperModel, model);
+}
+
+export function getSavedLlmModel(defaultValue = "") {
+  const raw = safeGet(STORAGE_KEYS.llmModel);
+  return raw || defaultValue;
+}
+
+export function setSavedLlmModel(model) {
+  safeSet(STORAGE_KEYS.llmModel, model);
 }
 
 export function getHrPrefix(defaultValue) {
