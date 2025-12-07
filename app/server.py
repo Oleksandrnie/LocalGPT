@@ -1,12 +1,17 @@
 # Copyright (c) 2025 Oleksandr Niemchenko. All Rights Reserved.
 import csv
 import io
+import json
 import logging
 import os
 import re
+import subprocess
 import tempfile
+import threading
+import time
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Iterable
 
@@ -43,6 +48,17 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 MEM_TURNS = int(os.getenv("MEM_TURNS", "6"))  # сколько пар (user+assistant) храним в памяти на сессию
 UI_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web_ui"))
 
+MODEL_RECOMMENDATIONS = [
+    {"name": "qwen2.5:3b", "label": "Лёгкая (≈3B)"},
+    {"name": "qwen2.5:7b-instruct", "label": "Инструкционная 7B"},
+    {"name": "qwen2.5-7b-long", "label": "Длинный контекст 7B"},
+    {"name": "llama3:8b", "label": "LLaMA 3 8B"},
+    {"name": "mistral:7b", "label": "Mistral 7B"},
+]
+
+MODEL_PULLS: dict[str, dict] = {}
+MODEL_PULL_LOCK = threading.Lock()
+
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
 app = FastAPI(title="LocalGPT HR API")
 
@@ -59,6 +75,11 @@ class ChatReq(BaseModel):
     session_id: str | None = None
     transcript: str | None = None
     criteria: list[str] | None = None
+    model: str | None = None
+
+
+class ModelPullRequest(BaseModel):
+    model: str
 
 def _system_prompt() -> str:
     try:
@@ -223,6 +244,221 @@ def _sanitize(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _list_local_models() -> list[dict]:
+    try:
+        result = subprocess.run(
+            ["ollama", "list", "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - зависит от окружения
+        raise HTTPException(status_code=500, detail="Ollama не установлена или недоступна.") from exc
+    except subprocess.SubprocessError as exc:  # pragma: no cover - зависит от окружения
+        raise HTTPException(status_code=500, detail="Ошибка обращения к Ollama.") from exc
+
+    if result.returncode != 0:
+        msg = (result.stderr or "не удалось получить список моделей").strip()
+        raise HTTPException(status_code=500, detail={"code": "ollama_list_failed", "message": msg})
+
+    models: list[dict] = []
+    for line in (result.stdout or "").splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        name = (payload.get("model") or payload.get("name") or "").strip()
+        size = payload.get("size")
+        models.append(
+            {
+                "name": name,
+                "size": size,
+                "size_gb": round(size / (1024**3), 2) if isinstance(size, (int, float)) else None,
+                "modified_at": payload.get("modified_at"),
+            }
+        )
+    return models
+
+
+def _public_pull_status(data: dict) -> dict:
+    copy = dict(data)
+    copy.pop("_last_completed", None)
+    copy.pop("_last_ts", None)
+    return copy
+
+
+def _pull_statuses() -> list[dict]:
+    with MODEL_PULL_LOCK:
+        return [_public_pull_status(item) for item in MODEL_PULLS.values()]
+
+
+def _update_pull(task_id: str, **fields) -> None:
+    with MODEL_PULL_LOCK:
+        if task_id not in MODEL_PULLS:
+            return
+        MODEL_PULLS[task_id].update(fields)
+
+
+def _run_model_pull(task_id: str, model: str) -> None:
+    start_ts = time.time()
+    _update_pull(task_id, state="running", started_at=start_ts)
+
+    cmd = ["ollama", "pull", model, "--json"]
+    try:
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
+    except FileNotFoundError:
+        _update_pull(task_id, state="error", message="Ollama не установлена", finished_at=time.time())
+        return
+    except Exception as exc:  # pragma: no cover - зависит от окружения
+        _update_pull(task_id, state="error", message=str(exc), finished_at=time.time())
+        return
+
+    last_completed = 0
+    last_ts = start_ts
+
+    try:
+        assert process.stdout is not None
+        for raw_line in process.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            status_text = payload.get("status") or payload.get("digest") or ""
+            total = payload.get("total")
+            completed = payload.get("completed")
+
+            percent = None
+            speed_mbps = None
+            eta_seconds = None
+
+            if isinstance(total, (int, float)) and isinstance(completed, (int, float)) and total > 0:
+                percent = round(100 * completed / total, 2)
+                now = time.time()
+                delta_bytes = completed - last_completed
+                delta_time = max(now - last_ts, 1e-3)
+                if delta_bytes > 0:
+                    speed_mbps = round(delta_bytes / delta_time / (1024 * 1024), 2)
+                    remaining = total - completed
+                    eta_seconds = round(remaining / (delta_bytes / delta_time)) if delta_bytes else None
+                last_completed = completed
+                last_ts = now
+
+            _update_pull(
+                task_id,
+                state="running",
+                message=status_text,
+                completed=completed,
+                total=total,
+                percent=percent,
+                speed_mbps=speed_mbps,
+                eta_seconds=eta_seconds,
+                _last_completed=last_completed,
+                _last_ts=last_ts,
+            )
+
+        process.wait()
+        finished = time.time()
+        if process.returncode == 0:
+            _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
+        else:
+            _update_pull(
+                task_id,
+                state="error",
+                message=f"ollama pull вернул код {process.returncode}",
+                finished_at=finished,
+            )
+    finally:
+        with MODEL_PULL_LOCK:
+            if task_id in MODEL_PULLS:
+                MODEL_PULLS[task_id]["finished_at"] = MODEL_PULLS[task_id].get("finished_at") or time.time()
+
+
+def _start_model_pull(model: str) -> dict:
+    task_id = uuid.uuid4().hex
+    entry = {
+        "task_id": task_id,
+        "model": model,
+        "state": "pending",
+        "message": "Запуск загрузки…",
+        "started_at": None,
+        "finished_at": None,
+        "completed": None,
+        "total": None,
+    }
+    with MODEL_PULL_LOCK:
+        MODEL_PULLS[task_id] = entry
+
+    thread = threading.Thread(target=_run_model_pull, args=(task_id, model), daemon=True)
+    thread.start()
+    return _public_pull_status(entry)
+
+
+@app.get("/models")
+def list_models():
+    installed = _list_local_models()
+    response = {
+        "installed": installed,
+        "models": [item.get("name") for item in installed if item.get("name")],
+        "recommended": MODEL_RECOMMENDATIONS,
+        "downloads": _pull_statuses(),
+    }
+    return response
+
+
+@app.post("/models/pull")
+def pull_model(req: ModelPullRequest):
+    model = (req.model or "").strip()
+    if not model:
+        raise HTTPException(status_code=422, detail={"code": "model_required", "message": "Укажите модель"})
+    return _start_model_pull(model)
+
+
+@app.get("/models/pull/{task_id}")
+def pull_status(task_id: str):
+    with MODEL_PULL_LOCK:
+        entry = MODEL_PULLS.get(task_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="task_not_found")
+    return _public_pull_status(entry)
+
+
+@app.get("/models/downloads")
+def pull_statuses():
+    return {"downloads": _pull_statuses()}
+
+
+@app.delete("/models/{model_name}")
+def delete_model(model_name: str):
+    target = (model_name or "").strip()
+    if not target:
+        raise HTTPException(status_code=422, detail={"code": "model_required", "message": "Укажите модель"})
+
+    try:
+        result = subprocess.run(
+            ["ollama", "rm", target], capture_output=True, text=True, check=False, timeout=30
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - зависит от окружения
+        raise HTTPException(status_code=500, detail="Ollama не установлена или недоступна.") from exc
+    except subprocess.SubprocessError as exc:  # pragma: no cover - зависит от окружения
+        raise HTTPException(status_code=500, detail="Ошибка удаления модели через Ollama") from exc
+
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout or "Не удалось удалить модель").strip()
+        raise HTTPException(status_code=500, detail={"code": "ollama_rm_failed", "message": msg})
+
+    return {"deleted": target}
+
+
 @app.post("/criteria/parse")
 def parse_criteria(
     session_id: str = Form(default=""),
@@ -366,8 +602,10 @@ def chat(req: ChatReq):
         user_query = (req.query or "").strip() or "проанализируй"
         messages.append({"role": "user", "content": user_query})
 
+        target_model = (req.model or MODEL).strip() or MODEL
+
         resp = client.chat.completions.create(
-            model=MODEL,
+            model=target_model,
             messages=messages,
             temperature=TEMP,
             max_tokens=MAX_TOK,

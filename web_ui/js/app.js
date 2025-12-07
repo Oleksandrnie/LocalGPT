@@ -4,12 +4,14 @@ import {
   deleteHistoryEntry,
   ensureSessionId,
   getHrPrefix,
+  getSavedLlmModel,
   getSavedModel,
   loadHistory,
   loadTranscripts,
   saveHistory,
   saveTranscripts,
   setHrPrefix,
+  setSavedLlmModel,
   setSavedModel,
 } from "./storage.js";
 import { renderRoleLegend, renderTimeline } from "./timeline.js";
@@ -19,6 +21,13 @@ const DEFAULT_HR_PREFIX = "Нейро-HR";
 
 const LIMITS = { num_ctx: null, max_tokens: null };
 const TRANSCRIPT_LIBRARY_LIMIT = 20;
+const MODEL_RECOMMENDATIONS = [
+  { name: "qwen2.5:3b", label: "Лёгкая (≈3B)" },
+  { name: "qwen2.5:7b-instruct", label: "Инструкционная 7B" },
+  { name: "qwen2.5-7b-long", label: "Длинный контекст 7B" },
+  { name: "llama3:8b", label: "LLaMA 3 8B" },
+  { name: "mistral:7b", label: "Mistral 7B" },
+];
 
 function estTokens(value) {
   return Math.ceil(((value || "").length) / 4.2);
@@ -75,6 +84,13 @@ const elements = {
   prompt: getElement("prompt"),
   answer: getElement("answer"),
   promptStats: getElement("promptStats"),
+  llmModelSelect: getElement("llmModelSelect"),
+  btnRefreshModels: getElement("btnRefreshModels"),
+  btnDeleteModel: getElement("btnDeleteModel"),
+  modelStatus: getElement("modelStatus"),
+  downloadList: getElement("downloadList"),
+  downloadsPanel: getElement("downloadsPanel"),
+  modelSuggestions: getElement("modelSuggestions"),
   btnSend: getElement("btnSend"),
   btnStop: getElement("btnStop"),
   btnCopy: getElement("btnCopy"),
@@ -131,6 +147,8 @@ const transcribeBusyState = { defaultLabel: null };
 const chatState = { controller: null };
 let activeTranscriptId = null;
 let transcriptLibrary = [];
+let modelState = { installed: [], recommended: MODEL_RECOMMENDATIONS, downloads: [] };
+let downloadPollTimer = null;
 
 const criteriaManager = new CriteriaManager({
   listEl: elements.criteriaList,
@@ -173,6 +191,230 @@ function recalcStats() {
     }
     elements.budgetStats.textContent = line;
   }
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "—";
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} ГБ`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} МБ`;
+  return `${Math.round(bytes / 1024)} КБ`;
+}
+
+function isModelInstalled(name) {
+  if (!name) return false;
+  return modelState.installed.some((item) => item?.name === name);
+}
+
+function setModelStatus(message, tone = "info") {
+  updateStatus(elements.modelStatus, message, tone);
+}
+
+function renderModelSuggestions() {
+  if (!elements.modelSuggestions) return;
+  const list = modelState.recommended?.length ? modelState.recommended : MODEL_RECOMMENDATIONS;
+  if (!list.length) {
+    elements.modelSuggestions.textContent = "";
+    return;
+  }
+  const chips = list
+    .map((item) => {
+      const installed = isModelInstalled(item.name);
+      const cls = installed ? "model-chip is-installed" : "model-chip";
+      return `<span class="${cls}"><strong>${item.name}</strong>${item.label ? ` — ${item.label}` : ""}</span>`;
+    })
+    .join(" ");
+  elements.modelSuggestions.innerHTML = chips;
+}
+
+function updateModelSelect(preferredValue) {
+  const select = elements.llmModelSelect;
+  if (!select) return;
+  const options = new Map();
+
+  const recommended = modelState.recommended?.length ? modelState.recommended : MODEL_RECOMMENDATIONS;
+  recommended.forEach((item) => {
+    if (!item?.name) return;
+    options.set(item.name, item.label || item.name);
+  });
+
+  modelState.installed.forEach((item) => {
+    if (!item?.name || options.has(item.name)) return;
+    options.set(item.name, item.name);
+  });
+
+  select.innerHTML = "";
+  options.forEach((label, value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = `${value}${label && label !== value ? ` — ${label}` : ""}`;
+    select.appendChild(option);
+  });
+
+  const saved = preferredValue || getSavedLlmModel();
+  const defaultValue = saved && options.has(saved) ? saved : select.options[0]?.value;
+  if (defaultValue) {
+    select.value = defaultValue;
+    setSavedLlmModel(defaultValue);
+  }
+  setModelStatus(select.value ? "Готово к работе" : "Добавьте или скачайте модель.", select.value ? "success" : "warning");
+}
+
+function renderDownloads() {
+  if (!elements.downloadList) return;
+  const list = Array.isArray(modelState.downloads) ? modelState.downloads : [];
+  if (!list.length) {
+    elements.downloadList.classList.add("muted");
+    elements.downloadList.textContent = "Активных загрузок нет.";
+    return;
+  }
+  elements.downloadList.classList.remove("muted");
+
+  const items = list
+    .map((item) => {
+      const percent = Number.isFinite(item.percent) ? `${item.percent}%` : "—";
+      const completed = formatBytes(item.completed);
+      const total = formatBytes(item.total);
+      const speed = Number.isFinite(item.speed_mbps) ? `${item.speed_mbps} МБ/с` : "—";
+      const eta = Number.isFinite(item.eta_seconds)
+        ? `${Math.max(Math.round(item.eta_seconds), 0)} с`
+        : "—";
+      const stateLabel =
+        item.state === "completed"
+          ? "Готово"
+          : item.state === "error"
+            ? `Ошибка: ${item.message || "неизвестно"}`
+            : item.message || "Загрузка";
+      const width = Number.isFinite(item.percent) ? `${Math.min(item.percent, 100)}%` : "0%";
+      return `
+        <div class="download-item">
+          <div class="download-header">
+            <div>
+              <div class="download-title">${item.model}</div>
+              <div class="download-meta">${completed} / ${total} • ${percent}</div>
+            </div>
+            <div class="download-meta">${speed} • ETA: ${eta}</div>
+          </div>
+          <div class="download-progress-bar"><span style="width:${width}"></span></div>
+          <div class="download-state">${stateLabel}</div>
+        </div>`;
+    })
+    .join("");
+
+  elements.downloadList.innerHTML = items;
+}
+
+async function refreshDownloadStatuses({ silent = false } = {}) {
+  try {
+    const response = await fetch(`${API_BASE}/models/downloads`, { method: "GET" });
+    if (!response.ok) return;
+    const data = await response.json();
+    const previous = modelState.downloads || [];
+    modelState.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
+    renderDownloads();
+
+    const completedModels = new Set(
+      modelState.downloads
+        .filter((item) => item.state === "completed")
+        .map((item) => item.model)
+        .filter(Boolean),
+    );
+    const hadCompleted = new Set(previous.filter((item) => item?.state === "completed").map((item) => item.model));
+    const hasNewCompletion = [...completedModels].some((m) => !hadCompleted.has(m));
+    if (hasNewCompletion) {
+      await fetchModelList({ silent: true });
+    }
+  } catch (error) {
+    if (!silent) console.warn("download poll failed", error);
+  }
+}
+
+async function fetchModelList({ silent = false } = {}) {
+  if (!silent) setModelStatus("Обновляю список моделей…");
+  try {
+    const response = await fetch(`${API_BASE}/models`, { method: "GET" });
+    const data = await response.json();
+    modelState.installed = Array.isArray(data?.installed) ? data.installed : [];
+    modelState.recommended = Array.isArray(data?.recommended) && data.recommended.length
+      ? data.recommended
+      : MODEL_RECOMMENDATIONS;
+    modelState.downloads = Array.isArray(data?.downloads) ? data.downloads : modelState.downloads;
+    updateModelSelect();
+    renderModelSuggestions();
+    renderDownloads();
+    const selected = elements.llmModelSelect?.value;
+    if (selected) {
+      setModelStatus(isModelInstalled(selected) ? `Локальная модель: ${selected}` : `Модель ${selected} не скачана`, isModelInstalled(selected) ? "success" : "warning");
+    }
+  } catch (error) {
+    setModelStatus("Не удалось получить список моделей", "error");
+  }
+}
+
+async function startModelDownload(model) {
+  if (!model) return;
+  const active = (modelState.downloads || []).find(
+    (item) => item?.model === model && item.state !== "completed" && item.state !== "error",
+  );
+  if (active) {
+    setModelStatus(`Загрузка ${model} уже запущена.`, "warning");
+    if (elements.downloadsPanel) elements.downloadsPanel.open = true;
+    return;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/models/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (elements.downloadsPanel) {
+      elements.downloadsPanel.open = true;
+    }
+    modelState.downloads = [...(modelState.downloads || []), data];
+    renderDownloads();
+    startDownloadPolling();
+  } catch (error) {
+    setModelStatus(`Не удалось запустить загрузку: ${error.message || error}`, "error");
+  }
+}
+
+async function ensureModelAvailability(model) {
+  if (!model) return true;
+  if (isModelInstalled(model)) return true;
+  const confirm = window.confirm(
+    `Модель "${model}" не найдена локально.\nСкачать через Ollama? Загрузка будет идти в фоне, можно работать с другими моделями.`,
+  );
+  if (!confirm) {
+    setModelStatus(`Модель ${model} не скачана. Выберите другую или скачайте.`, "warning");
+    return false;
+  }
+  await startModelDownload(model);
+  setModelStatus(`Загрузка модели ${model} запущена. Дождитесь завершения или выберите другую.`, "warning");
+  return false;
+}
+
+async function deleteSelectedModel() {
+  const model = elements.llmModelSelect?.value;
+  if (!model) return;
+  if (!isModelInstalled(model)) {
+    window.alert(`Модель ${model} не найдена локально.`);
+    return;
+  }
+  if (!window.confirm(`Удалить модель "${model}" из Ollama?`)) return;
+  try {
+    const response = await fetch(`${API_BASE}/models/${encodeURIComponent(model)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await fetchModelList();
+    setModelStatus(`Модель ${model} удалена.`, "success");
+  } catch (error) {
+    setModelStatus(`Не удалось удалить модель: ${error.message || error}`, "error");
+  }
+}
+
+function startDownloadPolling() {
+  if (downloadPollTimer) return;
+  downloadPollTimer = window.setInterval(() => refreshDownloadStatuses({ silent: true }), 2500);
 }
 
 function normalizeTimelineItem(item) {
@@ -805,6 +1047,14 @@ async function sendPrompt() {
   const rawQuery = elements.prompt?.value || "";
   const finalQuery = rawQuery.trim() || "проанализируй";
 
+  const selectedModel = (elements.llmModelSelect?.value || "").trim();
+  if (selectedModel) {
+    const available = await ensureModelAvailability(selectedModel);
+    if (!available) {
+      return;
+    }
+  }
+
   const controller = new AbortController();
   chatState.controller = controller;
   setBusy(true);
@@ -823,6 +1073,10 @@ async function sendPrompt() {
     const criteria = criteriaManager.getCriteria();
     if (criteria.length) {
       payload.criteria = criteria;
+    }
+    if (selectedModel) {
+      payload.model = selectedModel;
+      setSavedLlmModel(selectedModel);
     }
 
     const response = await fetch(`${API_BASE}/chat`, {
@@ -972,6 +1226,19 @@ function addQuickCriterion() {
 
 function attachEvents() {
   elements.prompt?.addEventListener("input", debounce(recalcStats, 100));
+
+  elements.llmModelSelect?.addEventListener("change", async () => {
+    const value = (elements.llmModelSelect.value || "").trim();
+    if (value) {
+      setSavedLlmModel(value);
+      const available = await ensureModelAvailability(value);
+      if (available) {
+        setModelStatus(isModelInstalled(value) ? `Локальная модель: ${value}` : `Модель ${value} не скачана`, isModelInstalled(value) ? "success" : "warning");
+      }
+    }
+  });
+  elements.btnRefreshModels?.addEventListener("click", () => fetchModelList());
+  elements.btnDeleteModel?.addEventListener("click", () => deleteSelectedModel());
 
   elements.btnSend?.addEventListener("click", sendPrompt);
   elements.btnStop?.addEventListener("click", stopCurrentChat);
@@ -1156,6 +1423,11 @@ function init() {
       setSavedModel(elements.modelSelect.value);
     });
   }
+
+  updateModelSelect(getSavedLlmModel());
+  renderModelSuggestions();
+  fetchModelList();
+  startDownloadPolling();
 
   if (elements.promptPresetSelect) {
     // placeholder for future logic if needed
