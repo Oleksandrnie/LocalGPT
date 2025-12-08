@@ -38,8 +38,13 @@ PROMPT_LANGUAGE_SUFFIX = (
 load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OLLAMA_MODELS_DIR = os.getenv("OLLAMA_MODELS") or str(PROJECT_ROOT / "ollama" / "models")
+OLLAMA_MODELS_DIR = (
+    os.getenv("OLLAMA_MODELS_DIR")
+    or os.getenv("OLLAMA_MODELS")
+    or str(PROJECT_ROOT / "ollama_models" / "models")
+)
 os.environ["OLLAMA_MODELS"] = OLLAMA_MODELS_DIR
+os.environ["OLLAMA_MODELS_DIR"] = OLLAMA_MODELS_DIR
 Path(OLLAMA_MODELS_DIR).mkdir(parents=True, exist_ok=True)
 OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": OLLAMA_MODELS_DIR}
 
@@ -61,9 +66,12 @@ MODEL_RECOMMENDATIONS = [
     {"name": "llama3:8b", "label": "LLaMA 3 8B"},
     {"name": "mistral:7b", "label": "Mistral 7B"},
 ]
+DEFAULT_LLAMA_MODEL = os.getenv("DEFAULT_LOCAL_MODEL", MODEL_RECOMMENDATIONS[0]["name"])
 
 MODEL_PULLS: dict[str, dict] = {}
+MODEL_PULL_PROCS: dict[str, subprocess.Popen] = {}
 MODEL_PULL_LOCK = threading.Lock()
+AUTO_PULL_TRIGGERED = False
 
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
 app = FastAPI(title="LocalGPT HR API")
@@ -308,6 +316,8 @@ def _update_pull(task_id: str, **fields) -> None:
         if task_id not in MODEL_PULLS:
             return
         MODEL_PULLS[task_id].update(fields)
+        if fields.get("state") == "canceled":
+            MODEL_PULL_PROCS.pop(task_id, None)
 
 
 def _run_model_pull(task_id: str, model: str) -> None:
@@ -319,6 +329,8 @@ def _run_model_pull(task_id: str, model: str) -> None:
         process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=OLLAMA_ENV
         )
+        with MODEL_PULL_LOCK:
+            MODEL_PULL_PROCS[task_id] = process
     except FileNotFoundError:
         _update_pull(task_id, state="error", message="Ollama не установлена", finished_at=time.time())
         return
@@ -335,6 +347,10 @@ def _run_model_pull(task_id: str, model: str) -> None:
             line = raw_line.strip()
             if not line:
                 continue
+            with MODEL_PULL_LOCK:
+                if MODEL_PULLS.get(task_id, {}).get("state") == "canceled":
+                    process.terminate()
+                    break
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
@@ -375,6 +391,11 @@ def _run_model_pull(task_id: str, model: str) -> None:
 
         process.wait()
         finished = time.time()
+        with MODEL_PULL_LOCK:
+            current_state = MODEL_PULLS.get(task_id, {}).get("state")
+        if current_state == "canceled":
+            _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=finished)
+            return
         if process.returncode == 0:
             _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
         else:
@@ -388,6 +409,7 @@ def _run_model_pull(task_id: str, model: str) -> None:
         with MODEL_PULL_LOCK:
             if task_id in MODEL_PULLS:
                 MODEL_PULLS[task_id]["finished_at"] = MODEL_PULLS[task_id].get("finished_at") or time.time()
+            MODEL_PULL_PROCS.pop(task_id, None)
 
 
 def _start_model_pull(model: str) -> dict:
@@ -410,14 +432,61 @@ def _start_model_pull(model: str) -> dict:
     return _public_pull_status(entry)
 
 
+def _maybe_trigger_default_pull(installed: list[dict], downloads: list[dict]) -> None:
+    global AUTO_PULL_TRIGGERED
+    if AUTO_PULL_TRIGGERED:
+        return
+    if installed:
+        return
+    active = [item for item in downloads if item.get("state") in {"pending", "running"}]
+    if active:
+        return
+    AUTO_PULL_TRIGGERED = True
+    downloads.append(_start_model_pull(DEFAULT_LLAMA_MODEL))
+
+
+def _cancel_model_pull(task_id: str) -> dict:
+    with MODEL_PULL_LOCK:
+        entry = MODEL_PULLS.get(task_id)
+        process = MODEL_PULL_PROCS.get(task_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="task_not_found")
+    if entry.get("state") in {"completed", "error", "canceled"}:
+        return _public_pull_status(entry)
+
+    _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=time.time())
+    if process and process.poll() is None:
+        try:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        finally:
+            with MODEL_PULL_LOCK:
+                MODEL_PULL_PROCS.pop(task_id, None)
+
+    return _public_pull_status(MODEL_PULLS[task_id])
+
+
 @app.get("/models")
 def list_models():
-    installed = _list_local_models()
+    error = None
+    try:
+        installed = _list_local_models()
+    except HTTPException as exc:
+        installed = []
+        error = exc.detail
+        LOGGER.warning("Оllama list failed: %s", exc.detail)
+    downloads = _pull_statuses()
+    if not error:
+        _maybe_trigger_default_pull(installed, downloads)
     response = {
         "installed": installed,
         "models": [item.get("name") for item in installed if item.get("name")],
         "recommended": MODEL_RECOMMENDATIONS,
-        "downloads": _pull_statuses(),
+        "downloads": downloads,
+        "error": error,
     }
     return response
 
@@ -442,6 +511,10 @@ def pull_status(task_id: str):
 @app.get("/models/downloads")
 def pull_statuses():
     return {"downloads": _pull_statuses()}
+
+@app.post("/models/pull/{task_id}/cancel")
+def cancel_pull(task_id: str):
+    return _cancel_model_pull(task_id)
 
 
 @app.delete("/models/{model_name}")

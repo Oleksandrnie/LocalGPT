@@ -98,3 +98,14 @@
     color: var(--color-text-muted);
     margin-top: 2px;
 }
+
+.download-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--space-xs);
+}
+
+.download-actions button {
+    padding: 6px 10px;
+    box-shadow: none;
+}

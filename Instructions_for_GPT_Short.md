@@ -10,7 +10,7 @@ LocalGPT — полностью локальный HR‑ и ASR‑бот. Все
 LocalGPT/
 ├── app/
 ├── web_ui/
-├── ollama_models/
+├── ollama_models/            # ollama_models/models — пустая по умолчанию, .gitkeep
 ├── venv/
 ├── run_localgpt.py
 └── .env
@@ -51,6 +51,7 @@ UI → http://127.0.0.1:8000/
   - `model`: small / medium,
   - `prompt_preset`: none/ru/en.
   Whisper‑модели хранятся внутри проекта по пути `ollama_models/whisper/`.
+- Модели Ollama хранятся в `ollama_models/models/` (игнор в git). Если нет локальных моделей и активных загрузок, автоматически запускается скачивание минимальной (`qwen2.5:3b` по умолчанию). Есть API для остановки загрузки: `/models/pull/{task_id}/cancel`; кнопка удаления активна только для скачанных моделей.
 
 ---
 

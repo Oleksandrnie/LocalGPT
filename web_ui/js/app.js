@@ -253,6 +253,14 @@ function setModelStatus(message, tone = "info") {
   updateStatus(elements.modelStatus, message, tone);
 }
 
+function syncModelActions() {
+  const selected = elements.llmModelSelect?.value;
+  const installed = selected && isModelInstalled(selected);
+  if (elements.btnDeleteModel) {
+    elements.btnDeleteModel.disabled = !installed;
+  }
+}
+
 function renderModelSuggestions() {
   if (!elements.modelSuggestions) return;
   const list = modelState.recommended?.length ? modelState.recommended : MODEL_RECOMMENDATIONS;
@@ -306,6 +314,7 @@ function updateModelSelect(preferredValue) {
     setSavedLlmModel(defaultValue);
   }
   setModelStatus(select.value ? "Готово к работе" : "Добавьте или скачайте модель.", select.value ? "success" : "warning");
+  syncModelActions();
 }
 
 function renderDownloads() {
@@ -332,8 +341,14 @@ function renderDownloads() {
           ? "Готово"
           : item.state === "error"
             ? `Ошибка: ${item.message || "неизвестно"}`
+            : item.state === "canceled"
+              ? "Остановлено пользователем"
             : item.message || "Загрузка";
       const width = Number.isFinite(item.percent) ? `${Math.min(item.percent, 100)}%` : "0%";
+      const actions =
+        item.state === "running" || item.state === "pending"
+          ? `<div class="download-actions"><button class="secondary" type="button" data-action="cancel-download" data-task="${item.task_id}">Пауза/отмена</button></div>`
+          : "";
       return `
         <div class="download-item">
           <div class="download-header">
@@ -345,6 +360,7 @@ function renderDownloads() {
           </div>
           <div class="download-progress-bar"><span style="width:${width}"></span></div>
           <div class="download-state">${stateLabel}</div>
+          ${actions}
         </div>`;
     })
     .join("");
@@ -382,6 +398,7 @@ async function fetchModelList({ silent = false } = {}) {
   try {
     const response = await fetch(`${API_BASE}/models`, { method: "GET" });
     const data = await response.json();
+    const apiError = data?.error;
     modelState.installed = Array.isArray(data?.installed) ? data.installed : [];
     modelState.recommended = Array.isArray(data?.recommended) && data.recommended.length
       ? data.recommended
@@ -391,9 +408,15 @@ async function fetchModelList({ silent = false } = {}) {
     renderModelSuggestions();
     renderDownloads();
     const selected = elements.llmModelSelect?.value;
-    if (selected) {
+    if (apiError) {
+      const message = typeof apiError === "string" ? apiError : apiError?.message || "Список моделей недоступен.";
+      setModelStatus(`Не удалось получить список моделей: ${message}`, "error");
+    } else if (selected) {
       setModelStatus(isModelInstalled(selected) ? `Локальная модель: ${selected}` : `Модель ${selected} не скачана`, isModelInstalled(selected) ? "success" : "warning");
+    } else {
+      setModelStatus("Добавьте или скачайте модель.", "warning");
     }
+    syncModelActions();
   } catch (error) {
     setModelStatus("Не удалось получить список моделей", "error");
   }
@@ -425,6 +448,27 @@ async function startModelDownload(model) {
     startDownloadPolling();
   } catch (error) {
     setModelStatus(`Не удалось запустить загрузку: ${error.message || error}`, "error");
+  }
+}
+
+async function cancelModelDownload(taskId) {
+  if (!taskId) return;
+  try {
+    const response = await fetch(`${API_BASE}/models/pull/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    modelState.downloads = (modelState.downloads || []).map((item) => (item.task_id === taskId ? data : item));
+    renderDownloads();
+  } catch (error) {
+    setModelStatus(`Не удалось остановить загрузку: ${error.message || error}`, "error");
+  }
+}
+
+function handleDownloadListClick(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  if (button.dataset.action === "cancel-download") {
+    cancelModelDownload(button.dataset.task);
   }
 }
 
@@ -1488,6 +1532,7 @@ function attachEvents() {
         setModelStatus(isModelInstalled(value) ? `Локальная модель: ${value}` : `Модель ${value} не скачана`, isModelInstalled(value) ? "success" : "warning");
       }
     }
+    syncModelActions();
   });
   elements.btnRefreshModels?.addEventListener("click", () => fetchModelList());
   elements.btnDeleteModel?.addEventListener("click", () => deleteSelectedModel());
@@ -1700,6 +1745,7 @@ function attachEvents() {
   });
 
   elements.transcriptList?.addEventListener("click", handleTranscriptListClick);
+  elements.downloadList?.addEventListener("click", handleDownloadListClick);
   elements.transcriptHistoryList?.addEventListener("click", handleTranscriptHistoryClick);
   elements.btnApplyTranscriptFromHistory?.addEventListener("click", () => {
     const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
