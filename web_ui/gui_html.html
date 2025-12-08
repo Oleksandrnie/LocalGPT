@@ -9,16 +9,38 @@
 </head>
 <body>
     <header class="app-header">
-        <h1>LocalGPT — Web UI</h1>
-        <span class="status" id="healthStatus">проверка сервера…</span>
+        <div class="brand-block">
+            <h1>LocalGPT — Web UI</h1>
+            <span class="status" id="healthStatus">проверка сервера…</span>
+        </div>
+        <div class="profile-chip">
+            <button id="btnProfile" type="button" title="Выбрать профиль">
+                <span class="icon-user">👤</span>
+                <span id="profileLabel">Профиль</span>
+            </button>
+        </div>
         <div class="header-actions">
             <button class="secondary" id="btnSettings">Настройки</button>
             <button class="secondary" id="btnHistory">История</button>
         </div>
     </header>
 
-    <main class="split">
-        <lgpt-card title="Запрос" data-card="request">
+    <main class="workspace-grid">
+        <aside class="sidebar" id="sidebar">
+            <div class="session-pane__header">
+                <div>
+                    <p class="muted">Диалоги</p>
+                    <h3 id="profileTitle">Сессии профиля</h3>
+                </div>
+                <div class="session-pane__actions">
+                    <button class="secondary btn-new-session" id="btnNewSession" type="button">+ Новый диалог</button>
+                    <button class="ghost" id="btnToggleSidebar" type="button" title="Свернуть список">◀</button>
+                </div>
+            </div>
+            <div id="sessionList" class="session-list muted">Загружаю список…</div>
+        </aside>
+        <section class="split">
+            <lgpt-card title="Запрос" data-card="request">
             <textarea id="prompt" placeholder="Введите промпт…"></textarea>
             <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
             <div class="buttons mt-sm">
@@ -49,9 +71,9 @@
                                     использовать</button>
                             </div>
                         </div>
-                        <div class="status" id="transcriptStatus"></div>
-                        <div id="transcriptList" class="transcript-list muted">Сохранённых транскриптов пока нет.</div>
-                    </section>
+                    <div class="status" id="transcriptStatus"></div>
+                    <div id="transcriptList" class="transcript-list muted" hidden>Сохранённых транскриптов пока нет.</div>
+                </section>
                     <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу
                         критериев.</p>
                     <div class="row mt-sm">
@@ -87,7 +109,7 @@
             <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
         </lgpt-card>
 
-        <lgpt-card title="Результаты" data-card="results">
+            <lgpt-card title="Результаты" data-card="results">
             <div class="tabs" role="tablist" aria-label="Результаты анализа">
                 <button class="tab is-active" type="button" id="tab-answer" data-tab-target="answer" role="tab"
                     aria-selected="true" aria-controls="panel-answer">Ответ</button>
@@ -136,7 +158,12 @@
                 </section>
             </div>
         </lgpt-card>
+        </section>
     </main>
+
+    <div class="help-fab">
+        <button id="btnHelp" type="button" title="Краткая инструкция">?</button>
+    </div>
 
     <div class="overlay" id="overlay" role="dialog" aria-modal="true">
         <div class="modal modal--history">
@@ -168,6 +195,7 @@
                     </div>
                     <div class="badges-row">
                         <span class="badge">Хранятся в ollama/models/</span>
+                        <span class="help-icon" title="Список локальных моделей из Ollama. Можно обновить, скачать или удалить.">?</span>
                     </div>
                 </header>
                 <div class="field-group">
@@ -191,9 +219,50 @@
             <section class="modal__section">
                 <header class="modal__section-header">
                     <div>
+                        <p class="muted">LLM</p>
+                        <h4>Настройки модели (по профилю)</h4>
+                    </div>
+                    <div class="badges-row">
+                        <span class="badge">Сохраняется локально в SQLite</span>
+                        <span class="help-icon" title="Настройки для выбранной модели и профиля:&#10;• Temperature — креативность (0–1)&#10;• Max response tokens — максимум токенов ответа&#10;• Max context tokens — общий лимит контекста&#10;• Memory turns (MEM_TURNS) — сколько пар user/assistant загружается в историю." aria-label="Подсказка по настройкам модели">?</span>
+                    </div>
+                </header>
+                <div class="row row--gutter">
+                    <div class="field-group">
+                        <label class="muted" for="temperatureInput">Temperature</label>
+                        <input id="temperatureInput" type="number" min="0" max="1" step="0.01" class="input-control"
+                            placeholder="Например 0.25" />
+                    </div>
+                    <div class="field-group">
+                        <label class="muted" for="maxTokensInput">Max response tokens</label>
+                        <input id="maxTokensInput" type="number" min="1" class="input-control"
+                            placeholder="Ответ в токенах" />
+                    </div>
+                    <div class="field-group">
+                        <label class="muted" for="numCtxInput">Max context tokens</label>
+                        <input id="numCtxInput" type="number" min="1" class="input-control"
+                            placeholder="Длина контекста" />
+                    </div>
+                    <div class="field-group">
+                        <label class="muted" for="memTurnsInput">Memory turns (MEM_TURNS)</label>
+                        <input id="memTurnsInput" type="number" min="1" class="input-control"
+                            placeholder="Пар диалога" />
+                    </div>
+                </div>
+                <div class="buttons mt-sm">
+                    <button id="btnSaveModelSettings" type="button">Сохранить</button>
+                    <button class="secondary" id="btnResetModelSettings" type="button">По умолчанию</button>
+                </div>
+                <div class="status" id="modelSettingsStatus">Используются значения из .env</div>
+            </section>
+
+            <section class="modal__section">
+                <header class="modal__section-header">
+                    <div>
                         <p class="muted">ASR</p>
                         <h4>Транскрибация по умолчанию</h4>
                     </div>
+                    <span class="help-icon" title="Модель Whisper и промпт, которые будут применяться при распознавании аудио/видео.">?</span>
                 </header>
                 <div class="row row--gutter">
                     <div class="field-group">
@@ -220,6 +289,7 @@
                         <p class="muted">HR</p>
                         <h4>Префикс подсказки</h4>
                     </div>
+                    <span class="help-icon" title="Короткий префикс, который подставляется в начало запроса после транскрибации для заземления роли.">?</span>
                 </header>
                 <div class="field-group">
                     <label class="muted" for="hrPrefix">Префикс HR-подсказки</label>
@@ -238,7 +308,10 @@
                     <p class="muted">История транскрибаций</p>
                     <h3 id="transcriptHistoryHeading">Транскрипция</h3>
                 </div>
-                <button class="secondary" id="btnCloseTranscriptHistory" type="button">Закрыть</button>
+                <div class="modal__header-actions">
+                    <button class="secondary" id="btnAddTranscriptHistoryEntry" type="button">Добавить</button>
+                    <button class="secondary" id="btnCloseTranscriptHistory" type="button">Закрыть</button>
+                </div>
             </header>
             <div class="transcript-history__details" id="transcriptHistoryDetails" hidden>
                 <div class="field-group">
@@ -253,6 +326,42 @@
                     <button class="warn" id="btnDeleteTranscriptFromHistory" type="button">Удалить</button>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div class="overlay" id="profileOverlay" role="dialog" aria-modal="true">
+        <div class="modal modal--profiles">
+            <header class="modal__header">
+                <div>
+                    <p class="muted">Профили</p>
+                    <h3>Выбор профиля</h3>
+                </div>
+                <button class="secondary" id="btnCloseProfileModal" type="button">Закрыть</button>
+            </header>
+            <div id="profileList" class="profile-list muted">Загружаю…</div>
+            <div class="buttons mt-sm">
+                <button id="btnModalNewProfile" type="button">Новый профиль</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="overlay" id="helpOverlay" role="dialog" aria-modal="true">
+        <div class="modal modal--help">
+            <header class="modal__header">
+                <div>
+                    <p class="muted">Подсказки</p>
+                    <h3>Как работать с LocalGPT</h3>
+                </div>
+                <button class="secondary" id="btnCloseHelp" type="button">Закрыть</button>
+            </header>
+            <ul class="help-list">
+                <li><strong>Профили.</strong> В левом верхнем углу выберите профиль или создайте новый. У каждого профиля свои диалоги, транскрипты и настройки моделей.</li>
+                <li><strong>Сессии.</strong> В левой колонке список диалогов выбранного профиля. Нажмите «+ Новый диалог», чтобы начать чат с выбранной моделью.</li>
+                <li><strong>Модель.</strong> В настройках укажите модель Ollama и сохраните параметры: temperature, max_tokens, num_ctx, mem_turns. Можно сбросить к значениям .env.</li>
+                <li><strong>Транскрипты.</strong> Загружайте или вставляйте текст, сохраняйте его в историю, прикрепляйте к чату или запускайте анализ.</li>
+                <li><strong>Критерии и контекст.</strong> Добавляйте критерии из файла/Google Sheets, прикрепляйте транскрипты и контекст — все запросы идут локально.</li>
+            </ul>
+            <p class="muted">Все данные (профили, диалоги, транскрипты и настройки) сохраняются в локальной базе проекта. Интернет не требуется.</p>
         </div>
     </div>
 

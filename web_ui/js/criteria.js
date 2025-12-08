@@ -195,13 +195,16 @@ export class CriteriaManager {
     return { sheetId: value, gid: "" };
   }
 
-  async requestFromBackend({ apiBase, sessionId, file, googleSheetId, googleGid, rawText }) {
+  async requestFromBackend({ apiBase, sessionId, profileId, file, googleSheetId, googleGid, rawText }) {
     if (this.busy) return;
     this.busy = true;
     this.updateStatus("Загружаю критерии…");
     try {
       const fd = new FormData();
-      fd.append("session_id", sessionId);
+      fd.append("session_id", sessionId || "");
+      if (profileId) {
+        fd.append("profile_id", profileId);
+      }
       if (file) {
         fd.append("file", file, file.name || "criteria");
       }

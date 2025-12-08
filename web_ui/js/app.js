@@ -2,16 +2,17 @@ import {
   API_BASE,
   addHistoryEntry,
   deleteHistoryEntry,
-  ensureSessionId,
   getHrPrefix,
+  getLastChatSessionId,
+  getLastProfileId,
   getSavedLlmModel,
   getSavedModel,
   getSavedPromptPreset,
   loadHistory,
-  loadTranscripts,
   saveHistory,
-  saveTranscripts,
   setHrPrefix,
+  setLastChatSessionId,
+  setLastProfileId,
   setSavedLlmModel,
   setSavedModel,
   setSavedPromptPreset,
@@ -86,6 +87,12 @@ const elements = {
   prompt: getElement("prompt"),
   answer: getElement("answer"),
   promptStats: getElement("promptStats"),
+  btnProfile: getElement("btnProfile"),
+  profileLabel: getElement("profileLabel"),
+  profileTitle: getElement("profileTitle"),
+  btnNewSession: getElement("btnNewSession"),
+  btnToggleSidebar: getElement("btnToggleSidebar"),
+  sessionList: getElement("sessionList"),
   llmModelSelect: getElement("llmModelSelect"),
   btnRefreshModels: getElement("btnRefreshModels"),
   btnDeleteModel: getElement("btnDeleteModel"),
@@ -148,12 +155,31 @@ const elements = {
   transcriptHistoryOverlay: getElement("transcriptHistoryOverlay"),
   btnCloseTranscriptHistory: getElement("btnCloseTranscriptHistory"),
   btnDeleteTranscriptFromHistory: getElement("btnDeleteTranscriptFromHistory"),
+  btnAddTranscriptHistoryEntry: getElement("btnAddTranscriptHistoryEntry"),
+  profileOverlay: getElement("profileOverlay"),
+  btnCloseProfileModal: getElement("btnCloseProfileModal"),
+  btnModalNewProfile: getElement("btnModalNewProfile"),
+  profileList: getElement("profileList"),
+  btnHelp: getElement("btnHelp"),
+  helpOverlay: getElement("helpOverlay"),
+  btnCloseHelp: getElement("btnCloseHelp"),
+  temperatureInput: getElement("temperatureInput"),
+  maxTokensInput: getElement("maxTokensInput"),
+  numCtxInput: getElement("numCtxInput"),
+  memTurnsInput: getElement("memTurnsInput"),
+  btnSaveModelSettings: getElement("btnSaveModelSettings"),
+  btnResetModelSettings: getElement("btnResetModelSettings"),
+  modelSettingsStatus: getElement("modelSettingsStatus"),
 };
 
 const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
 const tabPanels = Array.from(document.querySelectorAll("[data-panel]"));
 
-const sessionId = ensureSessionId();
+let profileList = [];
+let activeProfileId = null;
+let sessionListState = [];
+let currentSessionId = getLastChatSessionId();
+let currentSessionModel = null;
 let currentTranscript = "";
 let currentTimeline = [];
 let originalTimeline = [];
@@ -167,6 +193,7 @@ let transcriptLibrary = [];
 let selectedTranscriptHistoryId = null;
 let modelState = { installed: [], recommended: MODEL_RECOMMENDATIONS, downloads: [] };
 let downloadPollTimer = null;
+let modelSettingsState = { effective: {}, overrides: {}, defaults: {} };
 
 const criteriaManager = new CriteriaManager({
   listEl: elements.criteriaList,
@@ -251,6 +278,16 @@ function isModelInstalled(name) {
 
 function setModelStatus(message, tone = "info") {
   updateStatus(elements.modelStatus, message, tone);
+}
+
+function updateDownloadStatusIndicator() {
+  const running = (modelState.downloads || []).filter(
+    (d) => d.state === "running" || d.state === "pending",
+  );
+  if (!running.length) return;
+  const first = running[0];
+  const percent = Number.isFinite(first.percent) ? `${first.percent}%` : "—";
+  setModelStatus(`Загрузка модели ${first.model || ""}: ${percent}`, "warning");
 }
 
 function syncModelActions() {
@@ -366,6 +403,361 @@ function renderDownloads() {
     .join("");
 
   elements.downloadList.innerHTML = items;
+  updateDownloadStatusIndicator();
+}
+
+function renderProfiles() {
+  const activeProfile = profileList.find((p) => p.id === activeProfileId);
+  if (elements.profileLabel) {
+    elements.profileLabel.textContent = activeProfile ? activeProfile.name : "Профиль";
+  }
+  if (elements.profileTitle) {
+    elements.profileTitle.textContent = activeProfile ? `Сессии: ${activeProfile.name}` : "Сессии профиля";
+  }
+  if (!elements.profileList) return;
+  if (!profileList.length) {
+    elements.profileList.classList.add("muted");
+    elements.profileList.textContent = "Профили не найдены.";
+    return;
+  }
+  elements.profileList.classList.remove("muted");
+  const html = profileList
+    .map((profile) => {
+      const isActive = profile.id === activeProfileId;
+      return `
+        <div class="profile-list__item" data-id="${profile.id}">
+          <div class="profile-list__meta">
+            <strong>${escapeHtml(profile.name || `Профиль ${profile.id}`)}</strong>
+            <span class="muted">ID: ${profile.id}</span>
+          </div>
+          <div class="profile-list__actions">
+            <button class="secondary" type="button" data-action="select">${isActive ? "Активен" : "Выбрать"}</button>
+            <button class="warn" type="button" data-action="delete" ${isActive && profileList.length === 1 ? "disabled" : ""}>×</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+  elements.profileList.innerHTML = html;
+}
+
+function renderSessions() {
+  if (!elements.sessionList) return;
+  if (!sessionListState.length) {
+    elements.sessionList.classList.add("muted");
+    elements.sessionList.innerHTML = '<div class="muted">Диалогов пока нет. Создайте новый.</div>';
+    return;
+  }
+  elements.sessionList.classList.remove("muted");
+  const html = sessionListState
+    .map((session) => {
+      const isActive = session.id === currentSessionId;
+      const updated = session.updated_at || session.updatedAt;
+      const stamp = updated ? tsFmt(updated) : "";
+      const model = session.model_name || session.model || "";
+      return `
+        <article class="session-item${isActive ? " session-item--active" : ""}" data-id="${session.id}">
+          <div class="session-item__meta">
+            <div class="session-item__title">${escapeHtml(session.title || "Диалог")}</div>
+            <div class="muted">${escapeHtml(stamp)} • ${escapeHtml(model)}</div>
+          </div>
+          <div class="session-item__actions">
+            <button class="secondary" type="button" data-action="open">Открыть</button>
+            <button class="warn" type="button" data-action="delete">×</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+  elements.sessionList.innerHTML = html;
+}
+
+async function setActiveSession(sessionId, { refreshOnly = false } = {}) {
+  currentSessionId = sessionId;
+  setLastChatSessionId(sessionId || null);
+  if (!sessionId) {
+    currentSessionModel = null;
+  }
+  const session = sessionListState.find((item) => item.id === sessionId);
+  currentSessionModel = session?.model_name || currentSessionModel || null;
+  if (elements.llmModelSelect && currentSessionModel) {
+    const exists = Array.from(elements.llmModelSelect.options).some((opt) => opt.value === currentSessionModel);
+    if (!exists) {
+      updateModelSelect(currentSessionModel);
+    }
+    elements.llmModelSelect.value = currentSessionModel;
+    setSavedLlmModel(currentSessionModel);
+  }
+  renderSessions();
+  if (!refreshOnly) {
+    await refreshModelSettings(currentSessionModel || elements.llmModelSelect?.value || "");
+    await loadTranscriptLibrary({ silent: true });
+  }
+}
+
+async function loadSessionsForProfile(profileId) {
+  if (!profileId) {
+    sessionListState = [];
+    renderSessions();
+    return;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/sessions?profile_id=${profileId}`, { method: "GET" });
+    const data = await response.json();
+    sessionListState = Array.isArray(data?.sessions) ? data.sessions : [];
+    const preferred = sessionListState.find((item) => item.id === getLastChatSessionId());
+    const next = preferred || sessionListState[0] || null;
+    await setActiveSession(next?.id || null, { refreshOnly: false });
+    renderSessions();
+  } catch (error) {
+    updateStatus(elements.healthStatus, "Список сессий недоступен", "error");
+  }
+}
+
+async function fetchProfilesAndInit() {
+  try {
+    const response = await fetch(`${API_BASE}/profiles`, { method: "GET" });
+    const data = await response.json();
+    profileList = Array.isArray(data?.profiles) ? data.profiles : [];
+    const preferred = profileList.find((p) => p.id === getLastProfileId());
+    activeProfileId = preferred?.id ?? profileList[0]?.id ?? null;
+    if (activeProfileId) {
+      setLastProfileId(activeProfileId);
+    }
+    renderProfiles();
+    await loadSessionsForProfile(activeProfileId);
+  } catch (error) {
+    updateStatus(elements.healthStatus, "Профили недоступны", "error");
+  }
+}
+
+async function createProfileFlow() {
+  const name = window.prompt("Название профиля", "Новый профиль")?.trim();
+  if (!name) return;
+  try {
+    const response = await fetch(`${API_BASE}/profiles`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const profile = await response.json();
+    profileList = [...profileList, profile];
+    activeProfileId = profile.id;
+    setLastProfileId(activeProfileId);
+    renderProfiles();
+    await loadSessionsForProfile(activeProfileId);
+    closeProfileModal();
+  } catch (error) {
+    updateStatus(elements.healthStatus, `Не удалось создать профиль: ${error.message || error}`, "error");
+  }
+}
+
+async function deleteProfileFlow(profileId = activeProfileId) {
+  if (!profileId) return;
+  const confirmed = window.confirm("Удалить профиль и все связанные данные?");
+  if (!confirmed) return;
+  try {
+    const response = await fetch(`${API_BASE}/profiles/${profileId}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    profileList = profileList.filter((p) => p.id !== profileId);
+    activeProfileId = profileList[0]?.id || null;
+    setLastProfileId(activeProfileId);
+    renderProfiles();
+    await loadSessionsForProfile(activeProfileId);
+    closeProfileModal();
+  } catch (error) {
+    updateStatus(elements.healthStatus, `Не удалось удалить профиль: ${error.message || error}`, "error");
+  }
+}
+
+function openProfileModal() {
+  renderProfiles();
+  elements.profileOverlay?.classList.add("overlay--visible");
+}
+
+function closeProfileModal() {
+  elements.profileOverlay?.classList.remove("overlay--visible");
+}
+
+function handleProfileListClick(event) {
+  const row = event.target.closest(".profile-list__item");
+  if (!row) return;
+  const profileId = Number(row.dataset.id);
+  const action = event.target.closest("[data-action]")?.dataset?.action;
+  if (!Number.isFinite(profileId)) return;
+  if (action === "select") {
+    activeProfileId = profileId;
+    setLastProfileId(activeProfileId);
+    renderProfiles();
+    closeProfileModal();
+    void loadSessionsForProfile(activeProfileId);
+    void refreshModelSettings(currentModelName());
+    void loadTranscriptLibrary({ silent: true });
+    return;
+  }
+  if (action === "delete") {
+    deleteProfileFlow(profileId);
+  }
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  const workspace = document.querySelector(".workspace-grid");
+  if (!sidebar) return;
+  const collapsed = sidebar.classList.toggle("sidebar-collapsed");
+  if (workspace) {
+    workspace.classList.toggle("is-collapsed", collapsed);
+  }
+  if (elements.btnToggleSidebar) {
+    elements.btnToggleSidebar.textContent = collapsed ? "▶" : "◀";
+    elements.btnToggleSidebar.title = collapsed ? "Развернуть список" : "Свернуть список";
+  }
+}
+
+async function createSessionFlow() {
+  if (!activeProfileId) {
+    updateStatus(elements.healthStatus, "Сначала выберите профиль", "warning");
+    return;
+  }
+  const title = window.prompt("Название нового диалога", "Новый диалог")?.trim() || "Новый диалог";
+  const model = (elements.llmModelSelect?.value || "").trim();
+  try {
+    const response = await fetch(`${API_BASE}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: activeProfileId, title, model_name: model }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const session = await response.json();
+    sessionListState = [session, ...sessionListState.filter((s) => s.id !== session.id)];
+    renderSessions();
+    await setActiveSession(session.id);
+  } catch (error) {
+    updateStatus(elements.healthStatus, `Не удалось создать сессию: ${error.message || error}`, "error");
+  }
+}
+
+async function deleteSessionById(sessionId) {
+  if (!sessionId) return;
+  const confirmed = window.confirm("Удалить диалог и историю сообщений?");
+  if (!confirmed) return;
+  try {
+    const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    sessionListState = sessionListState.filter((item) => item.id !== sessionId);
+    if (currentSessionId === sessionId) {
+      currentSessionId = null;
+      currentSessionModel = null;
+    }
+    renderSessions();
+    const next = sessionListState[0];
+    await setActiveSession(next?.id || null);
+  } catch (error) {
+    updateStatus(elements.healthStatus, `Не удалось удалить сессию: ${error.message || error}`, "error");
+  }
+}
+
+function handleSessionListClick(event) {
+  const card = event.target.closest(".session-item");
+  if (!card) return;
+  const sessionId = card.dataset.id;
+  const action = event.target.closest("[data-action]")?.dataset?.action || "open";
+  if (action === "delete") {
+    deleteSessionById(sessionId);
+  } else {
+    setActiveSession(sessionId);
+  }
+}
+
+function currentModelName() {
+  return currentSessionModel || (elements.llmModelSelect?.value || "").trim();
+}
+
+function fillModelSettingsForm(bundle) {
+  if (!bundle) return;
+  const effective = bundle.effective || {};
+  if (elements.temperatureInput) elements.temperatureInput.value = effective.temperature ?? "";
+  if (elements.maxTokensInput) elements.maxTokensInput.value = effective.max_tokens ?? "";
+  if (elements.numCtxInput) elements.numCtxInput.value = effective.num_ctx ?? "";
+  if (elements.memTurnsInput) elements.memTurnsInput.value = effective.mem_turns ?? "";
+  LIMITS.num_ctx = effective.num_ctx ?? null;
+  LIMITS.max_tokens = effective.max_tokens ?? null;
+  recalcStats();
+  if (elements.modelSettingsStatus) {
+    const overrides = bundle.overrides || {};
+    const hasOverrides = Object.values(overrides).some((v) => v !== null && v !== undefined);
+    elements.modelSettingsStatus.textContent = hasOverrides
+      ? "Используются пользовательские настройки"
+      : "Используются значения по умолчанию (.env)";
+    elements.modelSettingsStatus.classList.toggle("status--success", hasOverrides);
+  }
+}
+
+async function refreshModelSettings(modelName) {
+  if (!activeProfileId || !modelName) return;
+  const params = new URLSearchParams({ profile_id: String(activeProfileId), model_name: modelName });
+  try {
+    const response = await fetch(`${API_BASE}/model_settings?${params.toString()}`, { method: "GET" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    modelSettingsState = data;
+    fillModelSettingsForm(data);
+  } catch (error) {
+    updateStatus(elements.modelSettingsStatus, "Не удалось получить настройки модели.", "error");
+  }
+}
+
+async function saveModelSettings() {
+  const model = currentModelName();
+  if (!activeProfileId || !model) {
+    updateStatus(elements.modelSettingsStatus, "Выберите профиль и модель.", "warning");
+    return;
+  }
+  const payload = {
+    profile_id: activeProfileId,
+    model_name: model,
+    temperature: elements.temperatureInput?.value ? Number(elements.temperatureInput.value) : null,
+    max_tokens: elements.maxTokensInput?.value ? Number(elements.maxTokensInput.value) : null,
+    num_ctx: elements.numCtxInput?.value ? Number(elements.numCtxInput.value) : null,
+    mem_turns: elements.memTurnsInput?.value ? Number(elements.memTurnsInput.value) : null,
+  };
+  try {
+    const response = await fetch(`${API_BASE}/model_settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    modelSettingsState = data;
+    fillModelSettingsForm(data);
+    updateStatus(elements.modelSettingsStatus, "Настройки модели сохранены.", "success");
+  } catch (error) {
+    updateStatus(elements.modelSettingsStatus, `Не удалось сохранить: ${error.message || error}`, "error");
+  }
+}
+
+async function resetModelSettingsToDefaults() {
+  const model = currentModelName();
+  if (!activeProfileId || !model) {
+    updateStatus(elements.modelSettingsStatus, "Выберите профиль и модель.", "warning");
+    return;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/model_settings/reset_to_defaults`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: activeProfileId, model_name: model }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    modelSettingsState = data;
+    fillModelSettingsForm(data);
+    updateStatus(elements.modelSettingsStatus, "Настройки сброшены к значениям по умолчанию.", "success");
+  } catch (error) {
+    updateStatus(elements.modelSettingsStatus, `Не удалось сбросить настройки: ${error.message || error}`, "error");
+  }
 }
 
 async function refreshDownloadStatuses({ silent = false } = {}) {
@@ -376,6 +768,7 @@ async function refreshDownloadStatuses({ silent = false } = {}) {
     const previous = modelState.downloads || [];
     modelState.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     renderDownloads();
+    updateDownloadStatusIndicator();
 
     const completedModels = new Set(
       modelState.downloads
@@ -445,6 +838,7 @@ async function startModelDownload(model) {
     }
     modelState.downloads = [...(modelState.downloads || []), data];
     renderDownloads();
+    updateDownloadStatusIndicator();
     startDownloadPolling();
   } catch (error) {
     setModelStatus(`Не удалось запустить загрузку: ${error.message || error}`, "error");
@@ -578,18 +972,20 @@ function normalizeTranscriptEntry(entry) {
   const timeline = Array.isArray(entry.timeline)
     ? entry.timeline.map((item) => normalizeTimelineItem(item)).filter(Boolean)
     : [];
-  const text = (entry.text || "").toString();
-  const title = (entry.title || "").toString().trim();
-  const ts = Number(entry.ts) || Date.now();
-  const updatedAt = Number(entry.updatedAt) || ts;
+  const text = (entry.text || entry.content || "").toString();
+  const title = (entry.title || entry.name || "").toString().trim();
+  const tsRaw = entry.updatedAt || entry.updated_at || entry.ts || entry.created_at;
+  const tsNumber = Number(tsRaw);
+  const parsedTs = Number.isFinite(tsNumber) ? tsNumber : Date.parse(tsRaw || "") || Date.now();
+  const updatedAt = parsedTs;
   return {
-    id: typeof entry.id === "string" ? entry.id : createTranscriptId(),
-    title: title || `Транскрипт ${new Date(ts).toLocaleString()}`,
+    id: typeof entry.id === "string" ? entry.id : String(entry.id || createTranscriptId()),
+    title: title || `Транскрипт ${new Date(parsedTs).toLocaleString()}`,
     text,
     timeline,
-    roleKeywords: cloneRoleKeywords(entry.roleKeywords),
+    roleKeywords: cloneRoleKeywords(entry.roleKeywords || entry.role_keywords),
     labels: cloneLabels(entry.labels),
-    ts,
+    ts: parsedTs,
     updatedAt,
   };
 }
@@ -738,7 +1134,7 @@ function saveTimelineEdit() {
   updateTimelineView();
   updateTimelineButtons();
   rebuildTranscriptFromTimeline();
-  updateActiveTranscriptEntry(
+  void updateActiveTranscriptEntry(
     { timeline: currentTimeline, text: currentTranscript },
     { silent: true },
   );
@@ -785,7 +1181,7 @@ function handleTimelineNameInput(event) {
     updateTimelineView();
   }
   updateTimelineLegend();
-  updateActiveTranscriptEntry({ labels: timelineLabels }, { silent: true });
+  void updateActiveTranscriptEntry({ labels: timelineLabels }, { silent: true });
 }
 
 function activateTab(target) {
@@ -843,58 +1239,8 @@ function setTranscriptStatus(message, tone = "info") {
   updateStatus(elements.transcriptStatus, message, tone);
 }
 
-function persistTranscriptLibrary() {
-  if (!Array.isArray(transcriptLibrary)) {
-    transcriptLibrary = [];
-  }
-  if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
-    transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
-  }
-  saveTranscripts(transcriptLibrary);
-}
-
 function renderTranscriptLibrary() {
   if (!elements.transcriptList) return;
-  if (!Array.isArray(transcriptLibrary) || !transcriptLibrary.length) {
-    elements.transcriptList.classList.add("muted");
-    elements.transcriptList.innerHTML = '<div class="muted">Сохранённых транскриптов пока нет.</div>';
-    renderTranscriptHistory();
-    return;
-  }
-
-  elements.transcriptList.classList.remove("muted");
-  const html = transcriptLibrary
-    .map((entry) => {
-      const activeClass = entry.id === activeTranscriptId ? " transcript-item--active" : "";
-      const hasTiming = hasTimelineTiming(entry.timeline);
-      const badge = hasTiming
-        ? '<span class="badge badge--success">с таймингами</span>'
-        : '<span class="badge badge--warning">без таймингов</span>';
-      const rawPreview = (entry.text || "").replace(/\s+/g, " ").trim();
-      const previewText = rawPreview.slice(0, 180);
-      const preview = escapeHtml(previewText + (rawPreview.length > 180 ? "…" : ""));
-      const timestamp = escapeHtml(tsFmt(entry.updatedAt || entry.ts));
-      return `
-        <article class="transcript-item${activeClass}" data-id="${escapeHtml(entry.id)}">
-          <header class="transcript-item__header">
-            <div>
-              <div class="transcript-item__title">${escapeHtml(entry.title)}</div>
-              <div class="transcript-item__meta muted">${timestamp}</div>
-            </div>
-            <div class="transcript-item__badges">${badge}</div>
-          </header>
-          <div class="transcript-item__preview muted">${preview || "—"}</div>
-          <div class="transcript-item__actions buttons mt-xs">
-            <button class="secondary" type="button" data-action="use">Загрузить</button>
-            <button type="button" data-action="analyze">Анализ</button>
-            <button class="warn" type="button" data-action="delete">Удалить</button>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
-
-  elements.transcriptList.innerHTML = html;
   renderTranscriptHistory();
 }
 
@@ -1036,44 +1382,104 @@ function sortTranscriptLibrary() {
   transcriptLibrary.sort((a, b) => (b.updatedAt || b.ts) - (a.updatedAt || a.ts));
 }
 
-function loadTranscriptLibrary() {
-  const stored = loadTranscripts();
-  const items = Array.isArray(stored)
-    ? stored
-        .map((entry) => normalizeTranscriptEntry(entry))
-        .filter(Boolean)
-    : [];
-  transcriptLibrary = items;
-  sortTranscriptLibrary();
-  if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
-    transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
+async function loadTranscriptLibrary({ silent = false } = {}) {
+  if (!activeProfileId) {
+    transcriptLibrary = [];
+    renderTranscriptLibrary();
+    return;
   }
-  renderTranscriptLibrary();
+  try {
+    const params = new URLSearchParams({ profile_id: String(activeProfileId) });
+    if (currentSessionId) params.append("session_id", currentSessionId);
+    const response = await fetch(`${API_BASE}/transcripts?${params.toString()}`, { method: "GET" });
+    const data = await response.json();
+    const items = Array.isArray(data?.transcripts) ? data.transcripts : [];
+    transcriptLibrary = items.map((entry) => normalizeTranscriptEntry(entry)).filter(Boolean);
+    sortTranscriptLibrary();
+    if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
+      transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
+    }
+    renderTranscriptLibrary();
+  } catch (error) {
+    if (!silent) {
+      setTranscriptStatus("Не удалось загрузить транскрипты для профиля.", "error");
+    }
+  }
 }
 
-function addTranscriptEntry(entry, { makeActive = false, announce = true } = {}) {
+async function addTranscriptEntry(entry, { makeActive = false, announce = true } = {}) {
+  if (!activeProfileId) {
+    setTranscriptStatus("Сначала выберите профиль.", "warning");
+    return null;
+  }
   const normalized = normalizeTranscriptEntry(entry);
   if (!normalized) return null;
-  transcriptLibrary = [normalized, ...transcriptLibrary.filter((item) => item.id !== normalized.id)];
-  sortTranscriptLibrary();
-  if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
-    transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
+  const payload = {
+    profile_id: activeProfileId,
+    session_id: currentSessionId || null,
+    name: normalized.title,
+    content: normalized.text,
+    language: null,
+    timeline: normalized.timeline,
+    role_keywords: normalized.roleKeywords,
+    labels: normalized.labels,
+  };
+  try {
+    const response = await fetch(`${API_BASE}/transcripts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const saved = normalizeTranscriptEntry({ ...normalized, ...data, title: data?.name, text: data?.content });
+    transcriptLibrary = [saved, ...transcriptLibrary.filter((item) => item.id !== saved.id)];
+    sortTranscriptLibrary();
+    if (transcriptLibrary.length > TRANSCRIPT_LIBRARY_LIMIT) {
+      transcriptLibrary = transcriptLibrary.slice(0, TRANSCRIPT_LIBRARY_LIMIT);
+    }
+    if (makeActive) {
+      activeTranscriptId = saved.id;
+    }
+    if (makeActive || !selectedTranscriptHistoryId) {
+      selectedTranscriptHistoryId = saved.id;
+    }
+    renderTranscriptLibrary();
+    if (announce) {
+      setTranscriptStatus(`Транскрипт «${saved.title}» сохранён.`, "success");
+    }
+    return saved;
+  } catch (error) {
+    setTranscriptStatus(`Не удалось сохранить транскрипт: ${error.message || error}`, "error");
+    return null;
   }
-  persistTranscriptLibrary();
-  if (makeActive) {
-    activeTranscriptId = normalized.id;
-  }
-  if (makeActive || !selectedTranscriptHistoryId) {
-    selectedTranscriptHistoryId = normalized.id;
-  }
-  renderTranscriptLibrary();
-  if (announce) {
-    setTranscriptStatus(`Транскрипт «${normalized.title}» сохранён.`, "success");
-  }
-  return normalized;
 }
 
-function updateActiveTranscriptEntry(patch = {}, { silent = false, targetId = null } = {}) {
+async function addTranscriptFromHistoryPrompt() {
+  if (!activeProfileId) {
+    setTranscriptStatus("Сначала выберите профиль.", "warning");
+    return;
+  }
+  const text = window.prompt("Вставьте текст транскрипта") || "";
+  const cleaned = text.trim();
+  if (!cleaned) return;
+  const title = window.prompt("Название транскрипта", suggestTranscriptTitle({ manual: true })) || "";
+  const entry = newTranscriptEntry({
+    title: title.trim() || suggestTranscriptTitle({ manual: true }),
+    text: cleaned,
+    timeline: buildTextTimelineFromTranscript(cleaned),
+    roleKeywords: {},
+    labels: {},
+  });
+  const saved = await addTranscriptEntry(entry, { makeActive: true, announce: false });
+  if (saved) {
+    renderTranscriptHistory();
+    showTranscriptHistoryDetails(saved);
+    setTranscriptStatus(`Транскрипт «${saved.title}» добавлен.`, "success");
+  }
+}
+
+async function updateActiveTranscriptEntry(patch = {}, { silent = false, targetId = null } = {}) {
   const id = targetId || activeTranscriptId;
   if (!id) return;
   const index = transcriptLibrary.findIndex((item) => item.id === id);
@@ -1086,38 +1492,60 @@ function updateActiveTranscriptEntry(patch = {}, { silent = false, targetId = nu
     ts: base.ts,
     updatedAt: Date.now(),
   });
-  transcriptLibrary[index] = next;
-  sortTranscriptLibrary();
-  persistTranscriptLibrary();
-  if (targetId) {
-    selectedTranscriptHistoryId = targetId;
-  }
-  renderTranscriptLibrary();
-  if (!silent) {
-    setTranscriptStatus(`Транскрипт «${next.title}» обновлён.`, "success");
+  try {
+    const response = await fetch(`${API_BASE}/transcripts/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: next.title,
+        content: next.text,
+        timeline: next.timeline,
+        role_keywords: next.roleKeywords,
+        labels: next.labels,
+      }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    transcriptLibrary[index] = next;
+    sortTranscriptLibrary();
+    if (targetId) {
+      selectedTranscriptHistoryId = targetId;
+    }
+    renderTranscriptLibrary();
+    if (!silent) {
+      setTranscriptStatus(`Транскрипт «${next.title}» обновлён.`, "success");
+    }
+  } catch (error) {
+    if (!silent) {
+      setTranscriptStatus(`Не удалось обновить транскрипт: ${error.message || error}`, "error");
+    }
   }
 }
 
-function deleteTranscriptEntry(id) {
+async function deleteTranscriptEntry(id) {
   if (!id) return;
   const index = transcriptLibrary.findIndex((item) => item.id === id);
   if (index === -1) return;
   const wasSelected = selectedTranscriptHistoryId === id;
-  const [removed] = transcriptLibrary.splice(index, 1);
-  persistTranscriptLibrary();
-  if (activeTranscriptId === id) {
-    activeTranscriptId = null;
+  try {
+    const response = await fetch(`${API_BASE}/transcripts/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const [removed] = transcriptLibrary.splice(index, 1);
+    if (activeTranscriptId === id) {
+      activeTranscriptId = null;
+    }
+    if (wasSelected) {
+      selectedTranscriptHistoryId = transcriptLibrary[0]?.id || null;
+    }
+    renderTranscriptLibrary();
+    if (wasSelected) {
+      closeTranscriptHistoryModal();
+    } else {
+      refreshTranscriptHistoryModal();
+    }
+    setTranscriptStatus(`Транскрипт «${removed.title}» удалён.`, "warning");
+  } catch (error) {
+    setTranscriptStatus(`Не удалось удалить транскрипт: ${error.message || error}`, "error");
   }
-  if (wasSelected) {
-    selectedTranscriptHistoryId = transcriptLibrary[0]?.id || null;
-  }
-  renderTranscriptLibrary();
-  if (wasSelected) {
-    closeTranscriptHistoryModal();
-  } else {
-    refreshTranscriptHistoryModal();
-  }
-  setTranscriptStatus(`Транскрипт «${removed.title}» удалён.`, "warning");
 }
 
 function applyTranscriptEntry(entry, { focusTimeline = true, announce = true } = {}) {
@@ -1149,7 +1577,7 @@ function findTranscriptEntry(id) {
   return transcriptLibrary.find((item) => item.id === id) || null;
 }
 
-function useManualTranscript({ save = false } = {}) {
+async function useManualTranscript({ save = false } = {}) {
   if (!elements.manualTranscriptInput) return;
   const rawValue = elements.manualTranscriptInput.value || "";
   const text = rawValue.trim();
@@ -1179,7 +1607,7 @@ function useManualTranscript({ save = false } = {}) {
       roleKeywords: currentRoleKeywords,
       labels: timelineLabels,
     });
-    addTranscriptEntry(entry, { makeActive: true, announce: true });
+    await addTranscriptEntry(entry, { makeActive: true, announce: true });
   } else {
     renderTranscriptLibrary();
     setTranscriptStatus("Текст прикреплён. Можно запускать анализ.", "success");
@@ -1340,12 +1768,17 @@ async function sendPrompt() {
   if (chatState.controller) {
     return;
   }
+  if (!activeProfileId) {
+    updateStatus(elements.healthStatus, "Сначала выберите профиль.", "warning");
+    return;
+  }
   const rawQuery = elements.prompt?.value || "";
   const finalQuery = rawQuery.trim() || "проанализируй";
 
   const selectedModel = (elements.llmModelSelect?.value || "").trim();
-  if (selectedModel) {
-    const available = await ensureModelAvailability(selectedModel);
+  const targetModel = currentSessionModel || selectedModel;
+  if (targetModel) {
+    const available = await ensureModelAvailability(targetModel);
     if (!available) {
       return;
     }
@@ -1361,7 +1794,10 @@ async function sendPrompt() {
 
   let aborted = false;
   try {
-    const payload = { query: finalQuery, session_id: sessionId };
+    const payload = { query: finalQuery, profile_id: activeProfileId };
+    if (currentSessionId) {
+      payload.session_id = currentSessionId;
+    }
     const transcript = currentTranscript.trim();
     if (transcript) {
       payload.transcript = transcript;
@@ -1370,9 +1806,9 @@ async function sendPrompt() {
     if (criteria.length) {
       payload.criteria = criteria;
     }
-    if (selectedModel) {
-      payload.model = selectedModel;
-      setSavedLlmModel(selectedModel);
+    if (!currentSessionId && targetModel) {
+      payload.model = targetModel;
+      setSavedLlmModel(targetModel);
     }
 
     const response = await fetch(`${API_BASE}/chat`, {
@@ -1389,6 +1825,22 @@ async function sendPrompt() {
       elements.answer.value = text;
     }
     addHistoryEntry(finalQuery, text);
+
+    if (data.session_id) {
+      currentSessionId = data.session_id;
+      setLastChatSessionId(currentSessionId);
+    }
+    if (data.model_name) {
+      currentSessionModel = data.model_name;
+    }
+    if (data.used_settings) {
+      LIMITS.num_ctx = data.used_settings.num_ctx ?? LIMITS.num_ctx;
+      LIMITS.max_tokens = data.used_settings.max_tokens ?? LIMITS.max_tokens;
+    }
+    await loadSessionsForProfile(activeProfileId);
+    if (currentSessionId) {
+      await setActiveSession(currentSessionId, { refreshOnly: true });
+    }
 
     if (elements.prompt) {
       elements.prompt.value = "";
@@ -1418,6 +1870,10 @@ async function transcribeFile() {
     updateStatus(elements.transcribeStatus, "выберите аудио/видео файл", "error");
     return;
   }
+  if (!activeProfileId) {
+    updateStatus(elements.transcribeStatus, "выберите профиль перед транскрибацией", "error");
+    return;
+  }
 
   setTranscribeBusy(true);
   try {
@@ -1431,7 +1887,10 @@ async function transcribeFile() {
     formData.append("model", model);
     const preset = (elements.promptPresetSelect?.value || "none").trim();
     formData.append("prompt_preset", preset);
-    formData.append("session_id", sessionId);
+    if (currentSessionId) {
+      formData.append("session_id", currentSessionId);
+    }
+    formData.append("profile_id", activeProfileId);
 
     const response = await fetch(`${API_BASE}/transcribe`, {
       method: "POST",
@@ -1484,7 +1943,7 @@ async function transcribeFile() {
       roleKeywords: currentRoleKeywords,
       labels: timelineLabels,
     });
-    addTranscriptEntry(entry, { makeActive: true, announce: false });
+    await addTranscriptEntry(entry, { makeActive: true, announce: false });
     const hasTiming = hasTimelineTiming(currentTimeline);
     setTranscriptStatus(
       hasTiming
@@ -1523,6 +1982,19 @@ function addQuickCriterion() {
 function attachEvents() {
   elements.prompt?.addEventListener("input", debounce(recalcStats, 100));
 
+  elements.btnProfile?.addEventListener("click", () => openProfileModal());
+  elements.btnCloseProfileModal?.addEventListener("click", () => closeProfileModal());
+  elements.profileOverlay?.addEventListener("click", (event) => {
+    if (event.target === elements.profileOverlay) {
+      closeProfileModal();
+    }
+  });
+  elements.profileList?.addEventListener("click", handleProfileListClick);
+  elements.btnModalNewProfile?.addEventListener("click", () => createProfileFlow());
+  elements.btnNewSession?.addEventListener("click", () => createSessionFlow());
+  elements.sessionList?.addEventListener("click", handleSessionListClick);
+  elements.btnToggleSidebar?.addEventListener("click", () => toggleSidebar());
+
   elements.llmModelSelect?.addEventListener("change", async () => {
     const value = (elements.llmModelSelect.value || "").trim();
     if (value) {
@@ -1530,6 +2002,10 @@ function attachEvents() {
       const available = await ensureModelAvailability(value);
       if (available) {
         setModelStatus(isModelInstalled(value) ? `Локальная модель: ${value}` : `Модель ${value} не скачана`, isModelInstalled(value) ? "success" : "warning");
+        if (!currentSessionId) {
+          currentSessionModel = value;
+        }
+        await refreshModelSettings(value);
       }
     }
     syncModelActions();
@@ -1618,6 +2094,14 @@ function attachEvents() {
       closeTranscriptHistoryModal();
       return;
     }
+    if (elements.profileOverlay?.classList.contains("overlay--visible")) {
+      closeProfileModal();
+      return;
+    }
+    if (elements.helpOverlay?.classList.contains("overlay--visible")) {
+      elements.helpOverlay.classList.remove("overlay--visible");
+      return;
+    }
     if (elements.settingsOverlay?.classList.contains("overlay--visible")) {
       closeSettings();
       return;
@@ -1642,6 +2126,9 @@ function attachEvents() {
     renderHistory();
   });
 
+  elements.btnSaveModelSettings?.addEventListener("click", () => saveModelSettings());
+  elements.btnResetModelSettings?.addEventListener("click", () => resetModelSettingsToDefaults());
+
   elements.btnLoadCriteriaFile?.addEventListener("click", async () => {
     const file = elements.criteriaFileInput?.files?.[0];
     if (!file) {
@@ -1649,7 +2136,12 @@ function attachEvents() {
       return;
     }
     try {
-      await criteriaManager.requestFromBackend({ apiBase: API_BASE, sessionId, file });
+      await criteriaManager.requestFromBackend({
+        apiBase: API_BASE,
+        sessionId: currentSessionId,
+        profileId: activeProfileId,
+        file,
+      });
       recalcStats();
     } catch (error) {
       console.warn("criteria file load failed", error);
@@ -1669,7 +2161,8 @@ function attachEvents() {
     try {
       await criteriaManager.requestFromBackend({
         apiBase: API_BASE,
-        sessionId,
+        sessionId: currentSessionId,
+        profileId: activeProfileId,
         googleSheetId: parsed.sheetId,
         googleGid: parsed.gid,
       });
@@ -1737,11 +2230,11 @@ function attachEvents() {
   });
 
   elements.btnUseManualTranscript?.addEventListener("click", () => {
-    useManualTranscript({ save: false });
+    void useManualTranscript({ save: false });
   });
 
   elements.btnSaveManualTranscript?.addEventListener("click", () => {
-    useManualTranscript({ save: true });
+    void useManualTranscript({ save: true });
   });
 
   elements.transcriptList?.addEventListener("click", handleTranscriptListClick);
@@ -1768,8 +2261,9 @@ function attachEvents() {
       setTranscriptStatus("Введите название транскрибации.", "error");
       return;
     }
-    updateActiveTranscriptEntry({ title }, { targetId: entry.id });
-    showTranscriptHistoryDetails(findTranscriptEntry(entry.id));
+    updateActiveTranscriptEntry({ title }, { targetId: entry.id }).then(() => {
+      showTranscriptHistoryDetails(findTranscriptEntry(entry.id));
+    });
   });
   elements.btnDeleteTranscriptFromHistory?.addEventListener("click", () => {
     const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
@@ -1780,6 +2274,7 @@ function attachEvents() {
     if (!window.confirm("Удалить сохранённый транскрипт?")) return;
     deleteTranscriptEntry(entry.id);
   });
+  elements.btnAddTranscriptHistoryEntry?.addEventListener("click", () => addTranscriptFromHistoryPrompt());
 
   elements.btnEditTimeline?.addEventListener("click", enterTimelineEditMode);
   elements.btnCancelTimeline?.addEventListener("click", cancelTimelineEdit);
@@ -1799,9 +2294,21 @@ function attachEvents() {
       activateTab(button.dataset.tabTarget);
     });
   });
+
+  elements.btnHelp?.addEventListener("click", () => {
+    elements.helpOverlay?.classList.add("overlay--visible");
+  });
+  elements.btnCloseHelp?.addEventListener("click", () => {
+    elements.helpOverlay?.classList.remove("overlay--visible");
+  });
+  elements.helpOverlay?.addEventListener("click", (event) => {
+    if (event.target === elements.helpOverlay) {
+      elements.helpOverlay.classList.remove("overlay--visible");
+    }
+  });
 }
 
-function init() {
+async function init() {
   if (elements.modelSelect) {
     elements.modelSelect.value = getSavedModel(elements.modelSelect.value || "medium");
     setSavedModel(elements.modelSelect.value);
@@ -1814,6 +2321,8 @@ function init() {
 
   updateModelSelect(getSavedLlmModel());
   renderModelSuggestions();
+  attachEvents();
+  await fetchProfilesAndInit();
   fetchModelList();
   startDownloadPolling();
 
@@ -1823,12 +2332,10 @@ function init() {
   }
 
   renderTranscribeDefaults();
-  loadTranscriptLibrary();
   setTranscriptStatus("", "info");
   clearTimelineState();
   criteriaManager.loadFromStorage();
 
-  attachEvents();
   checkHealth();
   activateTab("answer");
   recalcStats();

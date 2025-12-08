@@ -57,7 +57,7 @@ UI → http://127.0.0.1:8000/
 
 ## `.env`
 ```env
-LOCAL_MODEL=qwen2.5:7b-instruct
+LOCAL_MODEL=qwen2.5:3b
 LOCAL_BASE_URL=http://127.0.0.1:11434/v1
 LOCAL_API_KEY=LOCAL-KEY
 TEMP=0.25
@@ -70,7 +70,7 @@ MEM_TURNS=6
 ---
 
 ## Офлайн-подготовка
-- Скачайте LLM через `ollama pull qwen2.5:7b-instruct` и перенесите `~/.ollama/models`.
+- Скачайте минимальную LLM через `ollama pull qwen2.5:3b` (тяжёлые — по желанию) и перенесите `~/.ollama/models`.
 - Скачайте веса Whisper (`Systran/faster-whisper-*`) и положите в `ollama_models/whisper/`.
 - В `.env` оставьте локальные `LOCAL_BASE_URL` (`http://127.0.0.1:11434/v1`) и `LOCAL_API_KEY`.
 

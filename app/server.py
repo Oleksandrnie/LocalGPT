@@ -22,6 +22,8 @@ from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
+from . import db
+
 from .asr_whisper import transcribe_with_fallback
 
 LOGGER = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": OLLAMA_MODELS_DIR}
 ENV = os.getenv("ENV", "local")
 BASE_URL = os.getenv("LOCAL_BASE_URL", "http://localhost:11434/v1")
 API_KEY  = os.getenv("LOCAL_API_KEY", "LOCAL-KEY")
-MODEL    = os.getenv("LOCAL_MODEL", "qwen2.5:7b-instruct")
+MODEL    = os.getenv("LOCAL_MODEL", "qwen2.5:3b")
 TEMP     = float(os.getenv("TEMP", "0.25"))
 MAX_TOK  = int(os.getenv("MAX_TOKENS", "512"))
 NUM_CTX = int(os.getenv("NUM_CTX", "32768"))
@@ -72,28 +74,79 @@ MODEL_PULLS: dict[str, dict] = {}
 MODEL_PULL_PROCS: dict[str, subprocess.Popen] = {}
 MODEL_PULL_LOCK = threading.Lock()
 AUTO_PULL_TRIGGERED = False
+DEFAULT_SETTINGS = {
+    "temperature": TEMP,
+    "max_tokens": MAX_TOK,
+    "num_ctx": NUM_CTX,
+    "mem_turns": MEM_TURNS,
+}
+
+db.init_db()
 
 client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
 app = FastAPI(title="LocalGPT HR API")
-
-# Память чата по сессиям (in-memory)
-SESSIONS: dict[str, list[dict]] = {}
-# Кэш критериев, загруженных пользователем (по session_id)
-SESSION_CRITERIA: dict[str, list[str]] = {}
-# Последний транскрипт на сессию (можно использовать при повторном анализе)
-SESSION_TRANSCRIPTS: dict[str, str] = {}
 
 class ChatReq(BaseModel):
     query: str
     context: str | None = None
     session_id: str | None = None
+    profile_id: int | None = None
     transcript: str | None = None
     criteria: list[str] | None = None
     model: str | None = None
+    model_name: str | None = None
+    title: str | None = None
 
 
 class ModelPullRequest(BaseModel):
     model: str
+
+
+class ProfileCreate(BaseModel):
+    name: str
+    description: str | None = None
+    color: str | None = None
+
+
+class SessionCreate(BaseModel):
+    profile_id: int
+    title: str | None = None
+    model_name: str | None = None
+
+
+class ModelSettingsRequest(BaseModel):
+    profile_id: int
+    model_name: str
+    temperature: float | None = None
+    max_tokens: int | None = None
+    num_ctx: int | None = None
+    mem_turns: int | None = None
+
+
+class ModelSettingsReset(BaseModel):
+    profile_id: int
+    model_name: str
+
+
+class TranscriptCreate(BaseModel):
+    profile_id: int
+    session_id: str | None = None
+    name: str
+    content: str
+    source_path: str | None = None
+    language: str | None = None
+    timeline: list[dict] | None = None
+    role_keywords: dict | None = None
+    labels: dict | None = None
+
+
+class TranscriptUpdate(BaseModel):
+    name: str | None = None
+    content: str | None = None
+    language: str | None = None
+    timeline: list[dict] | None = None
+    role_keywords: dict | None = None
+    labels: dict | None = None
 
 def _system_prompt() -> str:
     try:
@@ -103,6 +156,30 @@ def _system_prompt() -> str:
         LOGGER.warning("Failed to read system prompt from %s: %s", PROMPT_PATH, exc)
         base_prompt = FALLBACK_SYSTEM_PROMPT
     return base_prompt + PROMPT_LANGUAGE_SUFFIX
+
+
+def _get_profile_or_404(profile_id: int) -> dict:
+    profile = db.get_profile(profile_id)
+    if not profile or not profile.get("is_active", 1):
+        raise HTTPException(status_code=404, detail="profile_not_found")
+    return profile
+
+
+def _effective_model_settings(profile_id: int, model_name: str) -> dict:
+    return db.effective_settings(profile_id, model_name, DEFAULT_SETTINGS)
+
+
+def _normalize_model_name(model_name: str | None) -> str:
+    return (model_name or MODEL).strip() or MODEL
+
+
+def _session_title_hint(raw_title: str | None, query: str | None) -> str:
+    if raw_title and raw_title.strip():
+        return raw_title.strip()
+    prompt = (query or "").strip()
+    if prompt:
+        return (prompt[:60] + ("…" if len(prompt) > 60 else "")).strip()
+    return "Новая сессия"
 
 # --- Критерии и источники данных -------------------------------------------------
 
@@ -259,9 +336,10 @@ def _sanitize(text: str) -> str:
 
 
 def _list_local_models() -> list[dict]:
+    cmd_json = ["ollama", "list", "--json"]
     try:
         result = subprocess.run(
-            ["ollama", "list", "--json"],
+            cmd_json,
             capture_output=True,
             text=True,
             check=False,
@@ -273,27 +351,59 @@ def _list_local_models() -> list[dict]:
     except subprocess.SubprocessError as exc:  # pragma: no cover - зависит от окружения
         raise HTTPException(status_code=500, detail="Ошибка обращения к Ollama.") from exc
 
-    if result.returncode != 0:
-        msg = (result.stderr or "не удалось получить список моделей").strip()
-        raise HTTPException(status_code=500, detail={"code": "ollama_list_failed", "message": msg})
+    stdout = result.stdout or ""
+    stderr = (result.stderr or "").strip()
+    fallback_plain = result.returncode != 0 and "unknown flag: --json" in stderr.lower()
+
+    lines: list[str] = []
+    if not fallback_plain:
+        if result.returncode != 0:
+            msg = stderr or "не удалось получить список моделей"
+            raise HTTPException(status_code=500, detail={"code": "ollama_list_failed", "message": msg})
+        lines = stdout.splitlines()
+    else:
+        # старые версии ollama без --json: парсим табличный вывод
+        try:
+            plain = subprocess.run(
+                ["ollama", "list"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+                env=OLLAMA_ENV,
+            )
+        except Exception as exc:  # pragma: no cover - зависит от окружения
+            raise HTTPException(status_code=500, detail={"code": "ollama_list_failed", "message": str(exc)}) from exc
+        if plain.returncode != 0:
+            msg = (plain.stderr or plain.stdout or "не удалось получить список моделей").strip()
+            raise HTTPException(status_code=500, detail={"code": "ollama_list_failed", "message": msg})
+        lines = (plain.stdout or "").splitlines()
+        # скипаем заголовок/разделители
+        lines = [line for line in lines if line.strip() and not line.lower().startswith("name ")]
 
     models: list[dict] = []
-    for line in (result.stdout or "").splitlines():
+    for line in lines:
         raw = line.strip()
         if not raw:
             continue
         try:
             payload = json.loads(raw)
+            name = (payload.get("model") or payload.get("name") or "").strip()
+            size = payload.get("size")
+            modified_at = payload.get("modified_at")
         except json.JSONDecodeError:
-            continue
-        name = (payload.get("model") or payload.get("name") or "").strip()
-        size = payload.get("size")
+            parts = raw.split()
+            if not parts:
+                continue
+            name = parts[0]
+            size = None
+            modified_at = None
         models.append(
             {
                 "name": name,
                 "size": size,
                 "size_gb": round(size / (1024**3), 2) if isinstance(size, (int, float)) else None,
-                "modified_at": payload.get("modified_at"),
+                "modified_at": modified_at,
             }
         )
     return models
@@ -324,92 +434,105 @@ def _run_model_pull(task_id: str, model: str) -> None:
     start_ts = time.time()
     _update_pull(task_id, state="running", started_at=start_ts)
 
-    cmd = ["ollama", "pull", model, "--json"]
-    try:
-        process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=OLLAMA_ENV
-        )
-        with MODEL_PULL_LOCK:
-            MODEL_PULL_PROCS[task_id] = process
-    except FileNotFoundError:
-        _update_pull(task_id, state="error", message="Ollama не установлена", finished_at=time.time())
-        return
-    except Exception as exc:  # pragma: no cover - зависит от окружения
-        _update_pull(task_id, state="error", message=str(exc), finished_at=time.time())
-        return
-
-    last_completed = 0
-    last_ts = start_ts
-
-    try:
-        assert process.stdout is not None
-        for raw_line in process.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
+    def _run(cmd: list[str], parse_json: bool) -> tuple[int, str | None]:
+        nonlocal start_ts
+        last_completed = 0
+        last_ts = start_ts
+        raw_error = None
+        try:
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=OLLAMA_ENV
+            )
             with MODEL_PULL_LOCK:
-                if MODEL_PULLS.get(task_id, {}).get("state") == "canceled":
-                    process.terminate()
-                    break
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+                MODEL_PULL_PROCS[task_id] = process
+        except FileNotFoundError:
+            _update_pull(task_id, state="error", message="Ollama не установлена", finished_at=time.time())
+            return 1, "Ollama не установлена"
+        except Exception as exc:  # pragma: no cover - зависит от окружения
+            _update_pull(task_id, state="error", message=str(exc), finished_at=time.time())
+            return 1, str(exc)
 
-            status_text = payload.get("status") or payload.get("digest") or ""
-            total = payload.get("total")
-            completed = payload.get("completed")
+        try:
+            assert process.stdout is not None
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                with MODEL_PULL_LOCK:
+                    if MODEL_PULLS.get(task_id, {}).get("state") == "canceled":
+                        process.terminate()
+                        break
+                if parse_json:
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        if "unknown flag: --json" in line.lower():
+                            raw_error = "unknown flag: --json"
+                            break
+                        continue
 
-            percent = None
-            speed_mbps = None
-            eta_seconds = None
+                    status_text = payload.get("status") or payload.get("digest") or ""
+                    total = payload.get("total")
+                    completed = payload.get("completed")
 
-            if isinstance(total, (int, float)) and isinstance(completed, (int, float)) and total > 0:
-                percent = round(100 * completed / total, 2)
-                now = time.time()
-                delta_bytes = completed - last_completed
-                delta_time = max(now - last_ts, 1e-3)
-                if delta_bytes > 0:
-                    speed_mbps = round(delta_bytes / delta_time / (1024 * 1024), 2)
-                    remaining = total - completed
-                    eta_seconds = round(remaining / (delta_bytes / delta_time)) if delta_bytes else None
-                last_completed = completed
-                last_ts = now
+                    percent = None
+                    speed_mbps = None
+                    eta_seconds = None
 
-            _update_pull(
-                task_id,
-                state="running",
-                message=status_text,
-                completed=completed,
-                total=total,
-                percent=percent,
-                speed_mbps=speed_mbps,
-                eta_seconds=eta_seconds,
-                _last_completed=last_completed,
-                _last_ts=last_ts,
-            )
+                    if isinstance(total, (int, float)) and isinstance(completed, (int, float)) and total > 0:
+                        percent = round(100 * completed / total, 2)
+                        now = time.time()
+                        delta_bytes = completed - last_completed
+                        delta_time = max(now - last_ts, 1e-3)
+                        if delta_bytes > 0:
+                            speed_mbps = round(delta_bytes / delta_time / (1024 * 1024), 2)
+                            remaining = total - completed
+                            eta_seconds = round(remaining / (delta_bytes / delta_time)) if delta_bytes else None
+                        last_completed = completed
+                        last_ts = now
 
-        process.wait()
-        finished = time.time()
-        with MODEL_PULL_LOCK:
-            current_state = MODEL_PULLS.get(task_id, {}).get("state")
-        if current_state == "canceled":
-            _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=finished)
-            return
-        if process.returncode == 0:
-            _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
-        else:
-            _update_pull(
-                task_id,
-                state="error",
-                message=f"ollama pull вернул код {process.returncode}",
-                finished_at=finished,
-            )
-    finally:
-        with MODEL_PULL_LOCK:
-            if task_id in MODEL_PULLS:
-                MODEL_PULLS[task_id]["finished_at"] = MODEL_PULLS[task_id].get("finished_at") or time.time()
-            MODEL_PULL_PROCS.pop(task_id, None)
+                    _update_pull(
+                        task_id,
+                        state="running",
+                        message=status_text,
+                        completed=completed,
+                        total=total,
+                        percent=percent,
+                        speed_mbps=speed_mbps,
+                        eta_seconds=eta_seconds,
+                        _last_completed=last_completed,
+                        _last_ts=last_ts,
+                    )
+                else:
+                    _update_pull(task_id, state="running", message=line)
+
+            process.wait()
+            finished = time.time()
+            with MODEL_PULL_LOCK:
+                current_state = MODEL_PULLS.get(task_id, {}).get("state")
+            if current_state == "canceled":
+                _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=finished)
+                return process.returncode, raw_error
+            if process.returncode == 0:
+                _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
+            else:
+                _update_pull(
+                    task_id,
+                    state="error",
+                    message=f"ollama pull вернул код {process.returncode}",
+                    finished_at=finished,
+                )
+            return process.returncode, raw_error
+        finally:
+            with MODEL_PULL_LOCK:
+                if task_id in MODEL_PULLS:
+                    MODEL_PULLS[task_id]["finished_at"] = MODEL_PULLS[task_id].get("finished_at") or time.time()
+                MODEL_PULL_PROCS.pop(task_id, None)
+
+    rc, err = _run(["ollama", "pull", model, "--json"], parse_json=True)
+    if err and "unknown flag: --json" in err.lower():
+        _update_pull(task_id, state="running", message="Старая версия Ollama, включён текстовый прогресс")
+        _run(["ollama", "pull", model], parse_json=False)
 
 
 def _start_model_pull(model: str) -> dict:
@@ -539,15 +662,176 @@ def delete_model(model_name: str):
     return {"deleted": target}
 
 
+# --- Профили и сессии -----------------------------------------------------------
+
+
+@app.get("/profiles")
+def list_profiles():
+    profiles = db.list_profiles()
+    return {"profiles": profiles}
+
+
+@app.post("/profiles")
+def create_profile(req: ProfileCreate):
+    try:
+        profile = db.create_profile(req.name, req.description, req.color)
+        return profile
+    except ValueError:
+        raise HTTPException(status_code=422, detail={"code": "profile_name_required", "message": "Укажите имя профиля"})
+
+
+@app.delete("/profiles/{profile_id}")
+def delete_profile(profile_id: int):
+    profiles = db.list_profiles()
+    if len(profiles) <= 1:
+        raise HTTPException(status_code=400, detail={"code": "cannot_delete_last_profile", "message": "Нельзя удалить единственный профиль"})
+    db.delete_profile(profile_id)
+    db.ensure_default_profile()
+    return {"deleted": profile_id}
+
+
+@app.get("/sessions")
+def list_chat_sessions(profile_id: int):
+    _get_profile_or_404(profile_id)
+    sessions = db.list_sessions(profile_id)
+    return {"sessions": sessions}
+
+
+@app.post("/sessions")
+def create_chat_session(req: SessionCreate):
+    _get_profile_or_404(req.profile_id)
+    title = _session_title_hint(req.title, None)
+    model_name = _normalize_model_name(req.model_name)
+    try:
+        session = db.create_session(req.profile_id, title=title, model_name=model_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Укажите название сессии"}) from exc
+    return session
+
+
+@app.delete("/sessions/{session_id}")
+def delete_chat_session(session_id: str):
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    db.delete_session(session_id)
+    return {"deleted": session_id}
+
+
+@app.get("/sessions/{session_id}/messages")
+def get_session_messages(session_id: str, limit: int | None = None):
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    messages = db.get_messages(session_id, limit_pairs=limit if limit else None)
+    return {"session_id": session_id, "messages": messages}
+
+
+# --- Настройки модели -----------------------------------------------------------
+
+
+@app.get("/model_settings")
+def get_model_settings(profile_id: int, model_name: str):
+    _get_profile_or_404(profile_id)
+    model = _normalize_model_name(model_name)
+    return _effective_model_settings(profile_id, model)
+
+
+@app.post("/model_settings")
+def save_model_settings(req: ModelSettingsRequest):
+    _get_profile_or_404(req.profile_id)
+    model = _normalize_model_name(req.model_name)
+    db.upsert_model_settings(
+        req.profile_id,
+        model,
+        temperature=req.temperature,
+        max_tokens=req.max_tokens,
+        num_ctx=req.num_ctx,
+        mem_turns=req.mem_turns,
+    )
+    return _effective_model_settings(req.profile_id, model)
+
+
+@app.post("/model_settings/reset_to_defaults")
+def reset_model_settings(req: ModelSettingsReset):
+    _get_profile_or_404(req.profile_id)
+    model = _normalize_model_name(req.model_name)
+    db.reset_model_settings(req.profile_id, model)
+    return _effective_model_settings(req.profile_id, model)
+
+
+# --- Транскрипты ---------------------------------------------------------------
+
+
+@app.get("/transcripts")
+def list_transcripts(profile_id: int, session_id: str | None = None):
+    _get_profile_or_404(profile_id)
+    transcripts = db.list_transcripts(profile_id, session_id=session_id)
+    return {"transcripts": transcripts}
+
+
+@app.post("/transcripts")
+def create_transcript(req: TranscriptCreate):
+    _get_profile_or_404(req.profile_id)
+    if req.session_id:
+        session = db.get_session(req.session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        if session["profile_id"] != req.profile_id:
+            raise HTTPException(status_code=400, detail="session_profile_mismatch")
+    try:
+        transcript = db.create_transcript(
+            profile_id=req.profile_id,
+            session_id=req.session_id,
+            name=req.name,
+            content=req.content,
+            source_path=req.source_path,
+            language=req.language,
+            timeline=req.timeline,
+            role_keywords=req.role_keywords,
+            labels=req.labels,
+        )
+        return transcript
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Контент транскрипта обязателен"}) from exc
+
+
+@app.patch("/transcripts/{transcript_id}")
+def update_transcript(transcript_id: int, req: TranscriptUpdate):
+    updated = db.update_transcript(
+        transcript_id,
+        name=req.name,
+        content=req.content,
+        language=req.language,
+        timeline=req.timeline,
+        role_keywords=req.role_keywords,
+        labels=req.labels,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="transcript_not_found")
+    return updated
+
+
+@app.delete("/transcripts/{transcript_id}")
+def delete_transcript(transcript_id: int):
+    transcript = db.get_transcript(transcript_id)
+    if not transcript:
+        raise HTTPException(status_code=404, detail="transcript_not_found")
+    db.delete_transcript(transcript_id)
+    return {"deleted": transcript_id}
+
+
+
 @app.post("/criteria/parse")
 def parse_criteria(
     session_id: str = Form(default=""),
+    profile_id: int = Form(default=0),
     google_sheet_id: str = Form(default=""),
     google_gid: str = Form(default=""),
     raw_text: str = Form(default=""),
     file: UploadFile | None = File(default=None),
 ):
-    sid = (session_id or "default").strip() or "default"
+    sid = (session_id or "").strip()
     criteria: list[str] | None = None
     source = None
     try:
@@ -612,8 +896,15 @@ def parse_criteria(
             status_code=422,
             detail={"code": "criteria_not_found", "message": "Не удалось выделить критерии"},
         )
-    SESSION_CRITERIA[sid] = criteria
-    return {"criteria": criteria, "count": len(criteria), "session_id": sid, "source": source}
+    if sid:
+        session = db.get_session(sid)
+        if not session:
+            raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "Сессия не найдена"})
+        db.save_session_criteria(sid, criteria)
+        profile_id = session["profile_id"]
+    elif profile_id:
+        _get_profile_or_404(profile_id)
+    return {"criteria": criteria, "count": len(criteria), "session_id": sid or None, "profile_id": profile_id or None, "source": source}
 
 def _build_timeline(segments: list[dict]) -> list[dict]:
     """Объединяет соседние сегменты одного говорящего в таймлайн."""
@@ -650,21 +941,44 @@ def _build_timeline(segments: list[dict]) -> list[dict]:
 @app.post("/chat")
 def chat(req: ChatReq):
     try:
-        # session memory
-        sid = (req.session_id or "default").strip()
-        history = SESSIONS.get(sid, [])
+        session_id = (req.session_id or "").strip() or None
+        model_from_req = req.model or req.model_name
+        session = None
+        profile_id = req.profile_id
+
+        if session_id:
+            session = db.get_session(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="session_not_found")
+            profile_id = session["profile_id"]
+            model_name = session["model_name"]
+        else:
+            if profile_id is None:
+                raise HTTPException(status_code=400, detail="profile_id_required")
+            _get_profile_or_404(profile_id)
+            model_name = _normalize_model_name(model_from_req)
+            title = _session_title_hint(req.title, req.query)
+            session = db.create_session(profile_id, title=title, model_name=model_name)
+            session_id = session["id"]
+
+        model_name = session["model_name"] if session else _normalize_model_name(model_from_req)
+        settings_bundle = _effective_model_settings(profile_id, model_name)  # type: ignore[arg-type]
+        effective_settings = settings_bundle.get("effective") or {}
+        mem_turns = int(effective_settings.get("mem_turns") or MEM_TURNS)
+
+        history = db.get_messages(session_id, limit_pairs=mem_turns) if session_id else []
 
         request_criteria = [c for c in (req.criteria or []) if isinstance(c, str)]
         cleaned_criteria = _criteria_from_lines(request_criteria) if request_criteria else []
-        if cleaned_criteria:
-            SESSION_CRITERIA[sid] = cleaned_criteria
-        active_criteria = cleaned_criteria or SESSION_CRITERIA.get(sid, []) or []
+        if cleaned_criteria and session_id:
+            db.save_session_criteria(session_id, cleaned_criteria)
+        stored_criteria = db.get_session_criteria(session_id) if session_id else []
+        active_criteria = cleaned_criteria or stored_criteria or []
 
         transcript_text = (req.transcript or "").strip()
-        if transcript_text:
-            SESSION_TRANSCRIPTS[sid] = transcript_text
-        else:
-            transcript_text = (SESSION_TRANSCRIPTS.get(sid) or "").strip()
+        if not transcript_text and session_id:
+            latest_transcript = db.get_latest_transcript_for_session(session_id)
+            transcript_text = (latest_transcript.get("content") if latest_transcript else "") or ""
 
         messages = [{"role": "system", "content": _system_prompt()}]
         if req.context:
@@ -682,13 +996,13 @@ def chat(req: ChatReq):
         user_query = (req.query or "").strip() or "проанализируй"
         messages.append({"role": "user", "content": user_query})
 
-        target_model = (req.model or MODEL).strip() or MODEL
+        target_model = _normalize_model_name(model_name)
 
         resp = client.chat.completions.create(
             model=target_model,
             messages=messages,
-            temperature=TEMP,
-            max_tokens=MAX_TOK,
+            temperature=effective_settings.get("temperature", TEMP),
+            max_tokens=effective_settings.get("max_tokens", MAX_TOK),
             stop=["\n\n\n", "\n\n—", "\n\n1."],  # мягкие ограничители списков/абзацев
             presence_penalty=0.2,
             frequency_penalty=0.2,
@@ -696,14 +1010,17 @@ def chat(req: ChatReq):
         text = resp.choices[0].message.content or ""
         text = _sanitize(text)
 
-        # обновляем память для сессии: храним последние MEM_TURNS пар (user/assistant)
-        new_history = history + [
-            {"role": "user", "content": user_query},
-            {"role": "assistant", "content": text},
-        ]
-        SESSIONS[sid] = new_history[-2 * MEM_TURNS:]
+        if session_id:
+            db.add_message(session_id, "user", user_query)
+            db.add_message(session_id, "assistant", text)
 
-        return {"reply": text}
+        return {
+            "reply": text,
+            "session_id": session_id,
+            "profile_id": profile_id,
+            "model_name": target_model,
+            "used_settings": effective_settings,
+        }
     except Exception as e:
         # Возвращаем понятную ошибку, если Ollama/LLM недоступны
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
@@ -718,6 +1035,7 @@ def transcribe(
     prompt_preset: str = Form(default="none"),
     language: str = Form(default="auto"),
     session_id: str = Form(default=""),
+    profile_id: int = Form(default=0),
 ):
     """Транскрибация аудио/видео через faster-whisper.
 
@@ -763,6 +1081,15 @@ def transcribe(
     preferred_language = None if language_raw == "auto" else language_raw
 
     sid = (session_id or "").strip()
+    profile_id_val = profile_id or 0
+    if sid:
+        session = db.get_session(sid)
+        if not session:
+            raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "Сессия не найдена"})
+        profile_id_val = session["profile_id"]
+    if not profile_id_val:
+        profile_id_val = db.ensure_default_profile()
+    _get_profile_or_404(profile_id_val)
 
     try:
         transcription = transcribe_with_fallback(
@@ -777,15 +1104,25 @@ def transcribe(
             segments = list(transcription.get("segments") or [])
         if not text:
             raise RuntimeError("empty_transcription")
-        timeline = _build_timeline(segments)
+            timeline = _build_timeline(segments)
         detected_language = None
         if isinstance(transcription, dict):
             detected_language = transcription.get("language")
         role_keywords = {}
         if isinstance(transcription, dict):
             role_keywords = transcription.get("role_keywords") or {}
-        if sid:
-            SESSION_TRANSCRIPTS[sid] = text
+
+        # Сохраняем транскрипт в БД
+        transcript_record = db.create_transcript(
+            profile_id=profile_id_val,
+            session_id=sid or None,
+            name=os.path.basename(file.filename or tmp_path) or "Транскрипт",
+            content=text,
+            source_path=file.filename,
+            language=detected_language or language_raw,
+            timeline=timeline,
+            role_keywords=role_keywords,
+        )
 
         return {
             "text": text,
@@ -796,6 +1133,9 @@ def transcribe(
             "segments": segments,
             "timeline": timeline,
             "role_keywords": role_keywords,
+            "transcript_id": transcript_record.get("id") if transcript_record else None,
+            "profile_id": profile_id_val,
+            "session_id": sid or None,
         }
     except RuntimeError as e:
         msg = str(e)
@@ -833,6 +1173,8 @@ def health():
         "model": MODEL,
         "num_ctx": NUM_CTX,
         "max_tokens": MAX_TOK,
+        "mem_turns": MEM_TURNS,
+        "temperature": TEMP,
     }
 
 
@@ -853,9 +1195,7 @@ def reset_session(req: ResetReq):
     if ADMIN_TOKEN and req.admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="forbidden")
     sid = req.session_id.strip()
-    SESSIONS.pop(sid, None)
-    SESSION_CRITERIA.pop(sid, None)
-    SESSION_TRANSCRIPTS.pop(sid, None)
+    db.reset_session(sid)
     return {"ok": True}
 
 

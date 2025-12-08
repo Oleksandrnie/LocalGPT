@@ -29,7 +29,7 @@ UI_URL = "http://127.0.0.1:8000/"
 OLLAMA_HEALTH_URL = "http://127.0.0.1:11434/v1/models"
 OLLAMA_LOG_FILE = ROOT / "ollama.log"
 ENV_FILE = ROOT / ".env"
-DEFAULT_MODEL = "qwen2.5:7b-instruct"
+DEFAULT_MODEL = "qwen2.5:3b"
 OLLAMA_MODELS_DIR = os.environ.get("OLLAMA_MODELS") or str(ROOT / "ollama" / "models")
 os.environ["OLLAMA_MODELS"] = OLLAMA_MODELS_DIR
 Path(OLLAMA_MODELS_DIR).mkdir(parents=True, exist_ok=True)
@@ -144,10 +144,13 @@ def ollama_list() -> Iterable[str]:
         return []
 
     models = []
-    for line in result.stdout.splitlines():
+    for idx, line in enumerate(result.stdout.splitlines()):
         parts = line.strip().split()
-        if parts:
-            models.append(parts[0])
+        if not parts:
+            continue
+        if idx == 0 and parts[0].lower() in {"name", "model"}:
+            continue  # skip header line
+        models.append(parts[0])
 
     with open(OLLAMA_LOG_FILE, "a", encoding="utf-8") as log_file:
         if result.stdout:
@@ -320,6 +323,19 @@ def ensure_model() -> str:
         print(f"[i] Model '{configured_model}' is ready.")
         return configured_model
 
+    def try_pull(model: str) -> bool:
+        print(f"[*] Pulling model '{model}' ...")
+        append_ollama_log(f"Pulling model '{model}' ...")
+        try:
+            run(["ollama", "pull", model], env=OLLAMA_ENV)
+            return True
+        except subprocess.CalledProcessError as exc:
+            print(f"[!] Failed to pull model '{model}': {exc}")
+            append_ollama_log(
+                f"'ollama pull {model}' failed with code {exc.returncode}: {exc.stderr if exc.stderr else ''}"
+            )
+            return False
+
     modelfile = modelfile_for(configured_model)
     if modelfile and create_from_modelfile(configured_model, modelfile):
         if ollama_show(configured_model):
@@ -331,28 +347,26 @@ def ensure_model() -> str:
             f"[!] Model '{configured_model}' was created from Modelfile but still not accessible."
         )
 
-    print(
-        f"[!] Model '{configured_model}' is not available and cannot be prepared automatically."
-    )
-
     available_models = list(ollama_list())
     if available_models:
         print("[i] Available models:", ", ".join(available_models))
+
+    # попытка скачать явно, если модели нет среди доступных
+    if configured_model not in available_models:
+        if try_pull(configured_model) and ollama_show(configured_model):
+            print(f"[i] Model '{configured_model}' pulled and ready.")
+            return configured_model
+
+    print(
+        f"[!] Model '{configured_model}' is not available and cannot be prepared automatically."
+    )
 
     fallback_model: Optional[str] = None
 
     if configured_model != DEFAULT_MODEL:
         print(f"[*] Trying to prepare default model '{DEFAULT_MODEL}' ...")
         if DEFAULT_MODEL not in available_models:
-            append_ollama_log(f"Pulling fallback model '{DEFAULT_MODEL}' ...")
-            try:
-                run(["ollama", "pull", DEFAULT_MODEL], env=OLLAMA_ENV)
-            except subprocess.CalledProcessError as exc:
-                print(f"[!] Failed to pull fallback model '{DEFAULT_MODEL}': {exc}")
-                append_ollama_log(
-                    f"Pulling fallback model '{DEFAULT_MODEL}' failed with code {exc.returncode}"
-                )
-            else:
+            if try_pull(DEFAULT_MODEL):
                 available_models.append(DEFAULT_MODEL)
 
         if ollama_show(DEFAULT_MODEL):
