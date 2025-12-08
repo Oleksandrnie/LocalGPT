@@ -86,3 +86,18 @@ button[disabled] {
     flex-direction: column;
     gap: var(--space-sm);
 }
+
+.link-button {
+    background: none;
+    color: var(--color-primary-light);
+    padding: 0;
+    border: none;
+    box-shadow: none;
+    text-align: left;
+}
+
+.link-button:hover:not([disabled]) {
+    color: #fff;
+    transform: none;
+    text-decoration: underline;
+}

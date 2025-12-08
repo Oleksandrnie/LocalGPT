@@ -6,6 +6,7 @@ import {
   getHrPrefix,
   getSavedLlmModel,
   getSavedModel,
+  getSavedPromptPreset,
   loadHistory,
   loadTranscripts,
   saveHistory,
@@ -13,6 +14,7 @@ import {
   setHrPrefix,
   setSavedLlmModel,
   setSavedModel,
+  setSavedPromptPreset,
 } from "./storage.js";
 import { renderRoleLegend, renderTimeline } from "./timeline.js";
 import { CriteriaManager } from "./criteria.js";
@@ -97,14 +99,18 @@ const elements = {
   btnClearPrompt: getElement("btnClearPrompt"),
   btnClearAnswer: getElement("btnClearAnswer"),
   btnHistory: getElement("btnHistory"),
+  btnSettings: getElement("btnSettings"),
   overlay: getElement("overlay"),
+  settingsOverlay: getElement("settingsOverlay"),
   btnCloseModal: getElement("btnCloseModal"),
+  btnCloseSettings: getElement("btnCloseSettings"),
   btnClearStorage: getElement("btnClearStorage"),
   historyList: getElement("historyList"),
   healthStatus: getElement("healthStatus"),
   fileInput: getElement("fileInput"),
   btnTranscribe: getElement("btnTranscribe"),
   transcribeStatus: getElement("transcribeStatus"),
+  transcribeDefaults: getElement("transcribeDefaults"),
   transcriptStatus: getElement("transcriptStatus"),
   manualTranscriptInput: getElement("manualTranscriptInput"),
   btnUseManualTranscript: getElement("btnUseManualTranscript"),
@@ -131,6 +137,13 @@ const elements = {
   budgetStats: getElement("budgetStats"),
   quickCriterionInput: getElement("quickCriterionInput"),
   btnQuickAddCriterion: getElement("btnQuickAddCriterion"),
+  transcriptHistoryList: getElement("transcriptHistoryList"),
+  transcriptHistoryDetails: getElement("transcriptHistoryDetails"),
+  transcriptHistoryTitle: getElement("transcriptHistoryTitle"),
+  transcriptHistoryMeta: getElement("transcriptHistoryMeta"),
+  transcriptHistoryContent: getElement("transcriptHistoryContent"),
+  btnApplyTranscriptFromHistory: getElement("btnApplyTranscriptFromHistory"),
+  btnSaveTranscriptHistoryTitle: getElement("btnSaveTranscriptHistoryTitle"),
 };
 
 const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
@@ -147,6 +160,7 @@ const transcribeBusyState = { defaultLabel: null };
 const chatState = { controller: null };
 let activeTranscriptId = null;
 let transcriptLibrary = [];
+let selectedTranscriptHistoryId = null;
 let modelState = { installed: [], recommended: MODEL_RECOMMENDATIONS, downloads: [] };
 let downloadPollTimer = null;
 
@@ -193,6 +207,32 @@ function recalcStats() {
   }
 }
 
+function describePromptPreset(preset) {
+  const map = {
+    none: "Без промпта",
+    ru: "Универсальный (русский)",
+    en: "Универсальный (английский)",
+  };
+  return map[preset] || preset || "—";
+}
+
+function renderTranscribeDefaults() {
+  if (elements.modelSelect) {
+    const savedModel = getSavedModel(elements.modelSelect.value || "medium");
+    elements.modelSelect.value = savedModel;
+  }
+  if (elements.promptPresetSelect) {
+    const savedPreset = getSavedPromptPreset(elements.promptPresetSelect.value || "none");
+    elements.promptPresetSelect.value = savedPreset;
+  }
+  if (elements.transcribeDefaults) {
+    const presetLabel = describePromptPreset(elements.promptPresetSelect?.value || "none");
+    const modelLabel = elements.modelSelect?.value || "medium";
+    elements.transcribeDefaults.textContent =
+      `По умолчанию: Whisper ${modelLabel}, промпт — ${presetLabel}. Меняется в настройках.`;
+  }
+}
+
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "—";
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} ГБ`;
@@ -220,9 +260,14 @@ function renderModelSuggestions() {
     .map((item) => {
       const installed = isModelInstalled(item.name);
       const cls = installed ? "model-chip is-installed" : "model-chip";
-      return `<span class="${cls}"><strong>${item.name}</strong>${item.label ? ` — ${item.label}` : ""}</span>`;
+      return `
+        <button type="button" class="${cls}" data-model="${item.name}" data-installed="${installed ? "1" : "0"}">
+          <strong>${item.name}</strong>${item.label ? ` — ${item.label}` : ""}
+          <span class="model-chip__hint">${installed ? "Выбрать" : "Скачать и выбрать"}</span>
+        </button>
+      `;
     })
-    .join(" ");
+    .join("");
   elements.modelSuggestions.innerHTML = chips;
 }
 
@@ -736,6 +781,15 @@ function escapeHtml(value) {
   return (value ?? "").toString().replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+function formatTimecode(seconds) {
+  if (!Number.isFinite(seconds)) return null;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds - mins * 60)
+    .toString()
+    .padStart(2, "0");
+  return `${mins}:${secs}`;
+}
+
 function setTranscriptStatus(message, tone = "info") {
   if (!elements.transcriptStatus) return;
   updateStatus(elements.transcriptStatus, message, tone);
@@ -756,6 +810,7 @@ function renderTranscriptLibrary() {
   if (!Array.isArray(transcriptLibrary) || !transcriptLibrary.length) {
     elements.transcriptList.classList.add("muted");
     elements.transcriptList.innerHTML = '<div class="muted">Сохранённых транскриптов пока нет.</div>';
+    renderTranscriptHistory();
     return;
   }
 
@@ -792,6 +847,93 @@ function renderTranscriptLibrary() {
     .join("");
 
   elements.transcriptList.innerHTML = html;
+  renderTranscriptHistory();
+}
+
+function renderTranscriptHistoryContent(entry) {
+  if (!entry) return "";
+  const items =
+    (Array.isArray(entry.timeline) && entry.timeline.length
+      ? entry.timeline
+      : buildTextTimelineFromTranscript(entry.text)
+    ).slice(0, 120);
+  if (!items.length) {
+    return '<div class="muted">Нет текста для отображения.</div>';
+  }
+  return items
+    .map((item) => {
+      const time = formatTimecode(item.start) || formatTimecode(item.end);
+      const labelParts = [];
+      if (time) labelParts.push(time);
+      if (item.speaker) labelParts.push(item.speaker);
+      const meta = labelParts.length ? labelParts.join(" • ") : "Без подписи";
+      const text = escapeHtml((item.text || "").trim());
+      return `
+        <div class="transcript-history__line">
+          <div class="transcript-history__line-meta muted">${escapeHtml(meta)}</div>
+          <div class="transcript-history__line-text">${text || "—"}</div>
+        </div>
+      `;
+    })
+    .join("\n");
+}
+
+function showTranscriptHistoryDetails(entry) {
+  if (!elements.transcriptHistoryDetails) return;
+  if (!entry) {
+    selectedTranscriptHistoryId = null;
+    elements.transcriptHistoryDetails.setAttribute("hidden", "");
+    return;
+  }
+
+  selectedTranscriptHistoryId = entry.id;
+  elements.transcriptHistoryDetails.removeAttribute("hidden");
+  if (elements.transcriptHistoryTitle) {
+    elements.transcriptHistoryTitle.value = entry.title || "";
+  }
+  if (elements.transcriptHistoryMeta) {
+    const hasTiming = hasTimelineTiming(entry.timeline);
+    const updatedAt = tsFmt(entry.updatedAt || entry.ts);
+    elements.transcriptHistoryMeta.textContent = `${updatedAt} • Символов: ${(entry.text || "").length} • ${
+      hasTiming ? "с таймингами" : "без таймингов"
+    }`;
+  }
+  if (elements.transcriptHistoryContent) {
+    elements.transcriptHistoryContent.innerHTML = renderTranscriptHistoryContent(entry);
+  }
+}
+
+function renderTranscriptHistory() {
+  if (!elements.transcriptHistoryList) return;
+  if (!Array.isArray(transcriptLibrary) || !transcriptLibrary.length) {
+    elements.transcriptHistoryList.innerHTML =
+      '<div class="muted">Транскрипции появятся после распознавания или сохранения текста.</div>';
+    showTranscriptHistoryDetails(null);
+    return;
+  }
+
+  const html = transcriptLibrary
+    .map(
+      (entry) => `
+        <article class="transcript-history__item" data-id="${escapeHtml(entry.id)}">
+          <button class="link-button transcript-history__title" type="button" data-action="load">
+            ${escapeHtml(entry.title)}
+          </button>
+          <div class="transcript-history__controls">
+            <button type="button" data-action="use">Использовать</button>
+            <button class="secondary" type="button" data-action="details">Открыть</button>
+          </div>
+        </article>
+      `,
+    )
+    .join("");
+
+  elements.transcriptHistoryList.innerHTML = html;
+  const preferred =
+    (selectedTranscriptHistoryId && findTranscriptEntry(selectedTranscriptHistoryId)) ||
+    (activeTranscriptId && findTranscriptEntry(activeTranscriptId)) ||
+    transcriptLibrary[0];
+  showTranscriptHistoryDetails(preferred);
 }
 
 function sortTranscriptLibrary() {
@@ -825,6 +967,9 @@ function addTranscriptEntry(entry, { makeActive = false, announce = true } = {})
   if (makeActive) {
     activeTranscriptId = normalized.id;
   }
+  if (makeActive || !selectedTranscriptHistoryId) {
+    selectedTranscriptHistoryId = normalized.id;
+  }
   renderTranscriptLibrary();
   if (announce) {
     setTranscriptStatus(`Транскрипт «${normalized.title}» сохранён.`, "success");
@@ -832,9 +977,10 @@ function addTranscriptEntry(entry, { makeActive = false, announce = true } = {})
   return normalized;
 }
 
-function updateActiveTranscriptEntry(patch = {}, { silent = false } = {}) {
-  if (!activeTranscriptId) return;
-  const index = transcriptLibrary.findIndex((item) => item.id === activeTranscriptId);
+function updateActiveTranscriptEntry(patch = {}, { silent = false, targetId = null } = {}) {
+  const id = targetId || activeTranscriptId;
+  if (!id) return;
+  const index = transcriptLibrary.findIndex((item) => item.id === id);
   if (index === -1) return;
   const base = transcriptLibrary[index];
   const next = normalizeTranscriptEntry({
@@ -847,6 +993,9 @@ function updateActiveTranscriptEntry(patch = {}, { silent = false } = {}) {
   transcriptLibrary[index] = next;
   sortTranscriptLibrary();
   persistTranscriptLibrary();
+  if (targetId) {
+    selectedTranscriptHistoryId = targetId;
+  }
   renderTranscriptLibrary();
   if (!silent) {
     setTranscriptStatus(`Транскрипт «${next.title}» обновлён.`, "success");
@@ -862,6 +1011,9 @@ function deleteTranscriptEntry(id) {
   if (activeTranscriptId === id) {
     activeTranscriptId = null;
   }
+  if (selectedTranscriptHistoryId === id) {
+    selectedTranscriptHistoryId = transcriptLibrary[0]?.id || null;
+  }
   renderTranscriptLibrary();
   setTranscriptStatus(`Транскрипт «${removed.title}» удалён.`, "warning");
 }
@@ -869,6 +1021,7 @@ function deleteTranscriptEntry(id) {
 function applyTranscriptEntry(entry, { focusTimeline = true, announce = true } = {}) {
   if (!entry) return false;
   activeTranscriptId = entry.id;
+  selectedTranscriptHistoryId = entry.id;
   currentTranscript = entry.text || "";
   setTimelineData(entry.timeline, entry.roleKeywords, { resetLabels: true, labels: entry.labels });
   if (elements.manualTranscriptInput) {
@@ -973,6 +1126,31 @@ function handleTranscriptListClick(event) {
   }
 }
 
+function handleTranscriptHistoryClick(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const item = button.closest(".transcript-history__item");
+  if (!item) return;
+  const id = item.dataset.id;
+  if (!id) return;
+  const entry = findTranscriptEntry(id);
+  if (!entry) {
+    setTranscriptStatus("Не удалось найти транскрипт в истории.", "error");
+    return;
+  }
+
+  const action = button.dataset.action;
+  if (action === "load" || action === "use") {
+    applyTranscriptEntry(entry, { focusTimeline: true, announce: true });
+    renderTranscriptHistory();
+    return;
+  }
+
+  if (action === "details") {
+    showTranscriptHistoryDetails(entry);
+  }
+}
+
 function stopCurrentChat() {
   if (chatState.controller) {
     chatState.controller.abort();
@@ -1008,6 +1186,14 @@ function openHistory() {
 
 function closeHistory() {
   elements.overlay?.classList.remove("overlay--visible");
+}
+
+function openSettings() {
+  elements.settingsOverlay?.classList.add("overlay--visible");
+}
+
+function closeSettings() {
+  elements.settingsOverlay?.classList.remove("overlay--visible");
 }
 
 function setBusy(isBusy) {
@@ -1239,6 +1425,26 @@ function attachEvents() {
   });
   elements.btnRefreshModels?.addEventListener("click", () => fetchModelList());
   elements.btnDeleteModel?.addEventListener("click", () => deleteSelectedModel());
+  elements.modelSuggestions?.addEventListener("click", async (event) => {
+    const chip = event.target.closest("[data-model]");
+    if (!chip) return;
+    const model = chip.dataset.model;
+    if (!model) return;
+    const installed = chip.dataset.installed === "1";
+    if (elements.llmModelSelect && elements.llmModelSelect.value !== model) {
+      const optionExists = Array.from(elements.llmModelSelect.options).some((opt) => opt.value === model);
+      if (!optionExists) {
+        updateModelSelect(model);
+      }
+      elements.llmModelSelect.value = model;
+      setSavedLlmModel(model);
+    }
+    if (installed) {
+      setModelStatus(`Локальная модель: ${model}`, "success");
+      return;
+    }
+    await startModelDownload(model);
+  });
 
   elements.btnSend?.addEventListener("click", sendPrompt);
   elements.btnStop?.addEventListener("click", stopCurrentChat);
@@ -1278,9 +1484,23 @@ function attachEvents() {
       closeHistory();
     }
   });
+  elements.btnSettings?.addEventListener("click", () => {
+    openSettings();
+    renderTranscribeDefaults();
+  });
+  elements.btnCloseSettings?.addEventListener("click", closeSettings);
+  elements.settingsOverlay?.addEventListener("click", (event) => {
+    if (event.target === elements.settingsOverlay) {
+      closeSettings();
+    }
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (elements.settingsOverlay?.classList.contains("overlay--visible")) {
+      closeSettings();
+      return;
+    }
     if (elements.overlay?.classList.contains("overlay--visible")) {
       closeHistory();
     }
@@ -1380,6 +1600,16 @@ function attachEvents() {
     }, 200),
   );
 
+  elements.modelSelect?.addEventListener("change", () => {
+    setSavedModel(elements.modelSelect.value);
+    renderTranscribeDefaults();
+  });
+
+  elements.promptPresetSelect?.addEventListener("change", () => {
+    setSavedPromptPreset(elements.promptPresetSelect.value);
+    renderTranscribeDefaults();
+  });
+
   elements.btnTranscribe?.addEventListener("click", (event) => {
     event.preventDefault();
     transcribeFile();
@@ -1394,6 +1624,30 @@ function attachEvents() {
   });
 
   elements.transcriptList?.addEventListener("click", handleTranscriptListClick);
+  elements.transcriptHistoryList?.addEventListener("click", handleTranscriptHistoryClick);
+  elements.btnApplyTranscriptFromHistory?.addEventListener("click", () => {
+    const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
+    if (!entry) {
+      setTranscriptStatus("Выберите транскрипцию из списка.", "warning");
+      return;
+    }
+    applyTranscriptEntry(entry, { focusTimeline: true, announce: true });
+    renderTranscriptHistory();
+  });
+  elements.btnSaveTranscriptHistoryTitle?.addEventListener("click", () => {
+    const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
+    const title = elements.transcriptHistoryTitle?.value?.trim();
+    if (!entry) {
+      setTranscriptStatus("Выберите транскрипцию для переименования.", "warning");
+      return;
+    }
+    if (!title) {
+      setTranscriptStatus("Введите название транскрибации.", "error");
+      return;
+    }
+    updateActiveTranscriptEntry({ title }, { targetId: entry.id });
+    showTranscriptHistoryDetails(findTranscriptEntry(entry.id));
+  });
 
   elements.btnEditTimeline?.addEventListener("click", enterTimelineEditMode);
   elements.btnCancelTimeline?.addEventListener("click", cancelTimelineEdit);
@@ -1416,12 +1670,14 @@ function attachEvents() {
 }
 
 function init() {
-  const savedModel = getSavedModel("medium");
   if (elements.modelSelect) {
-    elements.modelSelect.value = savedModel;
-    elements.modelSelect.addEventListener("change", () => {
-      setSavedModel(elements.modelSelect.value);
-    });
+    elements.modelSelect.value = getSavedModel(elements.modelSelect.value || "medium");
+    setSavedModel(elements.modelSelect.value);
+  }
+
+  if (elements.promptPresetSelect) {
+    elements.promptPresetSelect.value = getSavedPromptPreset(elements.promptPresetSelect.value || "none");
+    setSavedPromptPreset(elements.promptPresetSelect.value);
   }
 
   updateModelSelect(getSavedLlmModel());
@@ -1429,15 +1685,12 @@ function init() {
   fetchModelList();
   startDownloadPolling();
 
-  if (elements.promptPresetSelect) {
-    // placeholder for future logic if needed
-  }
-
   const savedPrefix = getHrPrefix(DEFAULT_HR_PREFIX);
   if (elements.hrPrefixInput) {
     elements.hrPrefixInput.value = savedPrefix || DEFAULT_HR_PREFIX;
   }
 
+  renderTranscribeDefaults();
   loadTranscriptLibrary();
   setTranscriptStatus("", "info");
   clearTimelineState();

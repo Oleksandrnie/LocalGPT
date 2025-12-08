@@ -12,13 +12,22 @@
     margin-top: var(--space-xs);
 }
 
+
 .model-chip {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    padding: 4px 10px;
+    padding: 6px 10px;
     background: rgba(255, 255, 255, 0.04);
     color: var(--color-text-muted);
     font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.2s ease, transform 0.1s ease;
+    text-align: left;
+}
+
+.model-chip:hover {
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
 }
 
 .model-chip strong {
@@ -29,6 +38,12 @@
     border-color: var(--color-success, #10b981);
     color: #d1fae5;
     background: rgba(16, 185, 129, 0.08);
+}
+
+.model-chip__hint {
+    display: block;
+    font-size: 11px;
+    color: var(--color-text-muted);
 }
 
 .download-list {
