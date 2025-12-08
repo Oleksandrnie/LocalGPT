@@ -91,23 +91,20 @@
 }
 
 .transcript-history {
-    display: grid;
-    grid-template-columns: minmax(260px, 1fr) 2fr;
-    gap: var(--space-md);
-    align-items: start;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
 }
 
-@media (max-width: 960px) {
-    .transcript-history {
-        grid-template-columns: 1fr;
-    }
+.transcript-history__header {
+    padding: 4px 0;
 }
 
 .transcript-history__list {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-surface-muted);
-    padding: var(--space-sm);
+    padding: var(--space-xs);
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
@@ -118,7 +115,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
     border-radius: var(--radius-sm);
 }
 
@@ -129,11 +126,29 @@
 .transcript-history__title {
     font-weight: 600;
     color: #fff;
+    font-size: 0.95rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transcript-history__meta {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.transcript-history__main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
 }
 
 .transcript-history__controls {
     display: flex;
-    gap: var(--space-xs);
+    gap: 6px;
+    flex-wrap: wrap;
 }
 
 .transcript-history__details {
@@ -151,7 +166,7 @@
     border-radius: var(--radius-sm);
     padding: var(--space-sm);
     background: var(--color-surface-muted);
-    max-height: 360px;
+    max-height: 420px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -177,4 +192,21 @@
 
 .transcript-history__actions {
     justify-content: flex-start;
+}
+
+.transcript-history__controls button,
+.transcript-history__actions button {
+    padding: 6px 10px;
+    font-size: 0.9rem;
+    box-shadow: none;
+}
+
+.modal--transcript {
+    width: min(720px, 100%);
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.transcript-history__modal-header h3 {
+    margin: 0;
 }

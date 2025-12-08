@@ -130,21 +130,8 @@
                 <section class="tab-panel" id="panel-transcripts" data-panel="transcripts" role="tabpanel"
                     aria-labelledby="tab-transcripts" hidden>
                     <div class="transcript-history">
+                        <div class="transcript-history__header muted">Заголовок и кнопки: использовать / редактировать / удалить</div>
                         <div class="transcript-history__list" id="transcriptHistoryList"></div>
-                        <div class="transcript-history__details" id="transcriptHistoryDetails" hidden>
-                            <div class="field-group">
-                                <label class="muted" for="transcriptHistoryTitle">Название транскрибации</label>
-                                <input id="transcriptHistoryTitle" type="text" class="input-control"
-                                    placeholder="Введите название" />
-                            </div>
-                            <div class="muted" id="transcriptHistoryMeta"></div>
-                            <div class="transcript-history__content" id="transcriptHistoryContent"></div>
-                            <div class="buttons mt-sm transcript-history__actions">
-                                <button id="btnApplyTranscriptFromHistory" type="button">Использовать</button>
-                                <button class="secondary" id="btnSaveTranscriptHistoryTitle" type="button">Сохранить
-                                    название</button>
-                            </div>
-                        </div>
                     </div>
                 </section>
             </div>
@@ -241,6 +228,31 @@
                         браузере.</p>
                 </div>
             </section>
+        </div>
+    </div>
+
+    <div class="overlay" id="transcriptHistoryOverlay" role="dialog" aria-modal="true">
+        <div class="modal modal--transcript">
+            <header class="modal__header transcript-history__modal-header">
+                <div>
+                    <p class="muted">История транскрибаций</p>
+                    <h3 id="transcriptHistoryHeading">Транскрипция</h3>
+                </div>
+                <button class="secondary" id="btnCloseTranscriptHistory" type="button">Закрыть</button>
+            </header>
+            <div class="transcript-history__details" id="transcriptHistoryDetails" hidden>
+                <div class="field-group">
+                    <label class="muted" for="transcriptHistoryTitle">Название транскрибации</label>
+                    <input id="transcriptHistoryTitle" type="text" class="input-control" placeholder="Введите название" />
+                </div>
+                <div class="muted" id="transcriptHistoryMeta"></div>
+                <div class="transcript-history__content" id="transcriptHistoryContent"></div>
+                <div class="buttons mt-sm transcript-history__actions">
+                    <button id="btnApplyTranscriptFromHistory" type="button">Использовать</button>
+                    <button class="secondary" id="btnSaveTranscriptHistoryTitle" type="button">Сохранить название</button>
+                    <button class="warn" id="btnDeleteTranscriptFromHistory" type="button">Удалить</button>
+                </div>
+            </div>
         </div>
     </div>
 

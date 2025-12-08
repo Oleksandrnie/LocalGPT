@@ -144,6 +144,10 @@ const elements = {
   transcriptHistoryContent: getElement("transcriptHistoryContent"),
   btnApplyTranscriptFromHistory: getElement("btnApplyTranscriptFromHistory"),
   btnSaveTranscriptHistoryTitle: getElement("btnSaveTranscriptHistoryTitle"),
+  transcriptHistoryHeading: getElement("transcriptHistoryHeading"),
+  transcriptHistoryOverlay: getElement("transcriptHistoryOverlay"),
+  btnCloseTranscriptHistory: getElement("btnCloseTranscriptHistory"),
+  btnDeleteTranscriptFromHistory: getElement("btnDeleteTranscriptFromHistory"),
 };
 
 const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
@@ -883,10 +887,16 @@ function showTranscriptHistoryDetails(entry) {
   if (!entry) {
     selectedTranscriptHistoryId = null;
     elements.transcriptHistoryDetails.setAttribute("hidden", "");
+    if (elements.transcriptHistoryHeading) {
+      elements.transcriptHistoryHeading.textContent = "Транскрипция";
+    }
     return;
   }
 
   selectedTranscriptHistoryId = entry.id;
+  if (elements.transcriptHistoryHeading) {
+    elements.transcriptHistoryHeading.textContent = entry.title || "Транскрипция";
+  }
   elements.transcriptHistoryDetails.removeAttribute("hidden");
   if (elements.transcriptHistoryTitle) {
     elements.transcriptHistoryTitle.value = entry.title || "";
@@ -903,12 +913,45 @@ function showTranscriptHistoryDetails(entry) {
   }
 }
 
+function closeTranscriptHistoryModal() {
+  elements.transcriptHistoryOverlay?.classList.remove("overlay--visible");
+  if (elements.transcriptHistoryDetails) {
+    elements.transcriptHistoryDetails.setAttribute("hidden", "");
+  }
+}
+
+function refreshTranscriptHistoryModal() {
+  if (!elements.transcriptHistoryOverlay?.classList.contains("overlay--visible")) return;
+  const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
+  if (entry) {
+    showTranscriptHistoryDetails(entry);
+  } else {
+    closeTranscriptHistoryModal();
+  }
+}
+
+function openTranscriptHistoryModal(entry) {
+  const target =
+    entry ||
+    (selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null) ||
+    (activeTranscriptId ? findTranscriptEntry(activeTranscriptId) : null) ||
+    transcriptLibrary[0];
+  if (!target) {
+    setTranscriptStatus("Транскрипции пока нет. Сначала сохраните текст или распознайте файл.", "warning");
+    return;
+  }
+  showTranscriptHistoryDetails(target);
+  elements.transcriptHistoryOverlay?.classList.add("overlay--visible");
+}
+
 function renderTranscriptHistory() {
   if (!elements.transcriptHistoryList) return;
   if (!Array.isArray(transcriptLibrary) || !transcriptLibrary.length) {
+    selectedTranscriptHistoryId = null;
     elements.transcriptHistoryList.innerHTML =
       '<div class="muted">Транскрипции появятся после распознавания или сохранения текста.</div>';
     showTranscriptHistoryDetails(null);
+    closeTranscriptHistoryModal();
     return;
   }
 
@@ -916,12 +959,18 @@ function renderTranscriptHistory() {
     .map(
       (entry) => `
         <article class="transcript-history__item" data-id="${escapeHtml(entry.id)}">
-          <button class="link-button transcript-history__title" type="button" data-action="load">
-            ${escapeHtml(entry.title)}
-          </button>
+          <div class="transcript-history__main">
+            <div class="transcript-history__title" title="${escapeHtml(entry.title)}">${escapeHtml(entry.title)}</div>
+            <div class="transcript-history__meta">${escapeHtml(
+              `${tsFmt(entry.updatedAt || entry.ts)} • Символов: ${(entry.text || "").length} • ${
+                hasTimelineTiming(entry.timeline) ? "с таймингами" : "без таймингов"
+              }`,
+            )}</div>
+          </div>
           <div class="transcript-history__controls">
             <button type="button" data-action="use">Использовать</button>
-            <button class="secondary" type="button" data-action="details">Открыть</button>
+            <button class="secondary" type="button" data-action="edit">Редактировать</button>
+            <button class="warn" type="button" data-action="delete">Удалить</button>
           </div>
         </article>
       `,
@@ -933,7 +982,10 @@ function renderTranscriptHistory() {
     (selectedTranscriptHistoryId && findTranscriptEntry(selectedTranscriptHistoryId)) ||
     (activeTranscriptId && findTranscriptEntry(activeTranscriptId)) ||
     transcriptLibrary[0];
-  showTranscriptHistoryDetails(preferred);
+  if (!selectedTranscriptHistoryId && preferred) {
+    selectedTranscriptHistoryId = preferred.id;
+  }
+  refreshTranscriptHistoryModal();
 }
 
 function sortTranscriptLibrary() {
@@ -1006,15 +1058,21 @@ function deleteTranscriptEntry(id) {
   if (!id) return;
   const index = transcriptLibrary.findIndex((item) => item.id === id);
   if (index === -1) return;
+  const wasSelected = selectedTranscriptHistoryId === id;
   const [removed] = transcriptLibrary.splice(index, 1);
   persistTranscriptLibrary();
   if (activeTranscriptId === id) {
     activeTranscriptId = null;
   }
-  if (selectedTranscriptHistoryId === id) {
+  if (wasSelected) {
     selectedTranscriptHistoryId = transcriptLibrary[0]?.id || null;
   }
   renderTranscriptLibrary();
+  if (wasSelected) {
+    closeTranscriptHistoryModal();
+  } else {
+    refreshTranscriptHistoryModal();
+  }
   setTranscriptStatus(`Транскрипт «${removed.title}» удалён.`, "warning");
 }
 
@@ -1140,14 +1198,22 @@ function handleTranscriptHistoryClick(event) {
   }
 
   const action = button.dataset.action;
-  if (action === "load" || action === "use") {
+  if (action === "use") {
     applyTranscriptEntry(entry, { focusTimeline: true, announce: true });
     renderTranscriptHistory();
     return;
   }
 
-  if (action === "details") {
-    showTranscriptHistoryDetails(entry);
+  if (action === "edit") {
+    openTranscriptHistoryModal(entry);
+    return;
+  }
+
+  if (action === "delete") {
+    const confirmed = window.confirm("Удалить сохранённый транскрипт?");
+    if (confirmed) {
+      deleteTranscriptEntry(entry.id);
+    }
   }
 }
 
@@ -1484,6 +1550,12 @@ function attachEvents() {
       closeHistory();
     }
   });
+  elements.btnCloseTranscriptHistory?.addEventListener("click", closeTranscriptHistoryModal);
+  elements.transcriptHistoryOverlay?.addEventListener("click", (event) => {
+    if (event.target === elements.transcriptHistoryOverlay) {
+      closeTranscriptHistoryModal();
+    }
+  });
   elements.btnSettings?.addEventListener("click", () => {
     openSettings();
     renderTranscribeDefaults();
@@ -1497,6 +1569,10 @@ function attachEvents() {
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (elements.transcriptHistoryOverlay?.classList.contains("overlay--visible")) {
+      closeTranscriptHistoryModal();
+      return;
+    }
     if (elements.settingsOverlay?.classList.contains("overlay--visible")) {
       closeSettings();
       return;
@@ -1633,6 +1709,7 @@ function attachEvents() {
     }
     applyTranscriptEntry(entry, { focusTimeline: true, announce: true });
     renderTranscriptHistory();
+    closeTranscriptHistoryModal();
   });
   elements.btnSaveTranscriptHistoryTitle?.addEventListener("click", () => {
     const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
@@ -1647,6 +1724,15 @@ function attachEvents() {
     }
     updateActiveTranscriptEntry({ title }, { targetId: entry.id });
     showTranscriptHistoryDetails(findTranscriptEntry(entry.id));
+  });
+  elements.btnDeleteTranscriptFromHistory?.addEventListener("click", () => {
+    const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
+    if (!entry) {
+      setTranscriptStatus("Выберите транскрипцию для удаления.", "warning");
+      return;
+    }
+    if (!window.confirm("Удалить сохранённый транскрипт?")) return;
+    deleteTranscriptEntry(entry.id);
   });
 
   elements.btnEditTimeline?.addEventListener("click", enterTimelineEditMode);
