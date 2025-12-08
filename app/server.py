@@ -1102,9 +1102,9 @@ def transcribe(
         segments = []
         if isinstance(transcription, dict):
             segments = list(transcription.get("segments") or [])
+        timeline = _build_timeline(segments)
         if not text:
             raise RuntimeError("empty_transcription")
-            timeline = _build_timeline(segments)
         detected_language = None
         if isinstance(transcription, dict):
             detected_language = transcription.get("language")

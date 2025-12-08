@@ -404,6 +404,9 @@ function renderDownloads() {
 
   elements.downloadList.innerHTML = items;
   updateDownloadStatusIndicator();
+  if (!hasActiveDownloads()) {
+    stopDownloadPolling();
+  }
 }
 
 function renderProfiles() {
@@ -769,6 +772,11 @@ async function refreshDownloadStatuses({ silent = false } = {}) {
     modelState.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     renderDownloads();
     updateDownloadStatusIndicator();
+    if (hasActiveDownloads()) {
+      startDownloadPolling();
+    } else {
+      stopDownloadPolling();
+    }
 
     const completedModels = new Set(
       modelState.downloads
@@ -800,6 +808,11 @@ async function fetchModelList({ silent = false } = {}) {
     updateModelSelect();
     renderModelSuggestions();
     renderDownloads();
+    if (hasActiveDownloads()) {
+      startDownloadPolling();
+    } else {
+      stopDownloadPolling();
+    }
     const selected = elements.llmModelSelect?.value;
     if (apiError) {
       const message = typeof apiError === "string" ? apiError : apiError?.message || "Список моделей недоступен.";
@@ -902,6 +915,18 @@ async function deleteSelectedModel() {
 function startDownloadPolling() {
   if (downloadPollTimer) return;
   downloadPollTimer = window.setInterval(() => refreshDownloadStatuses({ silent: true }), 2500);
+}
+
+function stopDownloadPolling() {
+  if (!downloadPollTimer) return;
+  window.clearInterval(downloadPollTimer);
+  downloadPollTimer = null;
+}
+
+function hasActiveDownloads() {
+  return (modelState.downloads || []).some(
+    (item) => item?.state === "running" || item?.state === "pending",
+  );
 }
 
 function normalizeTimelineItem(item) {
@@ -2324,7 +2349,6 @@ async function init() {
   attachEvents();
   await fetchProfilesAndInit();
   fetchModelList();
-  startDownloadPolling();
 
   const savedPrefix = getHrPrefix(DEFAULT_HR_PREFIX);
   if (elements.hrPrefixInput) {
