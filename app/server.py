@@ -37,6 +37,12 @@ PROMPT_LANGUAGE_SUFFIX = (
 
 load_dotenv()
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OLLAMA_MODELS_DIR = os.getenv("OLLAMA_MODELS") or str(PROJECT_ROOT / "ollama" / "models")
+os.environ["OLLAMA_MODELS"] = OLLAMA_MODELS_DIR
+Path(OLLAMA_MODELS_DIR).mkdir(parents=True, exist_ok=True)
+OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": OLLAMA_MODELS_DIR}
+
 ENV = os.getenv("ENV", "local")
 BASE_URL = os.getenv("LOCAL_BASE_URL", "http://localhost:11434/v1")
 API_KEY  = os.getenv("LOCAL_API_KEY", "LOCAL-KEY")
@@ -252,6 +258,7 @@ def _list_local_models() -> list[dict]:
             text=True,
             check=False,
             timeout=20,
+            env=OLLAMA_ENV,
         )
     except FileNotFoundError as exc:  # pragma: no cover - зависит от окружения
         raise HTTPException(status_code=500, detail="Ollama не установлена или недоступна.") from exc
@@ -310,7 +317,7 @@ def _run_model_pull(task_id: str, model: str) -> None:
     cmd = ["ollama", "pull", model, "--json"]
     try:
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=OLLAMA_ENV
         )
     except FileNotFoundError:
         _update_pull(task_id, state="error", message="Ollama не установлена", finished_at=time.time())
@@ -445,7 +452,7 @@ def delete_model(model_name: str):
 
     try:
         result = subprocess.run(
-            ["ollama", "rm", target], capture_output=True, text=True, check=False, timeout=30
+            ["ollama", "rm", target], capture_output=True, text=True, check=False, timeout=30, env=OLLAMA_ENV
         )
     except FileNotFoundError as exc:  # pragma: no cover - зависит от окружения
         raise HTTPException(status_code=500, detail="Ollama не установлена или недоступна.") from exc

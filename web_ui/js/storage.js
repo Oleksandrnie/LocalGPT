@@ -4,6 +4,7 @@ export const STORAGE_KEYS = {
   history: "localgpt_history_v1",
   session: "localgpt_session_id",
   whisperModel: "localgpt_whisper_model_v1",
+  whisperPromptPreset: "localgpt_whisper_prompt_v1",
   llmModel: "localgpt_llm_model_v1",
   hrPrefix: "localgpt_hr_prefix_v1",
   criteria: "localgpt_criteria_list_v1",
@@ -47,6 +48,15 @@ export function getSavedModel(defaultValue = "medium") {
 
 export function setSavedModel(model) {
   safeSet(STORAGE_KEYS.whisperModel, model);
+}
+
+export function getSavedPromptPreset(defaultValue = "none") {
+  const raw = safeGet(STORAGE_KEYS.whisperPromptPreset);
+  return raw || defaultValue;
+}
+
+export function setSavedPromptPreset(preset) {
+  safeSet(STORAGE_KEYS.whisperPromptPreset, preset);
 }
 
 export function getSavedLlmModel(defaultValue = "") {

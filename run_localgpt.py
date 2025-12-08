@@ -30,6 +30,10 @@ OLLAMA_HEALTH_URL = "http://127.0.0.1:11434/v1/models"
 OLLAMA_LOG_FILE = ROOT / "ollama.log"
 ENV_FILE = ROOT / ".env"
 DEFAULT_MODEL = "qwen2.5:7b-instruct"
+OLLAMA_MODELS_DIR = os.environ.get("OLLAMA_MODELS") or str(ROOT / "ollama" / "models")
+os.environ["OLLAMA_MODELS"] = OLLAMA_MODELS_DIR
+Path(OLLAMA_MODELS_DIR).mkdir(parents=True, exist_ok=True)
+OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": OLLAMA_MODELS_DIR}
 
 
 def run(cmd, **kwargs):
@@ -113,6 +117,7 @@ def ollama_show(model_name: str) -> bool:
             capture_output=True,
             text=True,
             check=True,
+            env=OLLAMA_ENV,
         )
         append_ollama_log(f"'ollama show {model_name}' succeeded.")
         return True
@@ -132,6 +137,7 @@ def ollama_list() -> Iterable[str]:
             capture_output=True,
             text=True,
             check=True,
+            env=OLLAMA_ENV,
         )
     except Exception as exc:
         append_ollama_log(f"'ollama list' failed: {exc}")
@@ -164,7 +170,7 @@ def create_from_modelfile(model_name: str, modelfile: Path) -> bool:
         f"Creating model {model_name} from {modelfile}", leading_newline=True
     )
     try:
-        run(["ollama", "create", model_name, "-f", str(modelfile)])
+        run(["ollama", "create", model_name, "-f", str(modelfile)], env=OLLAMA_ENV)
         return True
     except subprocess.CalledProcessError as exc:
         print(f"[!] Failed to create model {model_name}: {exc}")
@@ -274,6 +280,7 @@ def ensure_ollama_running() -> None:
         stdout=serve_log,
         stderr=subprocess.STDOUT,
         cwd=str(ROOT),
+        env=OLLAMA_ENV,
     )
     serve_log.close()
 
@@ -339,7 +346,7 @@ def ensure_model() -> str:
         if DEFAULT_MODEL not in available_models:
             append_ollama_log(f"Pulling fallback model '{DEFAULT_MODEL}' ...")
             try:
-                run(["ollama", "pull", DEFAULT_MODEL])
+                run(["ollama", "pull", DEFAULT_MODEL], env=OLLAMA_ENV)
             except subprocess.CalledProcessError as exc:
                 print(f"[!] Failed to pull fallback model '{DEFAULT_MODEL}': {exc}")
                 append_ollama_log(

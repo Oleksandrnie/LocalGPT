@@ -12,6 +12,7 @@
         <h1>LocalGPT — Web UI</h1>
         <span class="status" id="healthStatus">проверка сервера…</span>
         <div class="header-actions">
+            <button class="secondary" id="btnSettings">Настройки</button>
             <button class="secondary" id="btnHistory">История</button>
         </div>
     </header>
@@ -20,52 +21,20 @@
         <lgpt-card title="Запрос" data-card="request">
             <textarea id="prompt" placeholder="Введите промпт…"></textarea>
             <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
-            <div class="field-group mt-sm">
-                <label class="muted" for="llmModelSelect">Модель LLM (Ollama)</label>
-                <div class="model-select-row">
-                    <select id="llmModelSelect" class="input-control"></select>
-                    <button class="secondary" id="btnRefreshModels" type="button">Обновить</button>
-                    <button class="warn" id="btnDeleteModel" type="button">Удалить</button>
-                </div>
-                <div class="status" id="modelStatus">Загружаю список моделей…</div>
-                <div id="modelSuggestions" class="model-suggestions muted"></div>
-            </div>
             <div class="buttons mt-sm">
                 <button id="btnSend">Отправить</button>
                 <button class="warn" id="btnStop" type="button" hidden>Остановить</button>
                 <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
             </div>
-            <details class="collapse mt-sm" id="downloadsPanel" open>
-                <summary>Загрузки моделей Ollama</summary>
-                <div class="collapse__content">
-                    <div id="downloadList" class="download-list muted">Активных загрузок нет.</div>
-                </div>
-            </details>
             <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка.</p>
             <details class="collapse mt-sm" id="advancedControls">
-                <summary>Транскрибация и дополнительные настройки</summary>
+                <summary>Транскрибация и критерии</summary>
                 <div class="collapse__content">
-                    <div class="row row--gutter">
-                        <div class="field-group">
-                            <label class="muted" for="modelSelect">Модель Whisper</label>
-                            <select id="modelSelect" class="input-control">
-                                <option value="small">small — быстрее, но немного хуже по качеству</option>
-                                <option value="medium" selected>medium — выше качество, но медленнее</option>
-                            </select>
-                        </div>
-                        <div class="field-group">
-                            <label class="muted" for="promptPresetSelect">Промпт для распознавания</label>
-                            <select id="promptPresetSelect" class="input-control">
-                                <option value="none">Без промпта</option>
-                                <option value="ru">Универсальный (русский)</option>
-                                <option value="en">Универсальный (английский)</option>
-                            </select>
-                        </div>
-                    </div>
                     <div class="row mt-sm">
                         <input type="file" id="fileInput" accept="audio/*,video/*" />
                         <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
                     </div>
+                    <div class="muted" id="transcribeDefaults"></div>
                     <div class="status" id="transcribeStatus"></div>
                     <section class="transcript-manager">
                         <h4>Работа с транскриптами</h4>
@@ -94,13 +63,6 @@
                             placeholder="ID или ссылка на Google Sheets" />
                         <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google
                             Sheets</button>
-                    </div>
-                    <hr class="collapse-divider" />
-                    <div class="field-group">
-                        <label class="muted" for="hrPrefix">Префикс HR-подсказки</label>
-                        <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
-                        <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в
-                            вашем браузере.</p>
                     </div>
                     <div class="field-group">
                         <label class="muted" for="quickCriterionInput">Быстро добавить критерий</label>
@@ -131,6 +93,8 @@
                     aria-selected="true" aria-controls="panel-answer">Ответ</button>
                 <button class="tab" type="button" id="tab-timeline" data-tab-target="timeline" role="tab"
                     aria-selected="false" aria-controls="panel-timeline">Таймлайн</button>
+                <button class="tab" type="button" id="tab-transcripts" data-tab-target="transcripts" role="tab"
+                    aria-selected="false" aria-controls="panel-transcripts">История транскрибаций</button>
             </div>
             <div class="tab-panels">
                 <section class="tab-panel is-active" id="panel-answer" data-panel="answer" role="tabpanel"
@@ -163,6 +127,26 @@
                     <div id="timelineNotice" class="status timeline-notice"></div>
                     <div id="timelineContainer" class="timeline-grid"></div>
                 </section>
+                <section class="tab-panel" id="panel-transcripts" data-panel="transcripts" role="tabpanel"
+                    aria-labelledby="tab-transcripts" hidden>
+                    <div class="transcript-history">
+                        <div class="transcript-history__list" id="transcriptHistoryList"></div>
+                        <div class="transcript-history__details" id="transcriptHistoryDetails" hidden>
+                            <div class="field-group">
+                                <label class="muted" for="transcriptHistoryTitle">Название транскрибации</label>
+                                <input id="transcriptHistoryTitle" type="text" class="input-control"
+                                    placeholder="Введите название" />
+                            </div>
+                            <div class="muted" id="transcriptHistoryMeta"></div>
+                            <div class="transcript-history__content" id="transcriptHistoryContent"></div>
+                            <div class="buttons mt-sm transcript-history__actions">
+                                <button id="btnApplyTranscriptFromHistory" type="button">Использовать</button>
+                                <button class="secondary" id="btnSaveTranscriptHistoryTitle" type="button">Сохранить
+                                    название</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </div>
         </lgpt-card>
     </main>
@@ -176,6 +160,87 @@
                 <button class="warn" id="btnClearStorage">Очистить localStorage</button>
             </div>
             <p class="muted">Хранится только локально в браузере этого устройства.</p>
+        </div>
+    </div>
+
+    <div class="overlay" id="settingsOverlay" role="dialog" aria-modal="true">
+        <div class="modal modal--settings">
+            <header class="modal__header">
+                <div>
+                    <p class="muted">Глобальные настройки</p>
+                    <h3>Настройки приложения</h3>
+                </div>
+                <button class="secondary" id="btnCloseSettings" type="button">Закрыть</button>
+            </header>
+
+            <section class="modal__section">
+                <header class="modal__section-header">
+                    <div>
+                        <p class="muted">LLM</p>
+                        <h4>Модели Ollama</h4>
+                    </div>
+                    <div class="badges-row">
+                        <span class="badge">Хранятся в ollama/models/</span>
+                    </div>
+                </header>
+                <div class="field-group">
+                    <label class="muted" for="llmModelSelect">Модель LLM (Ollama)</label>
+                    <div class="model-select-row">
+                        <select id="llmModelSelect" class="input-control"></select>
+                        <button class="secondary" id="btnRefreshModels" type="button">Обновить</button>
+                        <button class="warn" id="btnDeleteModel" type="button">Удалить</button>
+                    </div>
+                    <div class="status" id="modelStatus">Загружаю список моделей…</div>
+                </div>
+                <div id="modelSuggestions" class="model-suggestions muted"></div>
+                <details class="collapse mt-sm" id="downloadsPanel" open>
+                    <summary>Загрузки моделей Ollama</summary>
+                    <div class="collapse__content">
+                        <div id="downloadList" class="download-list muted">Активных загрузок нет.</div>
+                    </div>
+                </details>
+            </section>
+
+            <section class="modal__section">
+                <header class="modal__section-header">
+                    <div>
+                        <p class="muted">ASR</p>
+                        <h4>Транскрибация по умолчанию</h4>
+                    </div>
+                </header>
+                <div class="row row--gutter">
+                    <div class="field-group">
+                        <label class="muted" for="modelSelect">Модель Whisper</label>
+                        <select id="modelSelect" class="input-control">
+                            <option value="small">small — быстрее, но немного хуже по качеству</option>
+                            <option value="medium" selected>medium — выше качество, но медленнее</option>
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label class="muted" for="promptPresetSelect">Промпт для распознавания</label>
+                        <select id="promptPresetSelect" class="input-control">
+                            <option value="none">Без промпта</option>
+                            <option value="ru">Универсальный (русский)</option>
+                            <option value="en">Универсальный (английский)</option>
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <section class="modal__section">
+                <header class="modal__section-header">
+                    <div>
+                        <p class="muted">HR</p>
+                        <h4>Префикс подсказки</h4>
+                    </div>
+                </header>
+                <div class="field-group">
+                    <label class="muted" for="hrPrefix">Префикс HR-подсказки</label>
+                    <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
+                    <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем
+                        браузере.</p>
+                </div>
+            </section>
         </div>
     </div>
 
