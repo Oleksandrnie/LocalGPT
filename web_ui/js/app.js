@@ -31,6 +31,8 @@ const MODEL_RECOMMENDATIONS = [
   { name: "llama3:8b", label: "LLaMA 3 8B" },
   { name: "mistral:7b", label: "Mistral 7B" },
 ];
+const SIDEBAR_STATE_KEY = "localgpt_sidebar_collapsed";
+let sidebarCollapsed = false;
 
 function estTokens(value) {
   return Math.ceil(((value || "").length) / 4.2);
@@ -148,9 +150,10 @@ const elements = {
   transcriptHistoryDetails: getElement("transcriptHistoryDetails"),
   transcriptHistoryTitle: getElement("transcriptHistoryTitle"),
   transcriptHistoryMeta: getElement("transcriptHistoryMeta"),
+  transcriptHistoryBody: getElement("transcriptHistoryBody"),
   transcriptHistoryContent: getElement("transcriptHistoryContent"),
   btnApplyTranscriptFromHistory: getElement("btnApplyTranscriptFromHistory"),
-  btnSaveTranscriptHistoryTitle: getElement("btnSaveTranscriptHistoryTitle"),
+  btnSaveTranscriptFromHistory: getElement("btnSaveTranscriptFromHistory"),
   transcriptHistoryHeading: getElement("transcriptHistoryHeading"),
   transcriptHistoryOverlay: getElement("transcriptHistoryOverlay"),
   btnCloseTranscriptHistory: getElement("btnCloseTranscriptHistory"),
@@ -191,6 +194,7 @@ const chatState = { controller: null };
 let activeTranscriptId = null;
 let transcriptLibrary = [];
 let selectedTranscriptHistoryId = null;
+let transcriptEditorMode = "view";
 let modelState = { installed: [], recommended: MODEL_RECOMMENDATIONS, downloads: [] };
 let downloadPollTimer = null;
 let modelSettingsState = { effective: {}, overrides: {}, defaults: {} };
@@ -280,6 +284,16 @@ function setModelStatus(message, tone = "info") {
   updateStatus(elements.modelStatus, message, tone);
 }
 
+function updateHealthModelName(modelName) {
+  if (!elements.healthStatus) return;
+  const cls = elements.healthStatus.classList;
+  if (cls.contains("status--error") || cls.contains("status--warning")) return;
+  const resolved = modelName || currentModelName() || getSavedLlmModel() || "";
+  if (resolved) {
+    updateStatus(elements.healthStatus, `сервер: OK • модель: ${resolved}`, "success");
+  }
+}
+
 function updateDownloadStatusIndicator() {
   const running = (modelState.downloads || []).filter(
     (d) => d.state === "running" || d.state === "pending",
@@ -351,6 +365,7 @@ function updateModelSelect(preferredValue) {
     setSavedLlmModel(defaultValue);
   }
   setModelStatus(select.value ? "Готово к работе" : "Добавьте или скачайте модель.", select.value ? "success" : "warning");
+  updateHealthModelName(select.value);
   syncModelActions();
 }
 
@@ -475,14 +490,21 @@ function renderSessions() {
   elements.sessionList.innerHTML = html;
 }
 
+function updateSessionState(sessionId, patch = {}) {
+  if (!sessionId) return;
+  sessionListState = sessionListState.map((item) => (item.id === sessionId ? { ...item, ...patch } : item));
+}
+
 async function setActiveSession(sessionId, { refreshOnly = false } = {}) {
-  currentSessionId = sessionId;
-  setLastChatSessionId(sessionId || null);
+  const previousSessionId = currentSessionId;
+  const changed = previousSessionId !== sessionId;
+  currentSessionId = sessionId || null;
+  setLastChatSessionId(currentSessionId || null);
   if (!sessionId) {
     currentSessionModel = null;
   }
   const session = sessionListState.find((item) => item.id === sessionId);
-  currentSessionModel = session?.model_name || currentSessionModel || null;
+  currentSessionModel = session?.model_name || (sessionId ? currentSessionModel : null);
   if (elements.llmModelSelect && currentSessionModel) {
     const exists = Array.from(elements.llmModelSelect.options).some((opt) => opt.value === currentSessionModel);
     if (!exists) {
@@ -491,11 +513,21 @@ async function setActiveSession(sessionId, { refreshOnly = false } = {}) {
     elements.llmModelSelect.value = currentSessionModel;
     setSavedLlmModel(currentSessionModel);
   }
+  if (currentSessionModel) {
+    updateSessionState(currentSessionId, { model_name: currentSessionModel });
+  }
   renderSessions();
+  if (changed) {
+    resetTranscriptContext({ clearAnswer: true });
+    if (elements.prompt) {
+      elements.prompt.value = "";
+    }
+  }
   if (!refreshOnly) {
     await refreshModelSettings(currentSessionModel || elements.llmModelSelect?.value || "");
-    await loadTranscriptLibrary({ silent: true });
+    await loadTranscriptLibrary({ silent: true, resetList: changed });
   }
+  updateHealthModelName(currentModelName());
 }
 
 async function loadSessionsForProfile(profileId) {
@@ -604,18 +636,45 @@ function handleProfileListClick(event) {
   }
 }
 
-function toggleSidebar() {
+function applySidebarState(collapsed, { persist = true } = {}) {
   const sidebar = document.getElementById("sidebar");
   const workspace = document.querySelector(".workspace-grid");
   if (!sidebar) return;
-  const collapsed = sidebar.classList.toggle("sidebar-collapsed");
+  sidebarCollapsed = Boolean(collapsed);
+  sidebar.classList.toggle("sidebar-collapsed", collapsed);
   if (workspace) {
     workspace.classList.toggle("is-collapsed", collapsed);
   }
   if (elements.btnToggleSidebar) {
     elements.btnToggleSidebar.textContent = collapsed ? "▶" : "◀";
     elements.btnToggleSidebar.title = collapsed ? "Развернуть список" : "Свернуть список";
+    elements.btnToggleSidebar.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
+  if (persist) {
+    try {
+      window.localStorage.setItem(SIDEBAR_STATE_KEY, collapsed ? "1" : "0");
+    } catch (error) {
+      // ignore storage errors
+    }
+  }
+}
+
+function toggleSidebar(force) {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+  const shouldCollapse = typeof force === "boolean" ? force : !sidebarCollapsed;
+  applySidebarState(shouldCollapse);
+}
+
+function restoreSidebarState() {
+  let preferred = false;
+  try {
+    preferred = window.localStorage.getItem(SIDEBAR_STATE_KEY) === "1";
+  } catch (error) {
+    preferred = false;
+  }
+  const autoCollapse = window.matchMedia("(max-width: 960px)").matches;
+  applySidebarState(preferred || autoCollapse, { persist: false });
 }
 
 async function createSessionFlow() {
@@ -699,6 +758,7 @@ function fillModelSettingsForm(bundle) {
 
 async function refreshModelSettings(modelName) {
   if (!activeProfileId || !modelName) return;
+  updateHealthModelName(modelName);
   const params = new URLSearchParams({ profile_id: String(activeProfileId), model_name: modelName });
   try {
     const response = await fetch(`${API_BASE}/model_settings?${params.toString()}`, { method: "GET" });
@@ -760,6 +820,22 @@ async function resetModelSettingsToDefaults() {
     updateStatus(elements.modelSettingsStatus, "Настройки сброшены к значениям по умолчанию.", "success");
   } catch (error) {
     updateStatus(elements.modelSettingsStatus, `Не удалось сбросить настройки: ${error.message || error}`, "error");
+  }
+}
+
+async function persistSessionModel(modelName) {
+  if (!currentSessionId || !modelName) return;
+  try {
+    const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(currentSessionId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_name: modelName }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  } catch (error) {
+    setModelStatus(`Не удалось обновить модель для сессии: ${error.message || error}`, "error");
   }
 }
 
@@ -988,6 +1064,23 @@ function buildTextTimelineFromTranscript(transcript) {
   return chunks.map((chunk) => ({ start: null, end: null, speaker: "unknown", text: chunk }));
 }
 
+function mergeTimelineText(existingTimeline, text) {
+  if (!Array.isArray(existingTimeline) || !existingTimeline.length) {
+    return buildTextTimelineFromTranscript(text);
+  }
+  if (!hasTimelineTiming(existingTimeline)) {
+    return buildTextTimelineFromTranscript(text);
+  }
+  const textChunks = buildTextTimelineFromTranscript(text);
+  if (!textChunks.length) {
+    return existingTimeline.map((item) => ({ ...item, text: "" }));
+  }
+  return existingTimeline.map((item, index) => ({
+    ...item,
+    text: textChunks[Math.min(index, textChunks.length - 1)]?.text || "",
+  }));
+}
+
 function createTranscriptId() {
   return `tr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -1106,6 +1199,23 @@ function clearTimelineState() {
   updateTimelineButtons();
   updateTimelineNameInputs();
   updateTimelineLegend();
+}
+
+function resetTranscriptContext({ clearManual = true, clearAnswer = false } = {}) {
+  currentTranscript = "";
+  activeTranscriptId = null;
+  selectedTranscriptHistoryId = null;
+  transcriptEditorMode = "view";
+  transcriptLibrary = [];
+  clearTimelineState();
+  if (elements.manualTranscriptInput && clearManual) {
+    elements.manualTranscriptInput.value = "";
+  }
+  renderTranscriptLibrary();
+  setTranscriptStatus("", "info");
+  if (clearAnswer && elements.answer) {
+    elements.answer.value = "";
+  }
 }
 
 function setTimelineData(items, keywords = null, { resetLabels = false, labels = null } = {}) {
@@ -1297,9 +1407,53 @@ function renderTranscriptHistoryContent(entry) {
     .join("\n");
 }
 
-function showTranscriptHistoryDetails(entry) {
+function updateTranscriptHistoryPreview(entry = null) {
+  const baseEntry =
+    entry || (selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null);
+  const draftText = (elements.transcriptHistoryBody?.value ?? baseEntry?.text ?? "").toString();
+  const hasExistingTimeline =
+    transcriptEditorMode !== "create" &&
+    Array.isArray(baseEntry?.timeline) &&
+    baseEntry.timeline.length > 0;
+  const timelineSource = hasExistingTimeline
+    ? mergeTimelineText(baseEntry?.timeline || [], draftText)
+    : buildTextTimelineFromTranscript(draftText);
+
+  if (elements.transcriptHistoryMeta) {
+    const updatedAt = baseEntry?.updatedAt || baseEntry?.ts;
+    const stamp = updatedAt ? tsFmt(updatedAt) : "Черновик";
+    elements.transcriptHistoryMeta.textContent = `${stamp} • Символов: ${draftText.length} • ${
+      hasTimelineTiming(timelineSource) ? "с таймингами" : "без таймингов"
+    }`;
+  }
+  if (elements.transcriptHistoryContent) {
+    elements.transcriptHistoryContent.innerHTML = renderTranscriptHistoryContent({
+      text: draftText,
+      timeline: timelineSource,
+    });
+  }
+}
+
+function showTranscriptHistoryDetails(entry, { mode = "edit" } = {}) {
   if (!elements.transcriptHistoryDetails) return;
-  if (!entry) {
+  transcriptEditorMode = mode;
+  const isDraft = mode === "create";
+  const targetEntry =
+    entry ||
+    (isDraft
+      ? {
+          id: null,
+          title: suggestTranscriptTitle({ manual: true }),
+          text: elements.manualTranscriptInput?.value || currentTranscript || "",
+          timeline: currentTimeline,
+          roleKeywords: currentRoleKeywords,
+          labels: timelineLabels,
+          ts: Date.now(),
+          updatedAt: Date.now(),
+        }
+      : null);
+
+  if (!targetEntry) {
     selectedTranscriptHistoryId = null;
     elements.transcriptHistoryDetails.setAttribute("hidden", "");
     if (elements.transcriptHistoryHeading) {
@@ -1308,24 +1462,26 @@ function showTranscriptHistoryDetails(entry) {
     return;
   }
 
-  selectedTranscriptHistoryId = entry.id;
+  selectedTranscriptHistoryId = isDraft ? null : targetEntry.id;
   if (elements.transcriptHistoryHeading) {
-    elements.transcriptHistoryHeading.textContent = entry.title || "Транскрипция";
+    elements.transcriptHistoryHeading.textContent = isDraft
+      ? "Новая транскрибация"
+      : targetEntry.title || "Транскрипция";
   }
   elements.transcriptHistoryDetails.removeAttribute("hidden");
   if (elements.transcriptHistoryTitle) {
-    elements.transcriptHistoryTitle.value = entry.title || "";
+    elements.transcriptHistoryTitle.value = targetEntry.title || "";
   }
-  if (elements.transcriptHistoryMeta) {
-    const hasTiming = hasTimelineTiming(entry.timeline);
-    const updatedAt = tsFmt(entry.updatedAt || entry.ts);
-    elements.transcriptHistoryMeta.textContent = `${updatedAt} • Символов: ${(entry.text || "").length} • ${
-      hasTiming ? "с таймингами" : "без таймингов"
-    }`;
+  if (elements.transcriptHistoryBody) {
+    elements.transcriptHistoryBody.value = targetEntry.text || "";
   }
-  if (elements.transcriptHistoryContent) {
-    elements.transcriptHistoryContent.innerHTML = renderTranscriptHistoryContent(entry);
+  if (elements.btnDeleteTranscriptFromHistory) {
+    elements.btnDeleteTranscriptFromHistory.hidden = isDraft;
   }
+  if (elements.btnApplyTranscriptFromHistory) {
+    elements.btnApplyTranscriptFromHistory.disabled = isDraft;
+  }
+  updateTranscriptHistoryPreview(targetEntry);
 }
 
 function closeTranscriptHistoryModal() {
@@ -1333,19 +1489,26 @@ function closeTranscriptHistoryModal() {
   if (elements.transcriptHistoryDetails) {
     elements.transcriptHistoryDetails.setAttribute("hidden", "");
   }
+  transcriptEditorMode = "view";
 }
 
 function refreshTranscriptHistoryModal() {
   if (!elements.transcriptHistoryOverlay?.classList.contains("overlay--visible")) return;
   const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
-  if (entry) {
-    showTranscriptHistoryDetails(entry);
+  if (entry || transcriptEditorMode === "create") {
+    showTranscriptHistoryDetails(entry, { mode: transcriptEditorMode });
   } else {
     closeTranscriptHistoryModal();
   }
 }
 
-function openTranscriptHistoryModal(entry) {
+function openTranscriptHistoryModal(entry, { mode = "edit" } = {}) {
+  if (mode === "create") {
+    selectedTranscriptHistoryId = null;
+    showTranscriptHistoryDetails(entry, { mode: "create" });
+    elements.transcriptHistoryOverlay?.classList.add("overlay--visible");
+    return;
+  }
   const target =
     entry ||
     (selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null) ||
@@ -1365,14 +1528,23 @@ function renderTranscriptHistory() {
     selectedTranscriptHistoryId = null;
     elements.transcriptHistoryList.innerHTML =
       '<div class="muted">Транскрипции появятся после распознавания или сохранения текста.</div>';
-    showTranscriptHistoryDetails(null);
-    closeTranscriptHistoryModal();
+    if (transcriptEditorMode === "create") {
+      showTranscriptHistoryDetails(null, { mode: "create" });
+    } else {
+      showTranscriptHistoryDetails(null);
+      closeTranscriptHistoryModal();
+    }
     return;
   }
 
   const html = transcriptLibrary
     .map(
-      (entry) => `
+      (entry) => {
+        const previewSource = (entry.text || "").trim();
+        const previewText = previewSource
+          ? `${previewSource.slice(0, 120)}${previewSource.length > 120 ? "…" : ""}`
+          : "—";
+        return `
         <article class="transcript-history__item" data-id="${escapeHtml(entry.id)}">
           <div class="transcript-history__main">
             <div class="transcript-history__title" title="${escapeHtml(entry.title)}">${escapeHtml(entry.title)}</div>
@@ -1381,6 +1553,7 @@ function renderTranscriptHistory() {
                 hasTimelineTiming(entry.timeline) ? "с таймингами" : "без таймингов"
               }`,
             )}</div>
+            <div class="transcript-history__preview">${escapeHtml(previewText)}</div>
           </div>
           <div class="transcript-history__controls">
             <button type="button" data-action="use">Использовать</button>
@@ -1388,17 +1561,20 @@ function renderTranscriptHistory() {
             <button class="warn" type="button" data-action="delete">Удалить</button>
           </div>
         </article>
-      `,
+      `;
+      },
     )
     .join("");
 
   elements.transcriptHistoryList.innerHTML = html;
-  const preferred =
-    (selectedTranscriptHistoryId && findTranscriptEntry(selectedTranscriptHistoryId)) ||
-    (activeTranscriptId && findTranscriptEntry(activeTranscriptId)) ||
-    transcriptLibrary[0];
-  if (!selectedTranscriptHistoryId && preferred) {
-    selectedTranscriptHistoryId = preferred.id;
+  if (transcriptEditorMode !== "create") {
+    const preferred =
+      (selectedTranscriptHistoryId && findTranscriptEntry(selectedTranscriptHistoryId)) ||
+      (activeTranscriptId && findTranscriptEntry(activeTranscriptId)) ||
+      transcriptLibrary[0];
+    if (!selectedTranscriptHistoryId && preferred) {
+      selectedTranscriptHistoryId = preferred.id;
+    }
   }
   refreshTranscriptHistoryModal();
 }
@@ -1407,11 +1583,18 @@ function sortTranscriptLibrary() {
   transcriptLibrary.sort((a, b) => (b.updatedAt || b.ts) - (a.updatedAt || a.ts));
 }
 
-async function loadTranscriptLibrary({ silent = false } = {}) {
+async function loadTranscriptLibrary({ silent = false, resetList = false } = {}) {
   if (!activeProfileId) {
+    transcriptEditorMode = "view";
     transcriptLibrary = [];
     renderTranscriptLibrary();
     return;
+  }
+  if (resetList) {
+    transcriptLibrary = [];
+    selectedTranscriptHistoryId = null;
+    transcriptEditorMode = "view";
+    renderTranscriptLibrary();
   }
   try {
     const params = new URLSearchParams({ profile_id: String(activeProfileId) });
@@ -1469,6 +1652,7 @@ async function addTranscriptEntry(entry, { makeActive = false, announce = true }
     if (makeActive || !selectedTranscriptHistoryId) {
       selectedTranscriptHistoryId = saved.id;
     }
+    transcriptEditorMode = "edit";
     renderTranscriptLibrary();
     if (announce) {
       setTranscriptStatus(`Транскрипт «${saved.title}» сохранён.`, "success");
@@ -1485,22 +1669,24 @@ async function addTranscriptFromHistoryPrompt() {
     setTranscriptStatus("Сначала выберите профиль.", "warning");
     return;
   }
-  const text = window.prompt("Вставьте текст транскрипта") || "";
-  const cleaned = text.trim();
-  if (!cleaned) return;
-  const title = window.prompt("Название транскрипта", suggestTranscriptTitle({ manual: true })) || "";
-  const entry = newTranscriptEntry({
-    title: title.trim() || suggestTranscriptTitle({ manual: true }),
-    text: cleaned,
-    timeline: buildTextTimelineFromTranscript(cleaned),
-    roleKeywords: {},
-    labels: {},
-  });
-  const saved = await addTranscriptEntry(entry, { makeActive: true, announce: false });
-  if (saved) {
-    renderTranscriptHistory();
-    showTranscriptHistoryDetails(saved);
-    setTranscriptStatus(`Транскрипт «${saved.title}» добавлен.`, "success");
+  const draftText = (elements.manualTranscriptInput?.value || currentTranscript || "").trim();
+  const hasText = Boolean(draftText);
+  const draft = {
+    id: null,
+    title: suggestTranscriptTitle({ manual: true }),
+    text: draftText,
+    timeline:
+      currentTimeline.length && hasText ? currentTimeline : hasText ? buildTextTimelineFromTranscript(draftText) : [],
+    roleKeywords: currentRoleKeywords,
+    labels: timelineLabels,
+    ts: Date.now(),
+    updatedAt: Date.now(),
+  };
+  openTranscriptHistoryModal(draft, { mode: "create" });
+  elements.transcriptHistoryOverlay?.classList.add("overlay--visible");
+  updateTranscriptHistoryPreview(draft);
+  if (!hasText) {
+    setTranscriptStatus("Заполните текст и нажмите «Сохранить».", "warning");
   }
 }
 
@@ -1546,6 +1732,62 @@ async function updateActiveTranscriptEntry(patch = {}, { silent = false, targetI
   }
 }
 
+async function saveTranscriptHistoryDraft() {
+  const title = elements.transcriptHistoryTitle?.value?.trim() || "";
+  const text = elements.transcriptHistoryBody?.value?.trim() || "";
+  if (!title) {
+    setTranscriptStatus("Введите название транскрибации.", "error");
+    return;
+  }
+  if (!text) {
+    setTranscriptStatus("Добавьте текст транскрипта перед сохранением.", "error");
+    return;
+  }
+
+  const baseEntry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
+  const preferTimeline =
+    transcriptEditorMode === "create" && currentTimeline.length
+      ? currentTimeline
+      : baseEntry?.timeline || currentTimeline;
+  const timeline =
+    Array.isArray(preferTimeline) && preferTimeline.length
+      ? mergeTimelineText(preferTimeline, text)
+      : buildTextTimelineFromTranscript(text);
+  const roleKeywords = baseEntry?.roleKeywords || currentRoleKeywords;
+  const labels = baseEntry?.labels || timelineLabels;
+
+  if (!selectedTranscriptHistoryId || transcriptEditorMode === "create") {
+    const entry = newTranscriptEntry({
+      title,
+      text,
+      timeline,
+      roleKeywords,
+      labels,
+    });
+    const saved = await addTranscriptEntry(entry, { makeActive: true, announce: true });
+    if (saved) {
+      transcriptEditorMode = "edit";
+      showTranscriptHistoryDetails(saved, { mode: "edit" });
+    }
+    return;
+  }
+
+  await updateActiveTranscriptEntry(
+    {
+      title,
+      text,
+      timeline,
+      roleKeywords,
+      labels,
+    },
+    { targetId: selectedTranscriptHistoryId },
+  );
+  const updated = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
+  if (updated) {
+    showTranscriptHistoryDetails(updated, { mode: "edit" });
+  }
+}
+
 async function deleteTranscriptEntry(id) {
   if (!id) return;
   const index = transcriptLibrary.findIndex((item) => item.id === id);
@@ -1562,6 +1804,9 @@ async function deleteTranscriptEntry(id) {
       selectedTranscriptHistoryId = transcriptLibrary[0]?.id || null;
     }
     renderTranscriptLibrary();
+    if (!transcriptLibrary.length) {
+      transcriptEditorMode = "view";
+    }
     if (wasSelected) {
       closeTranscriptHistoryModal();
     } else {
@@ -1577,6 +1822,7 @@ function applyTranscriptEntry(entry, { focusTimeline = true, announce = true } =
   if (!entry) return false;
   activeTranscriptId = entry.id;
   selectedTranscriptHistoryId = entry.id;
+  transcriptEditorMode = "edit";
   currentTranscript = entry.text || "";
   setTimelineData(entry.timeline, entry.roleKeywords, { resetLabels: true, labels: entry.labels });
   if (elements.manualTranscriptInput) {
@@ -1612,6 +1858,8 @@ async function useManualTranscript({ save = false } = {}) {
   }
 
   activeTranscriptId = null;
+  selectedTranscriptHistoryId = null;
+  transcriptEditorMode = "view";
   currentTranscript = text;
   const timeline = buildTextTimelineFromTranscript(text);
   setTimelineData(timeline, {}, { resetLabels: true });
@@ -1823,6 +2071,11 @@ async function sendPrompt() {
     if (currentSessionId) {
       payload.session_id = currentSessionId;
     }
+    if (targetModel) {
+      payload.model = targetModel;
+      payload.model_name = targetModel;
+      setSavedLlmModel(targetModel);
+    }
     const transcript = currentTranscript.trim();
     if (transcript) {
       payload.transcript = transcript;
@@ -1830,10 +2083,6 @@ async function sendPrompt() {
     const criteria = criteriaManager.getCriteria();
     if (criteria.length) {
       payload.criteria = criteria;
-    }
-    if (!currentSessionId && targetModel) {
-      payload.model = targetModel;
-      setSavedLlmModel(targetModel);
     }
 
     const response = await fetch(`${API_BASE}/chat`, {
@@ -1857,6 +2106,14 @@ async function sendPrompt() {
     }
     if (data.model_name) {
       currentSessionModel = data.model_name;
+      updateHealthModelName(currentSessionModel);
+    } else if (targetModel) {
+      currentSessionModel = targetModel;
+      updateHealthModelName(targetModel);
+    }
+    if (currentSessionId && currentSessionModel) {
+      updateSessionState(currentSessionId, { model_name: currentSessionModel });
+      renderSessions();
     }
     if (data.used_settings) {
       LIMITS.num_ctx = data.used_settings.num_ctx ?? LIMITS.num_ctx;
@@ -2019,6 +2276,25 @@ function attachEvents() {
   elements.btnNewSession?.addEventListener("click", () => createSessionFlow());
   elements.sessionList?.addEventListener("click", handleSessionListClick);
   elements.btnToggleSidebar?.addEventListener("click", () => toggleSidebar());
+  const sidebarMq = window.matchMedia("(max-width: 960px)");
+  const sidebarMqHandler = (event) => {
+    if (event.matches) {
+      applySidebarState(true, { persist: false });
+      return;
+    }
+    let preferred = false;
+    try {
+      preferred = window.localStorage.getItem(SIDEBAR_STATE_KEY) === "1";
+    } catch (error) {
+      preferred = false;
+    }
+    applySidebarState(preferred, { persist: false });
+  };
+  if (typeof sidebarMq.addEventListener === "function") {
+    sidebarMq.addEventListener("change", sidebarMqHandler);
+  } else if (typeof sidebarMq.addListener === "function") {
+    sidebarMq.addListener(sidebarMqHandler);
+  }
 
   elements.llmModelSelect?.addEventListener("change", async () => {
     const value = (elements.llmModelSelect.value || "").trim();
@@ -2027,11 +2303,17 @@ function attachEvents() {
       const available = await ensureModelAvailability(value);
       if (available) {
         setModelStatus(isModelInstalled(value) ? `Локальная модель: ${value}` : `Модель ${value} не скачана`, isModelInstalled(value) ? "success" : "warning");
-        if (!currentSessionId) {
-          currentSessionModel = value;
+        currentSessionModel = value;
+        updateHealthModelName(value);
+        if (currentSessionId) {
+          await persistSessionModel(value);
+          updateSessionState(currentSessionId, { model_name: value });
+          renderSessions();
         }
         await refreshModelSettings(value);
       }
+    } else {
+      updateHealthModelName("");
     }
     syncModelActions();
   });
@@ -2053,6 +2335,14 @@ function attachEvents() {
     }
     if (installed) {
       setModelStatus(`Локальная модель: ${model}`, "success");
+      currentSessionModel = model;
+      updateHealthModelName(model);
+      if (currentSessionId) {
+        await persistSessionModel(model);
+        updateSessionState(currentSessionId, { model_name: model });
+        renderSessions();
+      }
+      await refreshModelSettings(model);
       return;
     }
     await startModelDownload(model);
@@ -2275,20 +2565,9 @@ function attachEvents() {
     renderTranscriptHistory();
     closeTranscriptHistoryModal();
   });
-  elements.btnSaveTranscriptHistoryTitle?.addEventListener("click", () => {
-    const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
-    const title = elements.transcriptHistoryTitle?.value?.trim();
-    if (!entry) {
-      setTranscriptStatus("Выберите транскрипцию для переименования.", "warning");
-      return;
-    }
-    if (!title) {
-      setTranscriptStatus("Введите название транскрибации.", "error");
-      return;
-    }
-    updateActiveTranscriptEntry({ title }, { targetId: entry.id }).then(() => {
-      showTranscriptHistoryDetails(findTranscriptEntry(entry.id));
-    });
+  elements.transcriptHistoryBody?.addEventListener("input", () => updateTranscriptHistoryPreview());
+  elements.btnSaveTranscriptFromHistory?.addEventListener("click", () => {
+    void saveTranscriptHistoryDraft();
   });
   elements.btnDeleteTranscriptFromHistory?.addEventListener("click", () => {
     const entry = selectedTranscriptHistoryId ? findTranscriptEntry(selectedTranscriptHistoryId) : null;
@@ -2346,6 +2625,7 @@ async function init() {
 
   updateModelSelect(getSavedLlmModel());
   renderModelSuggestions();
+  restoreSidebarState();
   attachEvents();
   await fetchProfilesAndInit();
   fetchModelList();
@@ -2357,7 +2637,7 @@ async function init() {
 
   renderTranscribeDefaults();
   setTranscriptStatus("", "info");
-  clearTimelineState();
+  resetTranscriptContext({ clearManual: true, clearAnswer: false });
   criteriaManager.loadFromStorage();
 
   checkHealth();

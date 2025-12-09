@@ -98,6 +98,11 @@
 
 .transcript-history__header {
     padding: 4px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
 }
 
 .transcript-history__list {
@@ -115,12 +120,14 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-sm);
-    padding: var(--space-xs) var(--space-sm);
+    padding: 6px 10px;
     border-radius: var(--radius-sm);
+    border: 1px solid transparent;
 }
 
 .transcript-history__item:hover {
     background: rgba(37, 99, 235, 0.08);
+    border-color: rgba(37, 99, 235, 0.35);
 }
 
 .transcript-history__title {
@@ -149,6 +156,7 @@
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .transcript-history__details {
@@ -209,4 +217,17 @@
 
 .transcript-history__modal-header h3 {
     margin: 0;
+}
+
+.transcript-history__preview {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transcript-history__textarea {
+    min-height: 180px;
+    resize: vertical;
 }

@@ -241,6 +241,27 @@ def reset_session(session_id: str) -> None:
         conn.commit()
 
 
+def update_session(session_id: str, *, title: str | None = None, model_name: str | None = None) -> dict[str, Any] | None:
+    fields: list[str] = []
+    params: list[Any] = []
+    if title is not None:
+        fields.append("title = ?")
+        params.append(title.strip())
+    if model_name is not None:
+        fields.append("model_name = ?")
+        params.append(model_name.strip())
+    if not fields:
+        return get_session(session_id)
+    params.extend([_utcnow(), session_id])
+    with closing(_connect()) as conn:
+        conn.execute(
+            f"UPDATE chat_sessions SET {', '.join(fields)}, updated_at = ? WHERE id = ?",
+            params,
+        )
+        conn.commit()
+    return get_session(session_id)  # type: ignore[return-value]
+
+
 def add_message(session_id: str, role: str, content: str) -> None:
     now = _utcnow()
     with closing(_connect()) as conn:

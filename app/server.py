@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
+from datetime import datetime
 from typing import Iterable
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -31,7 +32,8 @@ PROMPT_PATH = Path(__file__).with_name("prompts") / "system_hr.md"
 FALLBACK_SYSTEM_PROMPT = (
     "Ты — локальный HR-ассистент. Работай строго по фактам, не выдумывай данные и"
     " отвечай кратко на русском языке. Если информации не хватает, прямо укажи на"
-    " это и предложи следующий шаг."
+    " это и предложи следующий шаг. Не повторяй уже выданные ответы и на сторонние"
+    " вопросы отвечай отдельно, без пересказа предыдущего анализа."
 )
 PROMPT_LANGUAGE_SUFFIX = (
     "\n\nТребование: отвечай ТОЛЬКО на русском языке. Не используй другие языки."
@@ -60,6 +62,9 @@ NUM_CTX = int(os.getenv("NUM_CTX", "32768"))
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 MEM_TURNS = int(os.getenv("MEM_TURNS", "6"))  # сколько пар (user+assistant) храним в памяти на сессию
 UI_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web_ui"))
+LOG_DIR = PROJECT_ROOT / "tmp_logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+CHAT_LOG_FILE = LOG_DIR / "chat.log"
 
 MODEL_RECOMMENDATIONS = [
     {"name": "qwen2.5:3b", "label": "Лёгкая (≈3B)"},
@@ -110,6 +115,11 @@ class ProfileCreate(BaseModel):
 
 class SessionCreate(BaseModel):
     profile_id: int
+    title: str | None = None
+    model_name: str | None = None
+
+
+class SessionUpdate(BaseModel):
     title: str | None = None
     model_name: str | None = None
 
@@ -180,6 +190,15 @@ def _session_title_hint(raw_title: str | None, query: str | None) -> str:
     if prompt:
         return (prompt[:60] + ("…" if len(prompt) > 60 else "")).strip()
     return "Новая сессия"
+
+
+def _log_chat_event(payload: dict) -> None:
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with CHAT_LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        LOGGER.warning("Failed to write chat log: %s", exc)
 
 # --- Критерии и источники данных -------------------------------------------------
 
@@ -718,6 +737,18 @@ def delete_chat_session(session_id: str):
     return {"deleted": session_id}
 
 
+@app.patch("/sessions/{session_id}")
+def update_chat_session(session_id: str, req: SessionUpdate):
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    new_model = _normalize_model_name(req.model_name) if req.model_name else None
+    updated = db.update_session(session_id, title=req.title, model_name=new_model)
+    if not updated:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return updated
+
+
 @app.get("/sessions/{session_id}/messages")
 def get_session_messages(session_id: str, limit: int | None = None):
     session = db.get_session(session_id)
@@ -940,17 +971,42 @@ def _build_timeline(segments: list[dict]) -> list[dict]:
 
 @app.post("/chat")
 def chat(req: ChatReq):
-    try:
-        session_id = (req.session_id or "").strip() or None
-        model_from_req = req.model or req.model_name
-        session = None
-        profile_id = req.profile_id
+    started = time.perf_counter()
+    session_id = (req.session_id or "").strip() or None
+    model_from_req = (req.model or req.model_name or "").strip() or None
+    session = None
+    profile_id = req.profile_id
+    user_query = (req.query or "").strip() or "проанализируй"
+    transcript_text = (req.transcript or "").strip()
+    active_criteria: list[str] = []
+    target_model: str | None = None
 
+    def _log(status: str, reply: str | None = None, error: str | None = None) -> None:
+        payload = {
+            "ts": datetime.utcnow().isoformat(),
+            "status": status,
+            "session_id": session_id,
+            "profile_id": profile_id,
+            "model": target_model,
+            "query": user_query,
+            "criteria_count": len(active_criteria),
+            "transcript_chars": len(transcript_text),
+            "reply": reply,
+            "error": error,
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+        }
+        _log_chat_event(payload)
+
+    try:
         if session_id:
             session = db.get_session(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="session_not_found")
             profile_id = session["profile_id"]
+            if model_from_req:
+                desired_model = _normalize_model_name(model_from_req)
+                if desired_model != session.get("model_name"):
+                    session = db.update_session(session_id, model_name=desired_model) or session
             model_name = session["model_name"]
         else:
             if profile_id is None:
@@ -962,6 +1018,7 @@ def chat(req: ChatReq):
             session_id = session["id"]
 
         model_name = session["model_name"] if session else _normalize_model_name(model_from_req)
+        target_model = model_name
         settings_bundle = _effective_model_settings(profile_id, model_name)  # type: ignore[arg-type]
         effective_settings = settings_bundle.get("effective") or {}
         mem_turns = int(effective_settings.get("mem_turns") or MEM_TURNS)
@@ -975,7 +1032,6 @@ def chat(req: ChatReq):
         stored_criteria = db.get_session_criteria(session_id) if session_id else []
         active_criteria = cleaned_criteria or stored_criteria or []
 
-        transcript_text = (req.transcript or "").strip()
         if not transcript_text and session_id:
             latest_transcript = db.get_latest_transcript_for_session(session_id)
             transcript_text = (latest_transcript.get("content") if latest_transcript else "") or ""
@@ -989,6 +1045,12 @@ def chat(req: ChatReq):
         if active_criteria:
             criteria_block = "\n".join(f"- {item}" for item in active_criteria)
             messages.append({"role": "user", "content": f"Критерии оценки:\n{criteria_block}"})
+        messages.append(
+            {
+                "role": "system",
+                "content": "Отвечай на последний вопрос пользователя, без повторения уже выданных ранее ответов и без пересказа предыдущего анализа.",
+            }
+        )
         # добавляем прошлые реплики (user/assistant) если есть
         if history:
             messages.extend(history)
@@ -1014,6 +1076,7 @@ def chat(req: ChatReq):
             db.add_message(session_id, "user", user_query)
             db.add_message(session_id, "assistant", text)
 
+        _log("ok", reply=text)
         return {
             "reply": text,
             "session_id": session_id,
@@ -1021,7 +1084,11 @@ def chat(req: ChatReq):
             "model_name": target_model,
             "used_settings": effective_settings,
         }
+    except HTTPException as exc:
+        _log("error", error=str(exc.detail))
+        raise
     except Exception as e:
+        _log("error", error=str(e))
         # Возвращаем понятную ошибку, если Ollama/LLM недоступны
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
 
