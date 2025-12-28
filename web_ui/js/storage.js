@@ -3,7 +3,11 @@ export const API_BASE = "http://127.0.0.1:8000";
 export const STORAGE_KEYS = {
   history: "localgpt_history_v1",
   session: "localgpt_session_id",
+  profileId: "localgpt_profile_id",
+  chatSessionId: "localgpt_chat_session_id",
   whisperModel: "localgpt_whisper_model_v1",
+  whisperPromptPreset: "localgpt_whisper_prompt_v1",
+  llmModel: "localgpt_llm_model_v1",
   hrPrefix: "localgpt_hr_prefix_v1",
   criteria: "localgpt_criteria_list_v1",
   transcripts: "localgpt_transcripts_v1",
@@ -48,6 +52,24 @@ export function setSavedModel(model) {
   safeSet(STORAGE_KEYS.whisperModel, model);
 }
 
+export function getSavedPromptPreset(defaultValue = "none") {
+  const raw = safeGet(STORAGE_KEYS.whisperPromptPreset);
+  return raw || defaultValue;
+}
+
+export function setSavedPromptPreset(preset) {
+  safeSet(STORAGE_KEYS.whisperPromptPreset, preset);
+}
+
+export function getSavedLlmModel(defaultValue = "") {
+  const raw = safeGet(STORAGE_KEYS.llmModel);
+  return raw || defaultValue;
+}
+
+export function setSavedLlmModel(model) {
+  safeSet(STORAGE_KEYS.llmModel, model);
+}
+
 export function getHrPrefix(defaultValue) {
   const raw = safeGet(STORAGE_KEYS.hrPrefix);
   if (!raw) return defaultValue;
@@ -82,6 +104,27 @@ export function addHistoryEntry(question, answer) {
   const items = loadHistory();
   items.unshift({ ts: Date.now(), q: question, a: answer });
   saveHistory(items);
+}
+
+export function getLastProfileId() {
+  const raw = safeGet(STORAGE_KEYS.profileId);
+  return raw ? Number(raw) : null;
+}
+
+export function setLastProfileId(profileId) {
+  if (!profileId) {
+    safeSet(STORAGE_KEYS.profileId, null);
+    return;
+  }
+  safeSet(STORAGE_KEYS.profileId, String(profileId));
+}
+
+export function getLastChatSessionId() {
+  return safeGet(STORAGE_KEYS.chatSessionId);
+}
+
+export function setLastChatSessionId(sessionId) {
+  safeSet(STORAGE_KEYS.chatSessionId, sessionId || null);
 }
 
 export function deleteHistoryEntry(timestamp) {

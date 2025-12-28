@@ -115,6 +115,7 @@ venv.bak/
 
 # macOS files
 .DS_Store
+.installed
 
 # LocalGPT specific
 hf_cache/**
@@ -127,10 +128,18 @@ __pycache__/
 *.tmp
 *.env.backup
 # Ollama models: keep only structure (.gitkeep) and Modelfile; ignore everything else
+ollama/
 ollama_models/**
 !ollama_models/qwen2.5-7b-long/
 !ollama_models/**/.gitkeep
 !ollama_models/**/Modelfile
+app/db/*.db
+app/db/*.sqlite
+app/db/*.sqlite3
+app/db/localgpt.db
+!app/db/.gitkeep
+tmp_logs/**
+!tmp_logs/.gitkeep
 *.wav
 *.mp3
 *.m4a
