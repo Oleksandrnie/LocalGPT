@@ -7,11 +7,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="css/style.css" />
 </head>
-<body>
-    <header class="app-header">
+<body class="theme-dark">
+    <header class="app-header" style="margin-bottom: 45px;">
         <div class="brand-block">
-            <h1>LocalGPT — Web UI</h1>
-            <span class="status" id="healthStatus">проверка сервера…</span>
+            <button class="ghost icon-button" id="btnSidebarHeader" type="button"
+                title="Свернуть/развернуть списки">☰</button>
+            <div>
+                <h1>LocalGPT — Web UI</h1>
+                <span class="status" id="healthStatus">проверка сервера…</span>
+            </div>
+        </div>
+        <div class="role-chip">
+            <label class="muted" for="roleSelect">Режим ответа</label>
+            <select id="roleSelect" class="input-control"></select>
+            <span class="muted role-tooltip" id="roleTooltip"></span>
         </div>
         <div class="profile-chip">
             <button id="btnProfile" type="button" title="Выбрать профиль">
@@ -41,96 +50,100 @@
         </aside>
         <section class="split">
             <lgpt-card title="Запрос" data-card="request">
-            <textarea id="prompt" placeholder="Введите промпт…"></textarea>
-            <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
-            <div class="buttons mt-sm">
-                <button id="btnSend">Отправить</button>
-                <button class="warn" id="btnStop" type="button" hidden>Остановить</button>
-                <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
-            </div>
-            <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка.</p>
-            <details class="collapse mt-sm" id="advancedControls">
-                <summary>Транскрибация и критерии</summary>
-                <div class="collapse__content">
-                    <div class="row mt-sm">
-                        <input type="file" id="fileInput" accept="audio/*,video/*" />
-                        <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
-                    </div>
-                    <div class="muted" id="transcribeDefaults"></div>
-                    <div class="status" id="transcribeStatus"></div>
-                    <section class="transcript-manager">
-                        <h4>Работа с транскриптами</h4>
-                        <div class="field-group">
-                            <label class="muted" for="manualTranscriptInput">Вставьте готовый текст транскрипта</label>
-                            <textarea id="manualTranscriptInput" class="input-control"
-                                placeholder="Вставьте или отредактируйте текст транскрипта…"></textarea>
-                            <div class="buttons mt-xs">
-                                <button class="secondary" id="btnUseManualTranscript" type="button">Использовать
-                                    текст</button>
-                                <button class="secondary" id="btnSaveManualTranscript" type="button">Сохранить и
-                                    использовать</button>
-                            </div>
-                        </div>
-                    <div class="status" id="transcriptStatus"></div>
-                    <div id="transcriptList" class="transcript-list muted" hidden>Сохранённых транскриптов пока нет.</div>
-                </section>
-                    <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу
-                        критериев.</p>
-                    <div class="row mt-sm">
-                        <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
-                        <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
-                    </div>
-                    <div class="row mt-sm">
-                        <input id="googleSheetInput" type="text" class="input-control"
-                            placeholder="ID или ссылка на Google Sheets" />
-                        <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google
-                            Sheets</button>
-                    </div>
-                    <div class="field-group">
-                        <label class="muted" for="quickCriterionInput">Быстро добавить критерий</label>
-                        <div class="quick-criteria">
-                            <input id="quickCriterionInput" type="text" class="input-control"
-                                placeholder="Например: Необходим опыт продаж от 3 лет" />
-                            <button class="secondary" id="btnQuickAddCriterion" type="button">Добавить</button>
-                        </div>
-                        <p class="muted">Критерий сразу появится в списке ниже и сохранится в рамках сессии.</p>
-                    </div>
+                <textarea id="prompt" placeholder="Введите промпт…"></textarea>
+                <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
+                <div class="buttons mt-sm">
+                    <button id="btnSend">Отправить</button>
+                    <button class="warn" id="btnStop" type="button" hidden>Остановить</button>
+                    <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
                 </div>
-            </details>
-            <h3 class="mt-lg">Критерии оценки</h3>
-            <p class="muted">Добавьте критерии вручную или загрузите их из файла/таблицы. Критерии сохраняются в рамках
-                текущей сессии.</p>
-            <div class="buttons mt-sm">
-                <button class="secondary" id="btnClearCriteria" type="button">Очистить критерии</button>
-            </div>
-            <div class="status" id="criteriaStatus"></div>
-            <ol id="criteriaList" class="criteria-list"></ol>
-            <div class="status mt-sm" id="budgetStats">Входные токены: 0 • Резерв на ответ: — • Лимит контекста: —</div>
-            <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
-        </lgpt-card>
-
-            <lgpt-card title="Результаты" data-card="results">
-            <div class="tabs" role="tablist" aria-label="Результаты анализа">
-                <button class="tab is-active" type="button" id="tab-answer" data-tab-target="answer" role="tab"
-                    aria-selected="true" aria-controls="panel-answer">Ответ</button>
-                <button class="tab" type="button" id="tab-timeline" data-tab-target="timeline" role="tab"
-                    aria-selected="false" aria-controls="panel-timeline">Таймлайн</button>
-                <button class="tab" type="button" id="tab-transcripts" data-tab-target="transcripts" role="tab"
-                    aria-selected="false" aria-controls="panel-transcripts">История транскрибаций</button>
-            </div>
-            <div class="tab-panels">
-                <section class="tab-panel is-active" id="panel-answer" data-panel="answer" role="tabpanel"
-                    aria-labelledby="tab-answer">
-                    <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
-                    <div class="buttons mt-sm">
-                        <button class="secondary" id="btnCopy">Скопировать ответ</button>
-                        <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
+                <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка.</p>
+                <details class="collapse mt-sm" id="advancedControls">
+                    <summary>Транскрибация и критерии</summary>
+                    <div class="collapse__content">
+                        <div class="row mt-sm">
+                            <input type="file" id="fileInput" accept="audio/*,video/*" />
+                            <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
+                        </div>
+                        <div class="muted" id="transcribeDefaults"></div>
+                        <div class="status" id="transcribeStatus"></div>
+                        <section class="transcript-manager">
+                            <h4>Работа с транскриптами</h4>
+                            <div class="field-group">
+                                <label class="muted" for="manualTranscriptInput">Вставьте готовый текст
+                                    транскрипта</label>
+                                <textarea id="manualTranscriptInput" class="input-control"
+                                    placeholder="Вставьте или отредактируйте текст транскрипта…"></textarea>
+                                <div class="buttons mt-xs">
+                                    <button class="secondary" id="btnUseManualTranscript" type="button">Использовать
+                                        текст</button>
+                                    <button class="secondary" id="btnSaveManualTranscript" type="button">Сохранить и
+                                        использовать</button>
+                                </div>
+                            </div>
+                            <div class="status" id="transcriptStatus"></div>
+                            <div id="transcriptList" class="transcript-list muted" hidden>Сохранённых транскриптов пока
+                                нет.</div>
+                        </section>
+                        <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу
+                            критериев.</p>
+                        <div class="row mt-sm">
+                            <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
+                            <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
+                        </div>
+                        <div class="row mt-sm">
+                            <input id="googleSheetInput" type="text" class="input-control"
+                                placeholder="ID или ссылка на Google Sheets" />
+                            <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google
+                                Sheets</button>
+                        </div>
+                        <div class="field-group">
+                            <label class="muted" for="quickCriterionInput">Быстро добавить критерий</label>
+                            <div class="quick-criteria">
+                                <input id="quickCriterionInput" type="text" class="input-control"
+                                    placeholder="Например: Необходим опыт продаж от 3 лет" />
+                                <button class="secondary" id="btnQuickAddCriterion" type="button">Добавить</button>
+                            </div>
+                            <p class="muted">Критерий сразу появится в списке ниже и сохранится в рамках сессии.</p>
+                        </div>
                     </div>
-                </section>
-                <section class="tab-panel" id="panel-timeline" data-panel="timeline" role="tabpanel"
-                    aria-labelledby="tab-timeline" hidden>
-                    <!-- <div class="timeline-toolbar"> -->
-                    <!-- <div class="timeline-names">
+                </details>
+                <h3 class="mt-lg">Критерии оценки</h3>
+                <p class="muted">Добавьте критерии вручную или загрузите их из файла/таблицы. Критерии сохраняются в
+                    рамках
+                    текущей сессии.</p>
+                <div class="buttons mt-sm">
+                    <button class="secondary" id="btnClearCriteria" type="button">Очистить критерии</button>
+                </div>
+                <div class="status" id="criteriaStatus"></div>
+                <ol id="criteriaList" class="criteria-list"></ol>
+                <div class="status mt-sm" id="budgetStats">Входные токены: 0 • Резерв на ответ: — • Лимит контекста: —
+                </div>
+                <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
+            </lgpt-card>
+
+            <lgpt-card title="Результаты" data-card="results" style="margin-top: -47px;">
+                <div class="tabs" role="tablist" aria-label="Результаты анализа">
+                    <button class="tab is-active" type="button" id="tab-answer" data-tab-target="answer" role="tab"
+                        aria-selected="true" aria-controls="panel-answer">Ответ</button>
+                    <button class="tab" type="button" id="tab-timeline" data-tab-target="timeline" role="tab"
+                        aria-selected="false" aria-controls="panel-timeline">Таймлайн</button>
+                    <button class="tab" type="button" id="tab-transcripts" data-tab-target="transcripts" role="tab"
+                        aria-selected="false" aria-controls="panel-transcripts">История транскрибаций</button>
+                </div>
+                <div class="tab-panels">
+                    <section class="tab-panel is-active" id="panel-answer" data-panel="answer" role="tabpanel"
+                        aria-labelledby="tab-answer">
+                        <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
+                        <div class="buttons mt-sm">
+                            <button class="secondary" id="btnCopy">Скопировать ответ</button>
+                            <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
+                        </div>
+                    </section>
+                    <section class="tab-panel" id="panel-timeline" data-panel="timeline" role="tabpanel"
+                        aria-labelledby="tab-timeline" hidden>
+                        <!-- <div class="timeline-toolbar"> -->
+                        <!-- <div class="timeline-names">
                             <label class="timeline-name-field">Имя HR
                                 <input id="timelineHrName" data-role="hr" type="text" class="input-control" placeholder="Например: Юлия, third_party" />
                             </label>
@@ -138,32 +151,33 @@
                                 <input id="timelineCandidateName" data-role="candidate" type="text" class="input-control" placeholder="Например: Юрий" />
                             </label>
                         </div> -->
-                    <!-- <div class="timeline-actions">
+                        <!-- <div class="timeline-actions">
                             <button class="secondary" id="btnEditTimeline" type="button">Редактировать таймлайн</button>
                             <button class="secondary" id="btnSaveTimeline" type="button" hidden>Сохранить
                                 изменения</button>
                             <button class="secondary" id="btnCancelTimeline" type="button" hidden>Отмена</button>
                         </div> -->
-                    <!-- </div> -->
-                    <div id="timelineLegend" class="muted timeline-legend"></div>
-                    <div id="timelineNotice" class="status timeline-notice"></div>
-                    <div id="timelineContainer" class="timeline-grid"></div>
-                </section>
-                <section class="tab-panel" id="panel-transcripts" data-panel="transcripts" role="tabpanel"
-                    aria-labelledby="tab-transcripts" hidden>
-                    <div class="transcript-history">
-                        <div class="transcript-history__header">
-                            <div>
-                                <p class="muted">Сохранённые транскрибации</p>
-                                <h4>Выберите запись для просмотра или редактирования</h4>
+                        <!-- </div> -->
+                        <div id="timelineLegend" class="muted timeline-legend"></div>
+                        <div id="timelineNotice" class="status timeline-notice"></div>
+                        <div id="timelineContainer" class="timeline-grid"></div>
+                    </section>
+                    <section class="tab-panel" id="panel-transcripts" data-panel="transcripts" role="tabpanel"
+                        aria-labelledby="tab-transcripts" hidden>
+                        <div class="transcript-history">
+                            <div class="transcript-history__header">
+                                <div>
+                                    <p class="muted">Сохранённые транскрибации</p>
+                                    <h4>Выберите запись для просмотра или редактирования</h4>
+                                </div>
+                                <button class="secondary" id="btnAddTranscriptHistoryEntry"
+                                    type="button">Добавить</button>
                             </div>
-                            <button class="secondary" id="btnAddTranscriptHistoryEntry" type="button">Добавить</button>
+                            <div class="transcript-history__list" id="transcriptHistoryList"></div>
                         </div>
-                        <div class="transcript-history__list" id="transcriptHistoryList"></div>
-                    </div>
-                </section>
-            </div>
-        </lgpt-card>
+                    </section>
+                </div>
+            </lgpt-card>
         </section>
     </main>
 
@@ -196,12 +210,29 @@
             <section class="modal__section">
                 <header class="modal__section-header">
                     <div>
+                        <p class="muted">Внешний вид</p>
+                        <h4>Тема интерфейса</h4>
+                    </div>
+                </header>
+                <div class="switch-row">
+                    <span class="muted">Тёмная тема</span>
+                    <label class="switch">
+                        <input id="themeToggle" type="checkbox" />
+                        <span class="switch__slider"></span>
+                    </label>
+                </div>
+            </section>
+
+            <section class="modal__section">
+                <header class="modal__section-header">
+                    <div>
                         <p class="muted">LLM</p>
                         <h4>Модели Ollama</h4>
                     </div>
                     <div class="badges-row">
                         <span class="badge">Хранятся в ollama/models/</span>
-                        <span class="help-icon" title="Список локальных моделей из Ollama. Можно обновить, скачать или удалить.">?</span>
+                        <span class="help-icon"
+                            title="Список локальных моделей из Ollama. Можно обновить, скачать или удалить.">?</span>
                     </div>
                 </header>
                 <div class="field-group">
@@ -225,12 +256,37 @@
             <section class="modal__section">
                 <header class="modal__section-header">
                     <div>
+                        <p class="muted">Хранилище</p>
+                        <h4>Папка с моделями</h4>
+                    </div>
+                    <div class="badges-row">
+                        <span class="badge">models/ollama • models/whisper</span>
+                    </div>
+                </header>
+                <div class="field-group">
+                    <label class="muted" for="modelsDirInput">Базовая папка моделей</label>
+                    <div class="model-select-row">
+                        <input id="modelsDirInput" type="text" class="input-control"
+                            placeholder="например: models или /mnt/data/models" />
+                        <button class="secondary" id="btnApplyModelsDir" type="button">Сменить путь</button>
+                        <button class="secondary" id="btnMoveModelsDir" type="button">Перенести и обновить</button>
+                    </div>
+                    <p class="muted">Путь хранится в .env (MODELS_DIR). Кнопка «Перенести» аккуратно переносит текущие
+                        папки ollama/, whisper/, hf_cache/.</p>
+                </div>
+            </section>
+
+            <section class="modal__section">
+                <header class="modal__section-header">
+                    <div>
                         <p class="muted">LLM</p>
                         <h4>Настройки модели (по профилю)</h4>
                     </div>
                     <div class="badges-row">
                         <span class="badge">Сохраняется локально в SQLite</span>
-                        <span class="help-icon" title="Настройки для выбранной модели и профиля:&#10;• Temperature — креативность (0–1)&#10;• Max response tokens — максимум токенов ответа&#10;• Max context tokens — общий лимит контекста&#10;• Memory turns (MEM_TURNS) — сколько пар user/assistant загружается в историю." aria-label="Подсказка по настройкам модели">?</span>
+                        <span class="help-icon"
+                            title="Настройки для выбранной модели и профиля:&#10;• Temperature — креативность (0–1)&#10;• Max response tokens — максимум токенов ответа&#10;• Max context tokens — общий лимит контекста&#10;• Memory turns (MEM_TURNS) — сколько пар user/assistant загружается в историю."
+                            aria-label="Подсказка по настройкам модели">?</span>
                     </div>
                 </header>
                 <div class="row row--gutter">
@@ -268,7 +324,8 @@
                         <p class="muted">ASR</p>
                         <h4>Транскрибация по умолчанию</h4>
                     </div>
-                    <span class="help-icon" title="Модель Whisper и промпт, которые будут применяться при распознавании аудио/видео.">?</span>
+                    <span class="help-icon"
+                        title="Модель Whisper и промпт, которые будут применяться при распознавании аудио/видео.">?</span>
                 </header>
                 <div class="row row--gutter">
                     <div class="field-group">
@@ -295,12 +352,14 @@
                         <p class="muted">HR</p>
                         <h4>Префикс подсказки</h4>
                     </div>
-                    <span class="help-icon" title="Короткий префикс, который подставляется в начало запроса после транскрибации для заземления роли.">?</span>
+                    <span class="help-icon"
+                        title="Короткий префикс, который подставляется в начало запроса после транскрибации для заземления роли.">?</span>
                 </header>
                 <div class="field-group">
                     <label class="muted" for="hrPrefix">Префикс HR-подсказки</label>
                     <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
-                    <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в вашем
+                    <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в
+                        вашем
                         браузере.</p>
                 </div>
             </section>
@@ -321,11 +380,13 @@
             <div class="transcript-history__details" id="transcriptHistoryDetails" hidden>
                 <div class="field-group">
                     <label class="muted" for="transcriptHistoryTitle">Название транскрибации</label>
-                    <input id="transcriptHistoryTitle" type="text" class="input-control" placeholder="Введите название" />
+                    <input id="transcriptHistoryTitle" type="text" class="input-control"
+                        placeholder="Введите название" />
                 </div>
                 <div class="field-group">
                     <label class="muted" for="transcriptHistoryBody">Текст транскрибации</label>
-                    <textarea id="transcriptHistoryBody" class="input-control transcript-history__textarea" rows="10" placeholder="Редактируйте текст транскрибации здесь"></textarea>
+                    <textarea id="transcriptHistoryBody" class="input-control transcript-history__textarea" rows="10"
+                        placeholder="Редактируйте текст транскрибации здесь"></textarea>
                 </div>
                 <div class="muted" id="transcriptHistoryMeta"></div>
                 <div class="transcript-history__content" id="transcriptHistoryContent"></div>
@@ -364,16 +425,22 @@
                 <button class="secondary" id="btnCloseHelp" type="button">Закрыть</button>
             </header>
             <ul class="help-list">
-                <li><strong>Профили.</strong> В левом верхнем углу выберите профиль или создайте новый. У каждого профиля свои диалоги, транскрипты и настройки моделей.</li>
-                <li><strong>Сессии.</strong> В левой колонке список диалогов выбранного профиля. Нажмите «+ Новый диалог», чтобы начать чат с выбранной моделью.</li>
-                <li><strong>Модель.</strong> В настройках укажите модель Ollama и сохраните параметры: temperature, max_tokens, num_ctx, mem_turns. Можно сбросить к значениям .env.</li>
-                <li><strong>Транскрипты.</strong> Загружайте или вставляйте текст, сохраняйте его в историю, прикрепляйте к чату или запускайте анализ.</li>
-                <li><strong>Критерии и контекст.</strong> Добавляйте критерии из файла/Google Sheets, прикрепляйте транскрипты и контекст — все запросы идут локально.</li>
+                <li><strong>Профили.</strong> В левом верхнем углу выберите профиль или создайте новый. У каждого
+                    профиля свои диалоги, транскрипты и настройки моделей.</li>
+                <li><strong>Сессии.</strong> В левой колонке список диалогов выбранного профиля. Нажмите «+ Новый
+                    диалог», чтобы начать чат с выбранной моделью.</li>
+                <li><strong>Модель.</strong> В настройках укажите модель Ollama и сохраните параметры: temperature,
+                    max_tokens, num_ctx, mem_turns. Можно сбросить к значениям .env.</li>
+                <li><strong>Транскрипты.</strong> Загружайте или вставляйте текст, сохраняйте его в историю,
+                    прикрепляйте к чату или запускайте анализ.</li>
+                <li><strong>Критерии и контекст.</strong> Добавляйте критерии из файла/Google Sheets, прикрепляйте
+                    транскрипты и контекст — все запросы идут локально.</li>
             </ul>
-            <p class="muted">Все данные (профили, диалоги, транскрипты и настройки) сохраняются в локальной базе проекта. Интернет не требуется.</p>
+            <p class="muted">Все данные (профили, диалоги, транскрипты и настройки) сохраняются в локальной базе
+                проекта. Интернет не требуется.</p>
         </div>
     </div>
 
-    <script type="module" src="js/app.js"></script>
+    <script type="module" src="js/main.js"></script>
 </body>
 </html>

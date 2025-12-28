@@ -3,11 +3,7 @@ import os
 from pathlib import Path
 from typing import Any, Iterable
 
-# --- Whisper models root config ---
-ROOT = Path(__file__).resolve().parents[1]
-WHISPER_MODELS_DIR = os.getenv("WHISPER_MODELS_DIR", "ollama_models/whisper")
-WHISPER_DOWNLOAD_ROOT = ROOT / WHISPER_MODELS_DIR
-WHISPER_DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+from . import config
 
 DEFAULT_FALLBACK_LANGUAGE = (
     os.getenv("WHISPER_FALLBACK_LANGUAGE", "ru").strip().lower() or "ru"
@@ -51,6 +47,10 @@ EN_PRESET_PROMPT = (
     "use correct punctuation and spelling, numbers, dates, percentages, proper names; "
     "do not hallucinate; preserve meaning"
 )
+
+
+def _whisper_root() -> Path:
+    return config.MODEL_PATHS.whisper
 
 def build_whisper_prompt(audio_path: Path, prompt_preset: str | None) -> str | None:
     """Собирает initial_prompt из пресета (ru/en) и локального файла whisper_prompt.txt."""
@@ -234,6 +234,8 @@ def transcribe_with_fallback(
     from faster_whisper import WhisperModel  # локальный импорт, чтобы не ломать существующие импорты
 
     path = Path(audio_path)
+    download_root = _whisper_root()
+    download_root.mkdir(parents=True, exist_ok=True)
 
     # Значения по умолчанию из окружения, если явно не переданы
     if compute_type is None:
@@ -253,7 +255,7 @@ def transcribe_with_fallback(
             model_name,
             device=device,
             compute_type=compute_type,
-            download_root=str(WHISPER_DOWNLOAD_ROOT),
+            download_root=str(download_root),
         )
     except Exception as e:
         # Пробрасываем специальную ошибку, чтобы сервер и UI могли показать подсказку по скачиванию модели

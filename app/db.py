@@ -43,6 +43,13 @@ def _from_json(raw: str | None, fallback: Any = None) -> Any:
         return fallback
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    cursor = conn.execute(f"PRAGMA table_info({table});")
+    columns = {row[1] for row in cursor.fetchall()}
+    if column not in columns:
+        conn.execute(ddl)
+
+
 def init_db() -> None:
     with closing(_connect()) as conn:
         conn.executescript(
@@ -62,6 +69,7 @@ def init_db() -> None:
                 profile_id INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 model_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'free',
                 criteria_json TEXT NULL,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
@@ -118,6 +126,7 @@ def init_db() -> None:
             );
             """
         )
+        _ensure_column(conn, "chat_sessions", "role", "ALTER TABLE chat_sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'free';")
         conn.commit()
     ensure_default_profile()
 
@@ -185,7 +194,7 @@ def list_sessions(profile_id: int) -> list[dict[str, Any]]:
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT id, profile_id, title, model_name, created_at, updated_at
+            SELECT id, profile_id, title, model_name, role, created_at, updated_at
             FROM chat_sessions
             WHERE profile_id = ?
             ORDER BY updated_at DESC
@@ -199,7 +208,7 @@ def get_session(session_id: str) -> dict[str, Any] | None:
     with closing(_connect()) as conn:
         row = conn.execute(
             """
-            SELECT id, profile_id, title, model_name, created_at, updated_at, criteria_json
+            SELECT id, profile_id, title, model_name, role, created_at, updated_at, criteria_json
             FROM chat_sessions WHERE id = ?
             """,
             (session_id,),
@@ -210,7 +219,9 @@ def get_session(session_id: str) -> dict[str, Any] | None:
     return data
 
 
-def create_session(profile_id: int, title: str, model_name: str, session_id: str | None = None) -> dict[str, Any]:
+def create_session(
+    profile_id: int, title: str, model_name: str, session_id: str | None = None, role: str = "free"
+) -> dict[str, Any]:
     if not title.strip():
         raise ValueError("session_title_required")
     sid = session_id or str(uuid.uuid4())
@@ -218,10 +229,10 @@ def create_session(profile_id: int, title: str, model_name: str, session_id: str
     with closing(_connect()) as conn:
         conn.execute(
             """
-            INSERT INTO chat_sessions (id, profile_id, title, model_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO chat_sessions (id, profile_id, title, model_name, role, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (sid, profile_id, title.strip(), model_name.strip(), now, now),
+            (sid, profile_id, title.strip(), model_name.strip(), role.strip() or "free", now, now),
         )
         conn.commit()
     return get_session(sid)  # type: ignore[return-value]
@@ -241,7 +252,9 @@ def reset_session(session_id: str) -> None:
         conn.commit()
 
 
-def update_session(session_id: str, *, title: str | None = None, model_name: str | None = None) -> dict[str, Any] | None:
+def update_session(
+    session_id: str, *, title: str | None = None, model_name: str | None = None, role: str | None = None
+) -> dict[str, Any] | None:
     fields: list[str] = []
     params: list[Any] = []
     if title is not None:
@@ -250,6 +263,9 @@ def update_session(session_id: str, *, title: str | None = None, model_name: str
     if model_name is not None:
         fields.append("model_name = ?")
         params.append(model_name.strip())
+    if role is not None:
+        fields.append("role = ?")
+        params.append(role.strip())
     if not fields:
         return get_session(session_id)
     params.extend([_utcnow(), session_id])

@@ -9,8 +9,9 @@ export const STORAGE_KEYS = {
   whisperPromptPreset: "localgpt_whisper_prompt_v1",
   llmModel: "localgpt_llm_model_v1",
   hrPrefix: "localgpt_hr_prefix_v1",
-  criteria: "localgpt_criteria_list_v1",
-  transcripts: "localgpt_transcripts_v1",
+  role: "localgpt_role_v1",
+  sidebar: "localgpt_sidebar_collapsed",
+  theme: "localgpt_theme",
 };
 
 function safeGet(key) {
@@ -81,6 +82,34 @@ export function setHrPrefix(value) {
   safeSet(STORAGE_KEYS.hrPrefix, value);
 }
 
+export function getSavedRole(defaultValue = "free") {
+  const raw = safeGet(STORAGE_KEYS.role);
+  return raw || defaultValue;
+}
+
+export function setSavedRole(role) {
+  safeSet(STORAGE_KEYS.role, role);
+}
+
+export function getSidebarPreference(defaultValue = false) {
+  const raw = safeGet(STORAGE_KEYS.sidebar);
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  return defaultValue;
+}
+
+export function setSidebarPreference(collapsed) {
+  safeSet(STORAGE_KEYS.sidebar, collapsed ? "1" : "0");
+}
+
+export function getSavedTheme(defaultValue = "") {
+  return safeGet(STORAGE_KEYS.theme) || defaultValue;
+}
+
+export function setSavedTheme(theme) {
+  safeSet(STORAGE_KEYS.theme, theme);
+}
+
 function parseJson(raw, fallback) {
   if (!raw) return fallback;
   try {
@@ -131,30 +160,4 @@ export function deleteHistoryEntry(timestamp) {
   const items = loadHistory();
   const filtered = items.filter((item) => item.ts !== timestamp);
   saveHistory(filtered);
-}
-
-export function loadCriteriaFromStorage() {
-  const raw = safeGet(STORAGE_KEYS.criteria);
-  return parseJson(raw, []);
-}
-
-export function saveCriteriaToStorage(criteriaList) {
-  if (!Array.isArray(criteriaList) || !criteriaList.length) {
-    safeSet(STORAGE_KEYS.criteria, null);
-    return;
-  }
-  safeSet(STORAGE_KEYS.criteria, JSON.stringify(criteriaList));
-}
-
-export function loadTranscripts() {
-  const raw = safeGet(STORAGE_KEYS.transcripts);
-  return parseJson(raw, []);
-}
-
-export function saveTranscripts(list) {
-  if (!Array.isArray(list) || !list.length) {
-    safeSet(STORAGE_KEYS.transcripts, null);
-    return;
-  }
-  safeSet(STORAGE_KEYS.transcripts, JSON.stringify(list));
 }

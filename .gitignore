@@ -118,8 +118,13 @@ venv.bak/
 .installed
 
 # LocalGPT specific
+models/**
+!models/.gitkeep
+!models/**/.gitkeep
 hf_cache/**
-!hf_cache/**/.gitkeep
+!hf_cache/.gitkeep
+ctranslate2_cache/**
+!ctranslate2_cache/.gitkeep
 .cache/**
 !.cache/**/.gitkeep
 __pycache__/
@@ -127,10 +132,9 @@ __pycache__/
 *.log
 *.tmp
 *.env.backup
-# Ollama models: keep only structure (.gitkeep) and Modelfile; ignore everything else
+# Ollama legacy folders: keep structure, ignore heavy blobs
 ollama/
 ollama_models/**
-!ollama_models/qwen2.5-7b-long/
 !ollama_models/**/.gitkeep
 !ollama_models/**/Modelfile
 app/db/*.db
@@ -152,10 +156,6 @@ tmp_logs/**
 *.mkv
 *.mov
 
-# Hugging Face cache (полностью исключаем)
-hf_cache/**
-!hf_cache/**/.gitkeep
-
 # Allow committing project structure and instructions
 !INSTRUCTIONS_FOR_GPT.md
 !README.md
@@ -169,7 +169,10 @@ hf_cache/**
 # Keep project structure with .gitkeep files
 !app/.gitkeep
 !web_ui/.gitkeep
-!hf_cache/**/.gitkeep
+!models/.gitkeep
+!models/**/.gitkeep
+!hf_cache/.gitkeep
+!ctranslate2_cache/.gitkeep
 !.cache/**/.gitkeep
 !ollama_models/**/.gitkeep
 !venv/.gitkeep

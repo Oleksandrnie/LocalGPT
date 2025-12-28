@@ -30,10 +30,7 @@ OLLAMA_HEALTH_URL = "http://127.0.0.1:11434/v1/models"
 OLLAMA_LOG_FILE = ROOT / "ollama.log"
 ENV_FILE = ROOT / ".env"
 DEFAULT_MODEL = "qwen2.5:3b"
-OLLAMA_MODELS_DIR = os.environ.get("OLLAMA_MODELS") or str(ROOT / "ollama" / "models")
-os.environ["OLLAMA_MODELS"] = OLLAMA_MODELS_DIR
-Path(OLLAMA_MODELS_DIR).mkdir(parents=True, exist_ok=True)
-OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": OLLAMA_MODELS_DIR}
+MODELS_BASE = ROOT / "models"
 
 
 def run(cmd, **kwargs):
@@ -98,13 +95,44 @@ def update_env_variable(path: Path, key: str, value: str) -> None:
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
+ENV_VARS = read_env(ENV_FILE)
+MODELS_DIR = Path(ENV_VARS.get("MODELS_DIR", MODELS_BASE)).expanduser().resolve()
+OLLAMA_MODELS_DIR = Path(ENV_VARS.get("OLLAMA_MODELS_DIR") or (MODELS_DIR / "ollama")).expanduser()
+WHISPER_DIR = Path(ENV_VARS.get("WHISPER_MODELS_DIR") or (MODELS_DIR / "whisper")).expanduser()
+HF_CACHE_DIR = Path(ENV_VARS.get("HF_CACHE_DIR") or (MODELS_DIR / "hf_cache")).expanduser()
+CT2_CACHE_DIR = Path(ENV_VARS.get("CTRANSLATE2_CACHE_DIR") or (MODELS_DIR / "ctranslate2_cache")).expanduser()
+
+for path in (MODELS_DIR, OLLAMA_MODELS_DIR, WHISPER_DIR, HF_CACHE_DIR, CT2_CACHE_DIR):
+    path.mkdir(parents=True, exist_ok=True)
+
+os.environ.update(
+    {
+        "MODELS_DIR": str(MODELS_DIR),
+        "OLLAMA_MODELS": str(OLLAMA_MODELS_DIR),
+        "OLLAMA_MODELS_DIR": str(OLLAMA_MODELS_DIR),
+        "WHISPER_MODELS_DIR": str(WHISPER_DIR),
+        "HF_HOME": str(HF_CACHE_DIR),
+        "HUGGINGFACE_HUB_CACHE": str(HF_CACHE_DIR),
+        "HF_CACHE_DIR": str(HF_CACHE_DIR),
+        "CTRANSLATE2_CACHE_DIR": str(CT2_CACHE_DIR),
+        "CT2_TRANSLATORS_CACHE": str(CT2_CACHE_DIR),
+    }
+)
+OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(OLLAMA_MODELS_DIR)}
+
+
 def modelfile_for(model_name: str) -> Optional[Path]:
     """Return Modelfile path for the given model if it exists."""
 
     sanitized = model_name.replace(":", "-")
-    candidate = ROOT / "ollama_models" / sanitized / "Modelfile"
-    if candidate.exists():
-        return candidate
+    candidates = [
+        MODELS_DIR / "ollama" / sanitized / "Modelfile",
+        MODELS_DIR / sanitized / "Modelfile",
+        ROOT / "ollama_models" / sanitized / "Modelfile",  # legacy path for older installs
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     return None
 
 
@@ -443,6 +471,9 @@ def start_backend(python: str) -> None:
 
 def main() -> None:
     print(f"[*] Project root: {ROOT}")
+    print(f"[i] Models dir: {MODELS_DIR}")
+    print(f"[i] Ollama models dir: {OLLAMA_MODELS_DIR}")
+    print(f"[i] Whisper models dir: {WHISPER_DIR}")
     os.chdir(ROOT)
 
     py = ensure_venv()

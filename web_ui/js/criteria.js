@@ -1,4 +1,4 @@
-import { loadCriteriaFromStorage, saveCriteriaToStorage } from "./storage.js";
+import { fetchSessionCriteria, saveSessionCriteria } from "./api.js";
 import { sanitizeHTML } from "./timeline.js";
 
 const DEFAULT_MAX_CRITERIA = 200;
@@ -36,6 +36,8 @@ export class CriteriaManager {
     this.maxItems = maxItems;
     this.criteria = [];
     this.busy = false;
+    this.sessionId = null;
+    this.profileId = null;
   }
 
   updateStatus(message, tone = "info") {
@@ -76,7 +78,22 @@ export class CriteriaManager {
     this.listEl.innerHTML = html;
   }
 
-  setCriteria(list, { persist = true, source = "" } = {}) {
+  async persistToBackend() {
+    if (!this.sessionId) return;
+    try {
+      await saveSessionCriteria(this.sessionId, { criteria: this.criteria });
+    } catch (error) {
+      this.updateStatus(`❌ Не удалось сохранить критерии: ${error?.message || error}`, "error");
+    }
+  }
+
+  async setContext(sessionId, profileId) {
+    this.sessionId = sessionId || null;
+    this.profileId = profileId || null;
+    await this.loadFromSession(this.sessionId);
+  }
+
+  async setCriteria(list, { persist = true, source = "" } = {}) {
     const seen = new Set();
     const items = [];
     (Array.isArray(list) ? list : []).forEach((value) => {
@@ -93,7 +110,7 @@ export class CriteriaManager {
     this.criteria = items;
     this.renderCriteria(this.criteria);
     if (persist) {
-      saveCriteriaToStorage(this.criteria);
+      this.persistToBackend();
     }
 
     if (this.criteria.length) {
@@ -104,13 +121,26 @@ export class CriteriaManager {
     }
   }
 
-  loadFromStorage() {
-    const stored = loadCriteriaFromStorage();
-    if (Array.isArray(stored) && stored.length) {
-      this.setCriteria(stored, { persist: false, source: "localStorage" });
-    } else {
+  async loadFromSession(sessionId) {
+    if (!sessionId) {
+      this.criteria = [];
       this.renderCriteria();
       this.updateStatus(EMPTY_HINT);
+      return;
+    }
+    this.busy = true;
+    this.updateStatus("Загружаю критерии…");
+    try {
+      const data = await fetchSessionCriteria(sessionId);
+      const items = Array.isArray(data?.criteria) ? data.criteria : [];
+      await this.setCriteria(items, { persist: false, source: "session" });
+      if (!items.length) {
+        this.updateStatus(EMPTY_HINT);
+      }
+    } catch (error) {
+      this.updateStatus(`❌ Не удалось загрузить критерии: ${error?.message || error}`, "error");
+    } finally {
+      this.busy = false;
     }
   }
 
@@ -121,8 +151,8 @@ export class CriteriaManager {
   clear() {
     this.criteria = [];
     this.renderCriteria();
-    saveCriteriaToStorage([]);
     this.updateStatus(EMPTY_HINT);
+    this.persistToBackend();
   }
 
   removeCriterion(index) {
@@ -133,7 +163,7 @@ export class CriteriaManager {
 
     this.criteria = this.criteria.filter((_, itemIndex) => itemIndex !== idx);
     this.renderCriteria();
-    saveCriteriaToStorage(this.criteria);
+    this.persistToBackend();
 
     if (this.criteria.length) {
       this.updateStatus(`Критериев: ${this.criteria.length}`, "success");
@@ -164,7 +194,7 @@ export class CriteriaManager {
 
     this.criteria = [...this.criteria, normalized];
     this.renderCriteria();
-    saveCriteriaToStorage(this.criteria);
+    this.persistToBackend();
     this.updateStatus(`Критериев: ${this.criteria.length} • источник: вручную`, "success");
     return true;
   }
@@ -201,9 +231,11 @@ export class CriteriaManager {
     this.updateStatus("Загружаю критерии…");
     try {
       const fd = new FormData();
-      fd.append("session_id", sessionId || "");
-      if (profileId) {
-        fd.append("profile_id", profileId);
+      const sid = sessionId || this.sessionId || "";
+      fd.append("session_id", sid);
+      const pid = profileId || this.profileId || 0;
+      if (pid) {
+        fd.append("profile_id", pid);
       }
       if (file) {
         fd.append("file", file, file.name || "criteria");
