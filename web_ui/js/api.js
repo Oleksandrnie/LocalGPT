@@ -1,5 +1,3 @@
-import { API_BASE } from "./storage.js";
-
 async function handleResponse(response) {
   const raw = await response.text();
   let parsed = {};
@@ -32,12 +30,12 @@ async function handleResponse(response) {
 }
 
 async function apiGet(path) {
-  const response = await fetch(`${API_BASE}${path}`);
+  const response = await fetch(path);
   return handleResponse(response);
 }
 
 async function apiPost(path, body) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -46,7 +44,7 @@ async function apiPost(path, body) {
 }
 
 async function apiPatch(path, body) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(path, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -55,7 +53,7 @@ async function apiPatch(path, body) {
 }
 
 async function apiDelete(path) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(path, {
     method: "DELETE",
   });
   return handleResponse(response);
@@ -83,7 +81,7 @@ export async function transcribeFile(file, model, sourceType = "upload") {
   formData.append("model", model);
   formData.append("source_type", sourceType);
 
-  const response = await fetch(`${API_BASE}/transcribe`, {
+  const response = await fetch("/transcribe", {
     method: "POST",
     body: formData,
   });

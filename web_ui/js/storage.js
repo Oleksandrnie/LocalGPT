@@ -1,5 +1,3 @@
-export const API_BASE = "http://127.0.0.1:8000";
-
 const STORAGE_KEYS = {
   model: "whisper_only_model_v1",
   language: "whisper_only_lang_v1",
