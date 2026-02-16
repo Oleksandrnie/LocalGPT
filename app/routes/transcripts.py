@@ -54,3 +54,12 @@ def patch_transcript(transcript_id: str, req: TranscriptUpdate) -> dict[str, obj
         raise HTTPException(status_code=404, detail={"code": "transcript_not_found", "message": "Транскрипт не найден"})
 
     return updated
+
+
+@router.delete("/transcripts/{transcript_id}")
+def remove_transcript(transcript_id: str) -> dict[str, object]:
+    deleted = transcript_store.delete_transcript(transcript_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail={"code": "transcript_not_found", "message": "Транскрипт не найден"})
+
+    return {"ok": True, "id": transcript_id}

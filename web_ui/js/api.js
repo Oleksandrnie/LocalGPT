@@ -49,6 +49,13 @@ async function apiPatch(path, body) {
   return handleResponse(response);
 }
 
+async function apiDelete(path) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "DELETE",
+  });
+  return handleResponse(response);
+}
+
 export function fetchHealth() {
   return apiGet("/health");
 }
@@ -92,4 +99,8 @@ export function createTranscript(payload) {
 
 export function updateTranscript(id, payload) {
   return apiPatch(`/transcripts/${encodeURIComponent(id)}`, payload);
+}
+
+export function deleteTranscript(id) {
+  return apiDelete(`/transcripts/${encodeURIComponent(id)}`);
 }

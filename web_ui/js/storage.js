@@ -2,6 +2,7 @@ export const API_BASE = "http://127.0.0.1:8000";
 
 const STORAGE_KEYS = {
   model: "whisper_only_model_v1",
+  language: "whisper_only_lang_v1",
 };
 
 function safeGet(key) {
@@ -30,4 +31,12 @@ export function getSavedModel(defaultValue = "small") {
 
 export function setSavedModel(value) {
   safeSet(STORAGE_KEYS.model, value);
+}
+
+export function getSavedLanguage(defaultValue = "ru") {
+  return safeGet(STORAGE_KEYS.language) || defaultValue;
+}
+
+export function setSavedLanguage(value) {
+  safeSet(STORAGE_KEYS.language, value);
 }

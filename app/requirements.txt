@@ -4,3 +4,4 @@ python-dotenv
 faster-whisper
 python-multipart>=0.0.5
 httpx
+huggingface-hub

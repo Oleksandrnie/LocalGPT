@@ -8,19 +8,33 @@
 </head>
 <body>
   <header class="app-header">
-    <h1>LocalGPT Whisper Transcriber</h1>
+    <div class="app-header__row">
+      <h1 id="appTitle">LocalGPT Whisper Transcriber</h1>
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button class="lang-flag is-active" id="langEn" type="button" data-lang="en" title="English" aria-label="English">
+          <img src="img/flag-us.svg" alt="English" />
+        </button>
+        <button class="lang-flag" id="langUk" type="button" data-lang="uk" title="Українська" aria-label="Українська">
+          <img src="img/flag-ua.svg" alt="Українська" />
+        </button>
+        <button class="lang-flag" id="langRu" type="button" data-lang="ru" title="Русский" aria-label="Русский">
+          <img src="img/flag-ru.svg" alt="Русский" />
+        </button>
+      </div>
+    </div>
     <p class="status" id="healthStatus">Проверка сервера...</p>
   </header>
 
   <main class="app-layout">
     <section class="panel control-panel">
-      <h2>Управление</h2>
+      <h2 id="controlTitle">Управление</h2>
 
-      <label class="field-label" for="modelSelect">Модель Whisper</label>
+      <label class="field-label" id="modelLabel" for="modelSelect">Модель Whisper</label>
       <select id="modelSelect" class="input-control"></select>
 
       <input type="file" id="fileInput" accept="audio/*,video/*" hidden />
       <button id="btnChooseFile" class="btn">Выбрать файл</button>
+      <p class="file-hint file-hint--empty" id="fileHint">Локальный файл: не выбран</p>
 
       <div class="record-row">
         <button id="btnRecord" class="btn btn-record" title="Запись голоса">⏺</button>
@@ -46,7 +60,7 @@
 
     <section class="panel editor-panel">
       <div class="panel-head">
-        <h2>Транскрибация</h2>
+        <h2 id="transcriptTitle">Транскрибация</h2>
         <div class="actions">
           <button id="btnCopy" class="btn btn-secondary">copy</button>
           <button id="btnSave" class="btn btn-secondary">save</button>
@@ -57,7 +71,7 @@
     </section>
 
     <section class="panel history-panel">
-      <h2>История</h2>
+      <h2 id="historyTitle">История</h2>
       <div id="historyList" class="history-list"></div>
     </section>
   </main>
@@ -72,6 +86,7 @@
       <textarea id="historyModalText" class="modal-textarea"></textarea>
       <div class="actions actions-left">
         <button id="btnSendFromModal" class="btn">send</button>
+        <button id="btnDeleteFromModal" class="btn btn-danger" type="button">Удалить</button>
       </div>
     </div>
   </div>

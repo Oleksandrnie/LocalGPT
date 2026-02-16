@@ -42,22 +42,30 @@ def _resolve_path(raw: str | None, fallback: Path) -> Path:
 
 
 models_dir = _resolve_path(os.getenv("MODELS_DIR"), PROJECT_ROOT / "models")
-whisper_models_dir = _resolve_path(os.getenv("WHISPER_MODELS_DIR"), models_dir / "whisper")
-hf_cache_dir = _resolve_path(os.getenv("HF_CACHE_DIR") or os.getenv("HUGGINGFACE_HUB_CACHE"), models_dir / "hf_cache")
+whisper_models_dir = _resolve_path(os.getenv("WHISPER_MODELS_DIR"), models_dir)
+default_hf_home_dir = models_dir / "huggingface"
+hf_home_dir = _resolve_path(os.getenv("HF_HOME"), default_hf_home_dir)
+hf_hub_cache_dir = _resolve_path(
+    os.getenv("HUGGINGFACE_HUB_CACHE") or os.getenv("HF_CACHE_DIR"),
+    hf_home_dir / "hub",
+)
 ctranslate2_cache_dir = _resolve_path(
     os.getenv("CTRANSLATE2_CACHE_DIR") or os.getenv("CT2_TRANSLATORS_CACHE"),
     models_dir / "ctranslate2_cache",
 )
 transcripts_dir = _resolve_path(os.getenv("TRANSCRIPTS_DIR"), DATA_DIR / "transcripts")
 
-for path in (models_dir, whisper_models_dir, hf_cache_dir, ctranslate2_cache_dir, transcripts_dir):
+for path in (models_dir, whisper_models_dir, hf_home_dir, hf_hub_cache_dir, ctranslate2_cache_dir, transcripts_dir):
     path.mkdir(parents=True, exist_ok=True)
+
+for model_name in ALLOWED_WHISPER_MODELS:
+    (whisper_models_dir / model_name).mkdir(parents=True, exist_ok=True)
 
 os.environ["MODELS_DIR"] = str(models_dir)
 os.environ["WHISPER_MODELS_DIR"] = str(whisper_models_dir)
-os.environ["HF_HOME"] = str(hf_cache_dir)
-os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_cache_dir)
-os.environ["HF_CACHE_DIR"] = str(hf_cache_dir)
+os.environ["HF_HOME"] = str(hf_home_dir)
+os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_hub_cache_dir)
+os.environ["HF_CACHE_DIR"] = str(hf_hub_cache_dir)
 os.environ["CTRANSLATE2_CACHE_DIR"] = str(ctranslate2_cache_dir)
 os.environ["CT2_TRANSLATORS_CACHE"] = str(ctranslate2_cache_dir)
 os.environ["TRANSCRIPTS_DIR"] = str(transcripts_dir)
@@ -90,6 +98,7 @@ def _load_settings() -> Settings:
 SETTINGS = _load_settings()
 MODELS_DIR = models_dir
 WHISPER_MODELS_DIR = whisper_models_dir
-HF_CACHE_DIR = hf_cache_dir
+HF_HOME_DIR = hf_home_dir
+HF_CACHE_DIR = hf_hub_cache_dir
 CTRANSLATE2_CACHE_DIR = ctranslate2_cache_dir
 TRANSCRIPTS_DIR = transcripts_dir

@@ -34,6 +34,7 @@ LocalGPT теперь работает как локальный транскр�
 - `GET /transcripts/{id}`
 - `POST /transcripts`
 - `PATCH /transcripts/{id}`
+- `DELETE /transcripts/{id}`
 
 ## Хранилище
 - Транскрибации: `app/data/transcripts/<id>.json`

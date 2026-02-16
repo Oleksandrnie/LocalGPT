@@ -40,10 +40,54 @@ body {
   z-index: 10;
 }
 
+.app-header__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: 1.15rem;
   letter-spacing: 0.01em;
+}
+
+.lang-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lang-flag {
+  width: 34px;
+  height: 26px;
+  border: 1px solid #3b4d72;
+  border-radius: 7px;
+  background: #0f1829;
+  padding: 0;
+  cursor: pointer;
+  filter: grayscale(1) contrast(1.1);
+  opacity: 0.65;
+  transition: 0.16s ease-in-out;
+}
+
+.lang-flag img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 6px;
+}
+
+.lang-flag:hover {
+  opacity: 0.86;
+}
+
+.lang-flag.is-active {
+  filter: none;
+  opacity: 1;
+  border-color: #59ccff;
+  box-shadow: 0 0 0 2px rgba(66, 192, 255, 0.25);
 }
 
 .status {
@@ -150,6 +194,16 @@ textarea {
   border-color: #31456f;
 }
 
+.btn-danger {
+  background: #3d1b28;
+  color: #ffd8de;
+  border-color: #8f3a53;
+}
+
+.btn-danger:hover {
+  filter: brightness(1.08);
+}
+
 .btn-record {
   min-width: 54px;
   font-size: 1.05rem;
@@ -180,6 +234,28 @@ textarea {
   color: var(--text-soft);
   font-size: 0.9rem;
   margin: 10px 0 0;
+}
+
+.file-hint {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #31456f;
+  background: rgba(24, 37, 59, 0.72);
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.file-hint--ready {
+  border-color: rgba(86, 217, 139, 0.55);
+  color: #9fe2bd;
+}
+
+.file-hint--empty {
+  border-color: #31456f;
+  color: var(--text-soft);
 }
 
 .voice-activity {
@@ -266,11 +342,13 @@ textarea {
 }
 
 .history-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
   background: #101b2f;
   border: 1px solid #2a3d62;
   border-radius: 10px;
   padding: 9px;
-  cursor: pointer;
 }
 
 .history-item:hover {
@@ -288,6 +366,36 @@ textarea {
   gap: 10px;
   font-size: 0.82rem;
   color: var(--text-soft);
+}
+
+.history-open {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-delete {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 93, 93, 0.55);
+  background: rgba(120, 30, 30, 0.25);
+  color: #ff7777;
+  font-size: 0.9rem;
+  line-height: 1;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.history-delete:hover {
+  background: rgba(120, 30, 30, 0.44);
+  color: #ff9a9a;
 }
 
 .history-preview {

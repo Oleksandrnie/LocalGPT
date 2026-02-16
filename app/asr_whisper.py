@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import threading
 from pathlib import Path
 from typing import Any
@@ -12,7 +14,7 @@ MODEL_REPOSITORIES = {
     "small": "Systran/faster-whisper-small",
     "medium": "Systran/faster-whisper-medium",
     "large-v3": "Systran/faster-whisper-large-v3",
-    "large-v3-turbo": "Systran/faster-whisper-large-v3-turbo",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
 }
 
 RU_PRESET_PROMPT = (
@@ -48,14 +50,109 @@ def repository_for_model(model_name: str) -> str:
 
 def local_model_dir(model_name: str) -> Path:
     model = _normalize_model(model_name)
-    repo = repository_for_model(model)
-    repo_suffix = repo.split("/", 1)[1]
-    return config.WHISPER_MODELS_DIR / repo_suffix
+    return config.WHISPER_MODELS_DIR / model
+
+
+def _copy_tree(src: Path, dst: Path) -> None:
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, target)
+
+
+def _model_is_ready(path: Path) -> bool:
+    return path.exists() and (path / "model.bin").exists()
+
+
+def _snapshot_dirs(repo_id: str) -> list[Path]:
+    org, repo_name = repo_id.split("/", 1)
+    relative = Path(f"models--{org}--{repo_name}") / "snapshots"
+
+    roots: list[Path] = []
+    custom_import = (os.getenv("WHISPER_IMPORT_CACHE_DIR") or "").strip()
+    if custom_import:
+        roots.append(Path(custom_import).expanduser())
+    roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+    roots.append(config.HF_CACHE_DIR)
+
+    result: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        snapshots_root = resolved / relative
+        if not snapshots_root.exists():
+            continue
+        for snapshot in snapshots_root.iterdir():
+            if snapshot.is_dir():
+                result.append(snapshot)
+
+    result.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0.0, reverse=True)
+    return result
+
+
+def _legacy_model_dirs(model_name: str) -> list[Path]:
+    model = _normalize_model(model_name)
+    repo_suffix = repository_for_model(model).split("/", 1)[1]
+
+    candidates = [
+        config.MODELS_DIR / "whisper" / repo_suffix,
+        config.MODELS_DIR / "whisper" / model,
+        config.WHISPER_MODELS_DIR / repo_suffix,
+    ]
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            key = str(candidate.resolve())
+        except OSError:
+            key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _hydrate_model_from_cache(model_name: str) -> bool:
+    target = local_model_dir(model_name)
+    if _model_is_ready(target):
+        return True
+
+    for legacy in _legacy_model_dirs(model_name):
+        if not _model_is_ready(legacy):
+            continue
+        _copy_tree(legacy, target)
+        if _model_is_ready(target):
+            return True
+
+    repo_id = repository_for_model(model_name)
+    for snapshot in _snapshot_dirs(repo_id):
+        if not _model_is_ready(snapshot):
+            continue
+        _copy_tree(snapshot, target)
+        if _model_is_ready(target):
+            return True
+
+    return _model_is_ready(target)
 
 
 def is_local_model_ready(model_name: str) -> bool:
     model_dir = local_model_dir(model_name)
-    return model_dir.exists() and (model_dir / "model.bin").exists()
+    if _model_is_ready(model_dir):
+        return True
+    return _hydrate_model_from_cache(model_name)
 
 
 def _normalize_language(language: str | None) -> str | None:

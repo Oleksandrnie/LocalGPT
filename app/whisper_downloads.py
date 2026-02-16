@@ -20,6 +20,7 @@ _LOCK = threading.Lock()
 _CHUNK_SIZE = 1024 * 512
 _PROGRESS_INTERVAL_SECONDS = 0.2
 _DEFAULT_HF_ENDPOINT = "https://huggingface.co"
+_DEFAULT_HF_FALLBACK_ENDPOINT = "https://hf-mirror.com"
 
 
 class PrepareModelError(Exception):
@@ -53,9 +54,48 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _hf_token_raw() -> str:
+    return (
+        os.getenv("HF_TOKEN")
+        or os.getenv("HUGGINGFACE_TOKEN")
+        or os.getenv("HUGGINGFACE_HUB_TOKEN")
+        or ""
+    ).strip()
+
+
+def _is_ascii_text(value: str) -> bool:
+    try:
+        value.encode("ascii")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _has_invalid_hf_token() -> bool:
+    raw = _hf_token_raw()
+    return bool(raw) and not _is_ascii_text(raw)
+
+
+def _hf_token() -> str:
+    token = _hf_token_raw()
+    if not token:
+        return ""
+    if not _is_ascii_text(token):
+        return ""
+    return token
+
+
+def _http_headers() -> dict[str, str]:
+    headers = {"User-Agent": "LocalGPT-Whisper-Transcriber/1.0"}
+    token = _hf_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _huggingface_endpoints() -> list[str]:
     primary = (os.getenv("HF_ENDPOINT") or _DEFAULT_HF_ENDPOINT).strip().rstrip("/")
-    fallback = (os.getenv("HF_FALLBACK_ENDPOINT") or "").strip().rstrip("/")
+    fallback = (os.getenv("HF_FALLBACK_ENDPOINT") or _DEFAULT_HF_FALLBACK_ENDPOINT).strip().rstrip("/")
 
     endpoints: list[str] = []
     for item in (primary, fallback, _DEFAULT_HF_ENDPOINT):
@@ -157,8 +197,48 @@ def _is_dns_error(exc: BaseException) -> bool:
     return any(marker in message for marker in markers)
 
 
+def _http_status_from_exception(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    status = getattr(response, "status_code", None)
+    return int(status) if isinstance(status, int) else None
+
+
+def _is_auth_error(exc: BaseException) -> bool:
+    status = _http_status_from_exception(exc)
+    if status in {401, 403}:
+        return True
+
+    message = str(exc).lower()
+    return "401" in message or "403" in message
+
+
+def _directory_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+
+    total = 0
+    for file_path in path.rglob("*"):
+        if not file_path.is_file():
+            continue
+        try:
+            total += file_path.stat().st_size
+        except OSError:
+            continue
+
+    return total
+
+
 def _format_download_error(endpoint: str, exc: BaseException) -> str:
     host = _endpoint_host(endpoint)
+
+    if _has_invalid_hf_token() or isinstance(exc, UnicodeEncodeError):
+        return (
+            "HF_TOKEN в .env содержит недопустимые символы. "
+            "Используйте только ASCII токен вида hf_xxx (без кавычек) "
+            "или удалите строку HF_TOKEN и используйте HF_FALLBACK_ENDPOINT."
+        )
 
     if _is_dns_error(exc):
         return (
@@ -175,8 +255,26 @@ def _format_download_error(endpoint: str, exc: BaseException) -> str:
         if status == 404:
             return f"Репозиторий модели недоступен на {host} (404)."
         if status in {401, 403}:
-            return f"Нет доступа к модели на {host} (HTTP {status})."
+            if _hf_token():
+                return f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN."
+            return (
+                f"Нет доступа к модели на {host} (HTTP {status}). "
+                "Добавьте HF_TOKEN в .env (или выполните huggingface-cli login) "
+                "или задайте HF_FALLBACK_ENDPOINT (например https://hf-mirror.com), "
+                "затем перезапустите сервер."
+            )
         return f"Ошибка HTTP {status} при загрузке модели с {host}."
+
+    status = _http_status_from_exception(exc)
+    if status in {401, 403}:
+        if _hf_token():
+            return f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN."
+        return (
+            f"Нет доступа к модели на {host} (HTTP {status}). "
+            "Добавьте HF_TOKEN в .env (или выполните huggingface-cli login) "
+            "или задайте HF_FALLBACK_ENDPOINT (например https://hf-mirror.com), "
+            "затем перезапустите сервер."
+        )
 
     return str(exc)
 
@@ -191,6 +289,7 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
         follow_redirects=True,
         timeout=httpx.Timeout(90.0, connect=30.0),
         trust_env=trust_env,
+        headers=_http_headers(),
     ) as client:
         files = _get_model_files(client, endpoint, repo_id)
         total_bytes = sum(int(item.get("size") or 0) for item in files)
@@ -261,6 +360,52 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
         return downloaded_bytes, max(total_bytes, downloaded_bytes), final_speed
 
 
+def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, int, float]:
+    from huggingface_hub import snapshot_download
+
+    repo_id = repository_for_model(model)
+    model_dir = local_model_dir(model)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    size_before = _directory_size(model_dir)
+    start_ts = _now()
+    stop_event = threading.Event()
+
+    def _monitor() -> None:
+        while not stop_event.wait(_PROGRESS_INTERVAL_SECONDS):
+            current_size = _directory_size(model_dir)
+            downloaded = max(current_size - size_before, 0)
+            elapsed = max(_now() - start_ts, 0.001)
+            _update_task(
+                task_id,
+                message="Загрузка через huggingface_hub...",
+                percent=0.0,
+                speed_bps=downloaded / elapsed,
+                downloaded_bytes=downloaded,
+                total_bytes=0,
+            )
+
+    monitor_thread = threading.Thread(target=_monitor, daemon=True)
+    monitor_thread.start()
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=str(model_dir),
+            local_dir_use_symlinks=False,
+            resume_download=True,
+            endpoint=endpoint,
+            token=_hf_token() or None,
+        )
+    finally:
+        stop_event.set()
+        monitor_thread.join(timeout=2.0)
+
+    size_after = _directory_size(model_dir)
+    downloaded = max(size_after - size_before, 0)
+    elapsed = max(_now() - start_ts, 0.001)
+    return downloaded, downloaded, downloaded / elapsed
+
+
 def _run_prepare_task(task_id: str) -> None:
     with _LOCK:
         task = _TASKS.get(task_id)
@@ -274,6 +419,14 @@ def _run_prepare_task(task_id: str) -> None:
         model_dir.mkdir(parents=True, exist_ok=True)
 
         _update_task(task_id, state="running", repo_id=repo_id, message="Получение списка файлов модели")
+        if _has_invalid_hf_token():
+            _update_task(
+                task_id,
+                message=(
+                    "HF_TOKEN содержит не-ASCII символы, токен будет проигнорирован. "
+                    "Укажите ASCII токен вида hf_xxx или удалите HF_TOKEN."
+                ),
+            )
 
         endpoints = _huggingface_endpoints()
         for idx, endpoint in enumerate(endpoints):
@@ -282,17 +435,37 @@ def _run_prepare_task(task_id: str) -> None:
             try:
                 downloaded_bytes, total_bytes, final_speed = _download_from_endpoint(task_id, model, endpoint)
             except Exception as exc:
-                error_message = _format_download_error(endpoint, exc)
-                has_next_endpoint = idx < len(endpoints) - 1
+                if _is_auth_error(exc):
+                    try:
+                        _update_task(
+                            task_id,
+                            message="Получен HTTP 401/403. Пробуем загрузку через huggingface_hub...",
+                        )
+                        downloaded_bytes, total_bytes, final_speed = _download_via_hf_hub(task_id, model, endpoint)
+                    except Exception as fallback_exc:
+                        error_message = _format_download_error(endpoint, fallback_exc)
+                        has_next_endpoint = idx < len(endpoints) - 1
 
-                if has_next_endpoint:
-                    _update_task(
-                        task_id,
-                        message=f"{error_message} Пробуем резервный endpoint...",
-                    )
-                    continue
+                        if has_next_endpoint:
+                            _update_task(
+                                task_id,
+                                message=f"{error_message} Пробуем резервный endpoint...",
+                            )
+                            continue
 
-                raise PrepareModelError(error_message) from exc
+                        raise PrepareModelError(error_message) from fallback_exc
+                else:
+                    error_message = _format_download_error(endpoint, exc)
+                    has_next_endpoint = idx < len(endpoints) - 1
+
+                    if has_next_endpoint:
+                        _update_task(
+                            task_id,
+                            message=f"{error_message} Пробуем резервный endpoint...",
+                        )
+                        continue
+
+                    raise PrepareModelError(error_message) from exc
 
             if not is_local_model_ready(model):
                 raise PrepareModelError("Модель загружена не полностью")

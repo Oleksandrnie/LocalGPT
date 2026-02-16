@@ -53,6 +53,19 @@ class TranscriptStoreTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             transcript_store.create_transcript(text="   ")
 
+    def test_delete_transcript(self):
+        created = transcript_store.create_transcript(
+            text="Delete me",
+            source_type="manual",
+        )
+
+        deleted = transcript_store.delete_transcript(created["id"])
+        self.assertTrue(deleted)
+        self.assertIsNone(transcript_store.get_transcript(created["id"]))
+
+        deleted_missing = transcript_store.delete_transcript(created["id"])
+        self.assertFalse(deleted_missing)
+
 
 if __name__ == "__main__":
     unittest.main()

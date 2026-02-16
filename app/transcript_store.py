@@ -188,3 +188,19 @@ def update_transcript(
     existing["updated_at"] = _utc_now()
     _atomic_write_json(_record_path(transcript_id), existing)
     return existing
+
+
+def delete_transcript(transcript_id: str) -> bool:
+    if not transcript_id:
+        return False
+
+    path = _record_path(transcript_id)
+    if not path.exists():
+        return False
+
+    try:
+        path.unlink()
+    except OSError:
+        return False
+
+    return True

@@ -61,6 +61,24 @@ class TranscribeRouteTestCase(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["detail"]["code"], "invalid_model")
 
+    def test_delete_transcript(self):
+        created = transcript_store.create_transcript(
+            text="to be deleted",
+            source_type="manual",
+        )
+        response = self.client.delete(f"/transcripts/{created['id']}")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["id"], created["id"])
+        self.assertIsNone(transcript_store.get_transcript(created["id"]))
+
+    def test_delete_transcript_not_found(self):
+        response = self.client.delete("/transcripts/tr_not_found")
+        self.assertEqual(response.status_code, 404)
+        payload = response.json()
+        self.assertEqual(payload["detail"]["code"], "transcript_not_found")
+
 
 if __name__ == "__main__":
     unittest.main()
