@@ -1,89 +1,67 @@
-# 🧠 LocalGPT — локальный HR/ASR-бот
+# LocalGPT Whisper Transcriber
 
-LocalGPT — полностью офлайн ассистент для анализа собеседований и стенограмм. Он работает на FastAPI + Ollama + faster-whisper, хранит данные в SQLite и держит все модели внутри проекта.
+LocalGPT теперь работает как локальный транскрибатор аудио/видео с историей текстов и записью голоса.
 
-## Быстрый старт
-1. Требования: Python 3.10+, Ollama, ffmpeg.
+## Что умеет
+- Локальная транскрибация через `faster-whisper`.
+- Выбор модели: `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`.
+- Запись голоса в браузере (приоритет `M4A/AAC`, fallback `WebM/Opus`).
+- История транскрибаций в файловом хранилище (`app/data/transcripts/*.json`).
+- Единый тёмный интерфейс, адаптированный под desktop и phone.
+
+## Запуск
+1. Требования: Python 3.10+, ffmpeg.
 2. Запуск из корня проекта:
    ```bash
    python3 run_localgpt.py
    ```
-   Скрипт создаст venv, установит зависимости (`app/requirements.txt`), проверит Ollama, покажет путь к моделям и откроет UI.
 3. Ручной запуск:
    ```bash
-   python -m venv venv
-   source venv/bin/activate   # Windows: venv\Scripts\activate
+   python3 -m venv venv
+   source venv/bin/activate
    pip install -r app/requirements.txt
-   ollama serve &
-   uvicorn app.server:app --host 127.0.0.1 --port 8000
+   uvicorn app.server:app --host 127.0.0.1 --port 8000 --reload
    ```
-   UI: `http://127.0.0.1:8000/ui/gui_html.html`.
+4. UI: `http://127.0.0.1:8000/ui/gui_html.html`
 
-## Структура
-```
-LocalGPT/
-├── app/                  # FastAPI backend, маршруты, роли, промпты
-├── web_ui/               # Веб-интерфейс (HTML, CSS, JS-модули)
-├── models/               # Единое хранилище моделей/кэшей
-│   ├── ollama/           # Модели Ollama
-│   ├── whisper/          # Веса faster-whisper
-│   ├── hf_cache/         # Кэш Hugging Face
-│   └── ctranslate2_cache/# Кэш ctranslate2
-├── app/db/localgpt.db    # SQLite с профилями/сессиями/транскриптами
-├── run_localgpt.py       # Универсальный запуск
-├── .env                  # Настройки по умолчанию (в репозитории)
-└── .env.example          # Шаблон конфигурации
-```
+## API
+- `GET /health`
+- `GET /whisper/models`
+- `POST /whisper/models/prepare`
+- `GET /whisper/models/prepare/{task_id}`
+- `POST /transcribe` (multipart: `file`, `model`, `source_type`)
+- `GET /transcripts`
+- `GET /transcripts/{id}`
+- `POST /transcripts`
+- `PATCH /transcripts/{id}`
 
-## Модели и офлайн-подготовка
-Все пути управляются через `.env`:
-```
-# === Основные настройки моделей ===
-MODELS_DIR=models
-WHISPER_MODELS_DIR=models/whisper
-OLLAMA_MODELS_DIR=models/ollama
-HF_CACHE_DIR=models/hf_cache
-CTRANSLATE2_CACHE_DIR=models/ctranslate2_cache
+## Хранилище
+- Транскрибации: `app/data/transcripts/<id>.json`
+- Формат записи включает:
+  - `id`, `created_at`, `updated_at`
+  - `source_type`, `source_name`
+  - `model`, `language`, `duration_sec`
+  - `preview`, `text`
 
-# === Параметры LLM ===
-LOCAL_BASE_URL=http://localhost:11434/v1
-LOCAL_API_KEY=LOCAL-KEY
-LOCAL_MODEL=qwen2.5:3b
-TEMP=0.2
-MAX_TOKENS=2048
-NUM_CTX=32768
-MEM_TURNS=6
-```
-- Скопируйте веса Ollama в `models/ollama/` или дайте свой путь в `.env`.
-- Скачайте faster-whisper (Systran) в `models/whisper/`.
-- Кэши HF/ctranslate2 тоже лежат в `models/`.
-- В UI → «Настройки» можно поменять папку моделей и перенести существующие данные без повторной загрузки.
-  Если раньше использовали `ollama/` или `ollama_models/`, перенесите содержимое в `models/ollama/`.
+## Конфигурация (`.env`)
+Основные параметры смотрите в `.env.example`:
+- `MODELS_DIR`
+- `WHISPER_MODELS_DIR`
+- `HF_CACHE_DIR`
+- `CTRANSLATE2_CACHE_DIR`
+- `TRANSCRIPTS_DIR`
+- `WHISPER_MODEL_SIZE`
+- `WHISPER_COMPUTE_TYPE`
+- `WHISPER_DEVICE`
+- `WHISPER_BEAM_SIZE`
+- `WHISPER_FALLBACK_LANGUAGE`
+- `HF_ENDPOINT` (по умолчанию `https://huggingface.co`)
+- `HF_FALLBACK_ENDPOINT` (опциональный резервный endpoint)
+- `HF_TRUST_ENV` (`1` если нужно использовать `HTTP_PROXY`/`HTTPS_PROXY`)
 
-## Роли и промпты
-- Доступные режимы: свободное общение, учитель, строгий деловой стиль, объяснение, простые расчёты, HR.
-- Промпты лежат в `app/prompts/system_<role>.md`. HR-профиль — `system_hr.md`.
-- В UI есть выпадающий список роли (всегда на виду). Выбор сохраняется в сессии и передаётся в `/chat`.
-- Роль `calc` сначала пытается безопасно вычислить арифметику (+, -, *, /, %, скобки), иначе даёт лаконичный ответ через LLM.
-
-## Работа с профилями и сессиями
-- Профили переключаются в шапке. У каждого — свои диалоги, транскрипты и настройки модели.
-- В сайдбаре — список диалогов; есть кнопка сворачивания (и хоткей Ctrl/Cmd+B). Состояние сайдбара сохраняется.
-- Сессия хранит выбранную модель и роль; история сообщений подтягивается из БД с учётом `MEM_TURNS`.
-
-## Транскрибация и критерии
-- Транскрибация: выберите файл → `/transcribe` (Whisper) → текст + таймлайн сохраняются в БД и применяются к текущей сессии.
-- Критерии: загрузка CSV/XLSX/Google Sheets (`/criteria/parse`) или ручной ввод. Критерии закрепляются за сессией и подмешиваются в запрос.
-
-## UI (новое)
-- Роль/режим виден в шапке, есть подсказка по описанию.
-- Тёмная/светлая тема с запоминанием.
-- Управление папкой моделей и переносом кешей из настроек.
-- Сайдбар открывается кнопкой ☰ и хоткеем Ctrl/Cmd+B даже после сворачивания.
-
-## Диагностика и логи
-- Быстрый статус: `curl -s http://127.0.0.1:8000/health`.
-- Логи запуска и Ollama: `ollama.log`, `tmp_logs/chat.log`.
-- Если сервер недоступен, убедитесь, что `run_localgpt.py` запущен из корня и порт 8000 свободен.
-
-LocalGPT полностью офлайн: никакие данные не покидают вашу машину. Все пути и модели лежат внутри `LocalGPT/models/`, перенос на другую машину — копированием этой папки и `.env`.
+## Smoke checklist
+1. Выбрать аудио/видео файл -> транскрибация стартует автоматически.
+2. Нажать `⏺`, записать >=3 сек -> запись сохраняется и автоматически транскрибируется.
+3. Кнопки `copy | save | clear` работают с центральным полем.
+4. История показывает дату/время и preview.
+5. Клик по записи открывает модалку; `send` переносит текст в центральное поле.

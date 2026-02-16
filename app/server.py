@@ -1,22 +1,14 @@
 from __future__ import annotations
 
-import logging
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db
-from .routes import chat, criteria, meta, models, profiles, storage, transcripts, transcribe
+from . import config
+from .routes import meta, transcribe, transcripts
 
-logging.basicConfig(level=logging.INFO)
-LOGGER = logging.getLogger(__name__)
-
-db.init_db()
-config.log_startup(LOGGER)
-
-app = FastAPI(title="LocalGPT HR API")
+app = FastAPI(title="LocalGPT Whisper API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,17 +19,12 @@ app.add_middleware(
 )
 
 app.include_router(meta.router)
-app.include_router(models.router)
-app.include_router(profiles.router)
-app.include_router(criteria.router)
-app.include_router(transcripts.router)
 app.include_router(transcribe.router)
-app.include_router(chat.router)
-app.include_router(storage.router)
+app.include_router(transcripts.router)
 
 app.mount("/ui", StaticFiles(directory=config.UI_DIR, html=True), name="ui")
 
 
 @app.get("/", include_in_schema=False)
-def root():
+def root() -> RedirectResponse:
     return RedirectResponse(url="/ui/gui_html.html")

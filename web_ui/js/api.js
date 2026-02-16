@@ -1,106 +1,95 @@
 import { API_BASE } from "./storage.js";
 
 async function handleResponse(response) {
+  const raw = await response.text();
+  let parsed = {};
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = { message: raw };
+    }
+  }
   if (response.ok) {
-    const text = await response.text();
-    return text ? JSON.parse(text) : {};
+    return parsed;
   }
-  let detail = response.statusText;
-  try {
-    const data = await response.json();
-    detail = data?.detail || JSON.stringify(data);
-  } catch (error) {
-    // noop
-  }
-  const error = new Error(detail || `HTTP ${response.status}`);
+
+  const detail = parsed?.detail;
+  const message =
+    typeof detail === "string"
+      ? detail
+      : detail?.message || parsed?.message || `HTTP ${response.status}`;
+
+  const error = new Error(message);
   error.status = response.status;
-  error.detail = detail;
+  error.payload = parsed;
   throw error;
 }
 
-export async function apiGet(path) {
-  const res = await fetch(`${API_BASE}${path}`, { method: "GET" });
-  return handleResponse(res);
+async function apiGet(path) {
+  const response = await fetch(`${API_BASE}${path}`);
+  return handleResponse(response);
 }
 
-export async function apiDelete(path) {
-  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
-  return handleResponse(res);
-}
-
-export async function apiPost(path, body, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function apiPost(path, body) {
+  const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: options.signal,
   });
-  return handleResponse(res);
+  return handleResponse(response);
 }
 
-export async function apiPatch(path, body) {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function apiPatch(path, body) {
+  const response = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return handleResponse(res);
+  return handleResponse(response);
 }
 
-export async function apiUpload(path, formData) {
-  const res = await fetch(`${API_BASE}${path}`, {
+export function fetchHealth() {
+  return apiGet("/health");
+}
+
+export function fetchWhisperModels() {
+  return apiGet("/whisper/models");
+}
+
+export function startWhisperModelPrepare(model) {
+  return apiPost("/whisper/models/prepare", { model });
+}
+
+export function fetchWhisperModelPrepare(taskId) {
+  return apiGet(`/whisper/models/prepare/${encodeURIComponent(taskId)}`);
+}
+
+export async function transcribeFile(file, model, sourceType = "upload") {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model", model);
+  formData.append("source_type", sourceType);
+
+  const response = await fetch(`${API_BASE}/transcribe`, {
     method: "POST",
     body: formData,
   });
-  return handleResponse(res);
+  return handleResponse(response);
 }
 
-// Meta
-export const fetchHealth = () => apiGet("/health");
-export const fetchRoles = () => apiGet("/roles");
-export const fetchStoragePaths = () => apiGet("/storage/paths");
-export const updateStoragePaths = (payload) => apiPost("/storage/paths", payload);
+export function listTranscripts() {
+  return apiGet("/transcripts");
+}
 
-// Profiles & sessions
-export const fetchProfiles = () => apiGet("/profiles");
-export const createProfile = (payload) => apiPost("/profiles", payload);
-export const deleteProfile = (id) => apiDelete(`/profiles/${id}`);
-export const fetchSessions = (profileId) => apiGet(`/sessions?profile_id=${encodeURIComponent(profileId)}`);
-export const createSession = (payload) => apiPost("/sessions", payload);
-export const updateSession = (id, payload) => apiPatch(`/sessions/${id}`, payload);
-export const deleteSession = (id) => apiDelete(`/sessions/${id}`);
-export const fetchSessionMessages = (id, limit) =>
-  apiGet(`/sessions/${encodeURIComponent(id)}/messages${limit ? `?limit=${limit}` : ""}`);
-export const fetchSessionCriteria = (id) => apiGet(`/sessions/${encodeURIComponent(id)}/criteria`);
-export const saveSessionCriteria = (id, payload) => apiPost(`/sessions/${encodeURIComponent(id)}/criteria`, payload);
+export function getTranscript(id) {
+  return apiGet(`/transcripts/${encodeURIComponent(id)}`);
+}
 
-// Model settings
-export const fetchModelSettings = (profileId, modelName) =>
-  apiGet(`/model_settings?profile_id=${encodeURIComponent(profileId)}&model_name=${encodeURIComponent(modelName)}`);
-export const saveModelSettings = (payload) => apiPost("/model_settings", payload);
-export const resetModelSettings = (payload) => apiPost("/model_settings/reset_to_defaults", payload);
+export function createTranscript(payload) {
+  return apiPost("/transcripts", payload);
+}
 
-// Models
-export const listModels = () => apiGet("/models");
-export const pullModel = (payload) => apiPost("/models/pull", payload);
-export const pullStatus = (taskId) => apiGet(`/models/pull/${encodeURIComponent(taskId)}`);
-export const pullStatuses = () => apiGet("/models/downloads");
-export const cancelPull = (taskId) => apiPost(`/models/pull/${encodeURIComponent(taskId)}/cancel`);
-export const deleteModelApi = (modelName) => apiDelete(`/models/${encodeURIComponent(modelName)}`);
-export const pausePull = (taskId) => apiPost(`/models/pull/${encodeURIComponent(taskId)}/pause`, {});
-export const resumePull = (taskId) => apiPost(`/models/pull/${encodeURIComponent(taskId)}/resume`, {});
-
-// Chat & transcripts
-export const sendChat = (payload, options = {}) => apiPost("/chat", payload, options);
-export const resetChatSession = (payload) => apiPost("/session/reset", payload);
-export const transcribeFile = (formData) => apiUpload("/transcribe", formData);
-export const parseCriteria = (formData) => apiUpload("/criteria/parse", formData);
-
-export const listTranscripts = (profileId, sessionId) => {
-  const params = new URLSearchParams({ profile_id: profileId });
-  if (sessionId) params.append("session_id", sessionId);
-  return apiGet(`/transcripts?${params.toString()}`);
-};
-export const createTranscript = (payload) => apiPost("/transcripts", payload);
-export const updateTranscriptApi = (id, payload) => apiPatch(`/transcripts/${id}`, payload);
-export const deleteTranscriptApi = (id) => apiDelete(`/transcripts/${id}`);
+export function updateTranscript(id, payload) {
+  return apiPatch(`/transcripts/${encodeURIComponent(id)}`, payload);
+}

@@ -142,6 +142,8 @@ app/db/*.sqlite
 app/db/*.sqlite3
 app/db/localgpt.db
 !app/db/.gitkeep
+app/data/transcripts/*.json
+!app/data/transcripts/.gitkeep
 tmp_logs/**
 !tmp_logs/.gitkeep
 *.wav

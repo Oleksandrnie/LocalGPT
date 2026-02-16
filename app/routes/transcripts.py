@@ -2,72 +2,55 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from .. import db
+from .. import transcript_store
 from ..schemas import TranscriptCreate, TranscriptUpdate
 
 router = APIRouter()
 
 
-def _get_profile_or_404(profile_id: int) -> dict:
-    profile = db.get_profile(profile_id)
-    if not profile or not profile.get("is_active", 1):
-        raise HTTPException(status_code=404, detail="profile_not_found")
-    return profile
-
-
 @router.get("/transcripts")
-def list_transcripts(profile_id: int, session_id: str | None = None):
-    _get_profile_or_404(profile_id)
-    transcripts = db.list_transcripts(profile_id, session_id=session_id)
-    return {"transcripts": transcripts}
+def list_transcripts() -> dict[str, object]:
+    return {"items": transcript_store.list_transcripts()}
+
+
+@router.get("/transcripts/{transcript_id}")
+def get_transcript(transcript_id: str) -> dict[str, object]:
+    transcript = transcript_store.get_transcript(transcript_id)
+    if not transcript:
+        raise HTTPException(status_code=404, detail={"code": "transcript_not_found", "message": "Транскрипт не найден"})
+    return transcript
 
 
 @router.post("/transcripts")
-def create_transcript(req: TranscriptCreate):
-    _get_profile_or_404(req.profile_id)
-    if req.session_id:
-        session = db.get_session(req.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="session_not_found")
-        if session["profile_id"] != req.profile_id:
-            raise HTTPException(status_code=400, detail="session_profile_mismatch")
+def create_transcript(req: TranscriptCreate) -> dict[str, object]:
     try:
-        transcript = db.create_transcript(
-            profile_id=req.profile_id,
-            session_id=req.session_id,
-            name=req.name,
-            content=req.content,
-            source_path=req.source_path,
+        return transcript_store.create_transcript(
+            text=req.text,
+            source_type=req.source_type,
+            source_name=req.source_name,
+            model=req.model,
             language=req.language,
-            timeline=req.timeline,
-            role_keywords=req.role_keywords,
-            labels=req.labels,
+            duration_sec=req.duration_sec,
         )
-        return transcript
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Контент транскрипта обязателен"}) from exc
+        raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Текст обязателен"}) from exc
 
 
 @router.patch("/transcripts/{transcript_id}")
-def update_transcript(transcript_id: int, req: TranscriptUpdate):
-    updated = db.update_transcript(
-        transcript_id,
-        name=req.name,
-        content=req.content,
-        language=req.language,
-        timeline=req.timeline,
-        role_keywords=req.role_keywords,
-        labels=req.labels,
-    )
+def patch_transcript(transcript_id: str, req: TranscriptUpdate) -> dict[str, object]:
+    if req.text is None and req.source_name is None:
+        raise HTTPException(status_code=422, detail={"code": "empty_patch", "message": "Нет данных для обновления"})
+
+    try:
+        updated = transcript_store.update_transcript(
+            transcript_id,
+            text=req.text,
+            source_name=req.source_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Текст обязателен"}) from exc
+
     if not updated:
-        raise HTTPException(status_code=404, detail="transcript_not_found")
+        raise HTTPException(status_code=404, detail={"code": "transcript_not_found", "message": "Транскрипт не найден"})
+
     return updated
-
-
-@router.delete("/transcripts/{transcript_id}")
-def delete_transcript(transcript_id: int):
-    transcript = db.get_transcript(transcript_id)
-    if not transcript:
-        raise HTTPException(status_code=404, detail="transcript_not_found")
-    db.delete_transcript(transcript_id)
-    return {"deleted": transcript_id}

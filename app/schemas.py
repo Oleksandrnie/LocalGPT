@@ -1,86 +1,26 @@
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Literal
 
 from pydantic import BaseModel
 
 
-class ChatRequest(BaseModel):
-    query: str
-    context: str | None = None
-    session_id: str | None = None
-    profile_id: int | None = None
-    transcript: str | None = None
-    criteria: list[str] | None = None
-    model: str | None = None
-    model_name: str | None = None
-    title: str | None = None
-    role: str | None = None
-
-
-class ModelPullRequest(BaseModel):
-    model: str
-
-
-class ProfileCreate(BaseModel):
-    name: str
-    description: str | None = None
-    color: str | None = None
-
-
-class SessionCreate(BaseModel):
-    profile_id: int
-    title: str | None = None
-    model_name: str | None = None
-    role: str | None = None
-
-
-class SessionUpdate(BaseModel):
-    title: str | None = None
-    model_name: str | None = None
-    role: str | None = None
-
-
-class ModelSettingsRequest(BaseModel):
-    profile_id: int
-    model_name: str
-    temperature: float | None = None
-    max_tokens: int | None = None
-    num_ctx: int | None = None
-    mem_turns: int | None = None
-
-
-class ModelSettingsReset(BaseModel):
-    profile_id: int
-    model_name: str
+SourceType = Literal["upload", "recording", "manual"]
 
 
 class TranscriptCreate(BaseModel):
-    profile_id: int
-    session_id: str | None = None
-    name: str
-    content: str
-    source_path: str | None = None
+    text: str
+    source_type: SourceType = "manual"
+    source_name: str | None = None
+    model: str | None = None
     language: str | None = None
-    timeline: list[dict] | None = None
-    role_keywords: dict | None = None
-    labels: dict | None = None
+    duration_sec: float | None = None
 
 
 class TranscriptUpdate(BaseModel):
-    name: str | None = None
-    content: str | None = None
-    language: str | None = None
-    timeline: list[dict] | None = None
-    role_keywords: dict | None = None
-    labels: dict | None = None
+    text: str | None = None
+    source_name: str | None = None
 
 
-class ResetRequest(BaseModel):
-    session_id: str
-    admin_token: str | None = None
-
-
-class StorageUpdateRequest(BaseModel):
-    models_dir: str
-    move_existing: bool = False
+class ModelPrepareRequest(BaseModel):
+    model: str

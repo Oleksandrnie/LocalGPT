@@ -1,33 +1,25 @@
 from __future__ import annotations
 
-import logging
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+ALLOWED_WHISPER_MODELS = (
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 UI_DIR = PROJECT_ROOT / "web_ui"
-PROMPTS_DIR = Path(__file__).with_name("prompts")
-LOG_DIR = PROJECT_ROOT / "tmp_logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-CHAT_LOG_FILE = LOG_DIR / "chat.log"
-
-
-def _parse_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
+DATA_DIR = PROJECT_ROOT / "app" / "data"
 
 
 def _parse_int(name: str, default: int) -> int:
@@ -40,162 +32,64 @@ def _parse_int(name: str, default: int) -> int:
         return default
 
 
-def _ensure_dir(path: Path) -> Path:
+def _resolve_path(raw: str | None, fallback: Path) -> Path:
+    if not raw:
+        return fallback.resolve()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
+models_dir = _resolve_path(os.getenv("MODELS_DIR"), PROJECT_ROOT / "models")
+whisper_models_dir = _resolve_path(os.getenv("WHISPER_MODELS_DIR"), models_dir / "whisper")
+hf_cache_dir = _resolve_path(os.getenv("HF_CACHE_DIR") or os.getenv("HUGGINGFACE_HUB_CACHE"), models_dir / "hf_cache")
+ctranslate2_cache_dir = _resolve_path(
+    os.getenv("CTRANSLATE2_CACHE_DIR") or os.getenv("CT2_TRANSLATORS_CACHE"),
+    models_dir / "ctranslate2_cache",
+)
+transcripts_dir = _resolve_path(os.getenv("TRANSCRIPTS_DIR"), DATA_DIR / "transcripts")
+
+for path in (models_dir, whisper_models_dir, hf_cache_dir, ctranslate2_cache_dir, transcripts_dir):
     path.mkdir(parents=True, exist_ok=True)
-    return path
+
+os.environ["MODELS_DIR"] = str(models_dir)
+os.environ["WHISPER_MODELS_DIR"] = str(whisper_models_dir)
+os.environ["HF_HOME"] = str(hf_cache_dir)
+os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_cache_dir)
+os.environ["HF_CACHE_DIR"] = str(hf_cache_dir)
+os.environ["CTRANSLATE2_CACHE_DIR"] = str(ctranslate2_cache_dir)
+os.environ["CT2_TRANSLATORS_CACHE"] = str(ctranslate2_cache_dir)
+os.environ["TRANSCRIPTS_DIR"] = str(transcripts_dir)
 
 
-def _resolve_models_base() -> Path:
-    env_value = os.getenv("MODELS_DIR")
-    if env_value:
-        return Path(env_value).expanduser().resolve()
-    return PROJECT_ROOT / "models"
-
-
-@dataclass
-class ModelPaths:
-    base: Path
-    ollama: Path
-    whisper: Path
-    hf_cache: Path
-    ctranslate2_cache: Path
-
-    def ensure(self) -> "ModelPaths":
-        for path in (self.base, self.ollama, self.whisper, self.hf_cache, self.ctranslate2_cache):
-            _ensure_dir(path)
-        return self
-
-    def as_response(self) -> dict:
-        return {
-            "base": str(self.base),
-            "ollama": str(self.ollama),
-            "whisper": str(self.whisper),
-            "hf_cache": str(self.hf_cache),
-            "ctranslate2_cache": str(self.ctranslate2_cache),
-        }
-
-
-@dataclass
+@dataclass(frozen=True)
 class Settings:
     env: str
-    base_url: str
-    api_key: str
-    model: str
-    temperature: float
-    max_tokens: int
-    num_ctx: int
-    mem_turns: int
-    admin_token: str
-
-
-MODEL_RECOMMENDATIONS = [
-    {"name": "qwen2.5:3b", "label": "Лёгкая (≈3B)"},
-    {"name": "qwen2.5:7b-instruct", "label": "Инструкционная 7B"},
-    {"name": "qwen2.5-7b-long", "label": "Длинный контекст 7B"},
-    {"name": "llama3:8b", "label": "LLaMA 3 8B"},
-    {"name": "mistral:7b", "label": "Mistral 7B"},
-]
-
-
-def build_model_paths(base_dir: Path | str | None = None) -> ModelPaths:
-    base = Path(base_dir).expanduser().resolve() if base_dir else _resolve_models_base()
-    whisper_env = os.getenv("WHISPER_MODELS_DIR")
-    ollama_env = os.getenv("OLLAMA_MODELS_DIR") or os.getenv("OLLAMA_MODELS")
-    hf_env = os.getenv("HF_CACHE_DIR") or os.getenv("HUGGINGFACE_HUB_CACHE") or os.getenv("HF_HOME")
-    ct2_env = os.getenv("CTRANSLATE2_CACHE_DIR") or os.getenv("CT2_TRANSLATORS_CACHE")
-
-    paths = ModelPaths(
-        base=base,
-        ollama=Path(ollama_env).expanduser() if ollama_env else base / "ollama",
-        whisper=Path(whisper_env).expanduser() if whisper_env else base / "whisper",
-        hf_cache=Path(hf_env).expanduser() if hf_env else base / "hf_cache",
-        ctranslate2_cache=Path(ct2_env).expanduser() if ct2_env else base / "ctranslate2_cache",
-    )
-    return paths.ensure()
-
-
-def apply_model_env(paths: ModelPaths) -> None:
-    os.environ["MODELS_DIR"] = str(paths.base)
-    os.environ["OLLAMA_MODELS"] = str(paths.ollama)
-    os.environ["OLLAMA_MODELS_DIR"] = str(paths.ollama)
-    os.environ["WHISPER_MODELS_DIR"] = str(paths.whisper)
-    os.environ["HF_HOME"] = str(paths.hf_cache)
-    os.environ["HUGGINGFACE_HUB_CACHE"] = str(paths.hf_cache)
-    os.environ["HF_CACHE_DIR"] = str(paths.hf_cache)
-    os.environ["CTRANSLATE2_CACHE_DIR"] = str(paths.ctranslate2_cache)
-    os.environ["CT2_TRANSLATORS_CACHE"] = str(paths.ctranslate2_cache)
+    whisper_default_model: str
+    whisper_compute_type: str
+    whisper_device: str
+    whisper_beam_size: int
+    whisper_fallback_language: str
 
 
 def _load_settings() -> Settings:
+    raw_default_model = (os.getenv("WHISPER_MODEL_SIZE", "small") or "small").strip()
+    default_model = raw_default_model if raw_default_model in ALLOWED_WHISPER_MODELS else "small"
+
     return Settings(
-        env=os.getenv("ENV", "local"),
-        base_url=os.getenv("LOCAL_BASE_URL", "http://localhost:11434/v1"),
-        api_key=os.getenv("LOCAL_API_KEY", "LOCAL-KEY"),
-        model=os.getenv("LOCAL_MODEL", "qwen2.5:3b"),
-        temperature=_parse_float("TEMP", 0.25),
-        max_tokens=_parse_int("MAX_TOKENS", 512),
-        num_ctx=_parse_int("NUM_CTX", 32768),
-        mem_turns=_parse_int("MEM_TURNS", 6),
-        admin_token=os.getenv("ADMIN_TOKEN", ""),
+        env=(os.getenv("ENV", "local") or "local").strip(),
+        whisper_default_model=default_model,
+        whisper_compute_type=(os.getenv("WHISPER_COMPUTE_TYPE", "auto") or "auto").strip(),
+        whisper_device=(os.getenv("WHISPER_DEVICE", "auto") or "auto").strip(),
+        whisper_beam_size=max(1, _parse_int("WHISPER_BEAM_SIZE", 5)),
+        whisper_fallback_language=(os.getenv("WHISPER_FALLBACK_LANGUAGE", "ru") or "ru").strip().lower(),
     )
 
 
-def _move_tree(source: Path, target: Path) -> None:
-    if source.resolve() == target.resolve():
-        return
-    if not source.exists():
-        _ensure_dir(target)
-        return
-    _ensure_dir(target.parent)
-    try:
-        shutil.move(str(source), str(target))
-    except shutil.Error:
-        # shutil.move fails if target is inside source or already exists — fallback to merge copy
-        shutil.copytree(source, target, dirs_exist_ok=True)
-
-
-MODEL_PATHS = build_model_paths()
-apply_model_env(MODEL_PATHS)
 SETTINGS = _load_settings()
-DEFAULT_SETTINGS = {
-    "temperature": SETTINGS.temperature,
-    "max_tokens": SETTINGS.max_tokens,
-    "num_ctx": SETTINGS.num_ctx,
-    "mem_turns": SETTINGS.mem_turns,
-}
-OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(MODEL_PATHS.ollama)}
-
-
-def update_model_paths(new_base: Path | str, *, move_existing: bool = False) -> ModelPaths:
-    global MODEL_PATHS, OLLAMA_ENV
-    old_paths = MODEL_PATHS
-    target_paths = build_model_paths(new_base)
-    if move_existing:
-        for src, dst in zip(
-            (old_paths.ollama, old_paths.whisper, old_paths.hf_cache, old_paths.ctranslate2_cache),
-            (target_paths.ollama, target_paths.whisper, target_paths.hf_cache, target_paths.ctranslate2_cache),
-        ):
-            _move_tree(src, dst)
-    MODEL_PATHS = target_paths.ensure()
-    apply_model_env(MODEL_PATHS)
-    OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(MODEL_PATHS.ollama)}
-    return MODEL_PATHS
-
-
-def log_startup(logger: logging.Logger) -> None:
-    logger.info(
-        "Models dir: %s (ollama=%s, whisper=%s, hf_cache=%s, ctranslate2_cache=%s)",
-        MODEL_PATHS.base,
-        MODEL_PATHS.ollama,
-        MODEL_PATHS.whisper,
-        MODEL_PATHS.hf_cache,
-        MODEL_PATHS.ctranslate2_cache,
-    )
-    logger.info(
-        "Active model: %s • ctx=%s • max_tokens=%s • temp=%s • mem_turns=%s",
-        SETTINGS.model,
-        SETTINGS.num_ctx,
-        SETTINGS.max_tokens,
-        SETTINGS.temperature,
-        SETTINGS.mem_turns,
-    )
+MODELS_DIR = models_dir
+WHISPER_MODELS_DIR = whisper_models_dir
+HF_CACHE_DIR = hf_cache_dir
+CTRANSLATE2_CACHE_DIR = ctranslate2_cache_dir
+TRANSCRIPTS_DIR = transcripts_dir
