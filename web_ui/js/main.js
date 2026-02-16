@@ -41,6 +41,9 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    iosShortcutTitle: "Скопировать iOS URL: {url}",
+    iosCopied: "iOS URL скопирован в буфер.",
+    iosCopyFailed: "Не удалось скопировать iOS URL.",
     outputPlaceholder: "Здесь появится результат транскрибации...",
     historyEmpty: "История пуста.",
     emptyPreview: "(пусто)",
@@ -122,6 +125,9 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    iosShortcutTitle: "Скопіювати iOS URL: {url}",
+    iosCopied: "iOS URL скопійовано в буфер.",
+    iosCopyFailed: "Не вдалося скопіювати iOS URL.",
     outputPlaceholder: "Тут з'явиться результат транскрибації...",
     historyEmpty: "Історія порожня.",
     emptyPreview: "(порожньо)",
@@ -203,6 +209,9 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    iosShortcutTitle: "Copy iOS URL: {url}",
+    iosCopied: "iOS URL copied to clipboard.",
+    iosCopyFailed: "Failed to copy iOS URL.",
     outputPlaceholder: "Transcription result will appear here...",
     historyEmpty: "History is empty.",
     emptyPreview: "(empty)",
@@ -295,6 +304,9 @@ const elements = {
   btnCloseModal: document.getElementById("btnCloseModal"),
   btnSendFromModal: document.getElementById("btnSendFromModal"),
   btnDeleteFromModal: document.getElementById("btnDeleteFromModal"),
+  iosQuickLink: document.getElementById("iosQuickLink"),
+  iosQuickLinkText: document.getElementById("iosQuickLinkText"),
+  appToast: document.getElementById("appToast"),
   langFlags: Array.from(document.querySelectorAll(".lang-flag")),
 };
 
@@ -310,10 +322,12 @@ const state = {
   currentDownloadTask: null,
   serverHealthy: false,
   lastHealthError: null,
+  iosUrl: null,
   language: "ru",
 };
 
 let recorder = null;
+let toastTimer = null;
 
 function formatText(template, params = {}) {
   return String(template || "").replace(/\{(\w+)\}/g, (_, key) => {
@@ -430,6 +444,79 @@ function formatFileSize(bytes) {
   return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function sanitizeUrl(rawUrl) {
+  if (!rawUrl) return null;
+  try {
+    const parsed = new URL(String(rawUrl));
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function fallbackIosUrlFromLocation() {
+  const host = (window.location.hostname || "").trim().toLowerCase();
+  if (!host || host === "localhost" || host === "127.0.0.1" || host === "::1") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  url.protocol = "https:";
+  url.pathname = "/ui/gui_html.html";
+  url.search = "";
+  url.hash = "";
+
+  if (!url.port || url.port === "8000") {
+    url.port = "8443";
+  }
+
+  return url.toString();
+}
+
+function showToast(message, durationMs = 2200) {
+  if (!elements.appToast) return;
+
+  elements.appToast.textContent = message || "";
+  elements.appToast.hidden = !message;
+
+  if (toastTimer) {
+    window.clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+
+  if (!message) return;
+  toastTimer = window.setTimeout(() => {
+    elements.appToast.hidden = true;
+    toastTimer = null;
+  }, durationMs);
+}
+
+async function copyText(text) {
+  const value = String(text || "");
+  if (!value) return false;
+
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "readonly");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    area.style.pointerEvents = "none";
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+}
+
 function currentModel() {
   return (elements.modelSelect.value || "small").trim();
 }
@@ -464,6 +551,25 @@ function applyVoiceLabel() {
     return;
   }
   elements.voiceActivity.textContent = t("voiceIdle");
+}
+
+function renderIosQuickLink() {
+  if (!elements.iosQuickLink || !elements.iosQuickLinkText) return;
+
+  const resolvedUrl = sanitizeUrl(state.iosUrl) || sanitizeUrl(fallbackIosUrlFromLocation());
+  if (!resolvedUrl) {
+    delete elements.iosQuickLink.dataset.url;
+    elements.iosQuickLink.hidden = true;
+    return;
+  }
+
+  elements.iosQuickLink.hidden = false;
+  elements.iosQuickLink.dataset.url = resolvedUrl;
+  elements.iosQuickLinkText.textContent = resolvedUrl;
+
+  const title = t("iosShortcutTitle", { url: resolvedUrl });
+  elements.iosQuickLink.title = title;
+  elements.iosQuickLink.setAttribute("aria-label", title);
 }
 
 function applyStaticTexts() {
@@ -503,6 +609,8 @@ function applyStaticTexts() {
   } else {
     renderModalContent(state.modalTranscript);
   }
+
+  renderIosQuickLink();
 }
 
 function setLanguage(language, { persist = true } = {}) {
@@ -607,14 +715,17 @@ function selectTranscript(record) {
 
 async function loadHealth() {
   try {
-    await fetchHealth();
+    const health = await fetchHealth();
     state.serverHealthy = true;
     state.lastHealthError = null;
+    state.iosUrl = sanitizeUrl(health?.ios_url) || null;
   } catch (error) {
     state.serverHealthy = false;
     state.lastHealthError = error;
+    state.iosUrl = sanitizeUrl(fallbackIosUrlFromLocation()) || null;
   }
   renderHealthStatus();
+  renderIosQuickLink();
 }
 
 async function loadModels() {
@@ -924,6 +1035,18 @@ function bindEvents() {
       setLanguage(lang);
     });
   }
+
+  elements.iosQuickLink?.addEventListener("click", async () => {
+    const url = elements.iosQuickLink?.dataset?.url || "";
+    if (!url) return;
+
+    const copied = await copyText(url);
+    if (copied) {
+      showToast(`${t("iosCopied")} ${url}`);
+    } else {
+      showToast(t("iosCopyFailed"));
+    }
+  });
 }
 
 async function bootstrap() {

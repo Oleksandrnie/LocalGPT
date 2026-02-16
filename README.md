@@ -24,6 +24,25 @@ LocalGPT теперь работает как локальный транскр�
    ```
 4. UI: `http://127.0.0.1:8000/ui/gui_html.html`
 
+## Быстрый запуск на Mac через Automator (LTrnsrb)
+1. В проекте уже есть скрипт: `tools/LTrnsrb.sh`.
+2. Откройте `Automator` -> `Application`.
+3. Добавьте действие `Run Shell Script`.
+4. Вставьте одну строку:
+   ```bash
+   /Users/oleksandrniemchenko/my_personal_files/LocalGPT/tools/LTrnsrb.sh
+   ```
+5. Сохраните приложение как `LTrnsrb`.
+
+Что делает `LTrnsrb`:
+- проверяет, запущены ли backend и Caddy;
+- при необходимости запускает их в фоне (`nohup`) без открытия Terminal;
+- открывает UI по LAN URL `https://<ваш-ip>:8443/ui/gui_html.html` (или fallback на localhost).
+
+Логи launcher-а:
+- backend: `/tmp/LTrnsrb/backend.log`
+- caddy: `/tmp/LTrnsrb/caddy.log`
+
 ## LAN + iPhone (HTTPS через Caddy)
 Для записи голоса на iPhone нужен HTTPS. Для этого используется локальный reverse proxy Caddy.
 
@@ -57,6 +76,12 @@ https://Oleksandrs-MacBook-Pro.local:8443 {
 3. На Mac открыть:
    `https://Oleksandrs-MacBook-Pro.local:8443/ui/gui_html.html`
 4. На iPhone открыть тот же URL (в той же Wi-Fi сети).
+
+Подсказка в UI:
+- в desktop-версии в правом нижнем углу есть полупрозрачный значок `!`;
+- при наведении он становится ярким и показывает текущий iOS URL;
+- при клике URL копируется в буфер (без открытия новой страницы);
+- на мобильных экранах этот значок скрыт.
 
 ### 4) Сертификат Caddy для iPhone
 При первом запуске `caddy run --config Caddyfile.lan` Caddy автоматически генерирует локальный CA сертификат.
@@ -129,6 +154,8 @@ cp "/Users/oleksandrniemchenko/Library/Application Support/Caddy/pki/authorities
 - `HF_ENDPOINT` (по умолчанию `https://huggingface.co`)
 - `HF_FALLBACK_ENDPOINT` (опциональный резервный endpoint)
 - `HF_TRUST_ENV` (`1` если нужно использовать `HTTP_PROXY`/`HTTPS_PROXY`)
+- `IOS_ACCESS_URL` (опционально фиксирует URL для iPhone-подсказки в UI)
+- `IOS_HTTPS_PORT` (порт для генерации iPhone URL, если `IOS_ACCESS_URL` пуст)
 
 ## Smoke checklist
 1. Выбрать аудио/видео файл -> транскрибация стартует автоматически.

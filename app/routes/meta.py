@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import socket
+
 from fastapi import APIRouter, HTTPException
+from fastapi import Request
 
 from .. import config, whisper_downloads
 from ..schemas import ModelPrepareRequest
@@ -8,14 +11,42 @@ from ..schemas import ModelPrepareRequest
 router = APIRouter()
 
 
+def _detect_lan_ip() -> str | None:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("1.1.1.1", 80))
+            lan_ip = sock.getsockname()[0]
+    except OSError:
+        return None
+
+    if not lan_ip or lan_ip.startswith("127."):
+        return None
+    return lan_ip
+
+
+def _get_ios_url(request: Request) -> str | None:
+    if config.SETTINGS.ios_access_url:
+        return config.SETTINGS.ios_access_url
+
+    host = (request.headers.get("host") or "").strip()
+    if host and not host.startswith(("127.0.0.1", "localhost", "[::1]")):
+        return f"https://{host}/ui/gui_html.html"
+
+    lan_ip = _detect_lan_ip()
+    if lan_ip:
+        return f"https://{lan_ip}:{config.SETTINGS.ios_https_port}/ui/gui_html.html"
+    return None
+
+
 @router.get("/health")
-def health() -> dict[str, object]:
+def health(request: Request) -> dict[str, object]:
     return {
         "status": "ok",
         "env": config.SETTINGS.env,
         "default_model": config.SETTINGS.whisper_default_model,
         "whisper_models_dir": str(config.WHISPER_MODELS_DIR),
         "transcripts_dir": str(config.TRANSCRIPTS_DIR),
+        "ios_url": _get_ios_url(request),
     }
 
 

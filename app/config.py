@@ -79,11 +79,14 @@ class Settings:
     whisper_device: str
     whisper_beam_size: int
     whisper_fallback_language: str
+    ios_access_url: str | None
+    ios_https_port: int
 
 
 def _load_settings() -> Settings:
     raw_default_model = (os.getenv("WHISPER_MODEL_SIZE", "small") or "small").strip()
     default_model = raw_default_model if raw_default_model in ALLOWED_WHISPER_MODELS else "small"
+    ios_access_url = (os.getenv("IOS_ACCESS_URL", "") or "").strip() or None
 
     return Settings(
         env=(os.getenv("ENV", "local") or "local").strip(),
@@ -92,6 +95,8 @@ def _load_settings() -> Settings:
         whisper_device=(os.getenv("WHISPER_DEVICE", "auto") or "auto").strip(),
         whisper_beam_size=max(1, _parse_int("WHISPER_BEAM_SIZE", 5)),
         whisper_fallback_language=(os.getenv("WHISPER_FALLBACK_LANGUAGE", "ru") or "ru").strip().lower(),
+        ios_access_url=ios_access_url,
+        ios_https_port=max(1, _parse_int("IOS_HTTPS_PORT", 8443)),
     )
 
 
