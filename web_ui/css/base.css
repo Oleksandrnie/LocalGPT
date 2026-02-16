@@ -345,6 +345,7 @@ textarea {
   display: flex;
   gap: 8px;
   align-items: flex-start;
+  min-width: 0;
   background: #101b2f;
   border: 1px solid #2a3d62;
   border-radius: 10px;
@@ -370,6 +371,7 @@ textarea {
 
 .history-open {
   flex: 1;
+  min-width: 0;
   border: 0;
   background: transparent;
   padding: 0;
@@ -380,6 +382,8 @@ textarea {
 }
 
 .history-delete {
+  flex: 0 0 auto;
+  align-self: flex-start;
   width: 24px;
   min-width: 24px;
   height: 24px;

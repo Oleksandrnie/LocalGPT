@@ -24,7 +24,9 @@ _DEFAULT_HF_FALLBACK_ENDPOINT = "https://hf-mirror.com"
 
 
 class PrepareModelError(Exception):
-    pass
+    def __init__(self, message: str, *, code: str = "model_prepare_failed") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _now() -> float:
@@ -38,6 +40,7 @@ def _sanitize_task(task: dict[str, Any]) -> dict[str, Any]:
         "repo_id": task.get("repo_id"),
         "state": task.get("state"),
         "message": task.get("message"),
+        "error_code": task.get("error_code"),
         "percent": task.get("percent", 0.0),
         "speed_bps": task.get("speed_bps", 0.0),
         "downloaded_bytes": task.get("downloaded_bytes", 0),
@@ -145,7 +148,7 @@ def _get_model_files(client: httpx.Client, endpoint: str, repo_id: str) -> list[
         )
 
     if not files:
-        raise PrepareModelError("Список файлов модели пуст")
+        raise PrepareModelError("Список файлов модели пуст", code="download_empty_file_list")
 
     for item in files:
         if item["size"] > 0:
@@ -230,11 +233,12 @@ def _directory_size(path: Path) -> int:
     return total
 
 
-def _format_download_error(endpoint: str, exc: BaseException) -> str:
+def _format_download_error(endpoint: str, exc: BaseException) -> tuple[str, str]:
     host = _endpoint_host(endpoint)
 
     if _has_invalid_hf_token() or isinstance(exc, UnicodeEncodeError):
         return (
+            "invalid_hf_token",
             "HF_TOKEN в .env содержит недопустимые символы. "
             "Используйте только ASCII токен вида hf_xxx (без кавычек) "
             "или удалите строку HF_TOKEN и используйте HF_FALLBACK_ENDPOINT."
@@ -242,41 +246,44 @@ def _format_download_error(endpoint: str, exc: BaseException) -> str:
 
     if _is_dns_error(exc):
         return (
+            "download_dns_error",
             f"Не удалось подключиться к {host} (ошибка DNS). "
             "Проверьте интернет/VPN/DNS. "
             "При необходимости задайте HF_ENDPOINT в .env."
         )
 
     if isinstance(exc, httpx.TimeoutException):
-        return f"Тайм-аут загрузки модели с {host}. Попробуйте снова."
+        return ("download_timeout", f"Тайм-аут загрузки модели с {host}. Попробуйте снова.")
 
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         if status == 404:
-            return f"Репозиторий модели недоступен на {host} (404)."
+            return ("download_model_not_found", f"Репозиторий модели недоступен на {host} (404).")
         if status in {401, 403}:
             if _hf_token():
-                return f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN."
+                return ("download_auth_failed", f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN.")
             return (
+                "download_auth_required",
                 f"Нет доступа к модели на {host} (HTTP {status}). "
                 "Добавьте HF_TOKEN в .env (или выполните huggingface-cli login) "
                 "или задайте HF_FALLBACK_ENDPOINT (например https://hf-mirror.com), "
                 "затем перезапустите сервер."
             )
-        return f"Ошибка HTTP {status} при загрузке модели с {host}."
+        return ("download_http_error", f"Ошибка HTTP {status} при загрузке модели с {host}.")
 
     status = _http_status_from_exception(exc)
     if status in {401, 403}:
         if _hf_token():
-            return f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN."
+            return ("download_auth_failed", f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN.")
         return (
+            "download_auth_required",
             f"Нет доступа к модели на {host} (HTTP {status}). "
             "Добавьте HF_TOKEN в .env (или выполните huggingface-cli login) "
             "или задайте HF_FALLBACK_ENDPOINT (например https://hf-mirror.com), "
             "затем перезапустите сервер."
         )
 
-    return str(exc)
+    return ("model_prepare_failed", str(exc))
 
 
 def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[int, int, float]:
@@ -426,6 +433,7 @@ def _run_prepare_task(task_id: str) -> None:
                     "HF_TOKEN содержит не-ASCII символы, токен будет проигнорирован. "
                     "Укажите ASCII токен вида hf_xxx или удалите HF_TOKEN."
                 ),
+                error_code="invalid_hf_token",
             )
 
         endpoints = _huggingface_endpoints()
@@ -443,37 +451,40 @@ def _run_prepare_task(task_id: str) -> None:
                         )
                         downloaded_bytes, total_bytes, final_speed = _download_via_hf_hub(task_id, model, endpoint)
                     except Exception as fallback_exc:
-                        error_message = _format_download_error(endpoint, fallback_exc)
+                        error_code, error_message = _format_download_error(endpoint, fallback_exc)
                         has_next_endpoint = idx < len(endpoints) - 1
 
                         if has_next_endpoint:
                             _update_task(
                                 task_id,
                                 message=f"{error_message} Пробуем резервный endpoint...",
+                                error_code=error_code,
                             )
                             continue
 
-                        raise PrepareModelError(error_message) from fallback_exc
+                        raise PrepareModelError(error_message, code=error_code) from fallback_exc
                 else:
-                    error_message = _format_download_error(endpoint, exc)
+                    error_code, error_message = _format_download_error(endpoint, exc)
                     has_next_endpoint = idx < len(endpoints) - 1
 
                     if has_next_endpoint:
                         _update_task(
                             task_id,
                             message=f"{error_message} Пробуем резервный endpoint...",
+                            error_code=error_code,
                         )
                         continue
 
-                    raise PrepareModelError(error_message) from exc
+                    raise PrepareModelError(error_message, code=error_code) from exc
 
             if not is_local_model_ready(model):
-                raise PrepareModelError("Модель загружена не полностью")
+                raise PrepareModelError("Модель загружена не полностью", code="download_incomplete_model")
 
             _update_task(
                 task_id,
                 state="completed",
                 message="Модель готова",
+                error_code=None,
                 percent=100.0,
                 speed_bps=final_speed,
                 downloaded_bytes=downloaded_bytes,
@@ -483,10 +494,12 @@ def _run_prepare_task(task_id: str) -> None:
             return
 
     except Exception as exc:
+        error_code = getattr(exc, "code", "model_prepare_failed")
         _update_task(
             task_id,
             state="error",
             message=str(exc),
+            error_code=error_code,
             finished_at=_now(),
         )
     finally:
@@ -509,6 +522,7 @@ def start_prepare_task(model_name: str) -> dict[str, Any]:
             "repo_id": repository_for_model(model),
             "state": "completed",
             "message": "Модель уже доступна локально",
+            "error_code": None,
             "percent": 100.0,
             "speed_bps": 0.0,
             "downloaded_bytes": 0,
@@ -534,6 +548,7 @@ def start_prepare_task(model_name: str) -> dict[str, Any]:
             "repo_id": repository_for_model(model),
             "state": "pending",
             "message": "Подготовка загрузки",
+            "error_code": None,
             "percent": 0.0,
             "speed_bps": 0.0,
             "downloaded_bytes": 0,

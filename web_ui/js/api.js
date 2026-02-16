@@ -19,10 +19,15 @@ async function handleResponse(response) {
     typeof detail === "string"
       ? detail
       : detail?.message || parsed?.message || `HTTP ${response.status}`;
+  const code =
+    typeof detail === "string"
+      ? parsed?.code
+      : detail?.code || parsed?.code;
 
   const error = new Error(message);
   error.status = response.status;
   error.payload = parsed;
+  error.code = code || null;
   throw error;
 }
 

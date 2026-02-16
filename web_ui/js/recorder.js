@@ -17,6 +17,14 @@ function extensionForMime(mimeType) {
   return "bin";
 }
 
+function microphoneErrorCode(error) {
+  const name = String(error?.name || "");
+  if (name === "NotAllowedError" || name === "SecurityError") return "mic_permission_denied";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "mic_not_found";
+  if (name === "NotReadableError" || name === "TrackStartError") return "mic_unavailable";
+  return "mic_access_failed";
+}
+
 export class VoiceRecorder {
   constructor({ minDurationSeconds = 3, onStateChange, onReady, onTooShort, onError, onVoiceLevel }) {
     this.minDurationSeconds = minDurationSeconds;
@@ -59,7 +67,7 @@ export class VoiceRecorder {
 
   async start() {
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      this.onError?.("Браузер не поддерживает запись голоса.");
+      this.onError?.({ code: "recorder_unsupported" });
       return;
     }
 
@@ -83,7 +91,7 @@ export class VoiceRecorder {
       };
 
       recorder.onerror = () => {
-        this.onError?.("Ошибка записи голоса.");
+        this.onError?.({ code: "recorder_failed" });
       };
 
       recorder.onstop = () => {
@@ -116,7 +124,10 @@ export class VoiceRecorder {
     } catch (error) {
       this._stopVoiceMonitor();
       this._stopTracks();
-      this.onError?.(error?.message || "Не удалось получить доступ к микрофону.");
+      this.onError?.({
+        code: microphoneErrorCode(error),
+        message: error?.message || "",
+      });
     }
   }
 

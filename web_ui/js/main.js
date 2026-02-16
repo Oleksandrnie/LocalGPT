@@ -67,6 +67,32 @@ const I18N = {
     sentToMain: "Текст отправлен в основное поле.",
     deleted: "Запись удалена.",
     deleteError: "Ошибка удаления: {error}",
+    errUnknown: "Неизвестная ошибка.",
+    errNetwork: "Нет связи с сервером. Проверьте сеть и перезапустите запрос.",
+    errInvalidModel: "Выбрана недопустимая модель Whisper.",
+    errEmptyTranscription: "Whisper вернул пустую транскрибацию.",
+    errModelPrepareFailed: "Не удалось подготовить модель Whisper.",
+    errAudioFileMissing: "Временный файл транскрибации не найден.",
+    errTranscriptionFailed: "Транскрибация завершилась ошибкой.",
+    errTranscriptNotFound: "Транскрипт не найден.",
+    errEmptyText: "Текст обязателен.",
+    errEmptyPatch: "Нет данных для обновления.",
+    errTaskNotFound: "Задача подготовки модели не найдена.",
+    errInvalidHFToken: "HF_TOKEN содержит недопустимые символы.",
+    errDownloadDns: "Ошибка DNS при загрузке модели.",
+    errDownloadTimeout: "Превышен тайм-аут загрузки модели.",
+    errDownloadModelNotFound: "Репозиторий модели не найден.",
+    errDownloadAuthRequired: "Нет доступа к модели. Нужен HF_TOKEN или fallback endpoint.",
+    errDownloadAuthFailed: "Нет доступа к модели даже с HF_TOKEN.",
+    errDownloadHttp: "HTTP ошибка при загрузке модели.",
+    errDownloadIncomplete: "Модель загружена не полностью.",
+    errDownloadEmptyList: "Сервер вернул пустой список файлов модели.",
+    errRecorderUnsupported: "Браузер не поддерживает запись голоса.",
+    errRecorderFailed: "Ошибка записи голоса.",
+    errMicPermissionDenied: "Доступ к микрофону запрещен.",
+    errMicNotFound: "Микрофон не найден.",
+    errMicUnavailable: "Микрофон занят другим приложением.",
+    errMicAccessFailed: "Не удалось получить доступ к микрофону.",
     downloadModel: "Модель: {model}",
     downloadSpeed: "Скорость: {speed}",
     downloadPreparing: "Подготовка...",
@@ -122,6 +148,32 @@ const I18N = {
     sentToMain: "Текст відправлено в основне поле.",
     deleted: "Запис видалено.",
     deleteError: "Помилка видалення: {error}",
+    errUnknown: "Невідома помилка.",
+    errNetwork: "Немає зв'язку із сервером. Перевірте мережу та повторіть запит.",
+    errInvalidModel: "Вибрано недопустиму модель Whisper.",
+    errEmptyTranscription: "Whisper повернув порожню транскрипцію.",
+    errModelPrepareFailed: "Не вдалося підготувати модель Whisper.",
+    errAudioFileMissing: "Тимчасовий файл транскрипції не знайдено.",
+    errTranscriptionFailed: "Транскрибація завершилася з помилкою.",
+    errTranscriptNotFound: "Транскрипт не знайдено.",
+    errEmptyText: "Текст обов'язковий.",
+    errEmptyPatch: "Немає даних для оновлення.",
+    errTaskNotFound: "Задачу підготовки моделі не знайдено.",
+    errInvalidHFToken: "HF_TOKEN містить недопустимі символи.",
+    errDownloadDns: "DNS помилка під час завантаження моделі.",
+    errDownloadTimeout: "Перевищено тайм-аут завантаження моделі.",
+    errDownloadModelNotFound: "Репозиторій моделі не знайдено.",
+    errDownloadAuthRequired: "Немає доступу до моделі. Потрібен HF_TOKEN або fallback endpoint.",
+    errDownloadAuthFailed: "Немає доступу до моделі навіть з HF_TOKEN.",
+    errDownloadHttp: "HTTP помилка під час завантаження моделі.",
+    errDownloadIncomplete: "Модель завантажено не повністю.",
+    errDownloadEmptyList: "Сервер повернув порожній список файлів моделі.",
+    errRecorderUnsupported: "Браузер не підтримує запис голосу.",
+    errRecorderFailed: "Помилка запису голосу.",
+    errMicPermissionDenied: "Доступ до мікрофона заборонено.",
+    errMicNotFound: "Мікрофон не знайдено.",
+    errMicUnavailable: "Мікрофон зайнятий іншим застосунком.",
+    errMicAccessFailed: "Не вдалося отримати доступ до мікрофона.",
     downloadModel: "Модель: {model}",
     downloadSpeed: "Швидкість: {speed}",
     downloadPreparing: "Підготовка...",
@@ -177,6 +229,32 @@ const I18N = {
     sentToMain: "Text sent to main field.",
     deleted: "Record deleted.",
     deleteError: "Delete error: {error}",
+    errUnknown: "Unknown error.",
+    errNetwork: "Server connection failed. Check your network and try again.",
+    errInvalidModel: "Invalid Whisper model selected.",
+    errEmptyTranscription: "Whisper returned an empty transcription.",
+    errModelPrepareFailed: "Failed to prepare Whisper model.",
+    errAudioFileMissing: "Temporary transcription file was not found.",
+    errTranscriptionFailed: "Transcription failed.",
+    errTranscriptNotFound: "Transcript was not found.",
+    errEmptyText: "Text is required.",
+    errEmptyPatch: "No data provided for update.",
+    errTaskNotFound: "Model preparation task was not found.",
+    errInvalidHFToken: "HF_TOKEN contains invalid characters.",
+    errDownloadDns: "DNS error while downloading model.",
+    errDownloadTimeout: "Model download timed out.",
+    errDownloadModelNotFound: "Model repository was not found.",
+    errDownloadAuthRequired: "Model access denied. Add HF_TOKEN or fallback endpoint.",
+    errDownloadAuthFailed: "Model access denied even with HF_TOKEN.",
+    errDownloadHttp: "HTTP error while downloading model.",
+    errDownloadIncomplete: "Model download is incomplete.",
+    errDownloadEmptyList: "Server returned an empty model file list.",
+    errRecorderUnsupported: "Browser does not support voice recording.",
+    errRecorderFailed: "Voice recording error.",
+    errMicPermissionDenied: "Microphone permission denied.",
+    errMicNotFound: "No microphone found.",
+    errMicUnavailable: "Microphone is busy in another app.",
+    errMicAccessFailed: "Failed to access microphone.",
     downloadModel: "Model: {model}",
     downloadSpeed: "Speed: {speed}",
     downloadPreparing: "Preparing...",
@@ -231,7 +309,7 @@ const state = {
   modelPrepareTaskId: null,
   currentDownloadTask: null,
   serverHealthy: false,
-  lastHealthError: "",
+  lastHealthError: null,
   language: "ru",
 };
 
@@ -248,6 +326,73 @@ function t(key, params = {}) {
   const dict = I18N[state.language] || I18N.ru;
   const template = dict[key] ?? I18N.ru[key] ?? key;
   return formatText(template, params);
+}
+
+const ERROR_TEXT_KEY_BY_CODE = {
+  invalid_model: "errInvalidModel",
+  empty_transcription: "errEmptyTranscription",
+  model_prepare_failed: "errModelPrepareFailed",
+  audio_file_missing: "errAudioFileMissing",
+  transcription_failed: "errTranscriptionFailed",
+  transcript_not_found: "errTranscriptNotFound",
+  empty_text: "errEmptyText",
+  empty_patch: "errEmptyPatch",
+  task_not_found: "errTaskNotFound",
+  invalid_hf_token: "errInvalidHFToken",
+  download_dns_error: "errDownloadDns",
+  download_timeout: "errDownloadTimeout",
+  download_model_not_found: "errDownloadModelNotFound",
+  download_auth_required: "errDownloadAuthRequired",
+  download_auth_failed: "errDownloadAuthFailed",
+  download_http_error: "errDownloadHttp",
+  download_incomplete_model: "errDownloadIncomplete",
+  download_empty_file_list: "errDownloadEmptyList",
+  recorder_unsupported: "errRecorderUnsupported",
+  recorder_failed: "errRecorderFailed",
+  mic_permission_denied: "errMicPermissionDenied",
+  mic_not_found: "errMicNotFound",
+  mic_unavailable: "errMicUnavailable",
+  mic_access_failed: "errMicAccessFailed",
+  prepare_timeout: "prepareTimeout",
+};
+
+function localizeError(errorLike) {
+  const code = (errorLike && typeof errorLike === "object" && (errorLike.code || errorLike.error_code))
+    ? String(errorLike.code || errorLike.error_code)
+    : "";
+
+  const key = ERROR_TEXT_KEY_BY_CODE[code];
+  if (key) {
+    return t(key);
+  }
+
+  const message = typeof errorLike === "string"
+    ? errorLike
+    : String(errorLike?.message || "");
+
+  if (!message) {
+    return t("errUnknown");
+  }
+
+  const normalized = message.trim();
+  if (!normalized) {
+    return t("errUnknown");
+  }
+
+  if (normalized === "prepare_timeout") {
+    return t("prepareTimeout");
+  }
+
+  if (
+    normalized === "Failed to fetch"
+    || normalized === "Load failed"
+    || /networkerror/i.test(normalized)
+    || /network request failed/i.test(normalized)
+  ) {
+    return t("errNetwork");
+  }
+
+  return normalized;
 }
 
 function setBusy(value) {
@@ -389,6 +534,13 @@ function renderDownloadWidget(task) {
   elements.downloadPercent.textContent = `${Math.max(0, Math.min(100, Number(task.percent || 0))).toFixed(1)}%`;
   elements.downloadProgress.value = Math.max(0, Math.min(100, Number(task.percent || 0)));
   elements.downloadSpeed.textContent = t("downloadSpeed", { speed: formatSpeed(task.speed_bps) });
+  if (task.error_code) {
+    elements.downloadMessage.textContent = localizeError({
+      code: task.error_code || null,
+      message: task.message || "",
+    });
+    return;
+  }
   elements.downloadMessage.textContent = task.message || t("downloadPreparing");
 }
 
@@ -404,7 +556,9 @@ async function ensureModelReady(model) {
   }
 
   if (started.state === "error") {
-    throw new Error(started.message || t("errorGeneric", { error: "model_prepare_failed" }));
+    const error = new Error(started.message || "model_prepare_failed");
+    error.code = started.error_code || "model_prepare_failed";
+    throw error;
   }
 
   const maxPolls = 3600;
@@ -420,11 +574,15 @@ async function ensureModelReady(model) {
     }
 
     if (current.state === "error") {
-      throw new Error(current.message || t("errorGeneric", { error: "model_prepare_failed" }));
+      const error = new Error(current.message || "model_prepare_failed");
+      error.code = current.error_code || "model_prepare_failed";
+      throw error;
     }
   }
 
-  throw new Error("prepare_timeout");
+  const timeoutError = new Error("prepare_timeout");
+  timeoutError.code = "prepare_timeout";
+  throw timeoutError;
 }
 
 function renderHealthStatus() {
@@ -434,7 +592,7 @@ function renderHealthStatus() {
   }
 
   if (state.lastHealthError) {
-    setStatus(elements.healthStatus, t("serverDown", { error: state.lastHealthError }), "error");
+    setStatus(elements.healthStatus, t("serverDown", { error: localizeError(state.lastHealthError) }), "error");
     return;
   }
 
@@ -451,10 +609,10 @@ async function loadHealth() {
   try {
     await fetchHealth();
     state.serverHealthy = true;
-    state.lastHealthError = "";
+    state.lastHealthError = null;
   } catch (error) {
     state.serverHealthy = false;
-    state.lastHealthError = error.message || String(error);
+    state.lastHealthError = error;
   }
   renderHealthStatus();
 }
@@ -505,7 +663,7 @@ async function loadHistory({ keepSelection = true } = {}) {
 
     renderHistoryList(elements.historyList, state.history, state.activeTranscriptId, { t });
   } catch (error) {
-    setTranscribeStatus(t("historyLoadError", { error: error.message || error }), "error");
+    setTranscribeStatus(t("historyLoadError", { error: localizeError(error) }), "error");
   }
 }
 
@@ -526,8 +684,7 @@ async function runTranscription(file, sourceType) {
     const symbols = (result?.text || "").length;
     setTranscribeStatus(t("doneSymbols", { count: symbols }), "success");
   } catch (error) {
-    const raw = error?.message || String(error);
-    const message = raw === "prepare_timeout" ? t("prepareTimeout") : raw;
+    const message = localizeError(error);
     setTranscribeStatus(t("errorGeneric", { error: message }), "error");
   } finally {
     setBusy(false);
@@ -558,7 +715,7 @@ async function saveTranscriptText() {
     await loadHistory();
     setTranscribeStatus(t("savedToHistory"), "success");
   } catch (error) {
-    setTranscribeStatus(t("saveError", { error: error.message || error }), "error");
+    setTranscribeStatus(t("saveError", { error: localizeError(error) }), "error");
   }
 }
 
@@ -595,7 +752,7 @@ async function openHistoryModal(transcriptId) {
     renderModalContent(item);
     elements.historyModal.hidden = false;
   } catch (error) {
-    setTranscribeStatus(t("openError", { error: error.message || error }), "error");
+    setTranscribeStatus(t("openError", { error: localizeError(error) }), "error");
   }
 }
 
@@ -640,7 +797,7 @@ async function deleteTranscriptById(transcriptId) {
     await loadHistory();
     setTranscribeStatus(t("deleted"), "success");
   } catch (error) {
-    setTranscribeStatus(t("deleteError", { error: error.message || error }), "error");
+    setTranscribeStatus(t("deleteError", { error: localizeError(error) }), "error");
   }
 }
 
@@ -666,10 +823,10 @@ function initRecorder() {
       elements.recordingInfo.textContent = t("recordingTooShort");
       setTranscribeStatus(t("recordingTooShort"), "warning");
     },
-    onError: (message) => {
+    onError: (errorLike) => {
       state.lastRecordingFile = null;
       elements.btnSaveRecording.disabled = true;
-      setTranscribeStatus(t("errorGeneric", { error: message }), "error");
+      setTranscribeStatus(t("errorGeneric", { error: localizeError(errorLike) }), "error");
     },
     onVoiceLevel: ({ voiceDetected }) => {
       if (!recorder?.isRecording) return;
