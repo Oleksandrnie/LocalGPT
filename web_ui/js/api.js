@@ -107,3 +107,7 @@ export function updateTranscript(id, payload) {
 export function deleteTranscript(id) {
   return apiDelete(`/transcripts/${encodeURIComponent(id)}`);
 }
+
+export function shutdownRuntime() {
+  return apiPost("/runtime/shutdown", {});
+}

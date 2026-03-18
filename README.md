@@ -37,7 +37,9 @@ LocalGPT теперь работает как локальный транскр�
 Что делает `LTrnsrb`:
 - проверяет, запущены ли backend и Caddy;
 - при необходимости запускает их в фоне (`nohup`) без открытия Terminal;
-- открывает UI по LAN URL `https://<ваш-ip>:8443/ui/gui_html.html` (или fallback на localhost).
+- автоматически определяет актуальный LAN IP (с приоритетом Wi-Fi интерфейса, с учетом смены сети/VPN);
+- при смене IP пересоздает Caddy-конфиг и перезапускает Caddy;
+- открывает UI по актуальному LAN URL `https://<ваш-ip>:8443/ui/gui_html.html` (или fallback на localhost).
 
 Логи launcher-а:
 - backend: `/tmp/LTrnsrb/backend.log`
@@ -52,7 +54,11 @@ brew install caddy
 ```
 
 ### 2) Конфиг Caddy
-Готовый файл уже добавлен в проект: `Caddyfile.lan`
+Для ручного запуска есть `Caddyfile.lan` (фиксированный вариант).
+Для повседневного использования лучше запускать через `LTrnsrb`:
+- он генерирует динамический конфиг `/tmp/LTrnsrb/Caddyfile.auto`;
+- автоматически подставляет актуальный LAN IP;
+- при смене IP (включая VPN/другую сеть) перезапускает Caddy с новым сертификатом.
 
 Содержимое:
 ```caddy
@@ -81,6 +87,8 @@ https://Oleksandrs-MacBook-Pro.local:8443 {
 - в desktop-версии в правом нижнем углу есть полупрозрачный значок `!`;
 - при наведении он становится ярким и показывает текущий iOS URL;
 - при клике URL копируется в буфер (без открытия новой страницы);
+- рядом есть кнопка `⏻` для остановки backend+Caddy прямо из UI;
+- после `⏻` для нового старта нужно снова открыть `LTrnsrb`;
 - на мобильных экранах этот значок скрыт.
 
 ### 4) Сертификат Caddy для iPhone
@@ -124,6 +132,7 @@ cp "/Users/oleksandrniemchenko/Library/Application Support/Caddy/pki/authorities
 - `GET /whisper/models`
 - `POST /whisper/models/prepare`
 - `GET /whisper/models/prepare/{task_id}`
+- `POST /runtime/shutdown`
 - `POST /transcribe` (multipart: `file`, `model`, `source_type`)
 - `GET /transcripts`
 - `GET /transcripts/{id}`

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import signal
 import socket
+import threading
+import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi import Request
@@ -9,6 +14,9 @@ from .. import config, whisper_downloads
 from ..schemas import ModelPrepareRequest
 
 router = APIRouter()
+RUNTIME_DIR = Path(os.getenv("LTRNSRB_RUNTIME_DIR", "/tmp/LTrnsrb"))
+BACKEND_PID_FILE = RUNTIME_DIR / "backend.pid"
+CADDY_PID_FILE = RUNTIME_DIR / "caddy.pid"
 
 
 def _detect_lan_ip() -> str | None:
@@ -36,6 +44,55 @@ def _get_ios_url(request: Request) -> str | None:
     if lan_ip:
         return f"https://{lan_ip}:{config.SETTINGS.ios_https_port}/ui/gui_html.html"
     return None
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        pid = int(raw)
+    except ValueError:
+        return None
+    return pid if pid > 1 else None
+
+
+def _terminate_pid(pid: int) -> bool:
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return False
+
+
+def _safe_unlink(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _shutdown_worker() -> None:
+    time.sleep(0.45)
+
+    caddy_pid = _read_pid(CADDY_PID_FILE)
+    if caddy_pid:
+        _terminate_pid(caddy_pid)
+    _safe_unlink(CADDY_PID_FILE)
+
+    backend_pid = _read_pid(BACKEND_PID_FILE)
+    if backend_pid:
+        _terminate_pid(backend_pid)
+    _safe_unlink(BACKEND_PID_FILE)
+
+    # Fallback: ensure this API process also exits even if launcher PID was missing.
+    time.sleep(0.35)
+    _terminate_pid(os.getpid())
 
 
 @router.get("/health")
@@ -84,3 +141,10 @@ def get_prepare_status(task_id: str) -> dict[str, object]:
             detail={"code": "task_not_found", "message": "Задача подготовки модели не найдена"},
         )
     return task
+
+
+@router.post("/runtime/shutdown")
+def shutdown_runtime() -> dict[str, object]:
+    worker = threading.Thread(target=_shutdown_worker, daemon=True)
+    worker.start()
+    return {"status": "accepted", "message": "Shutdown started"}

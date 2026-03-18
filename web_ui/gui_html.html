@@ -44,6 +44,14 @@
       <p class="muted" id="recordingInfo">Запись не начата.</p>
       <p class="muted voice-activity voice-activity--idle" id="voiceActivity">Голос: —</p>
       <p class="status" id="transcribeStatus"></p>
+      <section class="stage-widget" id="stageWidget" hidden>
+        <div class="stage-widget__top">
+          <strong id="stageLabel">Этап: ожидание</strong>
+          <span id="stagePercent">0%</span>
+        </div>
+        <progress id="stageProgress" max="100" value="0"></progress>
+        <p class="stage-widget__detail" id="stageDetail"></p>
+      </section>
 
       <section class="download-widget" id="downloadWidget" hidden>
         <div class="download-widget__top">
@@ -101,6 +109,16 @@
   >
     <span class="ios-quick-link__mark">!</span>
     <span id="iosQuickLinkText" class="ios-quick-link__tooltip"></span>
+  </button>
+  <button
+    id="btnRuntimeStop"
+    class="runtime-stop"
+    type="button"
+    aria-label="Shutdown runtime"
+    title="Shutdown runtime"
+    hidden
+  >
+    ⏻
   </button>
 
   <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>

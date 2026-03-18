@@ -6,6 +6,7 @@ import {
   fetchWhisperModels,
   getTranscript,
   listTranscripts,
+  shutdownRuntime,
   startWhisperModelPrepare,
   transcribeFile,
   updateTranscript,
@@ -41,9 +42,23 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    stagePrefix: "Этап",
+    stageIdle: "Ожидание",
+    stagePrepare: "Подготовка модели",
+    stageTranscribe: "Транскрибация",
+    stageSave: "Сохранение",
+    stageStopping: "Остановка сервисов",
+    stageDone: "Готово",
+    stageError: "Ошибка",
     iosShortcutTitle: "Скопировать iOS URL: {url}",
     iosCopied: "iOS URL скопирован в буфер.",
     iosCopyFailed: "Не удалось скопировать iOS URL.",
+    runtimeStopTitle: "Остановить backend и Caddy",
+    runtimeStopConfirm: "Остановить backend и Caddy сейчас?",
+    runtimeStopping: "Остановка сервисов...",
+    runtimeStopped: "Сервисы остановлены.",
+    runtimeRestartHint: "Откройте LTrnsrb для повторного запуска.",
+    runtimeStopFailed: "Не удалось остановить сервисы: {error}",
     outputPlaceholder: "Здесь появится результат транскрибации...",
     historyEmpty: "История пуста.",
     emptyPreview: "(пусто)",
@@ -125,9 +140,23 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    stagePrefix: "Етап",
+    stageIdle: "Очікування",
+    stagePrepare: "Підготовка моделі",
+    stageTranscribe: "Транскрибація",
+    stageSave: "Збереження",
+    stageStopping: "Зупинка сервісів",
+    stageDone: "Готово",
+    stageError: "Помилка",
     iosShortcutTitle: "Скопіювати iOS URL: {url}",
     iosCopied: "iOS URL скопійовано в буфер.",
     iosCopyFailed: "Не вдалося скопіювати iOS URL.",
+    runtimeStopTitle: "Зупинити backend та Caddy",
+    runtimeStopConfirm: "Зупинити backend та Caddy зараз?",
+    runtimeStopping: "Зупинка сервісів...",
+    runtimeStopped: "Сервіси зупинено.",
+    runtimeRestartHint: "Відкрийте LTrnsrb для повторного запуску.",
+    runtimeStopFailed: "Не вдалося зупинити сервіси: {error}",
     outputPlaceholder: "Тут з'явиться результат транскрибації...",
     historyEmpty: "Історія порожня.",
     emptyPreview: "(порожньо)",
@@ -209,9 +238,23 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    stagePrefix: "Stage",
+    stageIdle: "Idle",
+    stagePrepare: "Preparing model",
+    stageTranscribe: "Transcribing",
+    stageSave: "Saving result",
+    stageStopping: "Stopping services",
+    stageDone: "Done",
+    stageError: "Error",
     iosShortcutTitle: "Copy iOS URL: {url}",
     iosCopied: "iOS URL copied to clipboard.",
     iosCopyFailed: "Failed to copy iOS URL.",
+    runtimeStopTitle: "Stop backend and Caddy",
+    runtimeStopConfirm: "Stop backend and Caddy now?",
+    runtimeStopping: "Stopping services...",
+    runtimeStopped: "Services stopped.",
+    runtimeRestartHint: "Open LTrnsrb to start them again.",
+    runtimeStopFailed: "Failed to stop services: {error}",
     outputPlaceholder: "Transcription result will appear here...",
     historyEmpty: "History is empty.",
     emptyPreview: "(empty)",
@@ -284,6 +327,11 @@ const elements = {
   recordingInfo: document.getElementById("recordingInfo"),
   voiceActivity: document.getElementById("voiceActivity"),
   transcribeStatus: document.getElementById("transcribeStatus"),
+  stageWidget: document.getElementById("stageWidget"),
+  stageLabel: document.getElementById("stageLabel"),
+  stagePercent: document.getElementById("stagePercent"),
+  stageProgress: document.getElementById("stageProgress"),
+  stageDetail: document.getElementById("stageDetail"),
   downloadWidget: document.getElementById("downloadWidget"),
   downloadModelName: document.getElementById("downloadModelName"),
   downloadPercent: document.getElementById("downloadPercent"),
@@ -306,6 +354,7 @@ const elements = {
   btnDeleteFromModal: document.getElementById("btnDeleteFromModal"),
   iosQuickLink: document.getElementById("iosQuickLink"),
   iosQuickLinkText: document.getElementById("iosQuickLinkText"),
+  btnRuntimeStop: document.getElementById("btnRuntimeStop"),
   appToast: document.getElementById("appToast"),
   langFlags: Array.from(document.querySelectorAll(".lang-flag")),
 };
@@ -323,6 +372,14 @@ const state = {
   serverHealthy: false,
   lastHealthError: null,
   iosUrl: null,
+  runtimeStopping: false,
+  liveStage: {
+    visible: false,
+    key: "stageIdle",
+    percent: 0,
+    detail: "",
+    tone: "info",
+  },
   language: "ru",
 };
 
@@ -418,6 +475,48 @@ function setBusy(value) {
 
 function setTranscribeStatus(message, tone = "info") {
   setStatus(elements.transcribeStatus, message, tone);
+}
+
+function renderLiveStage() {
+  if (!elements.stageWidget || !elements.stageLabel || !elements.stagePercent || !elements.stageProgress || !elements.stageDetail) {
+    return;
+  }
+
+  const stage = state.liveStage || { visible: false };
+  elements.stageWidget.hidden = !stage.visible;
+  elements.stageWidget.classList.remove("stage-widget--success", "stage-widget--warning", "stage-widget--error");
+  if (!stage.visible) return;
+
+  if (stage.tone === "success") {
+    elements.stageWidget.classList.add("stage-widget--success");
+  } else if (stage.tone === "warning") {
+    elements.stageWidget.classList.add("stage-widget--warning");
+  } else if (stage.tone === "error") {
+    elements.stageWidget.classList.add("stage-widget--error");
+  }
+
+  const percent = Math.max(0, Math.min(100, Number(stage.percent || 0)));
+  elements.stageLabel.textContent = `${t("stagePrefix")}: ${t(stage.key || "stageIdle")}`;
+  elements.stagePercent.textContent = `${Math.round(percent)}%`;
+  elements.stageProgress.value = percent;
+  elements.stageDetail.textContent = stage.detail || "";
+}
+
+function setLiveStage({
+  key = "stageIdle",
+  percent = 0,
+  detail = "",
+  tone = "info",
+  visible = true,
+} = {}) {
+  state.liveStage = {
+    visible: Boolean(visible),
+    key,
+    percent: Math.max(0, Math.min(100, Number(percent || 0))),
+    detail: String(detail || ""),
+    tone,
+  };
+  renderLiveStage();
 }
 
 function sleep(ms) {
@@ -588,6 +687,10 @@ function applyStaticTexts() {
   elements.btnCloseModal.textContent = t("close");
   elements.btnSendFromModal.textContent = t("send");
   elements.btnDeleteFromModal.textContent = t("delete");
+  if (elements.btnRuntimeStop) {
+    elements.btnRuntimeStop.title = t("runtimeStopTitle");
+    elements.btnRuntimeStop.setAttribute("aria-label", t("runtimeStopTitle"));
+  }
 
   if (!state.lastRecordingFile && !recorder?.isRecording) {
     elements.recordingInfo.textContent = t("recordingNotStarted");
@@ -610,6 +713,7 @@ function applyStaticTexts() {
     renderModalContent(state.modalTranscript);
   }
 
+  renderLiveStage();
   renderIosQuickLink();
 }
 
@@ -643,13 +747,31 @@ function renderDownloadWidget(task) {
   elements.downloadProgress.value = Math.max(0, Math.min(100, Number(task.percent || 0)));
   elements.downloadSpeed.textContent = t("downloadSpeed", { speed: formatSpeed(task.speed_bps) });
   if (task.error_code) {
-    elements.downloadMessage.textContent = localizeError({
+    const localizedError = localizeError({
       code: task.error_code || null,
       message: task.message || "",
     });
+    elements.downloadMessage.textContent = localizedError;
+    setLiveStage({
+      key: "stageError",
+      percent: 100,
+      detail: localizedError,
+      tone: "error",
+      visible: true,
+    });
     return;
   }
-  elements.downloadMessage.textContent = task.message || t("downloadPreparing");
+  const downloadMessage = task.message || t("downloadPreparing");
+  elements.downloadMessage.textContent = downloadMessage;
+  const rawPercent = Math.max(0, Math.min(100, Number(task.percent || 0)));
+  const mappedPercent = 8 + rawPercent * 0.52;
+  setLiveStage({
+    key: "stagePrepare",
+    percent: mappedPercent,
+    detail: downloadMessage,
+    tone: "info",
+    visible: true,
+  });
 }
 
 async function ensureModelReady(model) {
@@ -694,6 +816,11 @@ async function ensureModelReady(model) {
 }
 
 function renderHealthStatus() {
+  if (elements.btnRuntimeStop) {
+    elements.btnRuntimeStop.hidden = !state.serverHealthy;
+    elements.btnRuntimeStop.disabled = state.runtimeStopping;
+  }
+
   if (state.serverHealthy) {
     setStatus(elements.healthStatus, t("serverOk", { model: currentModel() || "small" }), "success");
     return;
@@ -783,20 +910,55 @@ async function runTranscription(file, sourceType) {
 
   setBusy(true);
   setTranscribeStatus(t("checkingModel"), "info");
+  setLiveStage({
+    key: "stagePrepare",
+    percent: 6,
+    detail: t("checkingModel"),
+    tone: "info",
+    visible: true,
+  });
 
   try {
     await ensureModelReady(currentModel());
     setTranscribeStatus(t("transcribing"), "info");
+    setLiveStage({
+      key: "stageTranscribe",
+      percent: 72,
+      detail: t("transcribing"),
+      tone: "info",
+      visible: true,
+    });
 
     const result = await transcribeFile(file, currentModel(), sourceType);
     selectTranscript(result);
+    setLiveStage({
+      key: "stageSave",
+      percent: 90,
+      detail: t("savedToHistory"),
+      tone: "info",
+      visible: true,
+    });
     await loadHistory();
 
     const symbols = (result?.text || "").length;
     setTranscribeStatus(t("doneSymbols", { count: symbols }), "success");
+    setLiveStage({
+      key: "stageDone",
+      percent: 100,
+      detail: t("doneSymbols", { count: symbols }),
+      tone: "success",
+      visible: true,
+    });
   } catch (error) {
     const message = localizeError(error);
     setTranscribeStatus(t("errorGeneric", { error: message }), "error");
+    setLiveStage({
+      key: "stageError",
+      percent: 100,
+      detail: message,
+      tone: "error",
+      visible: true,
+    });
   } finally {
     setBusy(false);
   }
@@ -810,6 +972,13 @@ async function saveTranscriptText() {
   }
 
   try {
+    setLiveStage({
+      key: "stageSave",
+      percent: 88,
+      detail: t("stageSave"),
+      tone: "info",
+      visible: true,
+    });
     let saved;
     if (state.activeTranscriptId) {
       saved = await updateTranscript(state.activeTranscriptId, { text });
@@ -825,8 +994,23 @@ async function saveTranscriptText() {
     state.activeTranscriptId = saved.id;
     await loadHistory();
     setTranscribeStatus(t("savedToHistory"), "success");
+    setLiveStage({
+      key: "stageDone",
+      percent: 100,
+      detail: t("savedToHistory"),
+      tone: "success",
+      visible: true,
+    });
   } catch (error) {
-    setTranscribeStatus(t("saveError", { error: localizeError(error) }), "error");
+    const localizedError = localizeError(error);
+    setTranscribeStatus(t("saveError", { error: localizedError }), "error");
+    setLiveStage({
+      key: "stageError",
+      percent: 100,
+      detail: localizedError,
+      tone: "error",
+      visible: true,
+    });
   }
 }
 
@@ -843,6 +1027,75 @@ async function copyOutput() {
     setTranscribeStatus(t("copied"), "success");
   } catch {
     setTranscribeStatus(t("copyError"), "error");
+  }
+}
+
+function isExpectedShutdownError(errorLike) {
+  const raw = String(errorLike?.message || errorLike || "").toLowerCase();
+  if (!raw) return false;
+  return (
+    raw.includes("failed to fetch")
+    || raw.includes("load failed")
+    || raw.includes("networkerror")
+    || raw.includes("network request failed")
+    || raw.includes("the network connection was lost")
+  );
+}
+
+function markRuntimeStoppedUi() {
+  state.runtimeStopping = false;
+  state.serverHealthy = false;
+  const message = `${t("runtimeStopped")} ${t("runtimeRestartHint")}`;
+  setStatus(elements.healthStatus, message, "warning");
+  setTranscribeStatus(message, "warning");
+  setLiveStage({
+    key: "stageStopping",
+    percent: 100,
+    detail: message,
+    tone: "warning",
+    visible: true,
+  });
+  if (elements.btnRuntimeStop) {
+    elements.btnRuntimeStop.hidden = false;
+    elements.btnRuntimeStop.disabled = true;
+  }
+  showToast(message, 5000);
+}
+
+async function stopRuntimeFromUi() {
+  if (state.runtimeStopping) return;
+  if (!window.confirm(t("runtimeStopConfirm"))) return;
+
+  state.runtimeStopping = true;
+  renderHealthStatus();
+  setLiveStage({
+    key: "stageStopping",
+    percent: 100,
+    detail: t("runtimeStopping"),
+    tone: "warning",
+    visible: true,
+  });
+  showToast(t("runtimeStopping"));
+
+  try {
+    await shutdownRuntime();
+    markRuntimeStoppedUi();
+  } catch (error) {
+    if (isExpectedShutdownError(error)) {
+      markRuntimeStoppedUi();
+      return;
+    }
+
+    state.runtimeStopping = false;
+    renderHealthStatus();
+    setLiveStage({
+      key: "stageError",
+      percent: 100,
+      detail: localizeError(error),
+      tone: "error",
+      visible: true,
+    });
+    showToast(t("runtimeStopFailed", { error: localizeError(error) }));
   }
 }
 
@@ -1046,6 +1299,10 @@ function bindEvents() {
     } else {
       showToast(t("iosCopyFailed"));
     }
+  });
+
+  elements.btnRuntimeStop?.addEventListener("click", async () => {
+    await stopRuntimeFromUi();
   });
 }
 
