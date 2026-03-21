@@ -2,6 +2,7 @@ import {
   createTranscript,
   deleteTranscript,
   fetchWhisperModelPrepare,
+  fetchWhisperModelUpdateCheck,
   fetchHealth,
   fetchWhisperModels,
   getTranscript,
@@ -42,6 +43,22 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    menuTitle: "Меню",
+    menuUpdate: "Обновить модель",
+    menuCopyUrl: "Скопировать URL",
+    menuExport: "Экспорт базы",
+    menuImport: "Импорт базы",
+    menuShutdown: "Завершить работу",
+    featureSoon: "Функция в разработке, ожидается позже.",
+    update: "update",
+    updateAvailable: "Доступно обновление модели {model}.",
+    updateUnknownRevision: "Локальная ревизия модели неизвестна. Обновление рекомендуется.",
+    updatePrompt:
+      "Для модели {model} доступно обновление. Обновить сейчас? Если нет, кнопка update останется доступной.",
+    updatingModel: "Обновление модели...",
+    updateDone: "Модель обновлена.",
+    updateUpToDate: "Для модели {model} обновлений не найдено.",
+    updateCheckFailed: "Не удалось проверить обновление модели: {error}",
     stagePrefix: "Этап",
     stageIdle: "Ожидание",
     stagePrepare: "Подготовка модели",
@@ -59,6 +76,7 @@ const I18N = {
     runtimeStopped: "Сервисы остановлены.",
     runtimeRestartHint: "Откройте LTrnsrb для повторного запуска.",
     runtimeStopFailed: "Не удалось остановить сервисы: {error}",
+    copyUrlMissing: "URL для iPhone пока недоступен.",
     outputPlaceholder: "Здесь появится результат транскрибации...",
     historyEmpty: "История пуста.",
     emptyPreview: "(пусто)",
@@ -111,6 +129,9 @@ const I18N = {
     errMicNotFound: "Микрофон не найден.",
     errMicUnavailable: "Микрофон занят другим приложением.",
     errMicAccessFailed: "Не удалось получить доступ к микрофону.",
+    dropHint: "Перетащите сюда аудио/видео файл",
+    dropHintActive: "Отпустите файл для транскрибации",
+    dropInvalidType: "Поддерживаются только аудио/видео файлы.",
     downloadModel: "Модель: {model}",
     downloadSpeed: "Скорость: {speed}",
     downloadPreparing: "Подготовка...",
@@ -140,6 +161,22 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    menuTitle: "Меню",
+    menuUpdate: "Оновити модель",
+    menuCopyUrl: "Скопіювати URL",
+    menuExport: "Експорт бази",
+    menuImport: "Імпорт бази",
+    menuShutdown: "Завершити роботу",
+    featureSoon: "Функція в розробці, очікується пізніше.",
+    update: "update",
+    updateAvailable: "Доступне оновлення моделі {model}.",
+    updateUnknownRevision: "Локальна ревізія моделі невідома. Оновлення рекомендоване.",
+    updatePrompt:
+      "Для моделі {model} доступне оновлення. Оновити зараз? Якщо ні, кнопка update залишиться доступною.",
+    updatingModel: "Оновлення моделі...",
+    updateDone: "Модель оновлено.",
+    updateUpToDate: "Для моделі {model} оновлень не знайдено.",
+    updateCheckFailed: "Не вдалося перевірити оновлення моделі: {error}",
     stagePrefix: "Етап",
     stageIdle: "Очікування",
     stagePrepare: "Підготовка моделі",
@@ -157,6 +194,7 @@ const I18N = {
     runtimeStopped: "Сервіси зупинено.",
     runtimeRestartHint: "Відкрийте LTrnsrb для повторного запуску.",
     runtimeStopFailed: "Не вдалося зупинити сервіси: {error}",
+    copyUrlMissing: "URL для iPhone поки що недоступний.",
     outputPlaceholder: "Тут з'явиться результат транскрибації...",
     historyEmpty: "Історія порожня.",
     emptyPreview: "(порожньо)",
@@ -209,6 +247,9 @@ const I18N = {
     errMicNotFound: "Мікрофон не знайдено.",
     errMicUnavailable: "Мікрофон зайнятий іншим застосунком.",
     errMicAccessFailed: "Не вдалося отримати доступ до мікрофона.",
+    dropHint: "Перетягніть сюди аудіо/відео файл",
+    dropHintActive: "Відпустіть файл для транскрибації",
+    dropInvalidType: "Підтримуються лише аудіо/відео файли.",
     downloadModel: "Модель: {model}",
     downloadSpeed: "Швидкість: {speed}",
     downloadPreparing: "Підготовка...",
@@ -238,6 +279,22 @@ const I18N = {
     copy: "copy",
     save: "save",
     clear: "clear",
+    menuTitle: "Menu",
+    menuUpdate: "Update model",
+    menuCopyUrl: "Copy URL",
+    menuExport: "Export database",
+    menuImport: "Import database",
+    menuShutdown: "Shut down app",
+    featureSoon: "Feature is in development and will be available later.",
+    update: "update",
+    updateAvailable: "Model update is available for {model}.",
+    updateUnknownRevision: "Local model revision is unknown. Update is recommended.",
+    updatePrompt:
+      "An update is available for {model}. Update now? If you cancel, the update button will remain visible.",
+    updatingModel: "Updating model...",
+    updateDone: "Model updated.",
+    updateUpToDate: "No updates found for {model}.",
+    updateCheckFailed: "Failed to check model updates: {error}",
     stagePrefix: "Stage",
     stageIdle: "Idle",
     stagePrepare: "Preparing model",
@@ -255,6 +312,7 @@ const I18N = {
     runtimeStopped: "Services stopped.",
     runtimeRestartHint: "Open LTrnsrb to start them again.",
     runtimeStopFailed: "Failed to stop services: {error}",
+    copyUrlMissing: "iPhone URL is not available yet.",
     outputPlaceholder: "Transcription result will appear here...",
     historyEmpty: "History is empty.",
     emptyPreview: "(empty)",
@@ -307,6 +365,9 @@ const I18N = {
     errMicNotFound: "No microphone found.",
     errMicUnavailable: "Microphone is busy in another app.",
     errMicAccessFailed: "Failed to access microphone.",
+    dropHint: "Drag and drop an audio/video file here",
+    dropHintActive: "Drop file to transcribe",
+    dropInvalidType: "Only audio/video files are supported.",
     downloadModel: "Model: {model}",
     downloadSpeed: "Speed: {speed}",
     downloadPreparing: "Preparing...",
@@ -316,10 +377,21 @@ const I18N = {
 const elements = {
   appTitle: document.getElementById("appTitle"),
   healthStatus: document.getElementById("healthStatus"),
+  btnHeaderMenu: document.getElementById("btnHeaderMenu"),
+  headerMenuPanel: document.getElementById("headerMenuPanel"),
+  menuBtnUpdate: document.getElementById("menuBtnUpdate"),
+  menuBtnCopyUrl: document.getElementById("menuBtnCopyUrl"),
+  menuBtnExport: document.getElementById("menuBtnExport"),
+  menuBtnImport: document.getElementById("menuBtnImport"),
+  menuExportWrap: document.getElementById("menuExportWrap"),
+  menuImportWrap: document.getElementById("menuImportWrap"),
+  menuBtnShutdown: document.getElementById("menuBtnShutdown"),
   controlTitle: document.getElementById("controlTitle"),
   modelLabel: document.getElementById("modelLabel"),
   modelSelect: document.getElementById("modelSelect"),
+  uploadDropZone: document.getElementById("uploadDropZone"),
   fileInput: document.getElementById("fileInput"),
+  dropHint: document.getElementById("dropHint"),
   btnChooseFile: document.getElementById("btnChooseFile"),
   fileHint: document.getElementById("fileHint"),
   btnRecord: document.getElementById("btnRecord"),
@@ -352,9 +424,6 @@ const elements = {
   btnCloseModal: document.getElementById("btnCloseModal"),
   btnSendFromModal: document.getElementById("btnSendFromModal"),
   btnDeleteFromModal: document.getElementById("btnDeleteFromModal"),
-  iosQuickLink: document.getElementById("iosQuickLink"),
-  iosQuickLinkText: document.getElementById("iosQuickLinkText"),
-  btnRuntimeStop: document.getElementById("btnRuntimeStop"),
   appToast: document.getElementById("appToast"),
   langFlags: Array.from(document.querySelectorAll(".lang-flag")),
 };
@@ -373,6 +442,11 @@ const state = {
   lastHealthError: null,
   iosUrl: null,
   runtimeStopping: false,
+  modelUpdateInfo: null,
+  modelUpdateChecking: false,
+  modelUpdateCheckSeq: 0,
+  modelUpdatePromptedTokens: new Set(),
+  menuOpen: false,
   liveStage: {
     visible: false,
     key: "stageIdle",
@@ -380,7 +454,7 @@ const state = {
     detail: "",
     tone: "info",
   },
-  language: "ru",
+  language: "en",
 };
 
 let recorder = null;
@@ -394,8 +468,8 @@ function formatText(template, params = {}) {
 }
 
 function t(key, params = {}) {
-  const dict = I18N[state.language] || I18N.ru;
-  const template = dict[key] ?? I18N.ru[key] ?? key;
+  const dict = I18N[state.language] || I18N.en;
+  const template = dict[key] ?? I18N.en[key] ?? key;
   return formatText(template, params);
 }
 
@@ -471,6 +545,9 @@ function setBusy(value) {
   elements.btnChooseFile.disabled = value;
   elements.modelSelect.disabled = value;
   elements.btnRecord.disabled = value;
+  if (elements.menuBtnUpdate) {
+    elements.menuBtnUpdate.disabled = value;
+  }
 }
 
 function setTranscribeStatus(message, tone = "info") {
@@ -617,7 +694,7 @@ async function copyText(text) {
 }
 
 function currentModel() {
-  return (elements.modelSelect.value || "small").trim();
+  return (elements.modelSelect.value || "large-v3-turbo").trim();
 }
 
 function setFileHint(file) {
@@ -652,30 +729,192 @@ function applyVoiceLabel() {
   elements.voiceActivity.textContent = t("voiceIdle");
 }
 
-function renderIosQuickLink() {
-  if (!elements.iosQuickLink || !elements.iosQuickLinkText) return;
+function availableIosUrl() {
+  return sanitizeUrl(state.iosUrl) || sanitizeUrl(fallbackIosUrlFromLocation());
+}
 
-  const resolvedUrl = sanitizeUrl(state.iosUrl) || sanitizeUrl(fallbackIosUrlFromLocation());
-  if (!resolvedUrl) {
-    delete elements.iosQuickLink.dataset.url;
-    elements.iosQuickLink.hidden = true;
+function modelUpdateToken(info) {
+  if (!info?.model) return null;
+  const revision = (info.remote_revision || "unknown").trim() || "unknown";
+  return `${info.model}:${revision}`;
+}
+
+function renderModelUpdateButton() {
+  if (!elements.menuBtnUpdate) return;
+  if (!state.serverHealthy || state.runtimeStopping) {
+    elements.menuBtnUpdate.disabled = true;
+    elements.menuBtnUpdate.classList.remove("has-update");
     return;
   }
 
-  elements.iosQuickLink.hidden = false;
-  elements.iosQuickLink.dataset.url = resolvedUrl;
-  elements.iosQuickLinkText.textContent = resolvedUrl;
+  const info = state.modelUpdateInfo;
+  const forCurrentModel = info && info.model === currentModel();
+  const hasUpdate = Boolean(forCurrentModel && info.update_available);
 
-  const title = t("iosShortcutTitle", { url: resolvedUrl });
-  elements.iosQuickLink.title = title;
-  elements.iosQuickLink.setAttribute("aria-label", title);
+  elements.menuBtnUpdate.disabled = Boolean(state.busy || state.modelUpdateChecking);
+  elements.menuBtnUpdate.classList.toggle("has-update", hasUpdate);
+
+  const title = hasUpdate
+    ? (
+      info.status === "unknown_local_revision"
+        ? t("updateUnknownRevision")
+        : t("updateAvailable", { model: info.model || currentModel() })
+    )
+    : t("menuUpdate");
+
+  elements.menuBtnUpdate.title = title;
+  elements.menuBtnUpdate.setAttribute("aria-label", title);
+}
+
+function renderHeaderMenu() {
+  if (!elements.headerMenuPanel || !elements.btnHeaderMenu) return;
+  const open = Boolean(state.menuOpen);
+  elements.headerMenuPanel.hidden = !open;
+  elements.btnHeaderMenu.classList.toggle("is-open", open);
+  elements.btnHeaderMenu.setAttribute("aria-expanded", open ? "true" : "false");
+
+  if (elements.menuBtnCopyUrl) {
+    elements.menuBtnCopyUrl.disabled = !availableIosUrl();
+  }
+}
+
+async function runModelUpdateNow(model = currentModel()) {
+  if (!model || state.busy) return;
+
+  setBusy(true);
+  setTranscribeStatus(t("updatingModel"), "info");
+  setLiveStage({
+    key: "stagePrepare",
+    percent: 6,
+    detail: t("updatingModel"),
+    tone: "info",
+    visible: true,
+  });
+
+  try {
+    await ensureModelReady(model, { force: true });
+    state.modelUpdateInfo = null;
+    setTranscribeStatus(t("updateDone"), "success");
+    setLiveStage({
+      key: "stageDone",
+      percent: 100,
+      detail: t("updateDone"),
+      tone: "success",
+      visible: true,
+    });
+  } catch (error) {
+    const message = localizeError(error);
+    setTranscribeStatus(t("errorGeneric", { error: message }), "error");
+    setLiveStage({
+      key: "stageError",
+      percent: 100,
+      detail: message,
+      tone: "error",
+      visible: true,
+    });
+  } finally {
+    setBusy(false);
+    await checkCurrentModelUpdate({ promptIfAvailable: false, silent: true });
+  }
+}
+
+async function maybePromptModelUpdate(info) {
+  if (!info?.update_available) return;
+  const token = modelUpdateToken(info);
+  if (!token || state.modelUpdatePromptedTokens.has(token)) return;
+  state.modelUpdatePromptedTokens.add(token);
+
+  const confirmed = window.confirm(t("updatePrompt", { model: info.model || currentModel() }));
+  if (!confirmed) return;
+  await runModelUpdateNow(info.model || currentModel());
+}
+
+async function checkCurrentModelUpdate({ promptIfAvailable = false, silent = true } = {}) {
+  const model = currentModel();
+  if (!model) return;
+  if (!state.serverHealthy) {
+    state.modelUpdateInfo = null;
+    renderModelUpdateButton();
+    return;
+  }
+
+  state.modelUpdateCheckSeq += 1;
+  const seq = state.modelUpdateCheckSeq;
+  state.modelUpdateChecking = true;
+  renderModelUpdateButton();
+
+  try {
+    const info = await fetchWhisperModelUpdateCheck(model);
+    if (seq !== state.modelUpdateCheckSeq) return;
+
+    state.modelUpdateInfo = info;
+    renderModelUpdateButton();
+
+    if (!silent && info?.update_available) {
+      const message = info.status === "unknown_local_revision"
+        ? t("updateUnknownRevision")
+        : t("updateAvailable", { model: info.model || model });
+      setTranscribeStatus(message, "warning");
+    }
+
+    if (promptIfAvailable && info?.update_available) {
+      await maybePromptModelUpdate(info);
+    }
+  } catch (error) {
+    if (seq !== state.modelUpdateCheckSeq) return;
+    state.modelUpdateInfo = null;
+    renderModelUpdateButton();
+    if (!silent) {
+      setTranscribeStatus(t("updateCheckFailed", { error: localizeError(error) }), "warning");
+    }
+  } finally {
+    if (seq === state.modelUpdateCheckSeq) {
+      state.modelUpdateChecking = false;
+      renderModelUpdateButton();
+    }
+  }
 }
 
 function applyStaticTexts() {
   elements.appTitle.textContent = t("appTitle");
   elements.controlTitle.textContent = t("controlTitle");
   elements.modelLabel.textContent = t("modelLabel");
+  if (elements.btnHeaderMenu) {
+    elements.btnHeaderMenu.title = t("menuTitle");
+    elements.btnHeaderMenu.setAttribute("aria-label", t("menuTitle"));
+  }
+  if (elements.menuBtnUpdate) {
+    elements.menuBtnUpdate.textContent = t("menuUpdate");
+  }
+  if (elements.menuBtnCopyUrl) {
+    elements.menuBtnCopyUrl.textContent = t("menuCopyUrl");
+  }
+  if (elements.menuBtnExport) {
+    elements.menuBtnExport.textContent = t("menuExport");
+    elements.menuBtnExport.disabled = true;
+    elements.menuBtnExport.removeAttribute("title");
+    elements.menuBtnExport.setAttribute("aria-label", t("featureSoon"));
+  }
+  if (elements.menuBtnImport) {
+    elements.menuBtnImport.textContent = t("menuImport");
+    elements.menuBtnImport.disabled = true;
+    elements.menuBtnImport.removeAttribute("title");
+    elements.menuBtnImport.setAttribute("aria-label", t("featureSoon"));
+  }
+  if (elements.menuExportWrap) {
+    elements.menuExportWrap.dataset.tooltip = t("featureSoon");
+  }
+  if (elements.menuImportWrap) {
+    elements.menuImportWrap.dataset.tooltip = t("featureSoon");
+  }
+  if (elements.menuBtnShutdown) {
+    elements.menuBtnShutdown.textContent = t("menuShutdown");
+  }
   elements.btnChooseFile.textContent = t("chooseFile");
+  if (elements.dropHint) {
+    const isActive = elements.uploadDropZone?.classList.contains("is-dragover");
+    elements.dropHint.textContent = isActive ? t("dropHintActive") : t("dropHint");
+  }
   elements.btnSaveRecording.textContent = t("saveRecording");
   elements.btnRecord.title = t("recordButtonTitle");
   elements.transcriptTitle.textContent = t("transcriptTitle");
@@ -687,10 +926,6 @@ function applyStaticTexts() {
   elements.btnCloseModal.textContent = t("close");
   elements.btnSendFromModal.textContent = t("send");
   elements.btnDeleteFromModal.textContent = t("delete");
-  if (elements.btnRuntimeStop) {
-    elements.btnRuntimeStop.title = t("runtimeStopTitle");
-    elements.btnRuntimeStop.setAttribute("aria-label", t("runtimeStopTitle"));
-  }
 
   if (!state.lastRecordingFile && !recorder?.isRecording) {
     elements.recordingInfo.textContent = t("recordingNotStarted");
@@ -714,11 +949,12 @@ function applyStaticTexts() {
   }
 
   renderLiveStage();
-  renderIosQuickLink();
+  renderModelUpdateButton();
+  renderHeaderMenu();
 }
 
 function setLanguage(language, { persist = true } = {}) {
-  const next = I18N[language] ? language : "ru";
+  const next = I18N[language] ? language : "en";
   state.language = next;
   document.documentElement.lang = next;
   if (persist) {
@@ -774,8 +1010,8 @@ function renderDownloadWidget(task) {
   });
 }
 
-async function ensureModelReady(model) {
-  const started = await startWhisperModelPrepare(model);
+async function ensureModelReady(model, { force = false } = {}) {
+  const started = await startWhisperModelPrepare(model, { force });
   state.modelPrepareTaskId = started.task_id;
   renderDownloadWidget(started);
 
@@ -816,13 +1052,14 @@ async function ensureModelReady(model) {
 }
 
 function renderHealthStatus() {
-  if (elements.btnRuntimeStop) {
-    elements.btnRuntimeStop.hidden = !state.serverHealthy;
-    elements.btnRuntimeStop.disabled = state.runtimeStopping;
+  if (elements.menuBtnShutdown) {
+    elements.menuBtnShutdown.disabled = !state.serverHealthy || state.runtimeStopping;
   }
+  renderModelUpdateButton();
+  renderHeaderMenu();
 
   if (state.serverHealthy) {
-    setStatus(elements.healthStatus, t("serverOk", { model: currentModel() || "small" }), "success");
+    setStatus(elements.healthStatus, t("serverOk", { model: currentModel() || "large-v3-turbo" }), "success");
     return;
   }
 
@@ -850,9 +1087,10 @@ async function loadHealth() {
     state.serverHealthy = false;
     state.lastHealthError = error;
     state.iosUrl = sanitizeUrl(fallbackIosUrlFromLocation()) || null;
+    state.modelUpdateInfo = null;
   }
   renderHealthStatus();
-  renderIosQuickLink();
+  renderHeaderMenu();
 }
 
 async function loadModels() {
@@ -861,7 +1099,7 @@ async function loadModels() {
   try {
     const data = await fetchWhisperModels();
     const models = Array.isArray(data?.models) && data.models.length ? data.models : fallbackModels;
-    const saved = getSavedModel(data?.default || "small");
+    const saved = getSavedModel("large-v3-turbo");
 
     elements.modelSelect.innerHTML = models
       .map((model) => `<option value="${model}">${model}</option>`)
@@ -870,17 +1108,19 @@ async function loadModels() {
     if (models.includes(saved)) {
       elements.modelSelect.value = saved;
     } else {
-      elements.modelSelect.value = data?.default && models.includes(data.default) ? data.default : models[0];
+      elements.modelSelect.value = models.includes("large-v3-turbo") ? "large-v3-turbo" : models[0];
     }
   } catch {
     elements.modelSelect.innerHTML = fallbackModels
       .map((model) => `<option value="${model}">${model}</option>`)
       .join("");
-    elements.modelSelect.value = getSavedModel("small");
+    const saved = getSavedModel("large-v3-turbo");
+    elements.modelSelect.value = fallbackModels.includes(saved) ? saved : "large-v3-turbo";
   }
 
   setSavedModel(elements.modelSelect.value);
   renderHealthStatus();
+  renderModelUpdateButton();
 }
 
 async function loadHistory({ keepSelection = true } = {}) {
@@ -903,6 +1143,36 @@ async function loadHistory({ keepSelection = true } = {}) {
   } catch (error) {
     setTranscribeStatus(t("historyLoadError", { error: localizeError(error) }), "error");
   }
+}
+
+function setDropZoneActive(isActive) {
+  if (!elements.uploadDropZone) return;
+  elements.uploadDropZone.classList.toggle("is-dragover", Boolean(isActive));
+  if (elements.dropHint) {
+    elements.dropHint.textContent = isActive ? t("dropHintActive") : t("dropHint");
+  }
+}
+
+function isSupportedMediaFile(file) {
+  if (!file) return false;
+  const mime = String(file.type || "").toLowerCase();
+  if (mime.startsWith("audio/") || mime.startsWith("video/")) {
+    return true;
+  }
+
+  const name = String(file.name || "").toLowerCase();
+  return /\.(aac|aif|aiff|amr|avi|flac|m4a|m4v|mkv|mov|mp3|mp4|mpeg|mpg|oga|ogg|opus|wav|webm|wma)$/i.test(name);
+}
+
+async function handleIncomingFile(file) {
+  if (!file) return;
+  if (state.busy) return;
+  if (!isSupportedMediaFile(file)) {
+    setTranscribeStatus(t("dropInvalidType"), "warning");
+    return;
+  }
+  setFileHint(file);
+  await runTranscription(file, "upload");
 }
 
 async function runTranscription(file, sourceType) {
@@ -1045,6 +1315,7 @@ function isExpectedShutdownError(errorLike) {
 function markRuntimeStoppedUi() {
   state.runtimeStopping = false;
   state.serverHealthy = false;
+  state.menuOpen = false;
   const message = `${t("runtimeStopped")} ${t("runtimeRestartHint")}`;
   setStatus(elements.healthStatus, message, "warning");
   setTranscribeStatus(message, "warning");
@@ -1055,10 +1326,7 @@ function markRuntimeStoppedUi() {
     tone: "warning",
     visible: true,
   });
-  if (elements.btnRuntimeStop) {
-    elements.btnRuntimeStop.hidden = false;
-    elements.btnRuntimeStop.disabled = true;
-  }
+  renderHealthStatus();
   showToast(message, 5000);
 }
 
@@ -1066,6 +1334,7 @@ async function stopRuntimeFromUi() {
   if (state.runtimeStopping) return;
   if (!window.confirm(t("runtimeStopConfirm"))) return;
 
+  state.menuOpen = false;
   state.runtimeStopping = true;
   renderHealthStatus();
   setLiveStage({
@@ -1216,9 +1485,93 @@ function initRecorder() {
 }
 
 function bindEvents() {
+  const closeMenu = () => {
+    if (!state.menuOpen) return;
+    state.menuOpen = false;
+    renderHeaderMenu();
+  };
+
+  const toggleMenu = () => {
+    state.menuOpen = !state.menuOpen;
+    renderHeaderMenu();
+  };
+
   elements.modelSelect.addEventListener("change", () => {
     setSavedModel(elements.modelSelect.value);
+    state.modelUpdateInfo = null;
+    renderModelUpdateButton();
     renderHealthStatus();
+    checkCurrentModelUpdate({ promptIfAvailable: true, silent: true });
+  });
+
+  elements.btnHeaderMenu?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleMenu();
+  });
+
+  elements.headerMenuPanel?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+
+  elements.menuBtnUpdate?.addEventListener("click", async () => {
+    const model = currentModel();
+    if (!model || state.busy) return;
+    closeMenu();
+
+    await checkCurrentModelUpdate({ promptIfAvailable: false, silent: false });
+    if (!state.modelUpdateInfo?.update_available) {
+      setTranscribeStatus(t("updateUpToDate", { model }), "success");
+      return;
+    }
+
+    const confirmed = window.confirm(t("updatePrompt", { model }));
+    if (!confirmed) return;
+    await runModelUpdateNow(model);
+  });
+
+  elements.menuBtnCopyUrl?.addEventListener("click", async () => {
+    closeMenu();
+    const url = availableIosUrl();
+    if (!url) {
+      showToast(t("copyUrlMissing"));
+      setTranscribeStatus(t("copyUrlMissing"), "warning");
+      return;
+    }
+    const copied = await copyText(url);
+    if (copied) {
+      showToast(`${t("iosCopied")} ${url}`);
+    } else {
+      showToast(t("iosCopyFailed"));
+    }
+  });
+
+  elements.menuBtnShutdown?.addEventListener("click", async () => {
+    closeMenu();
+    await stopRuntimeFromUi();
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!state.menuOpen) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (elements.headerMenuPanel?.contains(target)) return;
+    if (elements.btnHeaderMenu?.contains(target)) return;
+    closeMenu();
+  }, true);
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    closeMenu();
+  });
+
+  window.addEventListener("blur", () => {
+    closeMenu();
+  });
+
+  window.addEventListener("resize", () => {
+    if (!state.menuOpen) return;
+    closeMenu();
   });
 
   elements.btnChooseFile.addEventListener("click", () => {
@@ -1232,8 +1585,38 @@ function bindEvents() {
       setFileHint(null);
       return;
     }
-    setFileHint(file);
-    await runTranscription(file, "upload");
+    await handleIncomingFile(file);
+  });
+
+  let dragDepth = 0;
+  elements.uploadDropZone?.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    dragDepth += 1;
+    setDropZoneActive(true);
+  });
+
+  elements.uploadDropZone?.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    setDropZoneActive(true);
+  });
+
+  elements.uploadDropZone?.addEventListener("dragleave", (event) => {
+    event.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      setDropZoneActive(false);
+    }
+  });
+
+  elements.uploadDropZone?.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    dragDepth = 0;
+    setDropZoneActive(false);
+    const file = event.dataTransfer?.files?.[0];
+    await handleIncomingFile(file || null);
   });
 
   elements.btnSaveRecording.addEventListener("click", () => {
@@ -1288,30 +1671,15 @@ function bindEvents() {
       setLanguage(lang);
     });
   }
-
-  elements.iosQuickLink?.addEventListener("click", async () => {
-    const url = elements.iosQuickLink?.dataset?.url || "";
-    if (!url) return;
-
-    const copied = await copyText(url);
-    if (copied) {
-      showToast(`${t("iosCopied")} ${url}`);
-    } else {
-      showToast(t("iosCopyFailed"));
-    }
-  });
-
-  elements.btnRuntimeStop?.addEventListener("click", async () => {
-    await stopRuntimeFromUi();
-  });
 }
 
 async function bootstrap() {
   bindEvents();
-  setLanguage(getSavedLanguage("ru"), { persist: false });
+  setLanguage(getSavedLanguage("en"), { persist: false });
   initRecorder();
   await loadModels();
   await loadHealth();
+  await checkCurrentModelUpdate({ promptIfAvailable: true, silent: true });
   await loadHistory();
 }
 

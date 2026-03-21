@@ -24,3 +24,4 @@ class TranscriptUpdate(BaseModel):
 
 class ModelPrepareRequest(BaseModel):
     model: str
+    force: bool = False

@@ -67,12 +67,16 @@ export function fetchWhisperModels() {
   return apiGet("/whisper/models");
 }
 
-export function startWhisperModelPrepare(model) {
-  return apiPost("/whisper/models/prepare", { model });
+export function startWhisperModelPrepare(model, { force = false } = {}) {
+  return apiPost("/whisper/models/prepare", { model, force: Boolean(force) });
 }
 
 export function fetchWhisperModelPrepare(taskId) {
   return apiGet(`/whisper/models/prepare/${encodeURIComponent(taskId)}`);
+}
+
+export function fetchWhisperModelUpdateCheck(model) {
+  return apiGet(`/whisper/models/update-check/${encodeURIComponent(model)}`);
 }
 
 export async function transcribeFile(file, model, sourceType = "upload") {

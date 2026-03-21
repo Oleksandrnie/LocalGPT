@@ -5,7 +5,10 @@ LocalGPT теперь работает как локальный транскр�
 ## Что умеет
 - Локальная транскрибация через `faster-whisper`.
 - Выбор модели: `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`.
+- Модель по умолчанию: `large-v3-turbo`.
+- Язык интерфейса по умолчанию: English.
 - Запись голоса в браузере (приоритет `M4A/AAC`, fallback `WebM/Opus`).
+- Drag & drop загрузка аудио/видео в панели управления.
 - История транскрибаций в файловом хранилище (`app/data/transcripts/*.json`).
 - Единый тёмный интерфейс, адаптированный под desktop и phone.
 
@@ -84,12 +87,10 @@ https://Oleksandrs-MacBook-Pro.local:8443 {
 4. На iPhone открыть тот же URL (в той же Wi-Fi сети).
 
 Подсказка в UI:
-- в desktop-версии в правом нижнем углу есть полупрозрачный значок `!`;
-- при наведении он становится ярким и показывает текущий iOS URL;
-- при клике URL копируется в буфер (без открытия новой страницы);
-- рядом есть кнопка `⏻` для остановки backend+Caddy прямо из UI;
-- после `⏻` для нового старта нужно снова открыть `LTrnsrb`;
-- на мобильных экранах этот значок скрыт.
+- под переключателем языков есть burger-меню `☰`;
+- внутри меню: `Update model`, `Copy URL`, `Shut down app`;
+- после `Shut down app` для нового старта нужно снова открыть `LTrnsrb`;
+- `Choose file` и зона записи работают как drag & drop область для аудио/видео.
 
 ### 4) Сертификат Caddy для iPhone
 При первом запуске `caddy run --config Caddyfile.lan` Caddy автоматически генерирует локальный CA сертификат.
@@ -132,6 +133,7 @@ cp "/Users/oleksandrniemchenko/Library/Application Support/Caddy/pki/authorities
 - `GET /whisper/models`
 - `POST /whisper/models/prepare`
 - `GET /whisper/models/prepare/{task_id}`
+- `GET /whisper/models/update-check/{model_name}`
 - `POST /runtime/shutdown`
 - `POST /transcribe` (multipart: `file`, `model`, `source_type`)
 - `GET /transcripts`

@@ -84,8 +84,8 @@ class Settings:
 
 
 def _load_settings() -> Settings:
-    raw_default_model = (os.getenv("WHISPER_MODEL_SIZE", "small") or "small").strip()
-    default_model = raw_default_model if raw_default_model in ALLOWED_WHISPER_MODELS else "small"
+    raw_default_model = (os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo") or "large-v3-turbo").strip()
+    default_model = raw_default_model if raw_default_model in ALLOWED_WHISPER_MODELS else "large-v3-turbo"
     ios_access_url = (os.getenv("IOS_ACCESS_URL", "") or "").strip() or None
 
     return Settings(

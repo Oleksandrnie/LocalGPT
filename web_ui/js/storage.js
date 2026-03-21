@@ -23,7 +23,7 @@ function safeSet(key, value) {
   }
 }
 
-export function getSavedModel(defaultValue = "small") {
+export function getSavedModel(defaultValue = "large-v3-turbo") {
   return safeGet(STORAGE_KEYS.model) || defaultValue;
 }
 
@@ -31,7 +31,7 @@ export function setSavedModel(value) {
   safeSet(STORAGE_KEYS.model, value);
 }
 
-export function getSavedLanguage(defaultValue = "ru") {
+export function getSavedLanguage(defaultValue = "en") {
   return safeGet(STORAGE_KEYS.language) || defaultValue;
 }
 

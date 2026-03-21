@@ -118,7 +118,7 @@ def whisper_models() -> dict[str, object]:
 @router.post("/whisper/models/prepare")
 def prepare_model(req: ModelPrepareRequest) -> dict[str, object]:
     try:
-        return whisper_downloads.start_prepare_task(req.model)
+        return whisper_downloads.start_prepare_task(req.model, force=bool(req.force))
     except ValueError as exc:
         if str(exc) == "invalid_model":
             raise HTTPException(
@@ -126,6 +126,23 @@ def prepare_model(req: ModelPrepareRequest) -> dict[str, object]:
                 detail={
                     "code": "invalid_model",
                     "message": f"Недопустимая модель: {req.model}",
+                    "allowed": list(config.ALLOWED_WHISPER_MODELS),
+                },
+            ) from exc
+        raise
+
+
+@router.get("/whisper/models/update-check/{model_name}")
+def check_model_update(model_name: str) -> dict[str, object]:
+    try:
+        return whisper_downloads.check_model_update(model_name)
+    except ValueError as exc:
+        if str(exc) == "invalid_model":
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_model",
+                    "message": f"Недопустимая модель: {model_name}",
                     "allowed": list(config.ALLOWED_WHISPER_MODELS),
                 },
             ) from exc

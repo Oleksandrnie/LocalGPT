@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import socket
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -12,7 +15,7 @@ from urllib.parse import quote
 import httpx
 
 from . import config
-from .asr_whisper import is_local_model_ready, local_model_dir, repository_for_model
+from .asr_whisper import clear_model_cache, is_local_model_ready, local_model_dir, repository_for_model
 
 _TASKS: dict[str, dict[str, Any]] = {}
 _ACTIVE_BY_MODEL: dict[str, str] = {}
@@ -21,6 +24,7 @@ _CHUNK_SIZE = 1024 * 512
 _PROGRESS_INTERVAL_SECONDS = 0.2
 _DEFAULT_HF_ENDPOINT = "https://huggingface.co"
 _DEFAULT_HF_FALLBACK_ENDPOINT = "https://hf-mirror.com"
+_MODEL_META_FILENAME = ".localgpt_model_meta.json"
 
 
 class PrepareModelError(Exception):
@@ -38,6 +42,8 @@ def _sanitize_task(task: dict[str, Any]) -> dict[str, Any]:
         "task_id": task.get("task_id"),
         "model": task.get("model"),
         "repo_id": task.get("repo_id"),
+        "force": bool(task.get("force", False)),
+        "revision": task.get("revision"),
         "state": task.get("state"),
         "message": task.get("message"),
         "error_code": task.get("error_code"),
@@ -55,6 +61,10 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _hf_token_raw() -> str:
@@ -124,12 +134,54 @@ def _update_task(task_id: str, **fields: Any) -> None:
         task.update(fields)
 
 
-def _get_model_files(client: httpx.Client, endpoint: str, repo_id: str) -> list[dict[str, Any]]:
+def _model_meta_path(model_name: str) -> Path:
+    return local_model_dir(model_name) / _MODEL_META_FILENAME
+
+
+def _read_model_meta(model_name: str) -> dict[str, Any]:
+    path = _model_meta_path(model_name)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _read_local_revision(model_name: str) -> str | None:
+    raw = _read_model_meta(model_name).get("revision")
+    if not raw:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
+def _write_model_meta(model_name: str, *, revision: str | None, endpoint: str | None) -> None:
+    path = _model_meta_path(model_name)
+    payload = {
+        "model": model_name,
+        "repo_id": repository_for_model(model_name),
+        "revision": revision or None,
+        "endpoint": endpoint or None,
+        "updated_at": _utc_now(),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        return
+
+
+def _fetch_model_payload(client: httpx.Client, endpoint: str, repo_id: str) -> dict[str, Any]:
     response = client.get(_join_url(endpoint, f"/api/models/{repo_id}"))
     response.raise_for_status()
-
     payload = response.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+def _get_model_files(client: httpx.Client, endpoint: str, repo_id: str) -> tuple[list[dict[str, Any]], str | None]:
+    payload = _fetch_model_payload(client, endpoint, repo_id)
     siblings = payload.get("siblings") or []
+    revision_raw = payload.get("sha")
+    revision = str(revision_raw).strip() if revision_raw else None
 
     files: list[dict[str, Any]] = []
     for sibling in siblings:
@@ -158,7 +210,7 @@ def _get_model_files(client: httpx.Client, endpoint: str, repo_id: str) -> list[
         if head.status_code < 400:
             item["size"] = int(head.headers.get("Content-Length") or 0)
 
-    return files
+    return files, revision
 
 
 def _calculate_existing_bytes(model_dir: Path, files: list[dict[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -286,7 +338,7 @@ def _format_download_error(endpoint: str, exc: BaseException) -> tuple[str, str]
     return ("model_prepare_failed", str(exc))
 
 
-def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[int, int, float]:
+def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[int, int, float, str | None]:
     repo_id = repository_for_model(model)
     model_dir = local_model_dir(model)
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -298,7 +350,7 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
         trust_env=trust_env,
         headers=_http_headers(),
     ) as client:
-        files = _get_model_files(client, endpoint, repo_id)
+        files, revision = _get_model_files(client, endpoint, repo_id)
         total_bytes = sum(int(item.get("size") or 0) for item in files)
 
         existing_bytes, pending = _calculate_existing_bytes(model_dir, files)
@@ -364,15 +416,30 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
 
         final_elapsed = max(_now() - start_ts, 0.001)
         final_speed = downloaded_bytes / final_elapsed
-        return downloaded_bytes, max(total_bytes, downloaded_bytes), final_speed
+        return downloaded_bytes, max(total_bytes, downloaded_bytes), final_speed, revision
 
 
-def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, int, float]:
+def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, int, float, str | None]:
     from huggingface_hub import snapshot_download
 
     repo_id = repository_for_model(model)
     model_dir = local_model_dir(model)
     model_dir.mkdir(parents=True, exist_ok=True)
+    remote_revision: str | None = None
+
+    trust_env = _env_flag("HF_TRUST_ENV", default=False)
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(30.0, connect=20.0),
+            trust_env=trust_env,
+            headers=_http_headers(),
+        ) as client:
+            payload = _fetch_model_payload(client, endpoint, repo_id)
+            raw_revision = payload.get("sha")
+            remote_revision = str(raw_revision).strip() if raw_revision else None
+    except Exception:
+        remote_revision = None
 
     size_before = _directory_size(model_dir)
     start_ts = _now()
@@ -410,7 +477,7 @@ def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, 
     size_after = _directory_size(model_dir)
     downloaded = max(size_after - size_before, 0)
     elapsed = max(_now() - start_ts, 0.001)
-    return downloaded, downloaded, downloaded / elapsed
+    return downloaded, downloaded, downloaded / elapsed, remote_revision
 
 
 def _run_prepare_task(task_id: str) -> None:
@@ -419,11 +486,18 @@ def _run_prepare_task(task_id: str) -> None:
         if not task:
             return
         model = task["model"]
+        force = bool(task.get("force", False))
 
     try:
         repo_id = repository_for_model(model)
         model_dir = local_model_dir(model)
         model_dir.mkdir(parents=True, exist_ok=True)
+
+        if force:
+            _update_task(task_id, message="Очистка локальной модели перед обновлением")
+            clear_model_cache(model)
+            shutil.rmtree(model_dir, ignore_errors=True)
+            model_dir.mkdir(parents=True, exist_ok=True)
 
         _update_task(task_id, state="running", repo_id=repo_id, message="Получение списка файлов модели")
         if _has_invalid_hf_token():
@@ -441,7 +515,9 @@ def _run_prepare_task(task_id: str) -> None:
             _update_task(task_id, message=f"Подключение к {_endpoint_host(endpoint)}")
 
             try:
-                downloaded_bytes, total_bytes, final_speed = _download_from_endpoint(task_id, model, endpoint)
+                downloaded_bytes, total_bytes, final_speed, remote_revision = _download_from_endpoint(
+                    task_id, model, endpoint
+                )
             except Exception as exc:
                 if _is_auth_error(exc):
                     try:
@@ -449,7 +525,9 @@ def _run_prepare_task(task_id: str) -> None:
                             task_id,
                             message="Получен HTTP 401/403. Пробуем загрузку через huggingface_hub...",
                         )
-                        downloaded_bytes, total_bytes, final_speed = _download_via_hf_hub(task_id, model, endpoint)
+                        downloaded_bytes, total_bytes, final_speed, remote_revision = _download_via_hf_hub(
+                            task_id, model, endpoint
+                        )
                     except Exception as fallback_exc:
                         error_code, error_message = _format_download_error(endpoint, fallback_exc)
                         has_next_endpoint = idx < len(endpoints) - 1
@@ -480,11 +558,15 @@ def _run_prepare_task(task_id: str) -> None:
             if not is_local_model_ready(model):
                 raise PrepareModelError("Модель загружена не полностью", code="download_incomplete_model")
 
+            _write_model_meta(model, revision=remote_revision, endpoint=endpoint)
+            clear_model_cache(model)
+
             _update_task(
                 task_id,
                 state="completed",
                 message="Модель готова",
                 error_code=None,
+                revision=remote_revision,
                 percent=100.0,
                 speed_bps=final_speed,
                 downloaded_bytes=downloaded_bytes,
@@ -509,17 +591,20 @@ def _run_prepare_task(task_id: str) -> None:
                 _ACTIVE_BY_MODEL.pop(task["model"], None)
 
 
-def start_prepare_task(model_name: str) -> dict[str, Any]:
+def start_prepare_task(model_name: str, *, force: bool = False) -> dict[str, Any]:
     model = (model_name or "").strip()
     if model not in config.ALLOWED_WHISPER_MODELS:
         raise ValueError("invalid_model")
 
-    if is_local_model_ready(model):
+    if is_local_model_ready(model) and not force:
         task_id = uuid.uuid4().hex
+        revision = _read_local_revision(model)
         task = {
             "task_id": task_id,
             "model": model,
             "repo_id": repository_for_model(model),
+            "force": False,
+            "revision": revision,
             "state": "completed",
             "message": "Модель уже доступна локально",
             "error_code": None,
@@ -546,8 +631,10 @@ def start_prepare_task(model_name: str) -> dict[str, Any]:
             "task_id": task_id,
             "model": model,
             "repo_id": repository_for_model(model),
+            "force": force,
+            "revision": None,
             "state": "pending",
-            "message": "Подготовка загрузки",
+            "message": "Подготовка обновления" if force else "Подготовка загрузки",
             "error_code": None,
             "percent": 0.0,
             "speed_bps": 0.0,
@@ -570,3 +657,79 @@ def get_prepare_task(task_id: str) -> dict[str, Any] | None:
         if not task:
             return None
         return _sanitize_task(task)
+
+
+def check_model_update(model_name: str) -> dict[str, Any]:
+    model = (model_name or "").strip()
+    if model not in config.ALLOWED_WHISPER_MODELS:
+        raise ValueError("invalid_model")
+
+    local_ready = is_local_model_ready(model)
+    local_revision = _read_local_revision(model)
+    repo_id = repository_for_model(model)
+    checked_endpoint: str | None = None
+    remote_revision: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+    trust_env = _env_flag("HF_TRUST_ENV", default=False)
+    endpoints = _huggingface_endpoints()
+    with httpx.Client(
+        follow_redirects=True,
+        timeout=httpx.Timeout(10.0, connect=5.0),
+        trust_env=trust_env,
+        headers=_http_headers(),
+    ) as client:
+        for endpoint in endpoints:
+            checked_endpoint = endpoint
+            try:
+                payload = _fetch_model_payload(client, endpoint, repo_id)
+                raw_revision = payload.get("sha")
+                remote_revision = str(raw_revision).strip() if raw_revision else None
+                error_code = None
+                error_message = None
+                break
+            except Exception as exc:
+                error_code, error_message = _format_download_error(endpoint, exc)
+                continue
+
+    update_available = False
+    status = "up_to_date"
+    message = "Model is up to date."
+
+    if not local_ready:
+        status = "local_missing"
+        message = "Model is not downloaded locally yet."
+    elif error_code:
+        status = "check_failed"
+        message = error_message or "Failed to check updates."
+    elif remote_revision and local_revision:
+        if remote_revision != local_revision:
+            status = "update_available"
+            update_available = True
+            message = "Model update is available."
+        else:
+            status = "up_to_date"
+            message = "Model is up to date."
+    elif remote_revision and not local_revision:
+        status = "unknown_local_revision"
+        update_available = True
+        message = "Local model revision is unknown. Update is recommended."
+    elif not remote_revision:
+        status = "check_failed"
+        message = "Unable to fetch remote model revision."
+        error_code = "model_prepare_failed"
+
+    return {
+        "model": model,
+        "repo_id": repo_id,
+        "local_ready": local_ready,
+        "local_revision": local_revision,
+        "remote_revision": remote_revision,
+        "update_available": update_available,
+        "status": status,
+        "checked_endpoint": checked_endpoint,
+        "error_code": error_code,
+        "message": message,
+        "checked_at": _now(),
+    }

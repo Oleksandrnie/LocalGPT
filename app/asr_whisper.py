@@ -43,6 +43,23 @@ def _normalize_model(model_name: str) -> str:
     return model
 
 
+def clear_model_cache(model_name: str | None = None) -> None:
+    with _MODEL_LOCK:
+        if model_name is None:
+            _MODEL_CACHE.clear()
+            return
+
+        try:
+            normalized = _normalize_model(model_name)
+        except ValueError:
+            return
+
+        model_dir = str(local_model_dir(normalized))
+        keys_to_drop = [key for key in _MODEL_CACHE if key[0] in {normalized, model_dir}]
+        for key in keys_to_drop:
+            _MODEL_CACHE.pop(key, None)
+
+
 def repository_for_model(model_name: str) -> str:
     model = _normalize_model(model_name)
     return MODEL_REPOSITORIES[model]
