@@ -45,6 +45,7 @@ const I18N = {
     clear: "clear",
     menuTitle: "Меню",
     menuUpdate: "Обновить модель",
+    menuUpdateChecking: "Проверка обновлений...",
     menuCopyUrl: "Скопировать URL",
     menuExport: "Экспорт базы",
     menuImport: "Импорт базы",
@@ -59,6 +60,7 @@ const I18N = {
     updateDone: "Модель обновлена.",
     updateUpToDate: "Для модели {model} обновлений не найдено.",
     updateCheckFailed: "Не удалось проверить обновление модели: {error}",
+    checkingUpdates: "Идет проверка обновлений модели...",
     stagePrefix: "Этап",
     stageIdle: "Ожидание",
     stagePrepare: "Подготовка модели",
@@ -163,6 +165,7 @@ const I18N = {
     clear: "clear",
     menuTitle: "Меню",
     menuUpdate: "Оновити модель",
+    menuUpdateChecking: "Перевірка оновлень...",
     menuCopyUrl: "Скопіювати URL",
     menuExport: "Експорт бази",
     menuImport: "Імпорт бази",
@@ -177,6 +180,7 @@ const I18N = {
     updateDone: "Модель оновлено.",
     updateUpToDate: "Для моделі {model} оновлень не знайдено.",
     updateCheckFailed: "Не вдалося перевірити оновлення моделі: {error}",
+    checkingUpdates: "Триває перевірка оновлень моделі...",
     stagePrefix: "Етап",
     stageIdle: "Очікування",
     stagePrepare: "Підготовка моделі",
@@ -281,6 +285,7 @@ const I18N = {
     clear: "clear",
     menuTitle: "Menu",
     menuUpdate: "Update model",
+    menuUpdateChecking: "Checking updates...",
     menuCopyUrl: "Copy URL",
     menuExport: "Export database",
     menuImport: "Import database",
@@ -295,6 +300,7 @@ const I18N = {
     updateDone: "Model updated.",
     updateUpToDate: "No updates found for {model}.",
     updateCheckFailed: "Failed to check model updates: {error}",
+    checkingUpdates: "Checking for model updates...",
     stagePrefix: "Stage",
     stageIdle: "Idle",
     stagePrepare: "Preparing model",
@@ -742,7 +748,9 @@ function modelUpdateToken(info) {
 function renderModelUpdateButton() {
   if (!elements.menuBtnUpdate) return;
   if (!state.serverHealthy || state.runtimeStopping) {
+    elements.menuBtnUpdate.textContent = t("menuUpdate");
     elements.menuBtnUpdate.disabled = true;
+    elements.menuBtnUpdate.setAttribute("aria-busy", "false");
     elements.menuBtnUpdate.classList.remove("has-update");
     return;
   }
@@ -750,17 +758,22 @@ function renderModelUpdateButton() {
   const info = state.modelUpdateInfo;
   const forCurrentModel = info && info.model === currentModel();
   const hasUpdate = Boolean(forCurrentModel && info.update_available);
+  const checking = Boolean(state.modelUpdateChecking);
 
-  elements.menuBtnUpdate.disabled = Boolean(state.busy || state.modelUpdateChecking);
+  elements.menuBtnUpdate.textContent = checking ? t("menuUpdateChecking") : t("menuUpdate");
+  elements.menuBtnUpdate.disabled = Boolean(state.busy || checking);
+  elements.menuBtnUpdate.setAttribute("aria-busy", checking ? "true" : "false");
   elements.menuBtnUpdate.classList.toggle("has-update", hasUpdate);
 
-  const title = hasUpdate
-    ? (
-      info.status === "unknown_local_revision"
-        ? t("updateUnknownRevision")
-        : t("updateAvailable", { model: info.model || currentModel() })
-    )
-    : t("menuUpdate");
+  const title = checking
+    ? t("checkingUpdates")
+    : hasUpdate
+      ? (
+        info.status === "unknown_local_revision"
+          ? t("updateUnknownRevision")
+          : t("updateAvailable", { model: info.model || currentModel() })
+      )
+      : t("menuUpdate");
 
   elements.menuBtnUpdate.title = title;
   elements.menuBtnUpdate.setAttribute("aria-label", title);
@@ -841,6 +854,9 @@ async function checkCurrentModelUpdate({ promptIfAvailable = false, silent = tru
   state.modelUpdateCheckSeq += 1;
   const seq = state.modelUpdateCheckSeq;
   state.modelUpdateChecking = true;
+  if (!silent) {
+    setTranscribeStatus(t("checkingUpdates"), "info");
+  }
   renderModelUpdateButton();
 
   try {
