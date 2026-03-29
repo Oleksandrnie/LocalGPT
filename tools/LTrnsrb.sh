@@ -25,12 +25,8 @@ LAN_IP_FILE="${LOG_DIR}/lan_ip"
 BACKEND_PORT=8000
 HTTPS_PORT=8443
 BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/health"
-
-BACKEND_PYTHON="${PROJECT_ROOT}/venv/bin/python"
-if [[ ! -x "${BACKEND_PYTHON}" ]]; then
-  BACKEND_PYTHON="$(command -v python3 2>/dev/null || true)"
-fi
-if [[ -z "${BACKEND_PYTHON}" ]]; then
+BOOTSTRAP_PYTHON="$(command -v python3 2>/dev/null || true)"
+if [[ -z "${BOOTSTRAP_PYTHON}" ]]; then
   osascript -e 'display alert "LTrnsrb" message "Python 3 was not found."'
   exit 1
 fi
@@ -247,7 +243,7 @@ start_backend() {
     cd "${PROJECT_ROOT}"
     export LTRNSRB_RUNTIME_DIR="${LOG_DIR}"
     export PYTHONPATH="${PROJECT_ROOT}"
-    nohup "${BACKEND_PYTHON}" -m uvicorn app.server:app --host 127.0.0.1 --port "${BACKEND_PORT}" --log-level info >>"${BACKEND_LOG}" 2>&1 &
+    nohup "${BOOTSTRAP_PYTHON}" run_localgpt.py --no-browser --no-reload --exec-backend --host 127.0.0.1 --port "${BACKEND_PORT}" >>"${BACKEND_LOG}" 2>&1 &
     echo "$!" > "${BACKEND_PID_FILE}"
   )
 
