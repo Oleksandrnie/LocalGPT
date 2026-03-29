@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import threading
 from pathlib import Path
@@ -88,31 +87,14 @@ def _snapshot_dirs(repo_id: str) -> list[Path]:
     org, repo_name = repo_id.split("/", 1)
     relative = Path(f"models--{org}--{repo_name}") / "snapshots"
 
-    roots: list[Path] = []
-    custom_import = (os.getenv("WHISPER_IMPORT_CACHE_DIR") or "").strip()
-    if custom_import:
-        roots.append(Path(custom_import).expanduser())
-    roots.append(Path.home() / ".cache" / "huggingface" / "hub")
-    roots.append(config.HF_CACHE_DIR)
-
     result: list[Path] = []
-    seen: set[str] = set()
-    for root in roots:
-        try:
-            resolved = root.resolve()
-        except OSError:
-            continue
-        key = str(resolved)
-        if key in seen:
-            continue
-        seen.add(key)
+    snapshots_root = config.HF_CACHE_DIR / relative
+    if not snapshots_root.exists():
+        return result
 
-        snapshots_root = resolved / relative
-        if not snapshots_root.exists():
-            continue
-        for snapshot in snapshots_root.iterdir():
-            if snapshot.is_dir():
-                result.append(snapshot)
+    for snapshot in snapshots_root.iterdir():
+        if snapshot.is_dir():
+            result.append(snapshot)
 
     result.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0.0, reverse=True)
     return result
