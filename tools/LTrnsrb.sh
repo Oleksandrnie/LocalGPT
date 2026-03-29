@@ -26,6 +26,8 @@ BACKEND_PORT=8000
 HTTPS_PORT=8443
 BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/health"
 BOOTSTRAP_PYTHON="$(command -v python3 2>/dev/null || true)"
+BACKEND_VENV_PYTHON="${PROJECT_ROOT}/venv/bin/python"
+BACKEND_DEPS_MARKER="${PROJECT_ROOT}/venv/.deps_installed"
 if [[ -z "${BOOTSTRAP_PYTHON}" ]]; then
   osascript -e 'display alert "LTrnsrb" message "Python 3 was not found."'
   exit 1
@@ -201,6 +203,25 @@ wait_for_http_health() {
   return 1
 }
 
+wait_for_backend_ready() {
+  local url="$1"
+  local pid="$2"
+  local retries="${3:-40}"
+  local delay="${4:-0.25}"
+  local i=0
+  while [[ "${i}" -lt "${retries}" ]]; do
+    if health_ok_http "${url}"; then
+      return 0
+    fi
+    if ! is_pid_alive "${pid}"; then
+      return 1
+    fi
+    sleep "${delay}"
+    i=$((i + 1))
+  done
+  return 1
+}
+
 wait_for_https_health() {
   local url="$1"
   local retries="${2:-40}"
@@ -218,6 +239,8 @@ wait_for_https_health() {
 
 start_backend() {
   local backend_pid=""
+  local startup_retries=60
+  local startup_delay=0.25
   backend_pid="$(read_pid_file "${BACKEND_PID_FILE}")"
 
   if [[ -n "${backend_pid}" ]] && is_pid_alive "${backend_pid}" && health_ok_http "${BACKEND_HEALTH_URL}"; then
@@ -247,7 +270,13 @@ start_backend() {
     echo "$!" > "${BACKEND_PID_FILE}"
   )
 
-  if ! wait_for_http_health "${BACKEND_HEALTH_URL}" 60 0.25; then
+  backend_pid="$(read_pid_file "${BACKEND_PID_FILE}")"
+  if [[ ! -x "${BACKEND_VENV_PYTHON}" ]] || [[ ! -f "${BACKEND_DEPS_MARKER}" ]]; then
+    startup_retries=1200
+    startup_delay=0.5
+  fi
+
+  if ! wait_for_backend_ready "${BACKEND_HEALTH_URL}" "${backend_pid}" "${startup_retries}" "${startup_delay}"; then
     osascript -e "display alert \"LTrnsrb\" message \"Backend did not start. Check ${BACKEND_LOG}\""
     return 1
   fi
