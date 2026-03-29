@@ -27,15 +27,42 @@ LocalGPT теперь работает как локальный транскр�
    ```
 4. UI: `http://127.0.0.1:8000/ui/gui_html.html`
 
+## Запуск для обычного пользователя
+Самый простой вариант без Terminal и без `Automator`:
+- открыть в проекте `LTrnsrb.app`;
+- или запустить `LTrnsrb.command`.
+
+Как это работает:
+- оба launcher-а лежат внутри самого проекта;
+- они сами находят корень проекта относительно своего расположения;
+- абсолютный путь вида `/Users/.../LocalGPT` вручную прописывать не нужно.
+
+Важно:
+- `LTrnsrb.app` лучше не выносить отдельно из папки проекта;
+- если нужен запуск из Dock, откройте `LTrnsrb.app` один раз и выберите `Keep in Dock`.
+
 ## Быстрый запуск на Mac через Automator (LTrnsrb)
 1. В проекте уже есть скрипт: `tools/LTrnsrb.sh`.
-2. Откройте `Automator` -> `Application`.
-3. Добавьте действие `Run Shell Script`.
-4. Вставьте одну строку:
+2. Рекомендуется сначала создать стабильный symlink:
    ```bash
-   /Users/oleksandrniemchenko/my_personal_files/LocalGPT/tools/LTrnsrb.sh
+   ln -s "/фактический/путь/к/LocalGPT" "$HOME/LocalGPT"
    ```
-5. Сохраните приложение как `LTrnsrb`.
+3. Что такое symlink:
+   - это "ярлык" на папку или файл на уровне файловой системы;
+   - `~/LocalGPT` будет указывать на реальную папку проекта, даже если она лежит на другом диске или в другом каталоге;
+   - если проект переедет, достаточно обновить только symlink, а `Automator` менять не нужно.
+4. Если symlink уже существует и его нужно перенаправить на новый путь:
+   ```bash
+   rm -f "$HOME/LocalGPT"
+   ln -s "/новый/фактический/путь/к/LocalGPT" "$HOME/LocalGPT"
+   ```
+5. Откройте `Automator` -> `Application`.
+6. Добавьте действие `Run Shell Script`.
+7. Вставьте одну строку:
+   ```bash
+   /bin/zsh -lc "$HOME/LocalGPT/tools/LTrnsrb.sh"
+   ```
+8. Сохраните приложение как `LTrnsrb`.
 
 Что делает `LTrnsrb`:
 - проверяет, запущены ли backend и Caddy;
@@ -45,8 +72,8 @@ LocalGPT теперь работает как локальный транскр�
 - открывает UI по актуальному LAN URL `https://<ваш-ip>:8443/ui/gui_html.html` (или fallback на localhost).
 
 Логи launcher-а:
-- backend: `/tmp/LTrnsrb/backend.log`
-- caddy: `/tmp/LTrnsrb/caddy.log`
+- backend: `${TMPDIR}LTrnsrb-<uid>/backend.log`
+- caddy: `${TMPDIR}LTrnsrb-<uid>/caddy.log`
 
 ## LAN + iPhone (HTTPS через Caddy)
 Для записи голоса на iPhone нужен HTTPS. Для этого используется локальный reverse proxy Caddy.
@@ -59,7 +86,7 @@ brew install caddy
 ### 2) Конфиг Caddy
 Для ручного запуска есть `Caddyfile.lan` (фиксированный вариант).
 Для повседневного использования лучше запускать через `LTrnsrb`:
-- он генерирует динамический конфиг `/tmp/LTrnsrb/Caddyfile.auto`;
+- он генерирует динамический конфиг в per-user runtime dir: `${TMPDIR}LTrnsrb-<uid>/Caddyfile.auto`;
 - автоматически подставляет актуальный LAN IP;
 - при смене IP (включая VPN/другую сеть) перезапускает Caddy с новым сертификатом.
 

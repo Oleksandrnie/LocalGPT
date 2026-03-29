@@ -1,11 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
-PROJECT_ROOT="/Users/oleksandrniemchenko/my_personal_files/LocalGPT"
-if [[ ! -f "${PROJECT_ROOT}/run_localgpt.py" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-fi
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT_DEFAULT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="${LTRNSRB_PROJECT_ROOT:-${PROJECT_ROOT_DEFAULT}}"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -14,7 +12,9 @@ if [[ ! -f "${PROJECT_ROOT}/run_localgpt.py" ]]; then
   exit 1
 fi
 
-LOG_DIR="/tmp/LTrnsrb"
+RUNTIME_BASE="${TMPDIR:-/tmp}"
+RUNTIME_BASE="${RUNTIME_BASE%/}"
+LOG_DIR="${RUNTIME_BASE}/LTrnsrb-${UID}"
 mkdir -p "${LOG_DIR}"
 BACKEND_LOG="${LOG_DIR}/backend.log"
 CADDY_LOG="${LOG_DIR}/caddy.log"
@@ -252,7 +252,7 @@ start_backend() {
   )
 
   if ! wait_for_http_health "${BACKEND_HEALTH_URL}" 60 0.25; then
-    osascript -e 'display alert "LTrnsrb" message "Backend did not start. Check /tmp/LTrnsrb/backend.log"'
+    osascript -e "display alert \"LTrnsrb\" message \"Backend did not start. Check ${BACKEND_LOG}\""
     return 1
   fi
   return 0
@@ -279,7 +279,7 @@ start_or_restart_caddy() {
   )
 
   if ! wait_for_https_health "${https_health_url}" 80 0.25; then
-    osascript -e 'display alert "LTrnsrb" message "Caddy did not start HTTPS correctly. Check /tmp/LTrnsrb/caddy.log"'
+    osascript -e "display alert \"LTrnsrb\" message \"Caddy did not start HTTPS correctly. Check ${CADDY_LOG}\""
     return 1
   fi
   return 0

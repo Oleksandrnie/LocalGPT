@@ -76,20 +76,28 @@
         <p class="muted voice-activity voice-activity--idle" id="voiceActivity">Voice: —</p>
       </div>
 
-      <p class="status" id="transcribeStatus"></p>
+      <div id="transcribeStatusWrap" class="status-banner" hidden>
+        <p class="status" id="transcribeStatus"></p>
+        <button id="btnDismissTranscribeStatus" class="widget-dismiss" type="button" aria-label="Close notification">×</button>
+      </div>
+      <button id="btnStopTranscription" class="btn btn-danger btn-stop-transcription" type="button" hidden disabled>
+        Stop transcription
+      </button>
       <section class="stage-widget" id="stageWidget" hidden>
         <div class="stage-widget__top">
           <strong id="stageLabel">Stage: idle</strong>
-          <span id="stagePercent">0%</span>
+          <button id="btnDismissStage" class="widget-dismiss" type="button" aria-label="Close stage">×</button>
         </div>
-        <progress id="stageProgress" max="100" value="0"></progress>
         <p class="stage-widget__detail" id="stageDetail"></p>
       </section>
 
       <section class="download-widget" id="downloadWidget" hidden>
         <div class="download-widget__top">
           <strong id="downloadModelName">Model: —</strong>
-          <span id="downloadPercent">0%</span>
+          <div class="widget-actions">
+            <span id="downloadPercent">0%</span>
+            <button id="btnDismissDownload" class="widget-dismiss" type="button" aria-label="Close download">×</button>
+          </div>
         </div>
         <progress id="downloadProgress" max="100" value="0"></progress>
         <div class="download-widget__meta">

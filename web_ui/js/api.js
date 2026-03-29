@@ -92,6 +92,27 @@ export async function transcribeFile(file, model, sourceType = "upload") {
   return handleResponse(response);
 }
 
+export async function startTranscriptionTask(file, model, sourceType = "upload") {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("model", model);
+  formData.append("source_type", sourceType);
+
+  const response = await fetch("/transcribe/tasks", {
+    method: "POST",
+    body: formData,
+  });
+  return handleResponse(response);
+}
+
+export function fetchTranscriptionTask(taskId) {
+  return apiGet(`/transcribe/tasks/${encodeURIComponent(taskId)}`);
+}
+
+export function cancelTranscriptionTask(taskId) {
+  return apiPost(`/transcribe/tasks/${encodeURIComponent(taskId)}/cancel`, {});
+}
+
 export function listTranscripts() {
   return apiGet("/transcripts");
 }

@@ -1,5 +1,7 @@
 import {
+  cancelTranscriptionTask,
   createTranscript,
+  fetchTranscriptionTask,
   deleteTranscript,
   fetchWhisperModelPrepare,
   fetchWhisperModelUpdateCheck,
@@ -9,7 +11,7 @@ import {
   listTranscripts,
   shutdownRuntime,
   startWhisperModelPrepare,
-  transcribeFile,
+  startTranscriptionTask,
   updateTranscript,
 } from "./api.js";
 import { renderHistoryList } from "./history.js";
@@ -50,6 +52,7 @@ const I18N = {
     menuExport: "Экспорт базы",
     menuImport: "Импорт базы",
     menuShutdown: "Завершить работу",
+    stopTranscription: "Остановить транскрибацию",
     featureSoon: "Функция в разработке, ожидается позже.",
     update: "update",
     updateAvailable: "Доступно обновление модели {model}.",
@@ -67,6 +70,7 @@ const I18N = {
     stageTranscribe: "Транскрибация",
     stageSave: "Сохранение",
     stageStopping: "Остановка сервисов",
+    stageCancelled: "Остановлено",
     stageDone: "Готово",
     stageError: "Ошибка",
     iosShortcutTitle: "Скопировать iOS URL: {url}",
@@ -91,6 +95,9 @@ const I18N = {
     confirmDelete: "Удалить эту запись из истории?",
     checkingModel: "Проверка модели...",
     transcribing: "Транскрибация...",
+    transcriptionStopping: "Остановка транскрибации...",
+    transcriptionCancelled: "Транскрибация остановлена.",
+    transcriptionStopFailed: "Не удалось остановить транскрибацию: {error}",
     prepareTimeout: "Превышено время ожидания загрузки модели.",
     doneSymbols: "Готово • {count} символов",
     errorGeneric: "Ошибка: {error}",
@@ -116,6 +123,7 @@ const I18N = {
     errEmptyText: "Текст обязателен.",
     errEmptyPatch: "Нет данных для обновления.",
     errTaskNotFound: "Задача подготовки модели не найдена.",
+    errTranscriptionTaskNotFound: "Задача транскрибации не найдена.",
     errInvalidHFToken: "HF_TOKEN содержит недопустимые символы.",
     errDownloadDns: "Ошибка DNS при загрузке модели.",
     errDownloadTimeout: "Превышен тайм-аут загрузки модели.",
@@ -170,6 +178,7 @@ const I18N = {
     menuExport: "Експорт бази",
     menuImport: "Імпорт бази",
     menuShutdown: "Завершити роботу",
+    stopTranscription: "Зупинити транскрибацію",
     featureSoon: "Функція в розробці, очікується пізніше.",
     update: "update",
     updateAvailable: "Доступне оновлення моделі {model}.",
@@ -187,6 +196,7 @@ const I18N = {
     stageTranscribe: "Транскрибація",
     stageSave: "Збереження",
     stageStopping: "Зупинка сервісів",
+    stageCancelled: "Зупинено",
     stageDone: "Готово",
     stageError: "Помилка",
     iosShortcutTitle: "Скопіювати iOS URL: {url}",
@@ -211,6 +221,9 @@ const I18N = {
     confirmDelete: "Видалити цей запис з історії?",
     checkingModel: "Перевірка моделі...",
     transcribing: "Транскрибація...",
+    transcriptionStopping: "Зупинка транскрибації...",
+    transcriptionCancelled: "Транскрибацію зупинено.",
+    transcriptionStopFailed: "Не вдалося зупинити транскрибацію: {error}",
     prepareTimeout: "Перевищено час очікування завантаження моделі.",
     doneSymbols: "Готово • {count} символів",
     errorGeneric: "Помилка: {error}",
@@ -236,6 +249,7 @@ const I18N = {
     errEmptyText: "Текст обов'язковий.",
     errEmptyPatch: "Немає даних для оновлення.",
     errTaskNotFound: "Задачу підготовки моделі не знайдено.",
+    errTranscriptionTaskNotFound: "Задачу транскрибації не знайдено.",
     errInvalidHFToken: "HF_TOKEN містить недопустимі символи.",
     errDownloadDns: "DNS помилка під час завантаження моделі.",
     errDownloadTimeout: "Перевищено тайм-аут завантаження моделі.",
@@ -290,6 +304,7 @@ const I18N = {
     menuExport: "Export database",
     menuImport: "Import database",
     menuShutdown: "Shut down app",
+    stopTranscription: "Stop transcription",
     featureSoon: "Feature is in development and will be available later.",
     update: "update",
     updateAvailable: "Model update is available for {model}.",
@@ -307,6 +322,7 @@ const I18N = {
     stageTranscribe: "Transcribing",
     stageSave: "Saving result",
     stageStopping: "Stopping services",
+    stageCancelled: "Stopped",
     stageDone: "Done",
     stageError: "Error",
     iosShortcutTitle: "Copy iOS URL: {url}",
@@ -331,6 +347,9 @@ const I18N = {
     confirmDelete: "Delete this transcript from history?",
     checkingModel: "Checking model...",
     transcribing: "Transcribing...",
+    transcriptionStopping: "Stopping transcription...",
+    transcriptionCancelled: "Transcription stopped.",
+    transcriptionStopFailed: "Failed to stop transcription: {error}",
     prepareTimeout: "Model download wait timeout exceeded.",
     doneSymbols: "Done • {count} chars",
     errorGeneric: "Error: {error}",
@@ -356,6 +375,7 @@ const I18N = {
     errEmptyText: "Text is required.",
     errEmptyPatch: "No data provided for update.",
     errTaskNotFound: "Model preparation task was not found.",
+    errTranscriptionTaskNotFound: "Transcription task was not found.",
     errInvalidHFToken: "HF_TOKEN contains invalid characters.",
     errDownloadDns: "DNS error while downloading model.",
     errDownloadTimeout: "Model download timed out.",
@@ -404,18 +424,21 @@ const elements = {
   btnSaveRecording: document.getElementById("btnSaveRecording"),
   recordingInfo: document.getElementById("recordingInfo"),
   voiceActivity: document.getElementById("voiceActivity"),
+  transcribeStatusWrap: document.getElementById("transcribeStatusWrap"),
   transcribeStatus: document.getElementById("transcribeStatus"),
+  btnDismissTranscribeStatus: document.getElementById("btnDismissTranscribeStatus"),
+  btnStopTranscription: document.getElementById("btnStopTranscription"),
   stageWidget: document.getElementById("stageWidget"),
   stageLabel: document.getElementById("stageLabel"),
-  stagePercent: document.getElementById("stagePercent"),
-  stageProgress: document.getElementById("stageProgress"),
   stageDetail: document.getElementById("stageDetail"),
+  btnDismissStage: document.getElementById("btnDismissStage"),
   downloadWidget: document.getElementById("downloadWidget"),
   downloadModelName: document.getElementById("downloadModelName"),
   downloadPercent: document.getElementById("downloadPercent"),
   downloadProgress: document.getElementById("downloadProgress"),
   downloadSpeed: document.getElementById("downloadSpeed"),
   downloadMessage: document.getElementById("downloadMessage"),
+  btnDismissDownload: document.getElementById("btnDismissDownload"),
   transcriptTitle: document.getElementById("transcriptTitle"),
   transcriptOutput: document.getElementById("transcriptOutput"),
   btnCopy: document.getElementById("btnCopy"),
@@ -442,6 +465,9 @@ const state = {
   busy: false,
   lastRecordingFile: null,
   selectedUploadFile: null,
+  transcriptionTaskId: null,
+  transcriptionCancelable: false,
+  transcriptionStopping: false,
   modelPrepareTaskId: null,
   currentDownloadTask: null,
   serverHealthy: false,
@@ -459,6 +485,15 @@ const state = {
     percent: 0,
     detail: "",
     tone: "info",
+  },
+  transcribeStatusState: {
+    message: "",
+    tone: "info",
+  },
+  dismissedPanels: {
+    transcribeStatus: null,
+    stage: null,
+    download: null,
   },
   language: "en",
 };
@@ -489,6 +524,8 @@ const ERROR_TEXT_KEY_BY_CODE = {
   empty_text: "errEmptyText",
   empty_patch: "errEmptyPatch",
   task_not_found: "errTaskNotFound",
+  transcription_task_not_found: "errTranscriptionTaskNotFound",
+  task_cancelled: "transcriptionCancelled",
   invalid_hf_token: "errInvalidHFToken",
   download_dns_error: "errDownloadDns",
   download_timeout: "errDownloadTimeout",
@@ -554,21 +591,90 @@ function setBusy(value) {
   if (elements.menuBtnUpdate) {
     elements.menuBtnUpdate.disabled = value;
   }
+  renderStopTranscriptionButton();
+}
+
+function transcribeStatusSignature(message, tone = "info") {
+  const text = String(message || "").trim();
+  if (!text) return null;
+  return `${tone}:${text}`;
+}
+
+function stageSignature(stage = state.liveStage) {
+  if (!stage?.visible) return null;
+  return `${stage.key || "stageIdle"}:${stage.tone || "info"}`;
+}
+
+function downloadSignature(task = state.currentDownloadTask) {
+  if (!task) return null;
+  return String(task.task_id || `${task.model || "model"}:${task.state || "state"}`);
+}
+
+function resetPanelDismissals({
+  transcribeStatus = false,
+  stage = false,
+  download = false,
+} = {}) {
+  if (transcribeStatus) {
+    state.dismissedPanels.transcribeStatus = null;
+  }
+  if (stage) {
+    state.dismissedPanels.stage = null;
+  }
+  if (download) {
+    state.dismissedPanels.download = null;
+  }
+}
+
+function renderTranscribeStatus() {
+  if (!elements.transcribeStatus || !elements.transcribeStatusWrap) return;
+
+  const message = state.transcribeStatusState.message || "";
+  const tone = state.transcribeStatusState.tone || "info";
+  const signature = transcribeStatusSignature(message, tone);
+
+  if (!signature) {
+    setStatus(elements.transcribeStatus, "", tone);
+    elements.transcribeStatusWrap.hidden = true;
+    return;
+  }
+
+  setStatus(elements.transcribeStatus, message, tone);
+  elements.transcribeStatusWrap.hidden = state.dismissedPanels.transcribeStatus === signature;
 }
 
 function setTranscribeStatus(message, tone = "info") {
-  setStatus(elements.transcribeStatus, message, tone);
+  state.transcribeStatusState = {
+    message: String(message || ""),
+    tone,
+  };
+  renderTranscribeStatus();
+}
+
+function renderStopTranscriptionButton() {
+  if (!elements.btnStopTranscription) return;
+
+  const hasActiveTask = Boolean(
+    state.transcriptionTaskId
+    && state.transcriptionCancelable
+    && state.liveStage?.key === "stageTranscribe"
+  );
+  elements.btnStopTranscription.hidden = !hasActiveTask;
+  elements.btnStopTranscription.textContent = state.transcriptionStopping ? t("transcriptionStopping") : t("stopTranscription");
+  elements.btnStopTranscription.disabled = !hasActiveTask || state.transcriptionStopping || state.runtimeStopping;
 }
 
 function renderLiveStage() {
-  if (!elements.stageWidget || !elements.stageLabel || !elements.stagePercent || !elements.stageProgress || !elements.stageDetail) {
+  if (!elements.stageWidget || !elements.stageLabel || !elements.stageDetail) {
     return;
   }
 
   const stage = state.liveStage || { visible: false };
-  elements.stageWidget.hidden = !stage.visible;
   elements.stageWidget.classList.remove("stage-widget--success", "stage-widget--warning", "stage-widget--error");
-  if (!stage.visible) return;
+  if (!stage.visible) {
+    elements.stageWidget.hidden = true;
+    return;
+  }
 
   if (stage.tone === "success") {
     elements.stageWidget.classList.add("stage-widget--success");
@@ -578,11 +684,10 @@ function renderLiveStage() {
     elements.stageWidget.classList.add("stage-widget--error");
   }
 
-  const percent = Math.max(0, Math.min(100, Number(stage.percent || 0)));
+  const signature = stageSignature(stage);
   elements.stageLabel.textContent = `${t("stagePrefix")}: ${t(stage.key || "stageIdle")}`;
-  elements.stagePercent.textContent = `${Math.round(percent)}%`;
-  elements.stageProgress.value = percent;
   elements.stageDetail.textContent = stage.detail || "";
+  elements.stageWidget.hidden = state.dismissedPanels.stage === signature;
 }
 
 function setLiveStage({
@@ -794,6 +899,7 @@ function renderHeaderMenu() {
 async function runModelUpdateNow(model = currentModel()) {
   if (!model || state.busy) return;
 
+  resetPanelDismissals({ transcribeStatus: true, stage: true, download: true });
   setBusy(true);
   setTranscribeStatus(t("updatingModel"), "info");
   setLiveStage({
@@ -926,10 +1032,25 @@ function applyStaticTexts() {
   if (elements.menuBtnShutdown) {
     elements.menuBtnShutdown.textContent = t("menuShutdown");
   }
+  if (elements.btnDismissTranscribeStatus) {
+    elements.btnDismissTranscribeStatus.setAttribute("aria-label", t("close"));
+    elements.btnDismissTranscribeStatus.title = t("close");
+  }
+  if (elements.btnDismissStage) {
+    elements.btnDismissStage.setAttribute("aria-label", t("close"));
+    elements.btnDismissStage.title = t("close");
+  }
+  if (elements.btnDismissDownload) {
+    elements.btnDismissDownload.setAttribute("aria-label", t("close"));
+    elements.btnDismissDownload.title = t("close");
+  }
   elements.btnChooseFile.textContent = t("chooseFile");
   if (elements.dropHint) {
     const isActive = elements.uploadDropZone?.classList.contains("is-dragover");
     elements.dropHint.textContent = isActive ? t("dropHintActive") : t("dropHint");
+  }
+  if (elements.btnStopTranscription) {
+    elements.btnStopTranscription.textContent = state.transcriptionStopping ? t("transcriptionStopping") : t("stopTranscription");
   }
   elements.btnSaveRecording.textContent = t("saveRecording");
   elements.btnRecord.title = t("recordButtonTitle");
@@ -964,7 +1085,9 @@ function applyStaticTexts() {
     renderModalContent(state.modalTranscript);
   }
 
+  renderTranscribeStatus();
   renderLiveStage();
+  renderStopTranscriptionButton();
   renderModelUpdateButton();
   renderHeaderMenu();
 }
@@ -989,15 +1112,17 @@ function setLanguage(language, { persist = true } = {}) {
 function renderDownloadWidget(task) {
   state.currentDownloadTask = task || null;
   if (!task) {
+    state.dismissedPanels.download = null;
     elements.downloadWidget.hidden = true;
     return;
   }
 
-  elements.downloadWidget.hidden = false;
+  const signature = downloadSignature(task);
   elements.downloadModelName.textContent = t("downloadModel", { model: task.model || "—" });
   elements.downloadPercent.textContent = `${Math.max(0, Math.min(100, Number(task.percent || 0))).toFixed(1)}%`;
   elements.downloadProgress.value = Math.max(0, Math.min(100, Number(task.percent || 0)));
   elements.downloadSpeed.textContent = t("downloadSpeed", { speed: formatSpeed(task.speed_bps) });
+  elements.downloadWidget.hidden = state.dismissedPanels.download === signature;
   if (task.error_code) {
     const localizedError = localizeError({
       code: task.error_code || null,
@@ -1071,6 +1196,7 @@ function renderHealthStatus() {
   if (elements.menuBtnShutdown) {
     elements.menuBtnShutdown.disabled = !state.serverHealthy || state.runtimeStopping;
   }
+  renderStopTranscriptionButton();
   renderModelUpdateButton();
   renderHeaderMenu();
 
@@ -1191,10 +1317,48 @@ async function handleIncomingFile(file) {
   await runTranscription(file, "upload");
 }
 
+function isFinalTranscriptionTaskState(task) {
+  const currentState = String(task?.state || "").toLowerCase();
+  return currentState === "completed" || currentState === "error" || currentState === "cancelled";
+}
+
+async function waitForTranscriptionTask(taskId) {
+  const maxPolls = 7200;
+
+  for (let poll = 0; poll < maxPolls; poll += 1) {
+    await sleep(500);
+    const task = await fetchTranscriptionTask(taskId);
+
+    if (task?.state === "cancelling") {
+      setTranscribeStatus(t("transcriptionStopping"), "warning");
+      setLiveStage({
+        key: "stageTranscribe",
+        percent: 78,
+        detail: t("transcriptionStopping"),
+        tone: "warning",
+        visible: true,
+      });
+    }
+
+    if (isFinalTranscriptionTaskState(task)) {
+      return task;
+    }
+  }
+
+  const timeoutError = new Error("transcription_failed");
+  timeoutError.code = "transcription_failed";
+  throw timeoutError;
+}
+
 async function runTranscription(file, sourceType) {
   if (!file) return;
 
+  resetPanelDismissals({ transcribeStatus: true, stage: true, download: true });
   setBusy(true);
+  state.transcriptionTaskId = null;
+  state.transcriptionCancelable = false;
+  state.transcriptionStopping = false;
+  renderStopTranscriptionButton();
   setTranscribeStatus(t("checkingModel"), "info");
   setLiveStage({
     key: "stagePrepare",
@@ -1215,7 +1379,34 @@ async function runTranscription(file, sourceType) {
       visible: true,
     });
 
-    const result = await transcribeFile(file, currentModel(), sourceType);
+    const started = await startTranscriptionTask(file, currentModel(), sourceType);
+    state.transcriptionTaskId = started?.id || null;
+    state.transcriptionCancelable = Boolean(state.transcriptionTaskId);
+    state.transcriptionStopping = false;
+    renderStopTranscriptionButton();
+
+    const task = await waitForTranscriptionTask(state.transcriptionTaskId);
+    state.transcriptionCancelable = false;
+    renderStopTranscriptionButton();
+    if (task?.state === "cancelled") {
+      setTranscribeStatus(t("transcriptionCancelled"), "warning");
+      setLiveStage({
+        key: "stageCancelled",
+        percent: 100,
+        detail: t("transcriptionCancelled"),
+        tone: "warning",
+        visible: true,
+      });
+      return;
+    }
+
+    if (task?.state !== "completed" || !task?.result) {
+      const taskError = new Error(task?.message || "transcription_failed");
+      taskError.code = task?.error_code || "transcription_failed";
+      throw taskError;
+    }
+
+    const result = task.result;
     selectTranscript(result);
     setLiveStage({
       key: "stageSave",
@@ -1246,6 +1437,10 @@ async function runTranscription(file, sourceType) {
       visible: true,
     });
   } finally {
+    state.transcriptionTaskId = null;
+    state.transcriptionCancelable = false;
+    state.transcriptionStopping = false;
+    renderStopTranscriptionButton();
     setBusy(false);
   }
 }
@@ -1258,6 +1453,7 @@ async function saveTranscriptText() {
   }
 
   try {
+    resetPanelDismissals({ stage: true, transcribeStatus: true });
     setLiveStage({
       key: "stageSave",
       percent: 88,
@@ -1346,10 +1542,44 @@ function markRuntimeStoppedUi() {
   showToast(message, 5000);
 }
 
+async function stopActiveTranscription() {
+  const taskId = state.transcriptionTaskId;
+  if (!taskId || state.transcriptionStopping) return;
+
+  resetPanelDismissals({ transcribeStatus: true, stage: true });
+  state.transcriptionStopping = true;
+  renderStopTranscriptionButton();
+  setTranscribeStatus(t("transcriptionStopping"), "warning");
+  setLiveStage({
+    key: "stageTranscribe",
+    percent: 78,
+    detail: t("transcriptionStopping"),
+    tone: "warning",
+    visible: true,
+  });
+
+  try {
+    await cancelTranscriptionTask(taskId);
+  } catch (error) {
+    state.transcriptionStopping = false;
+    renderStopTranscriptionButton();
+    const message = localizeError(error);
+    setTranscribeStatus(t("transcriptionStopFailed", { error: message }), "error");
+    setLiveStage({
+      key: "stageError",
+      percent: 100,
+      detail: t("transcriptionStopFailed", { error: message }),
+      tone: "error",
+      visible: true,
+    });
+  }
+}
+
 async function stopRuntimeFromUi() {
   if (state.runtimeStopping) return;
   if (!window.confirm(t("runtimeStopConfirm"))) return;
 
+  resetPanelDismissals({ transcribeStatus: true, stage: true });
   state.menuOpen = false;
   state.runtimeStopping = true;
   renderHealthStatus();
@@ -1637,6 +1867,28 @@ function bindEvents() {
 
   elements.btnSaveRecording.addEventListener("click", () => {
     downloadRecordingFile();
+  });
+
+  elements.btnDismissTranscribeStatus?.addEventListener("click", () => {
+    state.dismissedPanels.transcribeStatus = transcribeStatusSignature(
+      state.transcribeStatusState.message,
+      state.transcribeStatusState.tone,
+    );
+    renderTranscribeStatus();
+  });
+
+  elements.btnDismissStage?.addEventListener("click", () => {
+    state.dismissedPanels.stage = stageSignature();
+    renderLiveStage();
+  });
+
+  elements.btnDismissDownload?.addEventListener("click", () => {
+    state.dismissedPanels.download = downloadSignature();
+    renderDownloadWidget(state.currentDownloadTask);
+  });
+
+  elements.btnStopTranscription?.addEventListener("click", () => {
+    stopActiveTranscription();
   });
 
   elements.btnCopy.addEventListener("click", () => copyOutput());

@@ -19,6 +19,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   width: 100%;
@@ -235,6 +239,19 @@ body {
   font-size: 0.93rem;
 }
 
+.status-banner {
+  margin-top: 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.status-banner .status {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
 .status.status-error {
   color: var(--danger);
 }
@@ -391,6 +408,11 @@ textarea {
   margin-top: 2px;
 }
 
+.btn-stop-transcription {
+  margin-top: 10px;
+  width: 100%;
+}
+
 .btn-record {
   min-width: 54px;
   font-size: 1.05rem;
@@ -492,6 +514,36 @@ textarea {
   font-size: 0.85rem;
 }
 
+.widget-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.widget-dismiss {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #385381;
+  border-radius: 999px;
+  background: rgba(16, 24, 40, 0.72);
+  color: var(--text-soft);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 0.95rem;
+  transition: 0.16s ease-in-out;
+}
+
+.widget-dismiss:hover,
+.widget-dismiss:focus-visible {
+  color: var(--text);
+  border-color: #59ccff;
+  box-shadow: 0 0 0 2px rgba(66, 192, 255, 0.16);
+}
+
 .download-widget progress {
   width: 100%;
   margin-top: 8px;
@@ -541,42 +593,6 @@ textarea {
   gap: 8px;
   align-items: center;
   font-size: 0.85rem;
-}
-
-.stage-widget progress {
-  width: 100%;
-  margin-top: 8px;
-  height: 8px;
-}
-
-.stage-widget progress::-webkit-progress-bar {
-  background: #0f1a2c;
-  border-radius: 999px;
-}
-
-.stage-widget progress::-webkit-progress-value {
-  background: linear-gradient(90deg, #42c0ff, #289ad4);
-  border-radius: 999px;
-}
-
-.stage-widget progress::-moz-progress-bar {
-  background: linear-gradient(90deg, #42c0ff, #289ad4);
-  border-radius: 999px;
-}
-
-.stage-widget--success progress::-webkit-progress-value,
-.stage-widget--success progress::-moz-progress-bar {
-  background: linear-gradient(90deg, #56d98b, #2ea86f);
-}
-
-.stage-widget--warning progress::-webkit-progress-value,
-.stage-widget--warning progress::-moz-progress-bar {
-  background: linear-gradient(90deg, #f7c75b, #d9982e);
-}
-
-.stage-widget--error progress::-webkit-progress-value,
-.stage-widget--error progress::-moz-progress-bar {
-  background: linear-gradient(90deg, #ff6b6b, #dd4444);
 }
 
 .stage-widget__detail {

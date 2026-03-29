@@ -6,15 +6,17 @@ import signal
 import socket
 import threading
 import time
+import tempfile
 
 from fastapi import APIRouter, HTTPException
 from fastapi import Request
 
-from .. import config, whisper_downloads
+from .. import config, transcribe_tasks, whisper_downloads
 from ..schemas import ModelPrepareRequest
 
 router = APIRouter()
-RUNTIME_DIR = Path(os.getenv("LTRNSRB_RUNTIME_DIR", "/tmp/LTrnsrb"))
+_DEFAULT_RUNTIME_DIR = Path(tempfile.gettempdir()) / f"LTrnsrb-{os.getuid()}"
+RUNTIME_DIR = Path(os.getenv("LTRNSRB_RUNTIME_DIR", str(_DEFAULT_RUNTIME_DIR)))
 BACKEND_PID_FILE = RUNTIME_DIR / "backend.pid"
 CADDY_PID_FILE = RUNTIME_DIR / "caddy.pid"
 
@@ -79,6 +81,8 @@ def _safe_unlink(path: Path) -> None:
 
 def _shutdown_worker() -> None:
     time.sleep(0.45)
+
+    transcribe_tasks.cancel_all_tasks()
 
     caddy_pid = _read_pid(CADDY_PID_FILE)
     if caddy_pid:
