@@ -8,18 +8,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ALLOWED_WHISPER_MODELS = (
-    "tiny",
-    "base",
-    "small",
-    "medium",
-    "large-v3",
-    "large-v3-turbo",
-)
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 UI_DIR = PROJECT_ROOT / "web_ui"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
+DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
+
+
+def _parse_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
 
 
 def _parse_int(name: str, default: int) -> int:
@@ -41,69 +40,86 @@ def _resolve_path(raw: str | None, fallback: Path) -> Path:
     return path.resolve()
 
 
-models_dir = _resolve_path(os.getenv("MODELS_DIR"), PROJECT_ROOT / "models")
-whisper_models_dir = _resolve_path(os.getenv("WHISPER_MODELS_DIR"), models_dir)
-default_hf_home_dir = models_dir / "huggingface"
-hf_home_dir = _resolve_path(os.getenv("HF_HOME"), default_hf_home_dir)
-hf_hub_cache_dir = _resolve_path(
-    os.getenv("HUGGINGFACE_HUB_CACHE") or os.getenv("HF_CACHE_DIR"),
-    hf_home_dir / "hub",
-)
-ctranslate2_cache_dir = _resolve_path(
-    os.getenv("CTRANSLATE2_CACHE_DIR") or os.getenv("CT2_TRANSLATORS_CACHE"),
-    models_dir / "ctranslate2_cache",
-)
-transcripts_dir = _resolve_path(os.getenv("TRANSCRIPTS_DIR"), DATA_DIR / "transcripts")
+def _parse_speed_options(raw: str | None) -> tuple[float, ...]:
+    if not raw:
+        return DEFAULT_TTS_SPEED_OPTIONS
 
-for path in (models_dir, whisper_models_dir, hf_home_dir, hf_hub_cache_dir, ctranslate2_cache_dir, transcripts_dir):
+    values: list[float] = []
+    seen: set[float] = set()
+    for chunk in raw.split(","):
+        item = chunk.strip()
+        if not item:
+            continue
+        try:
+            value = round(float(item), 2)
+        except ValueError:
+            continue
+        if value < 1.0 or value > 2.0 or value in seen:
+            continue
+        values.append(value)
+        seen.add(value)
+
+    return tuple(values) if values else DEFAULT_TTS_SPEED_OPTIONS
+
+
+models_dir = _resolve_path(os.getenv("MODELS_DIR"), PROJECT_ROOT / "models")
+tts_models_dir = _resolve_path(os.getenv("TTS_MODELS_DIR"), models_dir / "tts")
+piper_models_dir = _resolve_path(os.getenv("PIPER_MODELS_DIR"), tts_models_dir / "piper")
+tts_data_dir = _resolve_path(os.getenv("TTS_DATA_DIR"), DATA_DIR / "tts")
+tts_output_dir = _resolve_path(os.getenv("TTS_OUTPUT_DIR"), tts_data_dir / "output")
+tts_history_dir = _resolve_path(os.getenv("TTS_HISTORY_DIR"), tts_data_dir / "history")
+tts_temp_dir = _resolve_path(os.getenv("TTS_TEMP_DIR"), tts_data_dir / "temp")
+
+for path in (
+    models_dir,
+    tts_models_dir,
+    piper_models_dir,
+    tts_data_dir,
+    tts_output_dir,
+    tts_history_dir,
+    tts_temp_dir,
+):
     path.mkdir(parents=True, exist_ok=True)
 
-for model_name in ALLOWED_WHISPER_MODELS:
-    (whisper_models_dir / model_name).mkdir(parents=True, exist_ok=True)
-
 os.environ["MODELS_DIR"] = str(models_dir)
-os.environ["WHISPER_MODELS_DIR"] = str(whisper_models_dir)
-os.environ["HF_HOME"] = str(hf_home_dir)
-os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_hub_cache_dir)
-os.environ["HF_CACHE_DIR"] = str(hf_hub_cache_dir)
-os.environ["CTRANSLATE2_CACHE_DIR"] = str(ctranslate2_cache_dir)
-os.environ["CT2_TRANSLATORS_CACHE"] = str(ctranslate2_cache_dir)
-os.environ["TRANSCRIPTS_DIR"] = str(transcripts_dir)
+os.environ["TTS_MODELS_DIR"] = str(tts_models_dir)
+os.environ["PIPER_MODELS_DIR"] = str(piper_models_dir)
+os.environ["TTS_DATA_DIR"] = str(tts_data_dir)
+os.environ["TTS_OUTPUT_DIR"] = str(tts_output_dir)
+os.environ["TTS_HISTORY_DIR"] = str(tts_history_dir)
+os.environ["TTS_TEMP_DIR"] = str(tts_temp_dir)
 
 
 @dataclass(frozen=True)
 class Settings:
     env: str
-    whisper_default_model: str
-    whisper_compute_type: str
-    whisper_device: str
-    whisper_beam_size: int
-    whisper_fallback_language: str
-    ios_access_url: str | None
-    ios_https_port: int
+    tts_enabled: bool
+    tts_default_provider: str
+    tts_audio_format: str
+    tts_max_text_chars: int
+    tts_speed_options: tuple[float, ...]
 
 
 def _load_settings() -> Settings:
-    raw_default_model = (os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo") or "large-v3-turbo").strip()
-    default_model = raw_default_model if raw_default_model in ALLOWED_WHISPER_MODELS else "large-v3-turbo"
-    ios_access_url = (os.getenv("IOS_ACCESS_URL", "") or "").strip() or None
+    audio_format = (os.getenv("TTS_AUDIO_FORMAT", "wav") or "wav").strip().lower()
+    if audio_format != "wav":
+        audio_format = "wav"
 
     return Settings(
         env=(os.getenv("ENV", "local") or "local").strip(),
-        whisper_default_model=default_model,
-        whisper_compute_type=(os.getenv("WHISPER_COMPUTE_TYPE", "auto") or "auto").strip(),
-        whisper_device=(os.getenv("WHISPER_DEVICE", "auto") or "auto").strip(),
-        whisper_beam_size=max(1, _parse_int("WHISPER_BEAM_SIZE", 5)),
-        whisper_fallback_language=(os.getenv("WHISPER_FALLBACK_LANGUAGE", "ru") or "ru").strip().lower(),
-        ios_access_url=ios_access_url,
-        ios_https_port=max(1, _parse_int("IOS_HTTPS_PORT", 8443)),
+        tts_enabled=_parse_bool("TTS_ENABLED", True),
+        tts_default_provider=(os.getenv("TTS_DEFAULT_PROVIDER", "piper") or "piper").strip().lower(),
+        tts_audio_format=audio_format,
+        tts_max_text_chars=max(1, _parse_int("TTS_MAX_TEXT_CHARS", 15000)),
+        tts_speed_options=_parse_speed_options(os.getenv("TTS_SPEED_OPTIONS")),
     )
 
 
 SETTINGS = _load_settings()
 MODELS_DIR = models_dir
-WHISPER_MODELS_DIR = whisper_models_dir
-HF_HOME_DIR = hf_home_dir
-HF_CACHE_DIR = hf_hub_cache_dir
-CTRANSLATE2_CACHE_DIR = ctranslate2_cache_dir
-TRANSCRIPTS_DIR = transcripts_dir
+TTS_MODELS_DIR = tts_models_dir
+PIPER_MODELS_DIR = piper_models_dir
+TTS_DATA_DIR = tts_data_dir
+TTS_OUTPUT_DIR = tts_output_dir
+TTS_HISTORY_DIR = tts_history_dir
+TTS_TEMP_DIR = tts_temp_dir

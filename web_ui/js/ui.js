@@ -18,6 +18,20 @@ export function formatDateTime(isoString) {
   return date.toLocaleString();
 }
 
+export function formatDuration(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)} sec`;
+  }
+
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  return `${mins}m ${secs}s`;
+}
+
 export function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")

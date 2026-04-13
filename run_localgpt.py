@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Lightweight launcher for LocalGPT Whisper transcription app.
+"""Lightweight launcher for LocalGPT TTS app.
 
 - Ensures virtual environment exists
 - Installs dependencies from app/requirements.txt when changed
 - Starts FastAPI backend (uvicorn)
-- Opens UI in browser
+- Opens WebUI in browser
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def open_browser_delayed(ui_url: str, delay_seconds: float = 1.0) -> None:
         print(f"[*] Opening UI: {ui_url}")
         try:
             webbrowser.open(ui_url)
-        except Exception as exc:  # pragma: no cover - зависит от окружения
+        except Exception as exc:  # pragma: no cover - depends on host env
             print(f"[!] Could not open browser automatically: {exc}")
             print(f"[i] Open manually: {ui_url}")
 
@@ -128,7 +128,7 @@ def start_backend(python: str, host: str, port: int, reload_enabled: bool, exec_
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Launch LocalGPT Whisper transcription app")
+    parser = argparse.ArgumentParser(description="Launch LocalGPT TTS app")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--no-browser", action="store_true", help="Do not open the UI in a browser")

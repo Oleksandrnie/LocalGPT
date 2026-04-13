@@ -6,9 +6,10 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from .routes import meta, transcribe, transcripts
+from .routers import tts
+from .routes import meta
 
-app = FastAPI(title="LocalGPT Whisper API")
+app = FastAPI(title="LocalGPT TTS API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,9 +19,8 @@ app.add_middleware(
     allow_credentials=False,
 )
 
+app.include_router(tts.router)
 app.include_router(meta.router)
-app.include_router(transcribe.router)
-app.include_router(transcripts.router)
 
 app.mount("/ui", StaticFiles(directory=config.UI_DIR, html=True), name="ui")
 
