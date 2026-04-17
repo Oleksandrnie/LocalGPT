@@ -303,7 +303,11 @@ def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[s
         params.append(limit)
     with closing(_connect()) as conn:
         rows = conn.execute(query, params).fetchall()
-    messages = [{"role": row["role"], "content": row["content"]} for row in rows if row]
+    messages = [
+        {"role": row["role"], "content": row["content"], "created_at": row["created_at"]}
+        for row in rows
+        if row
+    ]
     messages.reverse()
     return messages
 

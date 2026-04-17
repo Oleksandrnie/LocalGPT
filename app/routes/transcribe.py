@@ -24,6 +24,7 @@ def transcribe(
     language: str = Form(default="auto"),
     session_id: str = Form(default=""),
     profile_id: int = Form(default=0),
+    store_result: bool = Form(default=True),
 ):
     with tempfile.NamedTemporaryFile(
         delete=False,
@@ -62,16 +63,19 @@ def transcribe(
 
     sid = (session_id or "").strip()
     profile_id_val = profile_id or 0
-    if sid:
-        session = db.get_session(sid)
-        if not session:
-            raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "Сессия не найдена"})
-        profile_id_val = session["profile_id"]
-    if not profile_id_val:
-        profile_id_val = db.ensure_default_profile()
-    profile = db.get_profile(profile_id_val)
-    if not profile:
-        raise HTTPException(status_code=404, detail="profile_not_found")
+    transcript_record = None
+
+    if store_result:
+        if sid:
+            session = db.get_session(sid)
+            if not session:
+                raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "Сессия не найдена"})
+            profile_id_val = session["profile_id"]
+        if not profile_id_val:
+            profile_id_val = db.ensure_default_profile()
+        profile = db.get_profile(profile_id_val)
+        if not profile:
+            raise HTTPException(status_code=404, detail="profile_not_found")
 
     try:
         transcription = transcribe_with_fallback(
@@ -94,16 +98,17 @@ def transcribe(
         if isinstance(transcription, dict):
             role_keywords = transcription.get("role_keywords") or {}
 
-        transcript_record = db.create_transcript(
-            profile_id=profile_id_val,
-            session_id=sid or None,
-            name=os.path.basename(file.filename or tmp_path) or "Транскрипт",
-            content=text,
-            source_path=file.filename,
-            language=detected_language or language_raw,
-            timeline=timeline,
-            role_keywords=role_keywords,
-        )
+        if store_result:
+            transcript_record = db.create_transcript(
+                profile_id=profile_id_val,
+                session_id=sid or None,
+                name=os.path.basename(file.filename or tmp_path) or "Транскрипт",
+                content=text,
+                source_path=file.filename,
+                language=detected_language or language_raw,
+                timeline=timeline,
+                role_keywords=role_keywords,
+            )
 
         return {
             "text": text,
@@ -115,8 +120,9 @@ def transcribe(
             "timeline": timeline,
             "role_keywords": role_keywords,
             "transcript_id": transcript_record.get("id") if transcript_record else None,
-            "profile_id": profile_id_val,
+            "profile_id": profile_id_val or None,
             "session_id": sid or None,
+            "stored": store_result,
         }
     except RuntimeError as e:
         msg = str(e)

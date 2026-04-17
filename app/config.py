@@ -45,11 +45,17 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
+def _resolve_path(raw: str | None, fallback: Path) -> Path:
+    if not raw:
+        return fallback.expanduser().resolve()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
 def _resolve_models_base() -> Path:
-    env_value = os.getenv("MODELS_DIR")
-    if env_value:
-        return Path(env_value).expanduser().resolve()
-    return PROJECT_ROOT / "models"
+    return _resolve_path(os.getenv("MODELS_DIR"), PROJECT_ROOT / "models")
 
 
 @dataclass
@@ -98,7 +104,7 @@ MODEL_RECOMMENDATIONS = [
 
 
 def build_model_paths(base_dir: Path | str | None = None) -> ModelPaths:
-    base = Path(base_dir).expanduser().resolve() if base_dir else _resolve_models_base()
+    base = _resolve_path(str(base_dir), PROJECT_ROOT / "models") if base_dir else _resolve_models_base()
     whisper_env = os.getenv("WHISPER_MODELS_DIR")
     ollama_env = os.getenv("OLLAMA_MODELS_DIR") or os.getenv("OLLAMA_MODELS")
     hf_env = os.getenv("HF_CACHE_DIR") or os.getenv("HUGGINGFACE_HUB_CACHE") or os.getenv("HF_HOME")
@@ -106,10 +112,10 @@ def build_model_paths(base_dir: Path | str | None = None) -> ModelPaths:
 
     paths = ModelPaths(
         base=base,
-        ollama=Path(ollama_env).expanduser() if ollama_env else base / "ollama",
-        whisper=Path(whisper_env).expanduser() if whisper_env else base / "whisper",
-        hf_cache=Path(hf_env).expanduser() if hf_env else base / "hf_cache",
-        ctranslate2_cache=Path(ct2_env).expanduser() if ct2_env else base / "ctranslate2_cache",
+        ollama=_resolve_path(ollama_env, base / "ollama"),
+        whisper=_resolve_path(whisper_env, base / "whisper"),
+        hf_cache=_resolve_path(hf_env, base / "hf_cache"),
+        ctranslate2_cache=_resolve_path(ct2_env, base / "ctranslate2_cache"),
     )
     return paths.ensure()
 

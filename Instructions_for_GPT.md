@@ -1,101 +1,133 @@
-# 🧠 LocalGPT — локальный HR/ASR-бот
+# 🧠 LocalGPT — актуальная техническая памятка
 
-LocalGPT полностью офлайн: FastAPI + Ollama + faster-whisper, все данные и модели внутри `LocalGPT/`.
+Этот файл описывает текущее состояние проекта в ветке, без старых промежуточных UI-версий.
 
----
+## 1. Что это за проект
 
-## ⚙️ Структура проекта
-```
-LocalGPT/
-├── app/                  # backend (FastAPI), маршруты, роли и промпты
-├── web_ui/               # интерфейс (HTML/CSS/JS-модули)
-├── models/               # единое хранилище моделей/кэшей
-│   ├── ollama/           # модели Ollama
-│   ├── whisper/          # веса faster-whisper
-│   ├── hf_cache/         # кэш Hugging Face
-│   └── ctranslate2_cache/# кэш ctranslate2
-├── app/db/localgpt.db    # SQLite: профили, сессии, сообщения, транскрипты, настройки моделей
-├── run_localgpt.py       # запуск + проверки
-├── .env                  # актуальная конфигурация (лежит в git)
-└── .env.example          # шаблон переменных
-```
+LocalGPT — локальный chat-first ассистент:
+- FastAPI backend;
+- Ollama/OpenAI-compatible LLM endpoint;
+- faster-whisper для ASR;
+- SQLite для профилей, сессий, сообщений, транскриптов и model settings;
+- LAN-доступ через Caddy launcher на macOS.
 
----
+Основной сценарий больше не HR-first.
+Сейчас это обычный локальный чат, в котором HR-режим остался только как backend-capability, а не как визуальный центр продукта.
 
-## 🚀 Запуск
-### Базовый
-```
-python3 run_localgpt.py
-```
-Скрипт создаёт venv, ставит зависимости, проверяет Ollama, выводит активные пути моделей и открывает UI: `http://127.0.0.1:8000/ui/gui_html.html`.
+## 2. Активные entrypoints
 
-### Ручной
-```
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r app/requirements.txt
-ollama serve &
-uvicorn app.server:app --host 127.0.0.1 --port 8000
-```
+### Backend
+- `app/server.py`
+- `run_localgpt.py`
 
----
+### Frontend
+Активный frontend подключён так:
+- HTML: `web_ui/gui_html.html`
+- JS: `web_ui/js/app.js`
+- CSS: `web_ui/css/style.css`
 
-## 🗂 Модели и .env
-Ключевые переменные (см. `.env` и `.env.example`):
-```
-MODELS_DIR=models
-WHISPER_MODELS_DIR=models/whisper
-OLLAMA_MODELS_DIR=models/ollama
-HF_CACHE_DIR=models/hf_cache
-CTRANSLATE2_CACHE_DIR=models/ctranslate2_cache
+Важно:
+- в `web_ui/js/` остались legacy-модули (`main.js`, `models.js`, `sessions.js` и т.д.);
+- текущая страница использует именно `app.js`.
 
-LOCAL_BASE_URL=http://127.0.0.1:11434/v1
-LOCAL_API_KEY=LOCAL-KEY
-LOCAL_MODEL=qwen2.5:3b
-TEMP=0.2
-MAX_TOKENS=2048
-NUM_CTX=32768
-MEM_TURNS=6
-```
-- Все веса и кеши лежат в `models/` (можно сменить путь в UI → «Настройки» → «Папка с моделями», с переносом данных).
-- Ollama использует `OLLAMA_MODELS_DIR`, faster-whisper — `WHISPER_MODELS_DIR`, Hugging Face/ctranslate2 — свои кэши.
-- Легаси каталоги `ollama/` и `ollama_models/` больше не используются по умолчанию — перенесите содержимое в `models/ollama/`.
+## 3. Текущий UI
 
----
+Текущий интерфейс:
+- фиксированный список чатов слева;
+- поток сообщений по центру;
+- панель настроек как боковая модалка;
+- `+`-меню у поля ввода;
+- микрофон внутри поля ввода;
+- `Отправить` disabled, если textarea пустая;
+- отдельный блок `Активный транскрипт` из chat area убран.
 
-## 🧩 Роли и промпты
-- Режимы: `free`, `teacher`, `business_strict`, `explain`, `calc`, `hr`.
-- Промпты: `app/prompts/system_<role>.md` (базовый — `system_base.md`, HR — `system_hr.md`).
-- Роль хранится в `chat_sessions.role`, выбирается в шапке UI, передаётся в `/chat`.
-- Роль `calc` сначала пытается безопасно вычислить арифметическое выражение (+, -, *, /, %, скобки), иначе отвечает кратко через LLM с ограниченным промптом.
+Что доступно в настройках:
+- выбор LLM-модели;
+- скачивание/удаление моделей Ollama;
+- профиль и управление профилями;
+- model settings:
+  - `temperature`
+  - `mem_turns`
+  - `max_tokens`
+  - `num_ctx`
+- Whisper settings;
+- пути моделей;
+- LAN URL и runtime shutdown;
+- список активных загрузок моделей.
 
----
+## 4. Голос и транскрибация
 
-## 🌐 UI и управление
-- Профили/сессии: сайдбар слева; кнопка ☰ в шапке и хоткей Ctrl/Cmd+B открывают/закрывают панель (состояние сохраняется).
-- Роль — выпадающий список в шапке (подсказка с описанием).
-- Настройки: выбор/скачивание моделей Ollama, параметры модели (по профилю), выбор папки моделей, переключатель темы.
-- Транскрибация: загрузка файла → `/transcribe` → текст и таймлайн сохраняются и применяются к текущей сессии. Ручные транскрипты также сохраняются.
-- Критерии: CSV/XLSX/Google Sheets через `/criteria/parse` или ручной ввод; сохраняются на сессию.
+### Файловая транскрибация
+- выполняется через `/transcribe`;
+- результат сохраняется в SQLite и может стать контекстом чата.
 
----
+### Voice input
+- запись идёт через `MediaRecorder` в браузере;
+- после записи blob идёт на `/transcribe` с `store_result=false`;
+- используется Whisper `large-v3-turbo`;
+- текст вставляется в поле ввода;
+- этот сценарий не создаёт постоянную запись transcript в истории.
 
-## 📦 Офлайн-подготовка
-1. Ollama: скачайте/скопируйте веса в `models/ollama/` (или пропишите свой путь в `.env`).
-2. Whisper: скачайте модели Systran faster-whisper в `models/whisper/`.
-3. Скопируйте `.env` и папку `models/` на целевую машину — этого достаточно для переноса.
+### Озвучка
+- не локальная TTS-модель;
+- используется `window.speechSynthesis` в браузере.
 
----
+## 5. Память и контекст
 
-## 🔎 Диагностика
-- Health: `curl -s http://127.0.0.1:8000/health`
-- Логи: `ollama.log`, `tmp_logs/chat.log`.
-- БД: `app/db/localgpt.db` (SQLite).
+Контекст запроса собирается в `/chat` так:
+1. system prompt = base + role
+2. явный `context`, если он передан
+3. transcript из запроса или последний transcript для сессии
+4. criteria из запроса или сохранённые для сессии
+5. последние `MEM_TURNS` пар истории
+6. текущий запрос пользователя
 
----
+Реально visible role-switching в основном UI сейчас убран, но backend-механизм ролей сохранён.
 
-## Правила для изменений
-- Все файлы — внутри `LocalGPT/`, не трогаем `venv/`.
-- Новые файлы кладём в `app/`, `web_ui/` или корень; модели/кэши — в `models/`.
-- Не используем внешние API (проект офлайн).
-- Роли и промпты редактируем в `app/prompts/`; добавление роли = новый `system_<name>.md` и запись в `app/roles.py`.
+## 6. Prompt layer
+
+Prompt-файлы:
+- `app/prompts/system_base.md`
+- `app/prompts/system_free.md`
+- `app/prompts/system_teacher.md`
+- `app/prompts/system_business_strict.md`
+- `app/prompts/system_explain.md`
+- `app/prompts/system_calc.md`
+- `app/prompts/system_hr.md`
+
+Важно:
+- prompt-файлы читаются с диска без долгоживущего `lru_cache`;
+- изменения проще тестировать без полной пересборки логики;
+- для проверки качества ответов лучше использовать новый чат, без старой истории.
+
+## 7. Модели и пути
+
+Проект опирается на portable paths:
+- `MODELS_DIR`
+- `WHISPER_MODELS_DIR`
+- `OLLAMA_MODELS_DIR`
+- `HF_CACHE_DIR`
+- `CTRANSLATE2_CACHE_DIR`
+
+Относительные пути резолвятся от корня проекта.
+`.env` сохраняется в переносимом виде, чтобы проект можно было переносить между машинами без жёсткой привязки к абсолютным путям.
+
+## 8. LAN launcher
+
+LAN launcher:
+- `tools/LTrnsrb.sh`
+- `LTrnsrb.command`
+
+Сценарий:
+- старт backend в фоне;
+- генерация Caddy config;
+- reverse proxy на `https://<lan-ip>:8443`;
+- логирование PID/runtime state в `${TMPDIR}/LocalGPT-<uid>`.
+
+## 9. Что важно не перепутать
+
+- Активный UI больше не `main.js`, а `app.js`.
+- Проект больше не должен документироваться как “локальный HR/ASR-бот” в главном описании.
+- Browser TTS и local ASR — это разные сценарии.
+- Не стоит возвращать в основной UI отдельные большие блоки для transcript/HR/role, если это не требуется явно.
+- Для длинных/обрывающихся ответов важен backend-вызов LLM, а не только prompt.

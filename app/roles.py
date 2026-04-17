@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -11,9 +10,9 @@ from .config import PROMPTS_DIR
 LANGUAGE_SUFFIX = "\n\nТребование: отвечай ТОЛЬКО на русском языке. Не используй другие языки."
 BASE_PROMPT_PATH = PROMPTS_DIR / "system_base.md"
 BASE_PROMPT_FALLBACK = (
-    "Ты — локальный офлайн-ассистент LocalGPT. Отвечай только по фактам, коротко, без "
-    "извинений и фантазий. Работай с данными из запроса и локальной сессии, не обращаясь "
-    "к внешним источникам."
+    "Ты — LocalGPT, естественный русскоязычный ассистент. Отвечай по делу, живо и без "
+    "канцелярита. Не выдумывай факты и не рассказывай о внутренних ограничениях системы, "
+    "если пользователь не спросил об этом напрямую."
 )
 
 
@@ -41,7 +40,7 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         label="Свободное общение",
         description="Дружелюбные, но лаконичные ответы без лишних формальностей.",
         prompt_file=PROMPTS_DIR / "system_free.md",
-        fallback_prompt="Свободное общение: отвечай дружелюбно, по делу и кратко.",
+        fallback_prompt="Свободное общение: отвечай живо, естественно, дружелюбно и по делу, без канцелярита.",
     ),
     "teacher": RoleDefinition(
         key="teacher",
@@ -88,7 +87,6 @@ def normalize_role(raw: str | None) -> str:
     return key if key in ROLE_DEFINITIONS else DEFAULT_ROLE
 
 
-@lru_cache
 def _load_prompt(path: Path, fallback: str) -> str:
     try:
         text = path.read_text(encoding="utf-8").strip()

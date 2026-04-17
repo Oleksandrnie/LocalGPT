@@ -40,23 +40,24 @@ def describe_paths() -> dict:
     return config.MODEL_PATHS.as_response()
 
 
+def _to_portable_env_path(path: Path) -> str:
+    normalized = path.expanduser().resolve()
+    try:
+        return str(normalized.relative_to(config.PROJECT_ROOT))
+    except ValueError:
+        return str(normalized)
+
+
 def update_models_dir(new_dir: str, *, move_existing: bool = False) -> dict:
     normalized = Path(new_dir).expanduser().resolve()
     paths = config.update_model_paths(normalized, move_existing=move_existing)
-    relative_base = normalized
-    try:
-        relative_base = normalized.relative_to(config.PROJECT_ROOT)
-    except ValueError:
-        relative_base = normalized
-
-    base_value = str(relative_base)
     _write_env(
         {
-            "MODELS_DIR": base_value,
-            "OLLAMA_MODELS_DIR": str(paths.ollama),
-            "WHISPER_MODELS_DIR": str(paths.whisper),
-            "HF_CACHE_DIR": str(paths.hf_cache),
-            "CTRANSLATE2_CACHE_DIR": str(paths.ctranslate2_cache),
+            "MODELS_DIR": _to_portable_env_path(paths.base),
+            "OLLAMA_MODELS_DIR": _to_portable_env_path(paths.ollama),
+            "WHISPER_MODELS_DIR": _to_portable_env_path(paths.whisper),
+            "HF_CACHE_DIR": _to_portable_env_path(paths.hf_cache),
+            "CTRANSLATE2_CACHE_DIR": _to_portable_env_path(paths.ctranslate2_cache),
         }
     )
     return paths.as_response()

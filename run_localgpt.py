@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""
-Cross-platform launcher for LocalGPT (macOS / Linux / Windows).
+"""Cross-platform launcher for LocalGPT (macOS / Linux / Windows)."""
 
-- Ensures venv exists and installs dependencies
-- Ensures Ollama is running
-- Reads `.env`, verifies LOCAL_MODEL via `ollama show` and prepares it if missing
-- Starts FastAPI backend via uvicorn
-- Opens web UI in browser
-"""
-
+import argparse
 import hashlib
 import os
 import sys
 import time
 import socket
 import subprocess
+import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +19,6 @@ ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / "venv"
 REQUIREMENTS = ROOT / "app" / "requirements.txt"
 DEPS_MARKER = VENV_DIR / ".deps_installed"
-UI_URL = "http://127.0.0.1:8000/"
 OLLAMA_HEALTH_URL = "http://127.0.0.1:11434/v1/models"
 OLLAMA_LOG_FILE = ROOT / "ollama.log"
 ENV_FILE = ROOT / ".env"
@@ -96,11 +89,22 @@ def update_env_variable(path: Path, key: str, value: str) -> None:
 
 
 ENV_VARS = read_env(ENV_FILE)
-MODELS_DIR = Path(ENV_VARS.get("MODELS_DIR", MODELS_BASE)).expanduser().resolve()
-OLLAMA_MODELS_DIR = Path(ENV_VARS.get("OLLAMA_MODELS_DIR") or (MODELS_DIR / "ollama")).expanduser()
-WHISPER_DIR = Path(ENV_VARS.get("WHISPER_MODELS_DIR") or (MODELS_DIR / "whisper")).expanduser()
-HF_CACHE_DIR = Path(ENV_VARS.get("HF_CACHE_DIR") or (MODELS_DIR / "hf_cache")).expanduser()
-CT2_CACHE_DIR = Path(ENV_VARS.get("CTRANSLATE2_CACHE_DIR") or (MODELS_DIR / "ctranslate2_cache")).expanduser()
+
+
+def resolve_env_path(raw: str | Path | None, fallback: Path) -> Path:
+    if not raw:
+        return fallback.expanduser().resolve()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    return path.resolve()
+
+
+MODELS_DIR = resolve_env_path(ENV_VARS.get("MODELS_DIR"), MODELS_BASE)
+OLLAMA_MODELS_DIR = resolve_env_path(ENV_VARS.get("OLLAMA_MODELS_DIR"), MODELS_DIR / "ollama")
+WHISPER_DIR = resolve_env_path(ENV_VARS.get("WHISPER_MODELS_DIR"), MODELS_DIR / "whisper")
+HF_CACHE_DIR = resolve_env_path(ENV_VARS.get("HF_CACHE_DIR"), MODELS_DIR / "hf_cache")
+CT2_CACHE_DIR = resolve_env_path(ENV_VARS.get("CTRANSLATE2_CACHE_DIR"), MODELS_DIR / "ctranslate2_cache")
 
 for path in (MODELS_DIR, OLLAMA_MODELS_DIR, WHISPER_DIR, HF_CACHE_DIR, CT2_CACHE_DIR):
     path.mkdir(parents=True, exist_ok=True)
@@ -428,48 +432,81 @@ def ensure_model() -> str:
     sys.exit(1)
 
 
-def open_browser() -> None:
-    """Try to open the UI URL in a browser."""
-    print(f"[*] Opening UI in browser: {UI_URL}")
-    try:
-        webbrowser.open(UI_URL)
-    except Exception as e:
-        print(f"[!] Could not open browser automatically: {e}")
-        print(f"[i] Please open {UI_URL} manually.")
+def build_ui_url(host: str, port: int) -> str:
+    return f"http://{host}:{port}/ui/gui_html.html"
 
 
-def start_backend(python: str) -> None:
-    """Start uvicorn backend if port 8000 is free."""
-    if check_port("127.0.0.1", 8000):
-        print("[!] Port 8000 is already in use. Not starting backend.")
+def open_browser_delayed(ui_url: str, delay_seconds: float = 1.0) -> None:
+    """Try to open the UI URL in a browser after a short delay."""
+
+    def _open() -> None:
+        time.sleep(delay_seconds)
+        print(f"[*] Opening UI in browser: {ui_url}")
+        try:
+            webbrowser.open(ui_url)
+        except Exception as exc:
+            print(f"[!] Could not open browser automatically: {exc}")
+            print(f"[i] Please open {ui_url} manually.")
+
+    thread = threading.Thread(target=_open, daemon=True)
+    thread.start()
+
+
+def build_backend_cmd(python: str, host: str, port: int, reload_enabled: bool) -> list[str]:
+    cmd = [
+        python,
+        "-m",
+        "uvicorn",
+        "app.server:app",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--log-level",
+        "info",
+    ]
+    if reload_enabled:
+        cmd.append("--reload")
+    return cmd
+
+
+def start_backend(python: str, *, host: str, port: int, reload_enabled: bool, exec_mode: bool = False) -> None:
+    """Start uvicorn backend."""
+    if check_port(host, port):
+        print(f"[!] Port {port} on {host} is already in use. Not starting backend.")
         print("[i] If this is an old uvicorn, stop it and rerun this script.")
         return
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
-    print("[*] Starting FastAPI backend (uvicorn app.server:app) ...")
+    cmd = build_backend_cmd(python, host, port, reload_enabled)
 
-    # Foreground process: when user stops script (Ctrl+C), backend also stops
-    run(
-        [
-            python,
-            "-m",
-            "uvicorn",
-            "app.server:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "8000",
-            "--log-level",
-            "info",
-            "--reload",
-        ],
-        cwd=str(ROOT),
-        env=env,
+    print("[*] Starting FastAPI backend (uvicorn app.server:app) ...")
+    if exec_mode:
+        printable = " ".join(cmd)
+        print(f">> {printable}")
+        os.chdir(ROOT)
+        os.execvpe(cmd[0], cmd, env)
+
+    run(cmd, cwd=str(ROOT), env=env)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Launch LocalGPT")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--no-browser", action="store_true", help="Do not open the UI in a browser")
+    parser.add_argument("--no-reload", action="store_true", help="Run uvicorn without --reload")
+    parser.add_argument(
+        "--exec-backend",
+        action="store_true",
+        help="Replace the current process with uvicorn after bootstrap",
     )
+    return parser.parse_args()
 
 
 def main() -> None:
+    args = parse_args()
     print(f"[*] Project root: {ROOT}")
     print(f"[i] Models dir: {MODELS_DIR}")
     print(f"[i] Ollama models dir: {OLLAMA_MODELS_DIR}")
@@ -482,8 +519,15 @@ def main() -> None:
     ensure_ollama_running()
     active_model = ensure_model()
     print(f"[i] Active LOCAL_MODEL: {active_model}")
-    open_browser()
-    start_backend(py)
+    if not args.no_browser:
+        open_browser_delayed(build_ui_url(args.host, args.port))
+    start_backend(
+        py,
+        host=args.host,
+        port=args.port,
+        reload_enabled=not args.no_reload,
+        exec_mode=args.exec_backend,
+    )
 
 
 if __name__ == "__main__":

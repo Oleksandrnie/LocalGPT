@@ -1,4 +1,4 @@
-export const API_BASE = "http://127.0.0.1:8000";
+export const API_BASE = window.location.origin;
 
 export const STORAGE_KEYS = {
   history: "localgpt_history_v1",

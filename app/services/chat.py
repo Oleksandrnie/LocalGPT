@@ -269,9 +269,6 @@ class ChatService:
                 messages=messages,
                 temperature=settings.get("temperature", config.SETTINGS.temperature),
                 max_tokens=settings.get("max_tokens", config.SETTINGS.max_tokens),
-                stop=["\n\n\n", "\n\n—", "\n\n1."],
-                presence_penalty=0.2,
-                frequency_penalty=0.2,
             )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
