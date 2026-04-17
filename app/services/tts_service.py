@@ -7,6 +7,7 @@ import re
 import signal
 import shutil
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from secrets import token_hex
@@ -23,6 +24,12 @@ _LOCK = threading.Lock()
 _TASKS: dict[str, dict[str, Any]] = {}
 _ACTIVE_STATES = {"queued", "generating", "processing_speed"}
 _FINAL_STATES = {"completed", "error"}
+_VOICE_LIBRARY_LOCK = threading.Lock()
+_VOICE_DOWNLOAD_TASKS: dict[str, dict[str, Any]] = {}
+_VOICE_DOWNLOAD_ACTIVE_STATES = {"queued", "running"}
+_VOICE_CATALOG_CACHE: dict[str, Any] = {"items": None, "expires_at": 0.0}
+_VOICE_CATALOG_TTL_SEC = 300.0
+_PREVIEW_MAX_TEXT_CHARS = 240
 _PROVIDERS = {
     "piper": PiperProvider(),
 }
@@ -63,6 +70,11 @@ def _record_path(record_id: str) -> Path:
 def _record_id() -> str:
     now = datetime.now(timezone.utc)
     return f"tts_{now:%Y%m%d_%H%M%S}_{token_hex(3)}"
+
+
+def _voice_download_task_id() -> str:
+    now = datetime.now(timezone.utc)
+    return f"vdl_{now:%Y%m%d_%H%M%S}_{token_hex(3)}"
 
 
 def _record_preview(text: str, max_chars: int = 120) -> str:
@@ -120,11 +132,71 @@ def _safe_unlink(path: Path | None) -> None:
         pass
 
 
+def _clear_voice_catalog_cache() -> None:
+    with _VOICE_LIBRARY_LOCK:
+        _VOICE_CATALOG_CACHE["items"] = None
+        _VOICE_CATALOG_CACHE["expires_at"] = 0.0
+
+
+def _public_voice_download_task(task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": task.get("id"),
+        "voice_key": task.get("voice_key"),
+        "force": bool(task.get("force")),
+        "state": task.get("state"),
+        "created_at": task.get("created_at"),
+        "updated_at": task.get("updated_at"),
+        "message": task.get("message"),
+        "error": task.get("error"),
+        "installed_voice_ids": task.get("installed_voice_ids") or [],
+    }
+
+
+def _preview_text_for_language(language: str | None) -> str:
+    code = (language or "").strip().lower()
+    if code.startswith("ru"):
+        return "Привет. Это локальное превью голоса."
+    if code.startswith("uk"):
+        return "Привіт. Це локальне прев'ю голосу."
+    if code.startswith("de"):
+        return "Hallo. Das ist eine lokale Stimmvorschau."
+    if code.startswith("fr"):
+        return "Bonjour. Ceci est un aperçu local de la voix."
+    if code.startswith("es"):
+        return "Hola. Esta es una vista previa local de la voz."
+    return "Hello. This is a local voice preview."
+
+
+def _normalize_preview_text(text: str | None, language: str | None) -> str:
+    clean = re.sub(r"\s+", " ", (text or "").strip())
+    if not clean:
+        return _preview_text_for_language(language)
+    if len(clean) > _PREVIEW_MAX_TEXT_CHARS:
+        raise TTSServiceError(
+            422,
+            "preview_text_too_long",
+            f"Текст превью не должен превышать {_PREVIEW_MAX_TEXT_CHARS} символов.",
+        )
+    return clean
+
+
+def _sanitize_filename_token(value: str) -> str:
+    clean = re.sub(r"[^a-zA-Z0-9._-]+", "_", value).strip("._")
+    return clean or "voice"
+
+
 def _provider_by_name(provider_name: str | None = None):
     selected = (provider_name or config.SETTINGS.tts_default_provider).strip().lower()
     provider = _PROVIDERS.get(selected)
     if provider is None:
         raise TTSServiceError(422, "unsupported_provider", f"Провайдер TTS не поддерживается: {selected}")
+    return provider
+
+
+def _voice_library_provider() -> PiperProvider:
+    provider = _provider_by_name(config.SETTINGS.tts_default_provider)
+    if not isinstance(provider, PiperProvider):
+        raise TTSServiceError(422, "unsupported_provider", "Каталог голосов доступен только для Piper.")
     return provider
 
 
@@ -352,6 +424,39 @@ def _synthesize_worker(record_id: str, text: str, voice_id: str, provider_name: 
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _download_voice_worker(task_id: str, voice_key: str, force: bool) -> None:
+    provider = _voice_library_provider()
+
+    with _VOICE_LIBRARY_LOCK:
+        task = _VOICE_DOWNLOAD_TASKS.get(task_id)
+        if task:
+            task["state"] = "running"
+            task["message"] = "Загрузка голоса..."
+            task["error"] = None
+            task["updated_at"] = _utc_now()
+
+    try:
+        provider.download_voice(voice_key, force=force)
+        _clear_voice_catalog_cache()
+        installed_voice_ids = provider.voice_ids_for_catalog_key(voice_key)
+        with _VOICE_LIBRARY_LOCK:
+            task = _VOICE_DOWNLOAD_TASKS.get(task_id)
+            if task:
+                task["state"] = "completed"
+                task["message"] = "Голос загружен."
+                task["error"] = None
+                task["installed_voice_ids"] = installed_voice_ids
+                task["updated_at"] = _utc_now()
+    except Exception as exc:  # pragma: no cover - network/runtime path
+        with _VOICE_LIBRARY_LOCK:
+            task = _VOICE_DOWNLOAD_TASKS.get(task_id)
+            if task:
+                task["state"] = "error"
+                task["message"] = "Не удалось загрузить голос."
+                task["error"] = str(exc) or "voice_download_failed"
+                task["updated_at"] = _utc_now()
+
+
 def _speed_worker(record_id: str, speed: float) -> None:
     temp_dir = _temp_dir(record_id)
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -443,6 +548,143 @@ def get_health() -> dict[str, Any]:
 def list_voices() -> list[dict[str, object]]:
     provider = _provider_by_name(config.SETTINGS.tts_default_provider)
     return [voice.to_public_dict() for voice in provider.list_voices()]
+
+
+def list_voice_catalog(*, force_refresh: bool = False) -> list[dict[str, Any]]:
+    _ensure_tts_enabled()
+    provider = _voice_library_provider()
+
+    with _VOICE_LIBRARY_LOCK:
+        cached_items = _VOICE_CATALOG_CACHE.get("items")
+        expires_at = float(_VOICE_CATALOG_CACHE.get("expires_at") or 0.0)
+        if not force_refresh and cached_items is not None and time.monotonic() < expires_at:
+            return list(cached_items)
+
+    try:
+        items = provider.list_catalog_voices()
+    except RuntimeError as exc:
+        code = str(exc)
+        if code == "voice_catalog_unavailable":
+            raise TTSServiceError(502, "voice_catalog_unavailable", "Не удалось получить каталог Piper voices.") from exc
+        raise TTSServiceError(502, "voice_catalog_unavailable", str(exc) or "voice_catalog_unavailable") from exc
+
+    with _VOICE_LIBRARY_LOCK:
+        _VOICE_CATALOG_CACHE["items"] = list(items)
+        _VOICE_CATALOG_CACHE["expires_at"] = time.monotonic() + _VOICE_CATALOG_TTL_SEC
+
+    return items
+
+
+def start_voice_download(voice_key: str, *, force: bool = False) -> dict[str, Any]:
+    _ensure_tts_enabled()
+    normalized_key = (voice_key or "").strip()
+    if not normalized_key:
+        raise TTSServiceError(422, "voice_key_required", "Укажите голос для загрузки.")
+
+    catalog_items = list_voice_catalog()
+    catalog_by_key = {item["key"]: item for item in catalog_items}
+    catalog_item = catalog_by_key.get(normalized_key)
+    if not catalog_item:
+        raise TTSServiceError(404, "voice_catalog_item_not_found", "Голос не найден в каталоге Piper.")
+
+    with _VOICE_LIBRARY_LOCK:
+        for existing in _VOICE_DOWNLOAD_TASKS.values():
+            if (
+                existing.get("voice_key") == normalized_key
+                and existing.get("state") in _VOICE_DOWNLOAD_ACTIVE_STATES
+            ):
+                return _public_voice_download_task(existing)
+
+    if catalog_item.get("installed") and not force:
+        raise TTSServiceError(409, "voice_already_installed", "Этот голос уже загружен локально.")
+
+    task = {
+        "id": _voice_download_task_id(),
+        "voice_key": normalized_key,
+        "force": bool(force),
+        "state": "queued",
+        "created_at": _utc_now(),
+        "updated_at": _utc_now(),
+        "message": "Задача загрузки создана.",
+        "error": None,
+        "installed_voice_ids": [],
+    }
+
+    with _VOICE_LIBRARY_LOCK:
+        _VOICE_DOWNLOAD_TASKS[task["id"]] = task
+
+    worker = threading.Thread(
+        target=_download_voice_worker,
+        args=(task["id"], normalized_key, bool(force)),
+        daemon=True,
+        name=f"voice_download_{task['id']}",
+    )
+    worker.start()
+    return _public_voice_download_task(task)
+
+
+def get_voice_download_task(task_id: str) -> dict[str, Any]:
+    if not task_id:
+        raise TTSServiceError(404, "voice_download_task_not_found", "Задача загрузки голоса не найдена.")
+
+    with _VOICE_LIBRARY_LOCK:
+        task = _VOICE_DOWNLOAD_TASKS.get(task_id)
+        if not task:
+            raise TTSServiceError(404, "voice_download_task_not_found", "Задача загрузки голоса не найдена.")
+        return _public_voice_download_task(task)
+
+
+def delete_voice(voice_key: str) -> dict[str, Any]:
+    _ensure_tts_enabled()
+    normalized_key = (voice_key or "").strip()
+    if not normalized_key:
+        raise TTSServiceError(422, "voice_key_required", "Укажите голос для удаления.")
+
+    provider = _voice_library_provider()
+    removed = provider.delete_voice(normalized_key)
+    if not removed:
+        raise TTSServiceError(404, "voice_not_installed", "Этот голос не найден локально.")
+
+    _clear_voice_catalog_cache()
+    return {"ok": True, "voice_key": normalized_key}
+
+
+def create_voice_preview_file(*, voice_id: str | None = None, voice_key: str | None = None, text: str | None = None) -> tuple[str, str]:
+    _ensure_tts_enabled()
+    provider = _voice_library_provider()
+    available, message = provider.is_available()
+    if not available:
+        raise TTSServiceError(503, "provider_unavailable", message or "TTS provider unavailable.")
+
+    voice_ref = (voice_id or voice_key or "").strip()
+    if not voice_ref:
+        raise TTSServiceError(422, "voice_ref_required", "Укажите голос для превью.")
+
+    resolved_voice_id = provider.resolve_preview_voice_id(voice_ref)
+    if not resolved_voice_id:
+        raise TTSServiceError(
+            404,
+            "voice_preview_unavailable",
+            "Превью доступно только для уже загруженных локальных голосов.",
+        )
+
+    voice = provider.get_voice(resolved_voice_id)
+    if not voice:
+        raise TTSServiceError(404, "voice_not_found", "Голос для превью не найден.")
+
+    preview_text = _normalize_preview_text(text, voice.language)
+    previews_dir = config.TTS_TEMP_DIR / "previews"
+    previews_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = previews_dir / f"preview_{token_hex(4)}.wav"
+
+    try:
+        provider.synthesize(preview_text, voice.id, preview_path)
+    except Exception as exc:
+        _safe_unlink(preview_path)
+        raise TTSServiceError(500, "voice_preview_failed", str(exc) or "voice_preview_failed") from exc
+
+    filename = f"preview_{_sanitize_filename_token(voice.id)}.wav"
+    return str(preview_path), filename
 
 
 def start_generation(*, text: str, voice_id: str, provider: str | None = None) -> dict[str, Any]:

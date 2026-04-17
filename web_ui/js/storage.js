@@ -1,6 +1,8 @@
 const STORAGE_KEYS = {
   voice: "localgpt_tts_voice_v1",
   speed: "localgpt_tts_speed_v1",
+  theme: "localgpt_tts_theme_v1",
+  language: "localgpt_tts_lang_v1",
 };
 
 function safeGet(key) {
@@ -40,4 +42,22 @@ export function getSavedSpeed(defaultValue = 1.25) {
 
 export function setSavedSpeed(value) {
   safeSet(STORAGE_KEYS.speed, value);
+}
+
+export function getSavedTheme(defaultValue = "dark") {
+  const raw = safeGet(STORAGE_KEYS.theme);
+  return raw === "light" ? "light" : raw === "dark" ? "dark" : defaultValue;
+}
+
+export function setSavedTheme(value) {
+  safeSet(STORAGE_KEYS.theme, value);
+}
+
+export function getSavedLanguage(defaultValue = "ru") {
+  const raw = safeGet(STORAGE_KEYS.language);
+  return raw === "en" || raw === "uk" || raw === "ru" ? raw : defaultValue;
+}
+
+export function setSavedLanguage(value) {
+  safeSet(STORAGE_KEYS.language, value);
 }

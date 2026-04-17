@@ -40,6 +40,60 @@ class TTSRoutesTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["items"][0]["id"], "voice-1")
 
+    @patch("app.routers.tts.tts_service.list_voice_catalog")
+    def test_tts_voice_library(self, mock_list_voice_catalog):
+        mock_list_voice_catalog.return_value = [{"key": "ru_RU-ruslan-medium", "quality": "medium"}]
+
+        response = self.client.get("/tts/voice-library")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["key"], "ru_RU-ruslan-medium")
+
+    @patch("app.routers.tts.tts_service.start_voice_download")
+    def test_tts_voice_library_download(self, mock_start_voice_download):
+        mock_start_voice_download.return_value = {"id": "vdl_1", "state": "queued"}
+
+        response = self.client.post(
+            "/tts/voice-library/download",
+            json={"voice_key": "ru_RU-ruslan-medium"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["id"], "vdl_1")
+
+    @patch("app.routers.tts.tts_service.get_voice_download_task")
+    def test_tts_voice_library_download_status(self, mock_get_voice_download_task):
+        mock_get_voice_download_task.return_value = {"id": "vdl_1", "state": "completed"}
+
+        response = self.client.get("/tts/voice-library/download/vdl_1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "completed")
+
+    @patch("app.routers.tts.tts_service.delete_voice")
+    def test_tts_voice_library_delete(self, mock_delete_voice):
+        mock_delete_voice.return_value = {"ok": True, "voice_key": "ru_RU-ruslan-medium"}
+
+        response = self.client.delete("/tts/voice-library/ru_RU-ruslan-medium")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+
+    @patch("app.routers.tts.tts_service.create_voice_preview_file")
+    def test_tts_voice_library_preview(self, mock_create_voice_preview_file):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wav_path = Path(temp_dir) / "preview.wav"
+            create_silent_wav(wav_path)
+            mock_create_voice_preview_file.return_value = (str(wav_path), "preview.wav")
+
+            response = self.client.post(
+                "/tts/voice-library/preview",
+                json={"voice_id": "voice-1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "audio/wav")
+
     @patch("app.routers.tts.tts_service.start_generation")
     def test_tts_generate(self, mock_start_generation):
         mock_start_generation.return_value = {"id": "tts_1", "status": "queued"}

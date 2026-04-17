@@ -57,6 +57,23 @@ export function listVoices() {
   return apiGet("/tts/voices");
 }
 
+export function listVoiceLibrary(forceRefresh = false) {
+  const query = forceRefresh ? "?force_refresh=1" : "";
+  return apiGet(`/tts/voice-library${query}`);
+}
+
+export function downloadVoice(payload) {
+  return apiPost("/tts/voice-library/download", payload);
+}
+
+export function fetchVoiceDownloadTask(taskId) {
+  return apiGet(`/tts/voice-library/download/${encodeURIComponent(taskId)}`);
+}
+
+export function deleteVoice(voiceKey) {
+  return apiDelete(`/tts/voice-library/${encodeURIComponent(voiceKey)}`);
+}
+
 export function generateSpeech(payload) {
   return apiPost("/tts/generate", payload);
 }
@@ -75,4 +92,16 @@ export function getHistoryItem(id) {
 
 export function deleteHistoryItem(id) {
   return apiDelete(`/tts/history/${encodeURIComponent(id)}`);
+}
+
+export async function previewVoice(payload) {
+  const response = await fetch("/tts/voice-library/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    await handleResponse(response);
+  }
+  return response.blob();
 }

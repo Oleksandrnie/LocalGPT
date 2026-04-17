@@ -39,6 +39,20 @@ class FakeRuntimeVoice:
         yield FakeChunk()
 
 
+class FakeUrlopenResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        import io
+
+        self._buffer = io.BytesIO(json.dumps(self.payload).encode("utf-8"))
+        return self._buffer
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class PiperProviderTestCase(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -119,6 +133,86 @@ class PiperProviderTestCase(unittest.TestCase):
             self.assertGreater(wav_file.getnframes(), 0)
 
         self.assertEqual(Path(voice.model_path), model_path.resolve())
+
+    @patch("app.providers.tts.piper_provider.urlopen")
+    def test_list_catalog_voices_marks_installed(self, mock_urlopen):
+        write_voice_files(
+            config.PIPER_MODELS_DIR,
+            "en_US-lessac-medium",
+            {
+                "audio": {"sample_rate": 22050},
+                "espeak": {"voice": "en_US"},
+                "num_speakers": 1,
+                "phoneme_id_map": {},
+                "num_symbols": 1,
+            },
+        )
+        mock_urlopen.return_value = FakeUrlopenResponse(
+            {
+                "en_US-lessac-medium": {
+                    "name": "lessac",
+                    "quality": "medium",
+                    "num_speakers": 1,
+                    "aliases": [],
+                    "language": {
+                        "code": "en_US",
+                        "name_english": "English",
+                        "country_english": "United States",
+                    },
+                    "files": {
+                        "en/en_US/lessac/medium/en_US-lessac-medium.onnx": {"size_bytes": 12345678},
+                    },
+                }
+            }
+        )
+
+        provider = PiperProvider()
+        items = provider.list_catalog_voices()
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["key"], "en_US-lessac-medium")
+        self.assertTrue(items[0]["installed"])
+        self.assertEqual(items[0]["download_size_bytes"], 12345678)
+
+    def test_resolve_preview_voice_id_prefers_exact_or_first_speaker(self):
+        write_voice_files(
+            config.PIPER_MODELS_DIR,
+            "ru_RU-demo-medium",
+            {
+                "audio": {"sample_rate": 22050},
+                "espeak": {"voice": "ru_RU"},
+                "num_speakers": 2,
+                "speaker_id_map": {"narrator": 0, "assistant": 1},
+                "phoneme_id_map": {},
+                "num_symbols": 1,
+            },
+        )
+
+        provider = PiperProvider()
+        voices = provider.list_voices()
+
+        self.assertEqual(provider.resolve_preview_voice_id(voices[1].id), voices[1].id)
+        self.assertEqual(provider.resolve_preview_voice_id("ru_RU-demo-medium"), voices[0].id)
+
+    def test_delete_voice_removes_local_model_files(self):
+        model_path = write_voice_files(
+            config.PIPER_MODELS_DIR,
+            "ru_RU-demo-medium",
+            {
+                "audio": {"sample_rate": 22050},
+                "espeak": {"voice": "ru_RU"},
+                "num_speakers": 1,
+                "phoneme_id_map": {},
+                "num_symbols": 1,
+            },
+        )
+
+        provider = PiperProvider()
+        deleted = provider.delete_voice("ru_RU-demo-medium")
+
+        self.assertTrue(deleted)
+        self.assertFalse(model_path.exists())
+        self.assertFalse(Path(f"{model_path}.json").exists())
 
 
 if __name__ == "__main__":

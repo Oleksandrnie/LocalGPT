@@ -12,3 +12,14 @@ class TTSGenerateRequest(BaseModel):
 class TTSSpeedProcessRequest(BaseModel):
     id: str = Field(..., min_length=1)
     speed: float
+
+
+class TTSVoiceDownloadRequest(BaseModel):
+    voice_key: str = Field(..., min_length=1)
+    force: bool = False
+
+
+class TTSVoicePreviewRequest(BaseModel):
+    voice_id: str | None = None
+    voice_key: str | None = None
+    text: str | None = None

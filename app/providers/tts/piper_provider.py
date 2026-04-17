@@ -5,12 +5,14 @@ import re
 import wave
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
 from ... import config
 from .base import SynthesisResult, TTSProvider, VoiceDefinition
 
 _LANGUAGE_RE = re.compile(r"^[a-z]{2}(?:_[A-Z]{2})?$")
 _QUALITY_TOKENS = {"x_low", "low", "medium", "high"}
+_VOICE_CATALOG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/voices.json?download=true"
 
 
 class PiperProvider(TTSProvider):
@@ -64,7 +66,7 @@ class PiperProvider(TTSProvider):
 
         sample_rate = voice.sample_rate or getattr(model.config, "sample_rate", None) or 22050
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_output = output_path.with_suffix(f"{output_path.suffix}.tmp")
+        temp_output = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
         total_frames = 0
         has_audio = False
 
@@ -99,6 +101,84 @@ class PiperProvider(TTSProvider):
             sample_rate=sample_rate,
             voice=voice,
         )
+
+    def list_catalog_voices(self) -> list[dict[str, Any]]:
+        try:
+            with urlopen(_VOICE_CATALOG_URL, timeout=20) as response:
+                payload = json.load(response)
+        except Exception as exc:  # pragma: no cover - network path
+            raise RuntimeError("voice_catalog_unavailable") from exc
+
+        local_voices = self.list_voices()
+        items: list[dict[str, Any]] = []
+        for voice_key, meta in payload.items():
+            items.append(self._catalog_item_for_voice(voice_key, meta or {}, local_voices))
+
+        items.sort(
+            key=lambda item: (
+                0 if item.get("installed") else 1,
+                str(item.get("language_code") or ""),
+                str(item.get("name") or ""),
+                str(item.get("quality") or ""),
+            )
+        )
+        return items
+
+    def download_voice(self, voice_key: str, force: bool = False) -> None:
+        from piper.download_voices import download_voice
+
+        download_voice(voice_key, config.PIPER_MODELS_DIR, force_redownload=bool(force))
+
+    def delete_voice(self, voice_key: str) -> bool:
+        voice_key = (voice_key or "").strip()
+        if not voice_key:
+            return False
+
+        files_to_remove: set[Path] = set()
+        for voice in self.list_voices():
+            if voice.id == voice_key or voice.id.startswith(f"{voice_key}::speaker:"):
+                files_to_remove.add(Path(voice.model_path))
+                files_to_remove.add(Path(voice.config_path))
+
+        direct_model = config.PIPER_MODELS_DIR / f"{voice_key}.onnx"
+        direct_config = Path(f"{direct_model}.json")
+        if direct_model.exists():
+            files_to_remove.add(direct_model.resolve())
+        if direct_config.exists():
+            files_to_remove.add(direct_config.resolve())
+
+        removed = False
+        for file_path in files_to_remove:
+            try:
+                file_path.unlink()
+                removed = True
+            except OSError:
+                continue
+            self._voice_runtime_cache.pop(str(file_path), None)
+
+        return removed
+
+    def voice_ids_for_catalog_key(self, voice_key: str) -> list[str]:
+        voice_key = (voice_key or "").strip()
+        if not voice_key:
+            return []
+        voice_ids: list[str] = []
+        for voice in self.list_voices():
+            if voice.id == voice_key or voice.id.startswith(f"{voice_key}::speaker:"):
+                voice_ids.append(voice.id)
+        return voice_ids
+
+    def resolve_preview_voice_id(self, voice_ref: str) -> str | None:
+        voice_ref = (voice_ref or "").strip()
+        if not voice_ref:
+            return None
+
+        direct = self.get_voice(voice_ref)
+        if direct:
+            return direct.id
+
+        voice_ids = self.voice_ids_for_catalog_key(voice_ref)
+        return voice_ids[0] if voice_ids else None
 
     def _runtime_import_error(self) -> Exception | None:
         try:
@@ -223,6 +303,73 @@ class PiperProvider(TTSProvider):
         if parts and parts[-1] in _QUALITY_TOKENS:
             return parts[-1]
         return None
+
+    def _catalog_item_for_voice(
+        self,
+        voice_key: str,
+        payload: dict[str, Any],
+        local_voices: list[VoiceDefinition],
+    ) -> dict[str, Any]:
+        language = payload.get("language") or {}
+        installed_voice_ids = [
+            voice.id
+            for voice in local_voices
+            if voice.id == voice_key or voice.id.startswith(f"{voice_key}::speaker:")
+        ]
+        size_bytes = self._catalog_model_size(payload)
+        speaker_count = self._as_int(payload.get("num_speakers")) or 1
+        speaker_map = payload.get("speaker_id_map") or {}
+        if speaker_map:
+            speaker_count = max(speaker_count, len(speaker_map))
+
+        name = self._humanize(str(payload.get("name") or voice_key))
+        language_code = (language.get("code") or "").strip() or None
+        language_name = (
+            language.get("name_english")
+            or language.get("name_native")
+            or language_code
+            or None
+        )
+        aliases = [str(alias).strip() for alias in (payload.get("aliases") or []) if str(alias).strip()]
+        quality = (payload.get("quality") or "").strip() or None
+
+        return {
+            "key": voice_key,
+            "name": name,
+            "language_code": language_code,
+            "language_name": language_name,
+            "country_name": (language.get("country_english") or "").strip() or None,
+            "quality": quality,
+            "num_speakers": speaker_count,
+            "aliases": aliases,
+            "installed": bool(installed_voice_ids),
+            "installed_voice_ids": installed_voice_ids,
+            "preview_available": bool(installed_voice_ids),
+            "download_size_bytes": size_bytes,
+            "download_size_mb": round(size_bytes / (1024 * 1024), 1) if size_bytes else None,
+            "label": self._catalog_label(name, language_code, quality),
+        }
+
+    def _catalog_label(self, name: str, language_code: str | None, quality: str | None) -> str:
+        parts = [name]
+        if language_code:
+            parts.append(language_code)
+        if quality:
+            parts.append(quality)
+        return " • ".join(parts)
+
+    def _catalog_model_size(self, payload: dict[str, Any]) -> int | None:
+        files = payload.get("files") or {}
+        best: int | None = None
+        for path, meta in files.items():
+            if not str(path).endswith(".onnx"):
+                continue
+            size = self._as_int((meta or {}).get("size_bytes"))
+            if size is None:
+                continue
+            if best is None or size > best:
+                best = size
+        return best
 
     def _split_text_chunks(self, text: str, max_chars: int = 2400) -> list[str]:
         clean = (text or "").replace("\r\n", "\n").strip()

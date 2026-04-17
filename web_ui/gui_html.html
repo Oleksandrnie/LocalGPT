@@ -4,14 +4,51 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>LocalGPT TTS / Voice</title>
+  <script>
+    (() => {
+      const defaultTheme = "dark";
+      const defaultLanguage = "ru";
+      try {
+        const savedTheme = window.localStorage.getItem("localgpt_tts_theme_v1");
+        const savedLanguage = window.localStorage.getItem("localgpt_tts_lang_v1");
+        document.documentElement.dataset.theme = savedTheme === "light" ? "light" : defaultTheme;
+        document.documentElement.lang =
+          savedLanguage === "en" || savedLanguage === "uk" || savedLanguage === "ru"
+            ? savedLanguage
+            : defaultLanguage;
+      } catch {
+        document.documentElement.dataset.theme = defaultTheme;
+        document.documentElement.lang = defaultLanguage;
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
   <header class="app-header">
-    <div class="app-header__brand">
-      <p class="app-kicker">Local • Piper • WAV</p>
-      <h1>LocalGPT TTS / Voice</h1>
-      <p class="app-subtitle">Локальная генерация озвучки без внешних API и облака.</p>
+    <div class="app-header__row">
+      <div class="app-header__copy">
+        <p class="app-kicker">Local • Piper • WAV</p>
+        <h1 id="appTitle">LocalGPT TTS / Voice</h1>
+        <p id="appSubtitle" class="app-subtitle">Локальная генерация озвучки без внешних API и облака.</p>
+      </div>
+      <div class="header-tools">
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button class="lang-flag" id="langEn" type="button" data-lang="en" title="English (US)" aria-label="English (US)">
+            <img src="img/flag-us.svg" alt="English (US)" />
+          </button>
+          <button class="lang-flag" id="langUk" type="button" data-lang="uk" title="Українська" aria-label="Українська">
+            <img src="img/flag-ua.svg" alt="Українська" />
+          </button>
+          <button class="lang-flag" id="langRu" type="button" data-lang="ru" title="Русский" aria-label="Русский">
+            <img src="img/flag-ru.svg" alt="Русский" />
+          </button>
+        </div>
+        <div class="theme-switch" role="group" aria-label="Theme switch">
+          <button id="btnThemeDark" class="theme-switch__button" type="button" data-theme="dark">Dark</button>
+          <button id="btnThemeLight" class="theme-switch__button" type="button" data-theme="light">Light</button>
+        </div>
+      </div>
     </div>
     <div class="app-header__status">
       <p id="healthStatus" class="status">Проверка локального TTS...</p>
@@ -23,13 +60,16 @@
     <section class="panel panel-compose">
       <div class="panel-head">
         <div>
-          <p class="panel-kicker">Step 1</p>
-          <h2>Текст и голос</h2>
+          <p id="step1Label" class="panel-kicker">Step 1</p>
+          <h2 id="step1Title">Текст</h2>
         </div>
-        <button id="btnClearText" class="btn btn-ghost" type="button">Очистить</button>
+        <div class="panel-actions">
+          <button id="btnVoiceSettings" class="btn btn-secondary" type="button">Settings</button>
+          <button id="btnClearText" class="btn btn-ghost" type="button">Очистить</button>
+        </div>
       </div>
 
-      <label class="field-label" for="ttsText">Текст</label>
+      <label id="textLabel" class="field-label" for="ttsText">Текст</label>
       <textarea
         id="ttsText"
         class="input-area"
@@ -38,71 +78,98 @@
       ></textarea>
       <div class="field-meta">
         <span id="textCounter" class="counter">0 / 15000</span>
-        <span class="field-hint">Длинный текст будет разбит на части и склеен в один WAV.</span>
+        <span id="textHint" class="field-hint">Длинный текст будет разбит на части и склеен в один WAV.</span>
       </div>
 
-      <label class="field-label" for="voiceSelect">Голос</label>
-      <select id="voiceSelect" class="input-select"></select>
-      <p id="voiceInfo" class="field-hint">Голос ещё не выбран.</p>
+      <section class="voice-summary" aria-label="Current voice">
+        <div>
+          <p id="currentVoiceLabel" class="voice-summary__label">Current voice</p>
+          <p id="voiceInfo" class="voice-summary__value">Голос ещё не выбран.</p>
+        </div>
+        <p id="voiceSummaryHint" class="voice-summary__hint">Выбор, загрузка, превью и удаление голосов находятся в `Settings`.</p>
+      </section>
 
       <div class="action-row">
         <button id="btnGenerate" class="btn btn-primary" type="button">Generate</button>
         <span id="generateBadge" class="badge">Idle</span>
       </div>
       <p id="generateStatus" class="status">Ожидание действия.</p>
+
+      <section id="voiceSettingsPanel" class="settings-popover" aria-label="Voice settings" hidden>
+        <div class="settings-popover__head">
+          <div>
+            <p id="settingsKicker" class="panel-kicker">Settings</p>
+            <h3 id="settingsTitle">Voices</h3>
+          </div>
+          <button id="btnCloseVoiceSettings" class="btn btn-ghost btn-icon" type="button" aria-label="Close settings">✕</button>
+        </div>
+
+        <label id="voiceSelectLabel" class="field-label" for="voiceSelect">Локальный голос</label>
+        <select id="voiceSelect" class="input-select"></select>
+
+        <div class="action-row action-row--compact">
+          <button id="btnPreviewSelected" class="btn btn-secondary" type="button">Preview</button>
+          <button id="btnRefreshVoiceLibrary" class="btn btn-ghost" type="button">Refresh</button>
+        </div>
+        <p id="previewStatus" class="status">Превью использует локально установленный голос.</p>
+        <audio id="voicePreviewPlayer" class="preview-player" controls preload="none"></audio>
+
+        <div class="settings-popover__divider"></div>
+
+        <div class="settings-popover__subhead">
+          <span id="voiceLibraryLabel">Library</span>
+          <span id="voiceLibraryBadge" class="badge">Idle</span>
+        </div>
+        <input
+          id="voiceLibrarySearch"
+          class="input-select voice-library__search"
+          type="search"
+          placeholder="Поиск по языку, имени или quality..."
+        />
+        <p id="voiceLibraryStatus" class="status">Загрузка каталога голосов...</p>
+        <div id="voiceLibraryList" class="voice-library__list voice-library__list--compact"></div>
+      </section>
     </section>
 
     <section class="panel panel-result">
       <div class="panel-head">
         <div>
-          <p class="panel-kicker">Step 2</p>
-          <h2>Результат</h2>
+          <p id="step2Label" class="panel-kicker">Step 2</p>
+          <h2 id="step2Title">Результат и скорость</h2>
         </div>
         <p id="recordMeta" class="panel-note">История и плеер появятся после генерации.</p>
       </div>
 
-      <article id="baseCard" class="audio-card is-empty">
+      <article id="resultCard" class="audio-card is-empty">
         <div class="audio-card__head">
           <div>
-            <p class="audio-card__eyebrow">Base WAV</p>
-            <h3>Исходная озвучка</h3>
+            <p id="resultEyebrow" class="audio-card__eyebrow">Result WAV</p>
+            <h3 id="resultTitle">Результат</h3>
           </div>
-          <a id="downloadBase" class="btn btn-ghost is-disabled" href="#" aria-disabled="true">Скачать WAV</a>
+          <a id="downloadResult" class="btn btn-ghost is-disabled" href="#" aria-disabled="true">Скачать WAV</a>
         </div>
-        <audio id="basePlayer" controls preload="none"></audio>
-        <p id="baseInfo" class="audio-card__meta">Базовый WAV пока не сгенерирован.</p>
+        <audio id="resultPlayer" controls preload="none"></audio>
+        <p id="resultInfo" class="audio-card__meta">WAV пока не сгенерирован.</p>
       </article>
 
       <section class="speed-panel">
-        <div class="panel-head panel-head--tight">
+        <div class="speed-toolbar">
           <div>
-            <p class="panel-kicker">Step 3</p>
-            <h3>Ускорение</h3>
+            <p id="speedEyebrow" class="audio-card__eyebrow">Speed</p>
+            <h3 id="speedTitle">Ускорение</h3>
           </div>
           <button id="btnApplySpeed" class="btn btn-secondary" type="button">Применить</button>
         </div>
         <div id="speedOptions" class="speed-grid" role="group" aria-label="Speed options"></div>
         <p id="speedStatus" class="status">Выберите скорость и создайте отдельный WAV.</p>
       </section>
-
-      <article id="processedCard" class="audio-card is-empty">
-        <div class="audio-card__head">
-          <div>
-            <p class="audio-card__eyebrow">Processed WAV</p>
-            <h3>Обработанная версия</h3>
-          </div>
-          <a id="downloadProcessed" class="btn btn-ghost is-disabled" href="#" aria-disabled="true">Скачать WAV</a>
-        </div>
-        <audio id="processedPlayer" controls preload="none"></audio>
-        <p id="processedInfo" class="audio-card__meta">Ускоренный WAV ещё не создан.</p>
-      </article>
     </section>
 
     <section class="panel panel-history">
       <div class="panel-head">
         <div>
-          <p class="panel-kicker">Step 4</p>
-          <h2>История</h2>
+          <p id="step4Label" class="panel-kicker">Step 4</p>
+          <h2 id="step4Title">История</h2>
         </div>
         <button id="btnRefreshHistory" class="btn btn-ghost" type="button">Обновить</button>
       </div>

@@ -144,6 +144,8 @@ app/db/localgpt.db
 !app/db/.gitkeep
 app/data/transcripts/*.json
 !app/data/transcripts/.gitkeep
+app/data/tts/history/*.json
+!app/data/tts/history/.gitkeep
 tmp_logs/**
 !tmp_logs/.gitkeep
 *.wav
