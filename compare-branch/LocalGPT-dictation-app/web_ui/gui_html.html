@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>LocalGPT Whisper Transcriber</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__row">
+      <h1 id="appTitle">LocalGPT Whisper Transcriber</h1>
+      <div class="header-tools">
+        <div class="lang-switch" role="group" aria-label="Language">
+          <button class="lang-flag is-active" id="langEn" type="button" data-lang="en" title="English" aria-label="English">
+            <img src="img/flag-us.svg" alt="English" />
+          </button>
+          <button class="lang-flag" id="langUk" type="button" data-lang="uk" title="Українська" aria-label="Українська">
+            <img src="img/flag-ua.svg" alt="Українська" />
+          </button>
+          <button class="lang-flag" id="langRu" type="button" data-lang="ru" title="Русский" aria-label="Русский">
+            <img src="img/flag-ru.svg" alt="Русский" />
+          </button>
+        </div>
+        <div class="header-menu-wrap">
+          <button
+            id="btnHeaderMenu"
+            class="burger-btn"
+            type="button"
+            aria-expanded="false"
+            aria-haspopup="menu"
+            title="Menu"
+          >
+            ☰
+          </button>
+          <div id="headerMenuPanel" class="header-menu" role="menu" hidden>
+            <button id="menuBtnUpdate" class="header-menu__item" type="button" role="menuitem">Update model</button>
+            <button id="menuBtnCopyUrl" class="header-menu__item" type="button" role="menuitem">Copy iOS URL</button>
+            <div id="menuExportWrap" class="header-menu__item-wrap" data-tooltip="">
+              <button id="menuBtnExport" class="header-menu__item" type="button" role="menuitem" disabled>Export database</button>
+            </div>
+            <div id="menuImportWrap" class="header-menu__item-wrap" data-tooltip="">
+              <button id="menuBtnImport" class="header-menu__item" type="button" role="menuitem" disabled>Import database</button>
+            </div>
+            <button id="menuBtnShutdown" class="header-menu__item header-menu__item--danger" type="button" role="menuitem">
+              Shut down app
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="status" id="healthStatus">Checking server...</p>
+  </header>
+
+  <main class="app-layout">
+    <section class="panel control-panel">
+      <h2 id="controlTitle">Controls</h2>
+
+      <label class="field-label" id="modelLabel" for="modelSelect">Whisper Model</label>
+      <select id="modelSelect" class="input-control"></select>
+
+      <section id="uploadDropZone" class="upload-drop-zone" aria-label="File upload drop zone">
+        <input type="file" id="fileInput" accept="audio/*,video/*" hidden />
+        <button id="btnChooseFile" class="btn">Choose file</button>
+        <p class="drop-hint" id="dropHint">Drag & drop audio/video here</p>
+        <p class="file-hint file-hint--empty" id="fileHint">Local file: not selected</p>
+
+        <div class="record-row">
+          <button id="btnRecord" class="btn btn-record" title="Voice recording">⏺</button>
+          <button id="btnSaveRecording" class="btn btn-secondary" disabled>Save recording</button>
+        </div>
+      </section>
+
+      <div class="record-status-block">
+        <p class="muted" id="recordingInfo">Recording not started.</p>
+        <p class="muted voice-activity voice-activity--idle" id="voiceActivity">Voice: —</p>
+      </div>
+
+      <div id="transcribeStatusWrap" class="status-banner" hidden>
+        <p class="status" id="transcribeStatus"></p>
+        <button id="btnDismissTranscribeStatus" class="widget-dismiss" type="button" aria-label="Close notification">×</button>
+      </div>
+      <button id="btnStopTranscription" class="btn btn-danger btn-stop-transcription" type="button" hidden disabled>
+        Stop transcription
+      </button>
+      <section class="stage-widget" id="stageWidget" hidden>
+        <div class="stage-widget__top">
+          <strong id="stageLabel">Stage: idle</strong>
+          <button id="btnDismissStage" class="widget-dismiss" type="button" aria-label="Close stage">×</button>
+        </div>
+        <p class="stage-widget__detail" id="stageDetail"></p>
+      </section>
+
+      <section class="download-widget" id="downloadWidget" hidden>
+        <div class="download-widget__top">
+          <strong id="downloadModelName">Model: —</strong>
+          <div class="widget-actions">
+            <span id="downloadPercent">0%</span>
+            <button id="btnDismissDownload" class="widget-dismiss" type="button" aria-label="Close download">×</button>
+          </div>
+        </div>
+        <progress id="downloadProgress" max="100" value="0"></progress>
+        <div class="download-widget__meta">
+          <span id="downloadSpeed">Speed: 0 MB/s</span>
+          <span id="downloadMessage">Preparing...</span>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel editor-panel">
+      <div class="panel-head">
+        <h2 id="transcriptTitle">Transcription</h2>
+        <div class="actions">
+          <button id="btnCopy" class="btn btn-secondary">copy</button>
+          <button id="btnSave" class="btn btn-secondary">save</button>
+          <button id="btnClear" class="btn btn-secondary">clear</button>
+        </div>
+      </div>
+      <textarea id="transcriptOutput" placeholder="Transcription result will appear here..."></textarea>
+    </section>
+
+    <section class="panel history-panel">
+      <h2 id="historyTitle">History</h2>
+      <div id="historyList" class="history-list"></div>
+    </section>
+  </main>
+
+  <div id="historyModal" class="modal-overlay" hidden>
+    <div class="modal-window" role="dialog" aria-modal="true" aria-labelledby="historyModalTitle">
+      <div class="panel-head">
+        <h3 id="historyModalTitle">Transcription</h3>
+        <button id="btnCloseModal" class="btn btn-secondary">Close</button>
+      </div>
+      <p class="muted" id="historyModalMeta"></p>
+      <textarea id="historyModalText" class="modal-textarea"></textarea>
+      <div class="actions actions-left">
+        <button id="btnSendFromModal" class="btn">send</button>
+        <button id="btnDeleteFromModal" class="btn btn-danger" type="button">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

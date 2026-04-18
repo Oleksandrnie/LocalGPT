@@ -1,0 +1,99 @@
+:root {
+    --color-background: #0f172a;
+    --color-surface: #111827;
+    --color-surface-muted: #0b1220;
+    --color-border: #334155;
+    --color-text: #e2e8f0;
+    --color-text-muted: #94a3b8;
+    --color-primary: #2563eb;
+    --color-secondary: #334155;
+    --color-warn: #b91c1c;
+    --color-info: #93c5fd;
+    --color-success: #bbf7d0;
+    --color-error: #f87171;
+    --space-xs: 4px;
+    --space-sm: 8px;
+    --space-md: 12px;
+    --space-lg: 16px;
+    --space-xl: 24px;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 12px;
+    --shadow-elevated: 0 12px 36px rgba(15, 23, 42, 0.35);
+}
+
+body.theme-dark {
+    --color-background: #0f172a;
+    --color-surface: #111827;
+    --color-surface-muted: #0b1220;
+    --color-border: #334155;
+    --color-text: #e2e8f0;
+    --color-text-muted: #94a3b8;
+    --color-primary: #2563eb;
+    --color-secondary: #334155;
+    --color-warn: #b91c1c;
+    --color-info: #93c5fd;
+    --color-success: #bbf7d0;
+    --color-error: #f87171;
+}
+
+body.theme-light {
+    --color-background: #f8fafc;
+    --color-surface: #ffffff;
+    --color-surface-muted: #e2e8f0;
+    --color-border: #cbd5e1;
+    --color-text: #0f172a;
+    --color-text-muted: #475569;
+    --color-primary: #1d4ed8;
+    --color-secondary: #e2e8f0;
+    --color-warn: #b91c1c;
+    --color-info: #2563eb;
+    --color-success: #16a34a;
+    --color-error: #b91c1c;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--color-background);
+    color: var(--color-text);
+    line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+    color: var(--color-text);
+}
+
+main {
+    width: calc(100% - 2 * var(--space-lg));
+    max-width: none;
+    margin: var(--space-xl) auto;
+    padding: 0 var(--space-lg);
+}
+
+lgpt-card {
+    display: block;
+}
+
+.card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-lg);
+    box-shadow: var(--shadow-elevated);
+}
+
+.card h3 {
+    margin-top: 0;
+    margin-bottom: var(--space-md);
+}
+
+.card__body > * + * {
+    margin-top: var(--space-sm);
+}

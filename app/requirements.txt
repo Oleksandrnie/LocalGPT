@@ -2,3 +2,8 @@ fastapi
 uvicorn[standard]
 python-dotenv
 piper-tts
+openai>=1.30.0
+faster-whisper
+pydub
+python-multipart>=0.0.5
+openpyxl

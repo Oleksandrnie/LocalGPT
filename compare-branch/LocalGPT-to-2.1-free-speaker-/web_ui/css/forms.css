@@ -1,0 +1,55 @@
+textarea,
+input[type="text"],
+select,
+input[type="file"] {
+    width: 100%;
+    background: var(--color-surface-muted);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    font: inherit;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+textarea {
+    max-width: 100%;
+    min-height: 120px;
+    line-height: 1.45;
+    resize: vertical;
+}
+
+input[type="file"] {
+    padding: var(--space-sm);
+    color: var(--color-text-muted);
+}
+
+textarea:focus,
+input[type="text"]:focus,
+select:focus,
+input[type="file"]:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+}
+
+textarea#prompt,
+textarea#answer {
+    min-height: 200px;
+    height: 200px;
+}
+
+.field-group label {
+    display: block;
+    margin-bottom: var(--space-xs);
+}
+
+.input-control {
+    width: 100%;
+}
+
+.buttons {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}

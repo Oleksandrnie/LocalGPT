@@ -3,49 +3,46 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT_DEFAULT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PROJECT_ROOT="${LTRNSRB_PROJECT_ROOT:-${PROJECT_ROOT_DEFAULT}}"
+PROJECT_ROOT="${LOCALGPT_PROJECT_ROOT:-${PROJECT_ROOT_DEFAULT}}"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 if [[ ! -f "${PROJECT_ROOT}/run_localgpt.py" ]]; then
-  osascript -e 'display alert "LTrnsrb" message "run_localgpt.py was not found. Check project path."'
+  osascript -e 'display alert "LocalGPT" message "run_localgpt.py was not found. Check project path."'
   exit 1
 fi
 
 RUNTIME_BASE="${TMPDIR:-/tmp}"
 RUNTIME_BASE="${RUNTIME_BASE%/}"
-LOG_DIR="${RUNTIME_BASE}/LTrnsrb-${UID}"
+LOG_DIR="${RUNTIME_BASE}/LocalGPT-${UID}"
 mkdir -p "${LOG_DIR}"
+
 BACKEND_LOG="${LOG_DIR}/backend.log"
 CADDY_LOG="${LOG_DIR}/caddy.log"
 BACKEND_PID_FILE="${LOG_DIR}/backend.pid"
 CADDY_PID_FILE="${LOG_DIR}/caddy.pid"
 CADDY_CONFIG_FILE="${LOG_DIR}/Caddyfile.auto"
 LAN_IP_FILE="${LOG_DIR}/lan_ip"
+
 BACKEND_PORT=8000
 HTTPS_PORT=8443
 BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/health"
 BOOTSTRAP_PYTHON="$(command -v python3 2>/dev/null || true)"
-BACKEND_VENV_PYTHON="${PROJECT_ROOT}/venv/bin/python"
-BACKEND_DEPS_MARKER="${PROJECT_ROOT}/venv/.deps_installed"
+
 if [[ -z "${BOOTSTRAP_PYTHON}" ]]; then
-  osascript -e 'display alert "LTrnsrb" message "Python 3 was not found."'
+  osascript -e 'display alert "LocalGPT" message "Python 3 was not found."'
   exit 1
 fi
 
 is_pid_alive() {
   local pid="$1"
-  if [[ -z "${pid}" ]]; then
-    return 1
-  fi
+  [[ -n "${pid}" ]] || return 1
   /bin/kill -0 "${pid}" >/dev/null 2>&1
 }
 
 cleanup_stale_pidfile() {
   local pid_file="$1"
-  if [[ ! -f "${pid_file}" ]]; then
-    return
-  fi
+  [[ -f "${pid_file}" ]] || return
   local pid
   pid="$(cat "${pid_file}" 2>/dev/null || true)"
   if ! is_pid_alive "${pid}"; then
@@ -58,10 +55,10 @@ cleanup_stale_pidfile "${CADDY_PID_FILE}"
 
 read_pid_file() {
   local pid_file="$1"
-  if [[ ! -f "${pid_file}" ]]; then
+  [[ -f "${pid_file}" ]] || {
     echo ""
     return
-  fi
+  }
   cat "${pid_file}" 2>/dev/null || true
 }
 
@@ -127,9 +124,9 @@ build_caddy_hosts() {
   fi
   host_label="$(echo "${host_label}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9.-')"
 
-  local hosts="https://${lan_ip}:8443"
+  local hosts="https://${lan_ip}:${HTTPS_PORT}"
   if [[ -n "${host_label}" ]]; then
-    hosts="${hosts}, https://${host_label}.local:8443"
+    hosts="${hosts}, https://${host_label}.local:${HTTPS_PORT}"
   fi
   echo "${hosts}"
 }
@@ -144,7 +141,7 @@ write_caddy_config() {
 }
 ${hosts} {
   tls internal
-  reverse_proxy 127.0.0.1:8000
+  reverse_proxy 127.0.0.1:${BACKEND_PORT}
 }
 EOF
 }
@@ -153,9 +150,7 @@ stop_pid_file_process() {
   local pid_file="$1"
   local pid=""
   pid="$(read_pid_file "${pid_file}")"
-  if [[ -z "${pid}" ]]; then
-    return
-  fi
+  [[ -n "${pid}" ]] || return
   if ! is_pid_alive "${pid}"; then
     rm -f "${pid_file}"
     return
@@ -188,26 +183,11 @@ health_ok_https_insecure() {
   curl -kfsS --max-time 3 "${url}" >/dev/null 2>&1
 }
 
-wait_for_http_health() {
-  local url="$1"
-  local retries="${2:-40}"
-  local delay="${3:-0.25}"
-  local i=0
-  while [[ "${i}" -lt "${retries}" ]]; do
-    if health_ok_http "${url}"; then
-      return 0
-    fi
-    sleep "${delay}"
-    i=$((i + 1))
-  done
-  return 1
-}
-
 wait_for_backend_ready() {
   local url="$1"
   local pid="$2"
-  local retries="${3:-40}"
-  local delay="${4:-0.25}"
+  local retries="${3:-80}"
+  local delay="${4:-0.5}"
   local i=0
   while [[ "${i}" -lt "${retries}" ]]; do
     if health_ok_http "${url}"; then
@@ -224,7 +204,7 @@ wait_for_backend_ready() {
 
 wait_for_https_health() {
   local url="$1"
-  local retries="${2:-40}"
+  local retries="${2:-60}"
   local delay="${3:-0.25}"
   local i=0
   while [[ "${i}" -lt "${retries}" ]]; do
@@ -239,8 +219,6 @@ wait_for_https_health() {
 
 start_backend() {
   local backend_pid=""
-  local startup_retries=60
-  local startup_delay=0.25
   backend_pid="$(read_pid_file "${BACKEND_PID_FILE}")"
 
   if [[ -n "${backend_pid}" ]] && is_pid_alive "${backend_pid}" && health_ok_http "${BACKEND_HEALTH_URL}"; then
@@ -251,36 +229,48 @@ start_backend() {
     stop_pid_file_process "${BACKEND_PID_FILE}"
   fi
 
-  if ! health_ok_http "${BACKEND_HEALTH_URL}"; then
-    local pid
-    for pid in $(listeners_on_port "${BACKEND_PORT}"); do
-      /bin/kill "${pid}" >/dev/null 2>&1 || true
-    done
-    sleep 0.3
-    for pid in $(listeners_on_port "${BACKEND_PORT}"); do
-      /bin/kill -9 "${pid}" >/dev/null 2>&1 || true
-    done
-  fi
+  local pid
+  for pid in $(listeners_on_port "${BACKEND_PORT}"); do
+    /bin/kill "${pid}" >/dev/null 2>&1 || true
+  done
+  sleep 0.3
+  for pid in $(listeners_on_port "${BACKEND_PORT}"); do
+    /bin/kill -9 "${pid}" >/dev/null 2>&1 || true
+  done
 
   (
     cd "${PROJECT_ROOT}"
-    export LTRNSRB_RUNTIME_DIR="${LOG_DIR}"
+    export LOCALGPT_RUNTIME_DIR="${LOG_DIR}"
     export PYTHONPATH="${PROJECT_ROOT}"
     nohup "${BOOTSTRAP_PYTHON}" run_localgpt.py --no-browser --no-reload --exec-backend --host 127.0.0.1 --port "${BACKEND_PORT}" >>"${BACKEND_LOG}" 2>&1 &
     echo "$!" > "${BACKEND_PID_FILE}"
   )
 
   backend_pid="$(read_pid_file "${BACKEND_PID_FILE}")"
-  if [[ ! -x "${BACKEND_VENV_PYTHON}" ]] || [[ ! -f "${BACKEND_DEPS_MARKER}" ]]; then
-    startup_retries=1200
-    startup_delay=0.5
-  fi
-
-  if ! wait_for_backend_ready "${BACKEND_HEALTH_URL}" "${backend_pid}" "${startup_retries}" "${startup_delay}"; then
-    osascript -e "display alert \"LTrnsrb\" message \"Backend did not start. Check ${BACKEND_LOG}\""
+  if ! wait_for_backend_ready "${BACKEND_HEALTH_URL}" "${backend_pid}" 240 0.5; then
+    osascript -e "display alert \"LocalGPT\" message \"Backend did not start. Check ${BACKEND_LOG}\""
     return 1
   fi
+
   return 0
+}
+
+resolve_caddy() {
+  local detected
+  detected="$(command -v caddy 2>/dev/null || true)"
+  if [[ -n "${detected}" ]]; then
+    echo "${detected}"
+    return
+  fi
+  if [[ -x "/opt/homebrew/bin/caddy" ]]; then
+    echo "/opt/homebrew/bin/caddy"
+    return
+  fi
+  if [[ -x "/usr/local/bin/caddy" ]]; then
+    echo "/usr/local/bin/caddy"
+    return
+  fi
+  echo ""
 }
 
 start_or_restart_caddy() {
@@ -304,35 +294,17 @@ start_or_restart_caddy() {
   )
 
   if ! wait_for_https_health "${https_health_url}" 80 0.25; then
-    osascript -e "display alert \"LTrnsrb\" message \"Caddy did not start HTTPS correctly. Check ${CADDY_LOG}\""
+    osascript -e "display alert \"LocalGPT\" message \"Caddy did not start HTTPS correctly. Check ${CADDY_LOG}\""
     return 1
   fi
   return 0
-}
-
-resolve_caddy() {
-  local detected
-  detected="$(command -v caddy 2>/dev/null || true)"
-  if [[ -n "${detected}" ]]; then
-    echo "${detected}"
-    return
-  fi
-  if [[ -x "/opt/homebrew/bin/caddy" ]]; then
-    echo "/opt/homebrew/bin/caddy"
-    return
-  fi
-  if [[ -x "/usr/local/bin/caddy" ]]; then
-    echo "/usr/local/bin/caddy"
-    return
-  fi
-  echo ""
 }
 
 start_backend || exit 1
 
 CADDY_BIN="$(resolve_caddy)"
 if [[ -z "${CADDY_BIN}" ]]; then
-  osascript -e 'display alert "LTrnsrb" message "Caddy was not found. Install: brew install caddy"'
+  osascript -e 'display alert "LocalGPT" message "Caddy was not found. Install it with: brew install caddy"'
   exit 1
 fi
 
@@ -349,16 +321,9 @@ fi
 
 if [[ -n "${LAN_IP}" ]]; then
   start_or_restart_caddy "${LAN_IP}" || exit 1
-else
-  osascript -e 'display alert "LTrnsrb" message "LAN IP was not detected. Open local UI on 127.0.0.1."'
-fi
-
-if [[ -n "${LAN_IP}" ]]; then
   echo "${LAN_IP}" > "${LAN_IP_FILE}"
-fi
-
-if [[ -n "${LAN_IP}" ]]; then
-  open "https://${LAN_IP}:8443/ui/gui_html.html"
+  open "https://${LAN_IP}:${HTTPS_PORT}/ui/gui_html.html"
 else
-  open "http://127.0.0.1:8000/ui/gui_html.html"
+  osascript -e 'display alert "LocalGPT" message "LAN IP was not detected. Opening localhost UI instead."'
+  open "http://127.0.0.1:${BACKEND_PORT}/ui/gui_html.html"
 fi

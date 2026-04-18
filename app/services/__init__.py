@@ -1,1 +1,1 @@
-"""Service layer for LocalGPT."""
+"""Shared service utilities for LocalGPT."""

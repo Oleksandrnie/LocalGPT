@@ -32,11 +32,6 @@ def _raise_service_error(exc: tts_service.TTSServiceError) -> None:
     ) from exc
 
 
-@router.get("/health", include_in_schema=False)
-def compatibility_health() -> dict[str, object]:
-    return tts_service.get_health()
-
-
 @router.get("/tts/health")
 def tts_health() -> dict[str, object]:
     return tts_service.get_health()

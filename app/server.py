@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config
+from . import config, db
 from .routers import tts
-from .routes import meta
+from .routes import chat, criteria, meta, models, profiles, storage, transcripts, transcribe
 
-app = FastAPI(title="LocalGPT TTS API")
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
+
+db.init_db()
+config.log_startup(LOGGER)
+
+app = FastAPI(title="LocalGPT API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,8 +27,15 @@ app.add_middleware(
     allow_credentials=False,
 )
 
-app.include_router(tts.router)
 app.include_router(meta.router)
+app.include_router(models.router)
+app.include_router(profiles.router)
+app.include_router(criteria.router)
+app.include_router(transcripts.router)
+app.include_router(transcribe.router)
+app.include_router(chat.router)
+app.include_router(storage.router)
+app.include_router(tts.router)
 
 app.mount("/ui", StaticFiles(directory=config.UI_DIR, html=True), name="ui")
 
@@ -36,5 +51,5 @@ async def disable_ui_cache(request: Request, call_next):
 
 
 @app.get("/", include_in_schema=False)
-def root() -> RedirectResponse:
+def root():
     return RedirectResponse(url="/ui/gui_html.html")
