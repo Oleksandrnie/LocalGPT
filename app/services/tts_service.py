@@ -634,6 +634,13 @@ def get_voice_download_task(task_id: str) -> dict[str, Any]:
         return _public_voice_download_task(task)
 
 
+def list_voice_download_tasks() -> list[dict[str, Any]]:
+    with _VOICE_LIBRARY_LOCK:
+        items = [_public_voice_download_task(task) for task in _VOICE_DOWNLOAD_TASKS.values()]
+    items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return items
+
+
 def delete_voice(voice_key: str) -> dict[str, Any]:
     _ensure_tts_enabled()
     normalized_key = (voice_key or "").strip()

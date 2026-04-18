@@ -18,6 +18,14 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 CHAT_LOG_FILE = LOG_DIR / "chat.log"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
+ALLOWED_WHISPER_MODELS = (
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
+)
 
 
 def _parse_bool(name: str, default: bool) -> bool:
@@ -136,6 +144,11 @@ class Settings:
     tts_audio_format: str
     tts_max_text_chars: int
     tts_speed_options: tuple[float, ...]
+    whisper_default_model: str
+    whisper_compute_type: str
+    whisper_device: str
+    whisper_beam_size: int
+    whisper_fallback_language: str
 
 
 MODEL_RECOMMENDATIONS = [
@@ -187,6 +200,8 @@ def _load_settings() -> Settings:
     audio_format = (os.getenv("TTS_AUDIO_FORMAT", "wav") or "wav").strip().lower()
     if audio_format != "wav":
         audio_format = "wav"
+    raw_whisper_model = (os.getenv("WHISPER_MODEL_SIZE", "medium") or "medium").strip()
+    whisper_default_model = raw_whisper_model if raw_whisper_model in ALLOWED_WHISPER_MODELS else "medium"
 
     return Settings(
         env=os.getenv("ENV", "local"),
@@ -203,6 +218,11 @@ def _load_settings() -> Settings:
         tts_audio_format=audio_format,
         tts_max_text_chars=max(1, _parse_int("TTS_MAX_TEXT_CHARS", 15000)),
         tts_speed_options=_parse_speed_options(os.getenv("TTS_SPEED_OPTIONS")),
+        whisper_default_model=whisper_default_model,
+        whisper_compute_type=(os.getenv("WHISPER_COMPUTE_TYPE", "int8") or "int8").strip(),
+        whisper_device=(os.getenv("WHISPER_DEVICE", "cpu") or "cpu").strip(),
+        whisper_beam_size=max(1, _parse_int("WHISPER_BEAM_SIZE", 5)),
+        whisper_fallback_language=(os.getenv("WHISPER_FALLBACK_LANGUAGE", "ru") or "ru").strip().lower(),
     )
 
 
@@ -244,12 +264,15 @@ os.environ["TTS_HISTORY_DIR"] = str(TTS_HISTORY_DIR)
 os.environ["TTS_TEMP_DIR"] = str(TTS_TEMP_DIR)
 
 MODELS_DIR = MODEL_PATHS.base
+WHISPER_MODELS_DIR = MODEL_PATHS.whisper
+HF_CACHE_DIR = MODEL_PATHS.hf_cache
+CTRANSLATE2_CACHE_DIR = MODEL_PATHS.ctranslate2_cache
 TTS_MODELS_DIR = MODEL_PATHS.tts
 PIPER_MODELS_DIR = MODEL_PATHS.piper
 
 
 def update_model_paths(new_base: Path | str, *, move_existing: bool = False) -> ModelPaths:
-    global MODEL_PATHS, OLLAMA_ENV, MODELS_DIR, TTS_MODELS_DIR, PIPER_MODELS_DIR
+    global MODEL_PATHS, OLLAMA_ENV, MODELS_DIR, WHISPER_MODELS_DIR, HF_CACHE_DIR, CTRANSLATE2_CACHE_DIR, TTS_MODELS_DIR, PIPER_MODELS_DIR
     old_paths = MODEL_PATHS
     target_paths = build_model_paths(new_base)
     if move_existing:
@@ -274,6 +297,9 @@ def update_model_paths(new_base: Path | str, *, move_existing: bool = False) -> 
     apply_model_env(MODEL_PATHS)
     OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(MODEL_PATHS.ollama)}
     MODELS_DIR = MODEL_PATHS.base
+    WHISPER_MODELS_DIR = MODEL_PATHS.whisper
+    HF_CACHE_DIR = MODEL_PATHS.hf_cache
+    CTRANSLATE2_CACHE_DIR = MODEL_PATHS.ctranslate2_cache
     TTS_MODELS_DIR = MODEL_PATHS.tts
     PIPER_MODELS_DIR = MODEL_PATHS.piper
     return MODEL_PATHS

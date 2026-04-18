@@ -93,6 +93,119 @@
         </main>
     </div>
 
+    <div class="tool-dock" id="toolDock"></div>
+
+    <section class="tool-window" id="asrToolWindow" hidden>
+        <header class="tool-window__header" data-tool-drag="asr">
+            <div>
+                <p class="eyebrow">ASR</p>
+                <h3>Transcribe Studio</h3>
+            </div>
+            <div class="tool-window__actions">
+                <button class="tool-window__icon" id="asrToolMinimizeButton" type="button" title="Свернуть">_</button>
+                <button class="tool-window__icon" id="asrToolFullscreenButton" type="button" title="На весь экран">□</button>
+                <button class="tool-window__icon tool-window__icon--danger" id="asrToolCloseButton" type="button" title="Закрыть">✕</button>
+            </div>
+        </header>
+        <div class="tool-window__body">
+            <div class="tool-panel">
+                <div class="tool-toolbar">
+                    <label class="field">
+                        <span class="field__label">ASR модель</span>
+                        <select id="asrToolModelSelect" class="field__control"></select>
+                    </label>
+                    <div class="button-row">
+                        <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать файл</button>
+                        <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить базу</button>
+                    </div>
+                    <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
+                </div>
+
+                <div class="info-card">
+                    <span class="info-card__label">Режим</span>
+                    <strong>Отдельное ASR-приложение, не диктовка в инпут</strong>
+                </div>
+
+                <p class="inline-status" id="asrToolStatus">Выберите файл и запустите отдельную транскрибацию.</p>
+                <p class="subtle" id="asrToolMeta">История ниже хранится отдельно от диктовки в поле ввода.</p>
+
+                <textarea id="asrToolOutput" class="tool-textarea" placeholder="Результат транскрибации появится здесь..."></textarea>
+
+                <div class="button-row">
+                    <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в промпт</button>
+                    <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить правки</button>
+                    <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить</button>
+                    <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить запись</button>
+                </div>
+            </div>
+
+            <aside class="tool-sidebar">
+                <div class="tool-sidebar__head">
+                    <h4>База транскрибаций</h4>
+                </div>
+                <div class="tool-history" id="asrToolHistoryList"></div>
+            </aside>
+        </div>
+        <div class="tool-window__resize" data-tool-resize="asr"></div>
+    </section>
+
+    <section class="tool-window" id="ttsToolWindow" hidden>
+        <header class="tool-window__header" data-tool-drag="tts">
+            <div>
+                <p class="eyebrow">TTS</p>
+                <h3>Voice Studio</h3>
+            </div>
+            <div class="tool-window__actions">
+                <button class="tool-window__icon" id="ttsToolMinimizeButton" type="button" title="Свернуть">_</button>
+                <button class="tool-window__icon" id="ttsToolFullscreenButton" type="button" title="На весь экран">□</button>
+                <button class="tool-window__icon tool-window__icon--danger" id="ttsToolCloseButton" type="button" title="Закрыть">✕</button>
+            </div>
+        </header>
+        <div class="tool-window__body">
+            <div class="tool-panel">
+                <div class="tool-toolbar">
+                    <label class="field">
+                        <span class="field__label">TTS движок</span>
+                        <select id="ttsToolProviderSelect" class="field__control">
+                            <option value="piper">Piper (local)</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="field__label">Голос</span>
+                        <select id="ttsToolVoiceSelect" class="field__control"></select>
+                    </label>
+                </div>
+
+                <div class="info-card">
+                    <span class="info-card__label">Режим</span>
+                    <strong>Отдельное TTS-приложение поверх чата</strong>
+                </div>
+
+                <p class="inline-status" id="ttsToolStatus">Подставьте текст и сгенерируйте локальную озвучку.</p>
+                <p class="subtle" id="ttsToolMeta">Текущий голос синхронизирован с глобальными настройками TTS.</p>
+
+                <textarea id="ttsToolText" class="tool-textarea" placeholder="Текст для локальной озвучки..."></textarea>
+
+                <div class="button-row">
+                    <button class="button button--primary" id="ttsToolGenerateButton" type="button">Озвучить</button>
+                    <button class="button button--ghost" id="ttsToolUseAssistantButton" type="button">Последний ответ</button>
+                    <button class="button button--ghost" id="ttsToolRefreshButton" type="button">Обновить голоса</button>
+                    <button class="button button--ghost" id="ttsToolDeleteButton" type="button">Удалить запись</button>
+                </div>
+
+                <audio id="ttsToolPlayer" class="tool-player" controls preload="none"></audio>
+            </div>
+
+            <aside class="tool-sidebar">
+                <div class="tool-sidebar__head">
+                    <h4>История озвучки</h4>
+                </div>
+                <div class="tool-history" id="ttsToolHistoryList"></div>
+            </aside>
+        </div>
+        <div class="tool-window__resize" data-tool-resize="tts"></div>
+    </section>
+
     <div class="modal-backdrop" id="settingsBackdrop" hidden>
         <section class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
             <header class="settings-panel__header">
@@ -104,36 +217,6 @@
             </header>
 
             <div class="settings-panel__content">
-                <section class="settings-group">
-                    <div class="settings-group__header">
-                        <div>
-                            <p class="eyebrow">Чат</p>
-                            <h4>Модель</h4>
-                        </div>
-                    </div>
-
-                    <label class="field">
-                        <span class="field__label">LLM модель</span>
-                        <select id="llmModelSelect" class="field__control"></select>
-                    </label>
-
-                    <div class="button-row">
-                        <button class="button button--ghost" id="refreshModelsButton" type="button">Обновить список</button>
-                        <button class="button button--ghost" id="deleteModelButton" type="button">Удалить текущую</button>
-                    </div>
-
-                    <label class="field">
-                        <span class="field__label">Скачать или обновить модель Ollama</span>
-                        <div class="inline-field">
-                            <input id="downloadModelInput" class="field__control" type="text"
-                                placeholder="Например: qwen2.5:7b-instruct" />
-                            <button class="button button--primary" id="downloadModelButton" type="button">Запустить</button>
-                        </div>
-                    </label>
-
-                    <div class="chip-list" id="recommendedModels"></div>
-                </section>
-
                 <section class="settings-group">
                     <div class="settings-group__header">
                         <div>
@@ -168,8 +251,41 @@
                 <section class="settings-group">
                     <div class="settings-group__header">
                         <div>
-                            <p class="eyebrow">LLM</p>
-                            <h4>Параметры модели</h4>
+                            <p class="eyebrow">Чат</p>
+                            <h4>Модели и параметры LLM</h4>
+                        </div>
+                    </div>
+
+                    <label class="field">
+                        <span class="field__label">LLM модель</span>
+                        <select id="llmModelSelect" class="field__control"></select>
+                    </label>
+
+                    <label class="field">
+                        <span class="field__label">Скачать или обновить модель Ollama</span>
+                        <div class="inline-field">
+                            <input id="downloadModelInput" class="field__control" type="text"
+                                placeholder="Например: qwen2.5:7b-instruct" />
+                            <button class="button button--primary" id="downloadModelButton" type="button">Запустить</button>
+                        </div>
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button--ghost" id="refreshModelsButton" type="button">Обновить список</button>
+                        <button class="button button--ghost" id="deleteModelButton" type="button">Удалить текущую</button>
+                    </div>
+
+                    <div class="chip-list" id="recommendedModels"></div>
+                    <div class="library-block">
+                        <button class="library-toggle" id="chatLibraryToggle" type="button" aria-expanded="false" aria-controls="chatLibraryPanel">
+                            <span class="library-toggle__copy">
+                                <span class="library-toggle__title">Библиотека загрузки LLM</span>
+                                <span class="library-toggle__meta" id="chatLibraryMeta">Свернуто</span>
+                            </span>
+                            <span class="library-toggle__icon" aria-hidden="true">⌄</span>
+                        </button>
+                        <div class="library-panel" id="chatLibraryPanel" hidden>
+                            <div class="model-library" id="chatModelLibrary"></div>
                         </div>
                     </div>
 
@@ -212,7 +328,7 @@
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">ASR</p>
-                            <h4>Транскрибация</h4>
+                            <h4>Whisper модели</h4>
                         </div>
                     </div>
 
@@ -230,7 +346,23 @@
                         </select>
                     </label>
 
-                    <p class="inline-status">Кнопка <code>Транскрибировать</code> в меню <code>+</code> использует эти ASR-настройки.</p>
+                    <div class="button-row">
+                        <button class="button button--ghost" id="refreshAsrModelsButton" type="button">Обновить модели</button>
+                    </div>
+
+                    <p class="inline-status" id="asrSettingsStatus">Кнопка <code>Транскрибировать</code> в меню <code>+</code> использует эти ASR-настройки.</p>
+                    <div class="library-block">
+                        <button class="library-toggle" id="asrLibraryToggle" type="button" aria-expanded="false" aria-controls="asrLibraryPanel">
+                            <span class="library-toggle__copy">
+                                <span class="library-toggle__title">Библиотека Whisper-моделей</span>
+                                <span class="library-toggle__meta" id="asrLibraryMeta">Свернуто</span>
+                            </span>
+                            <span class="library-toggle__icon" aria-hidden="true">⌄</span>
+                        </button>
+                        <div class="library-panel" id="asrLibraryPanel" hidden>
+                            <div class="model-library" id="asrModelLibrary"></div>
+                        </div>
+                    </div>
                 </section>
 
                 <section class="settings-group">
@@ -255,9 +387,26 @@
 
                     <div class="button-row">
                         <button class="button button--ghost" id="refreshTtsVoicesButton" type="button">Обновить голоса</button>
+                        <button class="button button--ghost" id="refreshTtsLibraryButton" type="button">Обновить библиотеку</button>
                     </div>
 
                     <p class="inline-status" id="ttsSettingsStatus">Кнопка <code>Озвучить</code> в меню <code>+</code> использует выбранный локальный голос.</p>
+                    <div class="library-block">
+                        <button class="library-toggle" id="ttsLibraryToggle" type="button" aria-expanded="false" aria-controls="ttsLibraryPanel">
+                            <span class="library-toggle__copy">
+                                <span class="library-toggle__title">Каталог голосов Piper</span>
+                                <span class="library-toggle__meta" id="ttsLibraryMeta">Свернуто</span>
+                            </span>
+                            <span class="library-toggle__icon" aria-hidden="true">⌄</span>
+                        </button>
+                        <div class="library-panel" id="ttsLibraryPanel" hidden>
+                            <label class="field">
+                                <span class="field__label">Поиск по каталогу голосов</span>
+                                <input id="ttsVoiceSearchInput" class="field__control" type="text" placeholder="Имя, язык, страна, quality..." />
+                            </label>
+                            <div class="model-library" id="ttsVoiceLibrary"></div>
+                        </div>
+                    </div>
                 </section>
 
                 <section class="settings-group">

@@ -13,6 +13,7 @@ from fastapi import Request
 
 from .. import config
 from ..roles import DEFAULT_ROLE, list_roles
+from .. import transcribe_tasks
 from ..services import tts_service
 
 router = APIRouter()
@@ -94,6 +95,7 @@ def _safe_unlink(path: Path) -> None:
 def _shutdown_worker() -> None:
     time.sleep(0.45)
 
+    transcribe_tasks.cancel_all_tasks()
     tts_service.cancel_all_tasks()
 
     caddy_pid = _read_pid(CADDY_PID_FILE)

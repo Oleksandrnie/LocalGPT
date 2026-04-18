@@ -37,6 +37,24 @@ LocalGPT — полностью локальный ассистент на FastA
 python3 run_localgpt.py
 ```
 
+Быстрые launcher-обёртки из корня:
+
+```bash
+./start_localgpt.sh
+```
+
+macOS double-click:
+
+```text
+start_localgpt.command
+```
+
+Windows:
+
+```text
+start_localgpt.bat
+```
+
 Что делает launcher:
 - создаёт `venv`, если его нет;
 - ставит зависимости из `app/requirements.txt`, если они изменились;

@@ -1,9 +1,22 @@
+from __future__ import annotations
+
 import json
 import os
+import shutil
+import threading
 from pathlib import Path
 from typing import Any, Iterable
 
 from . import config
+
+MODEL_REPOSITORIES = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+}
 
 DEFAULT_FALLBACK_LANGUAGE = (
     os.getenv("WHISPER_FALLBACK_LANGUAGE", "ru").strip().lower() or "ru"
@@ -48,30 +61,153 @@ EN_PRESET_PROMPT = (
     "do not hallucinate; preserve meaning"
 )
 
+_PROMPT_PRESETS = {
+    "ru": RU_PRESET_PROMPT,
+    "en": EN_PRESET_PROMPT,
+}
+
+_MODEL_CACHE: dict[tuple[str, str, str], Any] = {}
+_MODEL_LOCK = threading.Lock()
+
 
 def _whisper_root() -> Path:
-    return config.MODEL_PATHS.whisper
+    return config.WHISPER_MODELS_DIR
+
+
+def _normalize_model(model_name: str) -> str:
+    model = (model_name or "").strip()
+    if model not in config.ALLOWED_WHISPER_MODELS:
+        raise ValueError("invalid_model")
+    return model
+
+
+def clear_model_cache(model_name: str | None = None) -> None:
+    with _MODEL_LOCK:
+        if model_name is None:
+            _MODEL_CACHE.clear()
+            return
+
+        try:
+            normalized = _normalize_model(model_name)
+        except ValueError:
+            return
+
+        model_dir = str(local_model_dir(normalized))
+        keys_to_drop = [key for key in _MODEL_CACHE if key[0] in {normalized, model_dir}]
+        for key in keys_to_drop:
+            _MODEL_CACHE.pop(key, None)
+
+
+def repository_for_model(model_name: str) -> str:
+    model = _normalize_model(model_name)
+    return MODEL_REPOSITORIES[model]
+
+
+def local_model_dir(model_name: str) -> Path:
+    model = _normalize_model(model_name)
+    return config.WHISPER_MODELS_DIR / model
+
+
+def _copy_tree(src: Path, dst: Path) -> None:
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, target)
+
+
+def _model_is_ready(path: Path) -> bool:
+    return path.exists() and (path / "model.bin").exists()
+
+
+def _snapshot_dirs(repo_id: str) -> list[Path]:
+    org, repo_name = repo_id.split("/", 1)
+    relative = Path(f"models--{org}--{repo_name}") / "snapshots"
+
+    result: list[Path] = []
+    snapshots_root = config.HF_CACHE_DIR / relative
+    if not snapshots_root.exists():
+        return result
+
+    for snapshot in snapshots_root.iterdir():
+        if snapshot.is_dir():
+            result.append(snapshot)
+
+    result.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+    return result
+
+
+def _legacy_model_dirs(model_name: str) -> list[Path]:
+    model = _normalize_model(model_name)
+    repo_suffix = repository_for_model(model).split("/", 1)[1]
+
+    candidates = [
+        config.MODELS_DIR / "whisper" / repo_suffix,
+        config.MODELS_DIR / "whisper" / model,
+        config.WHISPER_MODELS_DIR / repo_suffix,
+    ]
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            key = str(candidate.resolve())
+        except OSError:
+            key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _hydrate_model_from_cache(model_name: str) -> bool:
+    target = local_model_dir(model_name)
+    if _model_is_ready(target):
+        return True
+
+    for legacy in _legacy_model_dirs(model_name):
+        if not _model_is_ready(legacy):
+            continue
+        _copy_tree(legacy, target)
+        if _model_is_ready(target):
+            return True
+
+    repo_id = repository_for_model(model_name)
+    for snapshot in _snapshot_dirs(repo_id):
+        if not _model_is_ready(snapshot):
+            continue
+        _copy_tree(snapshot, target)
+        if _model_is_ready(target):
+            return True
+
+    return _model_is_ready(target)
+
+
+def is_local_model_ready(model_name: str) -> bool:
+    model_dir = local_model_dir(model_name)
+    if _model_is_ready(model_dir):
+        return True
+    return _hydrate_model_from_cache(model_name)
+
 
 def build_whisper_prompt(audio_path: Path, prompt_preset: str | None) -> str | None:
-    """Собирает initial_prompt из пресета (ru/en) и локального файла whisper_prompt.txt."""
+    preset = (prompt_preset or "").strip().lower()
+    prompt_from_preset = _PROMPT_PRESETS.get(preset, "")
+
     local_prompt_file = audio_path.parent / "whisper_prompt.txt"
     local_prompt = ""
     if local_prompt_file.exists():
         try:
             local_prompt = local_prompt_file.read_text(encoding="utf-8").strip()
-        except Exception:
-            # если не удалось прочитать подсказку — просто игнорируем
+        except OSError:
             local_prompt = ""
 
-    user_prompt = ""
-    if prompt_preset == "ru":
-        user_prompt = RU_PRESET_PROMPT
-    elif prompt_preset == "en":
-        user_prompt = EN_PRESET_PROMPT
-
     parts: list[str] = []
-    if user_prompt:
-        parts.append(user_prompt)
+    if prompt_from_preset:
+        parts.append(prompt_from_preset)
     if local_prompt:
         parts.append(local_prompt)
 
@@ -79,20 +215,19 @@ def build_whisper_prompt(audio_path: Path, prompt_preset: str | None) -> str | N
         return None
     return "; ".join(parts)
 
+
 def _normalize_language(value: str | None) -> str | None:
     if not value:
         return None
     normalized = value.strip().lower()
-    if not normalized:
-        return None
-    if normalized in {"auto", "auto-detect", "detect"}:
+    if not normalized or normalized in {"auto", "auto-detect", "detect"}:
         return None
     return normalized
 
 
 def _normalize_role_keywords(data: dict[str, Iterable[str]] | None) -> dict[str, list[str]]:
     if not data:
-        return {k: list(v) for k, v in DEFAULT_ROLE_KEYWORDS.items()}
+        return {key: list(values) for key, values in DEFAULT_ROLE_KEYWORDS.items()}
 
     normalized: dict[str, list[str]] = {}
     for role, raw_keywords in data.items():
@@ -108,20 +243,18 @@ def _normalize_role_keywords(data: dict[str, Iterable[str]] | None) -> dict[str,
         for item in candidates:
             if not isinstance(item, str):
                 continue
-            kw = item.strip().lower()
-            if kw and kw not in cleaned:
-                cleaned.append(kw)
+            keyword = item.strip().lower()
+            if keyword and keyword not in cleaned:
+                cleaned.append(keyword)
         if cleaned:
             normalized[role.strip().lower() or role] = cleaned
 
     if not normalized:
-        return {k: list(v) for k, v in DEFAULT_ROLE_KEYWORDS.items()}
+        return {key: list(values) for key, values in DEFAULT_ROLE_KEYWORDS.items()}
     return normalized
 
 
 def _load_role_keywords(audio_path: Path) -> dict[str, list[str]]:
-    """Загружает словарь ключевых слов для определения ролей."""
-
     env_inline = os.getenv("WHISPER_ROLE_KEYWORDS")
     if env_inline:
         try:
@@ -160,15 +293,13 @@ def _load_role_keywords(audio_path: Path) -> dict[str, list[str]]:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             pass
 
-    return {k: list(v) for k, v in DEFAULT_ROLE_KEYWORDS.items()}
+    return {key: list(values) for key, values in DEFAULT_ROLE_KEYWORDS.items()}
 
 
 def _annotate_speakers(
     segments: list[dict[str, Any]],
     role_keywords: dict[str, list[str]],
 ) -> list[dict[str, Any]]:
-    """Присваивает каждому сегменту роль собеседника (HR/кандидат)."""
-
     if not segments:
         return []
 
@@ -177,8 +308,8 @@ def _annotate_speakers(
     annotated: list[dict[str, Any]] = []
     last_speaker = None
 
-    for seg in segments:
-        text = (seg.get("text") or "").lower()
+    for segment in segments:
+        text = (segment.get("text") or "").lower()
         best_speaker = None
         best_score = 0
 
@@ -191,26 +322,53 @@ def _annotate_speakers(
                 best_score = score
                 best_speaker = speaker
             elif score == best_score and score > 0:
-                # Ничья по ключевым словам — не меняем говорящего
                 best_speaker = last_speaker
 
         if not best_speaker:
-            if last_speaker is None:
-                best_speaker = default_speaker
-            elif best_score == 0:
-                # Без явных подсказок считаем, что говорит тот же собеседник.
-                best_speaker = last_speaker
-            else:
-                best_speaker = last_speaker
+            best_speaker = last_speaker or default_speaker
 
         annotated_segment = {
-            **seg,
+            **segment,
             "speaker": best_speaker or default_speaker,
         }
         annotated.append(annotated_segment)
         last_speaker = annotated_segment["speaker"]
 
     return annotated
+
+
+def _load_model(model_name: str, *, compute_type: str | None = None, device: str | None = None):
+    from faster_whisper import WhisperModel
+
+    model = _normalize_model(model_name)
+    local_ready = is_local_model_ready(model)
+    model_source = str(local_model_dir(model)) if local_ready else model
+    resolved_device = (device or config.SETTINGS.whisper_device).strip()
+    resolved_compute_type = (compute_type or config.SETTINGS.whisper_compute_type).strip()
+
+    model_key = (
+        model_source,
+        resolved_device,
+        resolved_compute_type,
+    )
+
+    with _MODEL_LOCK:
+        cached = _MODEL_CACHE.get(model_key)
+        if cached is not None:
+            return cached
+
+        whisper_model = WhisperModel(
+            model_source,
+            device=resolved_device,
+            compute_type=resolved_compute_type,
+            download_root=str(config.WHISPER_MODELS_DIR),
+        )
+        _MODEL_CACHE[model_key] = whisper_model
+        return whisper_model
+
+
+def ensure_model_available(model_name: str) -> None:
+    _load_model(model_name)
 
 
 def transcribe_with_fallback(
@@ -220,57 +378,35 @@ def transcribe_with_fallback(
     preferred_language: str | None = None,
     compute_type: str | None = None,
     device: str | None = None,
-    beam_size: int = 5,
+    beam_size: int | None = None,
 ) -> dict[str, Any]:
-    """Транскрибирует файл с двумя проходами и возвращает текст и сегменты.
-
-    1) язык auto + VAD + initial_prompt (если есть),
-    2) фолбэк: VAD выключен, язык берётся из preferred_language или системного
-       значения, initial_prompt задаётся по настройкам.
-
-    Возвращает словарь с итоговым текстом и списком сегментов вида
-    {"start": float, "end": float, "text": str, "speaker": str}.
-    """
-    from faster_whisper import WhisperModel  # локальный импорт, чтобы не ломать существующие импорты
-
     path = Path(audio_path)
-    download_root = _whisper_root()
-    download_root.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        raise RuntimeError("audio_file_missing")
 
-    # Значения по умолчанию из окружения, если явно не переданы
-    if compute_type is None:
-        compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-    if device is None:
-        device = os.getenv("WHISPER_DEVICE", "cpu")
-
+    model = _normalize_model(model_name)
+    resolved_beam_size = max(1, int(beam_size or config.SETTINGS.whisper_beam_size))
     full_prompt = build_whisper_prompt(path, prompt_preset)
-
     fallback_language = _normalize_language(preferred_language) or _normalize_language(
-        DEFAULT_FALLBACK_LANGUAGE
+        config.SETTINGS.whisper_fallback_language or DEFAULT_FALLBACK_LANGUAGE
     )
     fallback_prompt = full_prompt if FALLBACK_USE_PROMPT else None
 
     try:
-        model = WhisperModel(
-            model_name,
-            device=device,
-            compute_type=compute_type,
-            download_root=str(download_root),
-        )
-    except Exception as e:
-        # Пробрасываем специальную ошибку, чтобы сервер и UI могли показать подсказку по скачиванию модели
-        raise RuntimeError(f"WHISPER_MODEL_NOT_FOUND::{model_name}") from e
+        whisper_model = _load_model(model, compute_type=compute_type, device=device)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"WHISPER_MODEL_NOT_FOUND::{model}") from exc
 
     role_keywords = _load_role_keywords(path)
 
-    def run_once(
-        language: str | None, use_vad: bool, prompt: str | None
-    ) -> tuple[str, list[dict[str, Any]], Any]:
-        segments, info = model.transcribe(
+    def run_once(language: str | None, use_vad: bool, prompt: str | None) -> tuple[str, list[dict[str, Any]], Any]:
+        segments, info = whisper_model.transcribe(
             str(path),
             language=language,
             vad_filter=use_vad,
-            beam_size=beam_size,
+            beam_size=resolved_beam_size,
             initial_prompt=prompt,
         )
         collected_segments: list[dict[str, Any]] = []
@@ -291,10 +427,8 @@ def transcribe_with_fallback(
 
         return "".join(text_parts).strip(), collected_segments, info
 
-    # 1) Умный прогон: автоопределение языка (language=None) + VAD + initial_prompt (если есть)
     text, segments_data, info = run_once(language=None, use_vad=True, prompt=full_prompt)
 
-    # 2) Фолбэк: управляемый язык (если задан) + отключённый VAD + контролируемый промпт
     if not text:
         text, segments_data, info = run_once(
             language=fallback_language,
@@ -303,14 +437,14 @@ def transcribe_with_fallback(
         )
 
     annotated_segments = _annotate_speakers(segments_data, role_keywords)
-
     result: dict[str, Any] = {
         "text": text,
         "segments": annotated_segments,
         "role_keywords": role_keywords,
     }
-    language_result = getattr(info, "language", None)
-    if language_result:
-        result["language"] = language_result
+
+    detected_language = getattr(info, "language", None)
+    if detected_language:
+        result["language"] = detected_language
 
     return result

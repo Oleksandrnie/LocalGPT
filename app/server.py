@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, db
 from .routers import tts
-from .routes import chat, criteria, meta, models, profiles, storage, transcripts, transcribe
+from .routes import asr_models, chat, criteria, meta, models, profiles, storage, transcripts, transcribe
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ app.add_middleware(
 
 app.include_router(meta.router)
 app.include_router(models.router)
+app.include_router(asr_models.router)
 app.include_router(profiles.router)
 app.include_router(criteria.router)
 app.include_router(transcripts.router)

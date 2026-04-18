@@ -66,6 +66,11 @@ def tts_voice_library_download_status(task_id: str) -> dict[str, object]:
         _raise_service_error(exc)
 
 
+@router.get("/tts/voice-library/downloads")
+def tts_voice_library_downloads() -> dict[str, object]:
+    return {"items": tts_service.list_voice_download_tasks()}
+
+
 @router.delete("/tts/voice-library/{voice_key}")
 def tts_voice_library_delete(voice_key: str) -> dict[str, object]:
     try:

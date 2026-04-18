@@ -20,6 +20,11 @@ class ModelPullRequest(BaseModel):
     model: str
 
 
+class ModelPrepareRequest(BaseModel):
+    model: str
+    force: bool = False
+
+
 class ProfileCreate(BaseModel):
     name: str
     description: str | None = None

@@ -2,6 +2,7 @@
 
 from .core import (
     ChatRequest,
+    ModelPrepareRequest,
     ModelPullRequest,
     ModelSettingsRequest,
     ModelSettingsReset,
@@ -22,6 +23,7 @@ from .tts import (
 
 __all__ = [
     "ChatRequest",
+    "ModelPrepareRequest",
     "ModelPullRequest",
     "ModelSettingsRequest",
     "ModelSettingsReset",
