@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi import Request
 
-from .. import config
+from .. import chat_tasks, config
 from ..roles import DEFAULT_ROLE, list_roles
 from .. import transcribe_tasks
 from ..services import tts_service
@@ -95,6 +95,7 @@ def _safe_unlink(path: Path) -> None:
 def _shutdown_worker() -> None:
     time.sleep(0.45)
 
+    chat_tasks.cancel_all_tasks()
     transcribe_tasks.cancel_all_tasks()
     tts_service.cancel_all_tasks()
 

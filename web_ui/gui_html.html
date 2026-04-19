@@ -174,14 +174,13 @@
                         <span class="field__label">Голос</span>
                         <select id="ttsToolVoiceSelect" class="field__control"></select>
                     </label>
+                    <label class="field">
+                        <span class="field__label">Скорость</span>
+                        <select id="ttsToolSpeedSelect" class="field__control"></select>
+                    </label>
                 </div>
 
-                <div class="info-card">
-                    <span class="info-card__label">Режим</span>
-                    <strong>Отдельное TTS-приложение поверх чата</strong>
-                </div>
-
-                <p class="inline-status" id="ttsToolStatus">Подставьте текст и сгенерируйте локальную озвучку.</p>
+                <p class="inline-status" id="ttsToolStatus">Введите текст или выберите запись из истории.</p>
                 <p class="subtle" id="ttsToolMeta">Текущий голос синхронизирован с глобальными настройками TTS.</p>
 
                 <textarea id="ttsToolText" class="tool-textarea" placeholder="Текст для локальной озвучки..."></textarea>
@@ -190,7 +189,9 @@
                     <button class="button button--primary" id="ttsToolGenerateButton" type="button">Озвучить</button>
                     <button class="button button--ghost" id="ttsToolUseAssistantButton" type="button">Последний ответ</button>
                     <button class="button button--ghost" id="ttsToolRefreshButton" type="button">Обновить голоса</button>
+                    <button class="button button--ghost" id="ttsToolDownloadButton" type="button">Скачать</button>
                     <button class="button button--ghost" id="ttsToolDeleteButton" type="button">Удалить запись</button>
+                    <button class="button button--ghost" id="ttsToolClearButton" type="button">Очистить историю</button>
                 </div>
 
                 <audio id="ttsToolPlayer" class="tool-player" controls preload="none"></audio>

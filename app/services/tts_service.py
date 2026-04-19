@@ -807,6 +807,29 @@ def delete_history_item(record_id: str) -> None:
         raise TTSServiceError(500, "tts_delete_failed", str(exc) or "tts_delete_failed") from exc
 
 
+def clear_history() -> int:
+    records = list_history()
+    if not records:
+        return 0
+
+    active_ids = [item.get("id") for item in records if item.get("id") and _has_active_task(str(item.get("id")))]
+    if active_ids:
+        raise TTSServiceError(
+            409,
+            "tts_task_running",
+            "Нельзя очистить историю, пока одна из записей ещё обрабатывается.",
+        )
+
+    deleted = 0
+    for item in records:
+        record_id = str(item.get("id") or "").strip()
+        if not record_id:
+            continue
+        delete_history_item(record_id)
+        deleted += 1
+    return deleted
+
+
 def resolve_output_file(record_id: str, *, variant: str, speed: float | None = None) -> tuple[str, str]:
     record = _require_record(record_id)
 

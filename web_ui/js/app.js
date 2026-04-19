@@ -7,10 +7,13 @@ const STORAGE_KEYS = {
   promptPreset: "localgpt_simple_prompt_preset",
   ttsProvider: "localgpt_simple_tts_provider",
   ttsVoiceId: "localgpt_simple_tts_voice_id",
+  ttsSpeed: "localgpt_simple_tts_speed",
   chatLibraryOpen: "localgpt_simple_chat_library_open",
   asrLibraryOpen: "localgpt_simple_asr_library_open",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
 };
+
+const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
 
 const els = {
   sidebar: document.getElementById("sidebar"),
@@ -39,6 +42,27 @@ const els = {
   transcribeInput: document.getElementById("transcribeInput"),
   scrollTopButton: document.getElementById("scrollTopButton"),
   footerStatus: document.getElementById("footerStatus"),
+  toolDock: document.getElementById("toolDock"),
+  ttsToolWindow: document.getElementById("ttsToolWindow"),
+  ttsToolHeader: document.querySelector("#ttsToolWindow [data-tool-drag='tts']"),
+  ttsToolResizeHandle: document.querySelector("#ttsToolWindow [data-tool-resize='tts']"),
+  ttsToolMinimizeButton: document.getElementById("ttsToolMinimizeButton"),
+  ttsToolFullscreenButton: document.getElementById("ttsToolFullscreenButton"),
+  ttsToolCloseButton: document.getElementById("ttsToolCloseButton"),
+  ttsToolProviderSelect: document.getElementById("ttsToolProviderSelect"),
+  ttsToolVoiceSelect: document.getElementById("ttsToolVoiceSelect"),
+  ttsToolSpeedSelect: document.getElementById("ttsToolSpeedSelect"),
+  ttsToolStatus: document.getElementById("ttsToolStatus"),
+  ttsToolMeta: document.getElementById("ttsToolMeta"),
+  ttsToolText: document.getElementById("ttsToolText"),
+  ttsToolGenerateButton: document.getElementById("ttsToolGenerateButton"),
+  ttsToolUseAssistantButton: document.getElementById("ttsToolUseAssistantButton"),
+  ttsToolRefreshButton: document.getElementById("ttsToolRefreshButton"),
+  ttsToolDownloadButton: document.getElementById("ttsToolDownloadButton"),
+  ttsToolDeleteButton: document.getElementById("ttsToolDeleteButton"),
+  ttsToolClearButton: document.getElementById("ttsToolClearButton"),
+  ttsToolPlayer: document.getElementById("ttsToolPlayer"),
+  ttsToolHistoryList: document.getElementById("ttsToolHistoryList"),
   settingsBackdrop: document.getElementById("settingsBackdrop"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
   llmModelSelect: document.getElementById("llmModelSelect"),
@@ -108,6 +132,7 @@ const state = {
   selectedPromptPreset: readStored(STORAGE_KEYS.promptPreset, "none"),
   selectedTtsProvider: readStored(STORAGE_KEYS.ttsProvider, "piper"),
   selectedTtsVoiceId: readStored(STORAGE_KEYS.ttsVoiceId, ""),
+  selectedTtsSpeed: readStored(STORAGE_KEYS.ttsSpeed, "1"),
   latestTranscript: null,
   serverHealthy: false,
   ttsHealthy: false,
@@ -119,10 +144,13 @@ const state = {
   isVoiceTranscribing: false,
   voiceTranscriptionTaskId: null,
   voiceTranscriptionStartController: null,
+  chatTaskId: null,
+  chatTaskStartController: null,
   isSpeaking: false,
   autoScrollPinned: true,
   modelsDir: "",
   ttsVoices: [],
+  ttsSpeedOptions: [...DEFAULT_TTS_SPEED_OPTIONS],
   ttsVoiceCatalog: [],
   ttsVoiceDownloads: [],
   asrModels: [],
@@ -138,6 +166,15 @@ const state = {
   voiceStream: null,
   ttsAudio: null,
   ttsPreviewAudio: null,
+  ttsHistory: [],
+  ttsToolSelectedRecordId: null,
+  ttsToolSelectedRecord: null,
+  ttsToolIsOpen: false,
+  ttsToolIsMinimized: false,
+  ttsToolBounds: null,
+  ttsToolDragSession: null,
+  ttsToolResizeSession: null,
+  renderedCodeBlocks: [],
   modelSettingsState: {
     effective: {},
     overrides: {},
@@ -178,8 +215,151 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function formatMultiline(value) {
-  return escapeHtml(value).replace(/\n/g, "<br />");
+function formatInlineRichText(value) {
+  return escapeHtml(value)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, "<strong>$1</strong>");
+}
+
+function registerRenderedCodeBlock(value) {
+  const normalized = String(value || "");
+  state.renderedCodeBlocks.push(normalized);
+  return state.renderedCodeBlocks.length - 1;
+}
+
+function formatCodeLanguageLabel(value) {
+  const normalized = String(value || "").trim().replace(/[^a-zA-Z0-9#+._-]/g, "");
+  return normalized || "code";
+}
+
+function formatRichMessage(value) {
+  const source = String(value || "").replace(/\r\n?/g, "\n");
+  if (!source.trim()) return "";
+
+  const output = [];
+  const paragraph = [];
+  const codeLines = [];
+  let listType = null;
+  let inCodeBlock = false;
+  let codeBlockLanguage = "";
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    output.push(`<p class="message-md-paragraph">${paragraph.map((line) => formatInlineRichText(line)).join("<br />")}</p>`);
+    paragraph.length = 0;
+  };
+
+  const closeList = () => {
+    if (!listType) return;
+    output.push(listType === "ol" ? "</ol>" : "</ul>");
+    listType = null;
+  };
+
+  const flushCodeBlock = () => {
+    const rawCode = codeLines.join("\n").replace(/\n+$/, "");
+    const codeIndex = registerRenderedCodeBlock(rawCode);
+    const languageLabel = formatCodeLanguageLabel(codeBlockLanguage);
+    output.push(`
+      <div class="message-md-codeblock">
+        <div class="message-md-codeblock__toolbar">
+          <span class="message-md-codeblock__lang">${escapeHtml(languageLabel)}</span>
+          <button class="message-md-codeblock__copy" type="button" data-code-copy-index="${codeIndex}">Копировать код</button>
+        </div>
+        <pre class="message-md-codeblock__pre"><code>${escapeHtml(rawCode)}</code></pre>
+      </div>
+    `);
+    codeLines.length = 0;
+    codeBlockLanguage = "";
+  };
+
+  for (const rawLine of source.split("\n")) {
+    const trimmed = rawLine.trim();
+
+    if (inCodeBlock) {
+      if (trimmed.startsWith("```")) {
+        flushCodeBlock();
+        inCodeBlock = false;
+      } else {
+        codeLines.push(rawLine);
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      flushParagraph();
+      closeList();
+      inCodeBlock = true;
+      codeLines.length = 0;
+      codeBlockLanguage = trimmed.slice(3).trim();
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      flushParagraph();
+      closeList();
+      const level = Math.min(4, headingMatch[1].length);
+      output.push(
+        `<div class="message-md-heading message-md-heading--${level}">${formatInlineRichText(headingMatch[2])}</div>`,
+      );
+      continue;
+    }
+
+    const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      if (listType !== "ol") {
+        closeList();
+        output.push('<ol class="message-md-list message-md-list--ordered">');
+        listType = "ol";
+      }
+      output.push(`<li>${formatInlineRichText(orderedMatch[1])}</li>`);
+      continue;
+    }
+
+    const unorderedMatch = trimmed.match(/^[-*•]\s+(.+)$/);
+    if (unorderedMatch) {
+      flushParagraph();
+      if (listType !== "ul") {
+        closeList();
+        output.push('<ul class="message-md-list message-md-list--unordered">');
+        listType = "ul";
+      }
+      output.push(`<li>${formatInlineRichText(unorderedMatch[1])}</li>`);
+      continue;
+    }
+
+    if (listType) {
+      closeList();
+    }
+    paragraph.push(trimmed);
+  }
+
+  if (inCodeBlock) {
+    flushCodeBlock();
+  }
+  flushParagraph();
+  closeList();
+  return output.join("");
+}
+
+function stripRichTextToPlain(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/```([\s\S]*?)```/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/^\s*[-*•]\s+/gm, "")
+    .replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function formatDateTime(value) {
@@ -202,6 +382,30 @@ function formatBytes(value) {
     return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
   }
   return `${(mb / 1024).toFixed(1)} GB`;
+}
+
+function formatTtsSpeedLabel(value) {
+  const num = Number(value || 1);
+  if (!Number.isFinite(num)) return "1";
+  return num.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function getSelectedTtsSpeed() {
+  const parsed = Number(state.selectedTtsSpeed || 1);
+  if (!Number.isFinite(parsed)) return 1;
+  if ((state.ttsSpeedOptions || []).some((item) => Number(item) === parsed)) {
+    return parsed;
+  }
+  return Number(state.ttsSpeedOptions?.[0] || 1) || 1;
+}
+
+function getProcessedTtsPayload(record, speedValue) {
+  const normalizedLabel = formatTtsSpeedLabel(speedValue);
+  const outputs = record?.processed_outputs || {};
+  if (outputs[normalizedLabel]?.url) {
+    return outputs[normalizedLabel];
+  }
+  return Object.values(outputs).find((item) => Number(item?.speed) === Number(speedValue) && item?.url) || null;
 }
 
 function setLibraryOpen(kind, isOpen) {
@@ -424,6 +628,89 @@ function stopVoiceStreamTracks() {
 
 function isAbortError(error) {
   return error?.name === "AbortError" || String(error?.message || error || "").toLowerCase().includes("aborted");
+}
+
+function appendAssistantThinkingPlaceholder() {
+  const lastMessage = state.messages[state.messages.length - 1];
+  if (lastMessage?.role === "assistant" && lastMessage?._optimisticThinking) {
+    return;
+  }
+  state.messages = [
+    ...state.messages,
+    {
+      role: "assistant",
+      content: "Думаю…",
+      created_at: new Date().toISOString(),
+      _optimisticThinking: true,
+    },
+  ];
+  renderMessages();
+  scrollMessagesToBottom({ force: true });
+}
+
+function removeAssistantThinkingPlaceholder() {
+  const lastMessage = state.messages[state.messages.length - 1];
+  if (!lastMessage?._optimisticThinking) {
+    return;
+  }
+  state.messages = state.messages.slice(0, -1);
+  renderMessages();
+}
+
+async function waitForChatTask(taskId, { timeoutMs = 300000 } = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const task = await request(`/chat/tasks/${encodeURIComponent(taskId)}`);
+    const taskState = String(task?.state || "");
+    if (taskState === "completed" || taskState === "cancelled") {
+      return task;
+    }
+    if (taskState === "error") {
+      throw new Error(task?.message || "Генерация ответа завершилась ошибкой.");
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 700));
+  }
+  throw new Error("Истекло время ожидания генерации ответа.");
+}
+
+async function cancelCurrentChatGeneration() {
+  const controller = state.chatTaskStartController;
+  const taskId = state.chatTaskId;
+
+  if (!controller && !taskId) {
+    return;
+  }
+
+  setFooter("Останавливаю генерацию ответа…", "warning");
+
+  if (controller) {
+    controller.abort();
+  }
+
+  if (taskId) {
+    try {
+      await request(`/chat/tasks/${encodeURIComponent(taskId)}/cancel`, {
+        method: "POST",
+        body: {},
+      });
+    } catch (error) {
+      if ((error?.status || 0) !== 404) {
+        setFooter(`Не удалось остановить генерацию: ${error.message || error}`, "error");
+        return;
+      }
+    }
+  }
+
+  state.chatTaskId = null;
+  state.chatTaskStartController = null;
+  state.isSending = false;
+  removeAssistantThinkingPlaceholder();
+  if (state.currentSessionId) {
+    await loadSessions({ preferredSessionId: state.currentSessionId });
+  }
+  updateSendButtonState();
+  scrollMessagesToBottom({ force: true });
+  setFooter("Генерация ответа остановлена.", "warning");
 }
 
 function insertVoiceTranscript(text) {
@@ -729,7 +1016,8 @@ function autoResizePrompt() {
 function updateSendButtonState() {
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
-  els.sendButton.disabled = state.isSending || !hasText;
+  els.sendButton.disabled = state.isSending ? false : !hasText;
+  els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
 }
 
 function setFooter(message = "", tone = "info") {
@@ -934,6 +1222,7 @@ function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
   const items = state.messages || [];
+  state.renderedCodeBlocks = [];
   els.emptyState.hidden = items.length > 0;
   els.messageList.innerHTML = items
     .map((message, index) => {
@@ -947,7 +1236,7 @@ function renderMessages() {
               <span class="message-card__author">${escapeHtml(author)}</span>
               <span class="message-card__time">${escapeHtml(formatDateTime(message.created_at))}</span>
             </div>
-            <div class="message-card__body">${formatMultiline(message.content || "")}</div>
+            <div class="message-card__body">${formatRichMessage(message.content || "")}</div>
             ${canCopy
               ? `<div class="message-card__actions"><button class="message-copy-button" type="button" data-copy-index="${index}">Скопировать</button></div>`
               : ""}
@@ -1196,6 +1485,7 @@ function renderTtsControls() {
         : "Локальный TTS пока недоступен. Проверьте Piper и локальные голоса.",
       state.ttsHealthy ? "warning" : "error",
     );
+    renderTtsTool();
     renderLibraryPanels();
     renderTtsVoiceLibrary();
     return;
@@ -1217,10 +1507,11 @@ function renderTtsControls() {
   setInlineStatus(
     els.ttsSettingsStatus,
     selectedVoice
-      ? `Кнопка "Озвучить" использует голос: ${selectedVoice.label || selectedVoice.name || selectedVoice.id}`
-      : 'Кнопка "Озвучить" использует выбранный локальный голос.',
+      ? `Voice Studio использует голос: ${selectedVoice.label || selectedVoice.name || selectedVoice.id}`
+      : "Voice Studio использует выбранный локальный голос.",
     "success",
   );
+  renderTtsTool();
   renderLibraryPanels();
   renderTtsVoiceLibrary();
 }
@@ -1294,6 +1585,617 @@ function renderTtsVoiceLibrary() {
       `;
     })
     .join("")}`;
+}
+
+function renderToolDock() {
+  if (!els.toolDock) return;
+  if (!state.ttsToolIsMinimized) {
+    els.toolDock.innerHTML = "";
+    els.toolDock.hidden = true;
+    return;
+  }
+
+  els.toolDock.hidden = false;
+  els.toolDock.innerHTML = `
+    <button class="tool-dock__item tool-dock__item--minimized" type="button" data-tool-dock="tts" aria-pressed="false">
+      <span class="tool-dock__title">Озвучивание</span>
+      <span class="tool-dock__meta">Свернуто</span>
+    </button>
+  `;
+}
+
+function getDefaultTtsToolBounds() {
+  const viewportWidth = window.innerWidth || 1440;
+  const viewportHeight = window.innerHeight || 900;
+  const width = Math.max(920, Math.min(1460, viewportWidth - 36));
+  const height = Math.max(620, Math.min(900, viewportHeight - 36));
+  const left = Math.max(18, Math.round((viewportWidth - width) / 2));
+  const top = Math.max(18, Math.round((viewportHeight - height) / 2));
+  return { left, top, width, height };
+}
+
+function normalizeTtsToolBounds(bounds) {
+  const edge = 18;
+  const viewportWidth = Math.max(window.innerWidth || 0, 360);
+  const viewportHeight = Math.max(window.innerHeight || 0, 360);
+  const maxWidth = Math.max(320, viewportWidth - edge * 2);
+  const maxHeight = Math.max(320, viewportHeight - edge * 2);
+  const minWidth = Math.min(760, maxWidth);
+  const minHeight = Math.min(520, maxHeight);
+  const width = Math.min(Math.max(Math.round(bounds.width || minWidth), minWidth), maxWidth);
+  const height = Math.min(Math.max(Math.round(bounds.height || minHeight), minHeight), maxHeight);
+  const left = Math.min(Math.max(Math.round(bounds.left ?? edge), edge), Math.max(edge, viewportWidth - edge - width));
+  const top = Math.min(Math.max(Math.round(bounds.top ?? edge), edge), Math.max(edge, viewportHeight - edge - height));
+  return { left, top, width, height };
+}
+
+function applyTtsToolBounds(bounds) {
+  const tool = els.ttsToolWindow;
+  if (!tool || isMobileLayout()) return;
+  const normalized = normalizeTtsToolBounds(bounds);
+  state.ttsToolBounds = normalized;
+  tool.style.left = `${normalized.left}px`;
+  tool.style.top = `${normalized.top}px`;
+  tool.style.width = `${normalized.width}px`;
+  tool.style.height = `${normalized.height}px`;
+}
+
+function setTtsToolWindowBounds() {
+  const tool = els.ttsToolWindow;
+  if (!tool || isMobileLayout()) return;
+  applyTtsToolBounds(state.ttsToolBounds || getDefaultTtsToolBounds());
+}
+
+function stopTtsToolDrag() {
+  const session = state.ttsToolDragSession;
+  if (!session) return;
+  window.removeEventListener("mousemove", session.onMove);
+  window.removeEventListener("mouseup", session.onUp);
+  state.ttsToolDragSession = null;
+}
+
+function startTtsToolDrag(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!els.ttsToolWindow || els.ttsToolWindow.hidden || isMobileLayout()) return;
+  if (els.ttsToolWindow.classList.contains("tool-window--fullscreen")) return;
+  if (target?.closest(".tool-window__actions, button, input, select, textarea, audio")) return;
+
+  event.preventDefault();
+  stopTtsToolResize();
+  stopTtsToolDrag();
+
+  const rect = els.ttsToolWindow.getBoundingClientRect();
+  const session = {
+    startX: event.clientX,
+    startY: event.clientY,
+    startLeft: rect.left,
+    startTop: rect.top,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    onMove: null,
+    onUp: null,
+  };
+
+  session.onMove = (moveEvent) => {
+    applyTtsToolBounds({
+      left: session.startLeft + (moveEvent.clientX - session.startX),
+      top: session.startTop + (moveEvent.clientY - session.startY),
+      width: session.startWidth,
+      height: session.startHeight,
+    });
+  };
+
+  session.onUp = () => {
+    stopTtsToolDrag();
+  };
+
+  state.ttsToolDragSession = session;
+  window.addEventListener("mousemove", session.onMove);
+  window.addEventListener("mouseup", session.onUp);
+}
+
+function stopTtsToolResize() {
+  const session = state.ttsToolResizeSession;
+  if (!session) return;
+  window.removeEventListener("mousemove", session.onMove);
+  window.removeEventListener("mouseup", session.onUp);
+  state.ttsToolResizeSession = null;
+}
+
+function startTtsToolResize(event) {
+  if (!els.ttsToolWindow || els.ttsToolWindow.hidden || isMobileLayout()) return;
+  if (els.ttsToolWindow.classList.contains("tool-window--fullscreen")) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  stopTtsToolDrag();
+  stopTtsToolResize();
+
+  const rect = els.ttsToolWindow.getBoundingClientRect();
+  const session = {
+    startX: event.clientX,
+    startY: event.clientY,
+    startLeft: rect.left,
+    startTop: rect.top,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    onMove: null,
+    onUp: null,
+  };
+
+  session.onMove = (moveEvent) => {
+    applyTtsToolBounds({
+      left: session.startLeft,
+      top: session.startTop,
+      width: session.startWidth + (moveEvent.clientX - session.startX),
+      height: session.startHeight + (moveEvent.clientY - session.startY),
+    });
+  };
+
+  session.onUp = () => {
+    stopTtsToolResize();
+  };
+
+  state.ttsToolResizeSession = session;
+  window.addEventListener("mousemove", session.onMove);
+  window.addEventListener("mouseup", session.onUp);
+}
+
+function stopTtsToolPlayer() {
+  if (!els.ttsToolPlayer) return;
+  try {
+    els.ttsToolPlayer.pause();
+  } catch {
+    // ignore
+  }
+  els.ttsToolPlayer.removeAttribute("src");
+  els.ttsToolPlayer.hidden = true;
+  try {
+    els.ttsToolPlayer.load();
+  } catch {
+    // ignore
+  }
+}
+
+function syncTtsToolPlayer(record) {
+  if (!els.ttsToolPlayer) return;
+  const selectedSpeed = getSelectedTtsSpeed();
+  const processedOutput = selectedSpeed === 1 ? null : getProcessedTtsPayload(record, selectedSpeed);
+  const audioUrl = processedOutput?.url || record?.base_output_url || "";
+  if (!audioUrl) {
+    stopTtsToolPlayer();
+    return;
+  }
+
+  if ((els.ttsToolPlayer.getAttribute("src") || "") === audioUrl) {
+    els.ttsToolPlayer.hidden = false;
+    return;
+  }
+
+  els.ttsToolPlayer.src = audioUrl;
+  els.ttsToolPlayer.hidden = false;
+  try {
+    els.ttsToolPlayer.load();
+  } catch {
+    // ignore
+  }
+}
+
+function getTtsToolDownloadUrl(record) {
+  const selectedSpeed = getSelectedTtsSpeed();
+  const baseUrl = selectedSpeed === 1
+    ? (record?.base_output_url || "")
+    : (getProcessedTtsPayload(record, selectedSpeed)?.url || "");
+  if (!baseUrl) return "";
+  const url = new URL(baseUrl, window.location.origin);
+  url.searchParams.set("download", "true");
+  return `${url.pathname}${url.search}`;
+}
+
+function renderTtsToolHistory() {
+  if (!els.ttsToolHistoryList) return;
+  if (!state.ttsHistory.length) {
+    els.ttsToolHistoryList.innerHTML = '<p class="subtle">Записей озвучки пока нет.</p>';
+    return;
+  }
+
+  const selectedId = state.ttsToolSelectedRecordId;
+  const prioritized = selectedId
+    ? [
+      ...state.ttsHistory.filter((item) => item.id === selectedId),
+      ...state.ttsHistory.filter((item) => item.id !== selectedId),
+    ]
+    : [...state.ttsHistory];
+  const visibleItems = prioritized.slice(0, 4);
+
+  els.ttsToolHistoryList.innerHTML = visibleItems
+    .map((item) => {
+      const active = item.id === selectedId ? " tool-history__item--active" : "";
+      const voiceLabel = item.voice_name || item.voice_id || "voice";
+      const meta = [voiceLabel, item.status || "", formatDateTime(item.updated_at || item.created_at)]
+        .filter(Boolean)
+        .join(" • ");
+      const preview = stripRichTextToPlain(item.preview || "Без текста");
+      return `
+        <button class="tool-history__item${active}" type="button" data-tts-history-id="${escapeHtml(item.id)}">
+          <span class="tool-history__title">${escapeHtml(preview || "Без текста")}</span>
+          <span class="tool-history__meta">${escapeHtml(meta)}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderTtsTool() {
+  if (!els.ttsToolWindow) return;
+
+  const selectedRecord = state.ttsToolSelectedRecord;
+  const latestAssistantMessage = findLatestAssistantMessage();
+  const hasText = Boolean((els.ttsToolText?.value || "").trim());
+  const hasVoice = Boolean(state.selectedTtsVoiceId);
+  const selectedSpeed = getSelectedTtsSpeed();
+  const canDownload = Boolean(
+    selectedRecord?.base_output_url
+    || (selectedSpeed !== 1 && getProcessedTtsPayload(selectedRecord, selectedSpeed)?.url),
+  );
+
+  if (els.ttsToolProviderSelect) {
+    els.ttsToolProviderSelect.value = (state.selectedTtsProvider || "piper").trim() || "piper";
+    els.ttsToolProviderSelect.disabled = true;
+  }
+
+  if (els.ttsToolVoiceSelect) {
+    if (!state.ttsVoices.length) {
+      els.ttsToolVoiceSelect.innerHTML = '<option value="">Нет локальных голосов</option>';
+      els.ttsToolVoiceSelect.value = "";
+      els.ttsToolVoiceSelect.disabled = true;
+    } else {
+      els.ttsToolVoiceSelect.innerHTML = state.ttsVoices
+        .map((voice) => `<option value="${escapeHtml(voice.id)}">${escapeHtml(voice.label || voice.name || voice.id)}</option>`)
+        .join("");
+      els.ttsToolVoiceSelect.value = state.selectedTtsVoiceId || state.ttsVoices[0]?.id || "";
+      els.ttsToolVoiceSelect.disabled = false;
+    }
+  }
+  if (els.ttsToolSpeedSelect) {
+    const options = (state.ttsSpeedOptions || DEFAULT_TTS_SPEED_OPTIONS).map((item) => Number(item)).filter(Number.isFinite);
+    els.ttsToolSpeedSelect.innerHTML = options
+      .map((item) => `<option value="${formatTtsSpeedLabel(item)}">${formatTtsSpeedLabel(item)}x</option>`)
+      .join("");
+    els.ttsToolSpeedSelect.value = formatTtsSpeedLabel(selectedSpeed);
+    els.ttsToolSpeedSelect.disabled = state.isSpeaking;
+  }
+
+  if (els.ttsToolGenerateButton) {
+    els.ttsToolGenerateButton.disabled = state.isSpeaking || !hasText || !hasVoice;
+    els.ttsToolGenerateButton.textContent = state.isSpeaking ? "Генерация…" : "Озвучить";
+  }
+  if (els.ttsToolUseAssistantButton) {
+    els.ttsToolUseAssistantButton.disabled = !latestAssistantMessage;
+  }
+  if (els.ttsToolRefreshButton) {
+    els.ttsToolRefreshButton.disabled = state.isSpeaking;
+  }
+  if (els.ttsToolDeleteButton) {
+    els.ttsToolDeleteButton.disabled = state.isSpeaking || !selectedRecord;
+  }
+  if (els.ttsToolClearButton) {
+    els.ttsToolClearButton.disabled = state.isSpeaking || !state.ttsHistory.length;
+  }
+  if (els.ttsToolDownloadButton) {
+    els.ttsToolDownloadButton.disabled = !canDownload;
+  }
+  if (els.ttsToolFullscreenButton) {
+    els.ttsToolFullscreenButton.setAttribute(
+      "aria-pressed",
+      els.ttsToolWindow.classList.contains("tool-window--fullscreen") ? "true" : "false",
+    );
+  }
+  if (els.ttsToolMeta) {
+    const metaParts = [
+      selectedRecord?.voice_name || selectedRecord?.voice_id || state.selectedTtsVoiceId || "Голос не выбран",
+      `Скорость ${formatTtsSpeedLabel(selectedSpeed)}x`,
+      selectedRecord?.status || (hasVoice ? "Готово к генерации" : "Выберите голос в настройках"),
+      formatDateTime(selectedRecord?.updated_at || selectedRecord?.created_at),
+    ].filter(Boolean);
+    els.ttsToolMeta.textContent = metaParts.join(" • ");
+  }
+
+  syncTtsToolPlayer(selectedRecord);
+  renderTtsToolHistory();
+}
+
+async function ensureTtsToolSpeed(record, { silent = false, manageBusy = true } = {}) {
+  const selectedSpeed = getSelectedTtsSpeed();
+  if (!record?.id || selectedSpeed === 1) {
+    return record;
+  }
+
+  if (getProcessedTtsPayload(record, selectedSpeed)?.url) {
+    return record;
+  }
+
+  const alreadyBusy = state.isSpeaking;
+  if (manageBusy && !alreadyBusy) {
+    state.isSpeaking = true;
+    renderTtsTool();
+  }
+
+  if (!silent) {
+    setInlineStatus(els.ttsToolStatus, `Применяю скорость ${formatTtsSpeedLabel(selectedSpeed)}x…`, "warning");
+    setFooter(`Применяю скорость ${formatTtsSpeedLabel(selectedSpeed)}x…`);
+  }
+
+  try {
+    await request("/tts/process-speed", {
+      method: "POST",
+      body: {
+        id: record.id,
+        speed: selectedSpeed,
+      },
+    });
+    const updated = await waitForTtsRecord(record.id);
+    state.ttsToolSelectedRecordId = updated.id;
+    state.ttsToolSelectedRecord = updated;
+    await loadTtsHistory({ silent: true });
+    return updated;
+  } finally {
+    if (manageBusy && !alreadyBusy) {
+      state.isSpeaking = false;
+      renderTtsTool();
+    }
+  }
+}
+
+async function loadTtsHistory({ silent = false } = {}) {
+  try {
+    const data = await request("/tts/history");
+    state.ttsHistory = Array.isArray(data?.items) ? data.items : [];
+    if (state.ttsToolSelectedRecordId && !state.ttsHistory.some((item) => item.id === state.ttsToolSelectedRecordId)) {
+      state.ttsToolSelectedRecordId = null;
+      state.ttsToolSelectedRecord = null;
+    }
+    renderTtsTool();
+    return true;
+  } catch (error) {
+    state.ttsHistory = [];
+    renderTtsTool();
+    if (!silent) {
+      setFooter(`Не удалось загрузить историю TTS: ${error.message || error}`, "error");
+    }
+    return false;
+  }
+}
+
+async function selectTtsToolRecord(recordId, { silent = false } = {}) {
+  const target = String(recordId || "").trim();
+  if (!target) return;
+
+  try {
+    const record = await request(`/tts/history/${encodeURIComponent(target)}`);
+    state.ttsToolSelectedRecordId = record.id;
+    state.ttsToolSelectedRecord = record;
+    if (els.ttsToolText) {
+      els.ttsToolText.value = record.text || "";
+    }
+    const preparedRecord = await ensureTtsToolSpeed(record, { silent: true });
+    state.ttsToolSelectedRecord = preparedRecord;
+    setInlineStatus(
+      els.ttsToolStatus,
+      preparedRecord.status === "completed"
+        ? "Запись загружена. Можно скачать файл или сгенерировать заново."
+        : `Статус записи: ${preparedRecord.status || "unknown"}`,
+      preparedRecord.status === "completed" ? "success" : preparedRecord.status === "error" ? "error" : "warning",
+    );
+    renderTtsTool();
+  } catch (error) {
+    if (!silent) {
+      setFooter(`Не удалось открыть запись озвучки: ${error.message || error}`, "error");
+      setInlineStatus(els.ttsToolStatus, `Не удалось открыть запись: ${error.message || error}`, "error");
+    }
+  }
+}
+
+function fillTtsToolWithLatestAssistant({ silent = false } = {}) {
+  const message = findLatestAssistantMessage();
+  if (!message) {
+    if (!silent) {
+      setInlineStatus(els.ttsToolStatus, "Пока нет ответа ассистента для подстановки.", "warning");
+      setFooter("Пока нет ответа, который можно подставить в Voice Studio.", "warning");
+    }
+    return false;
+  }
+
+  state.ttsToolSelectedRecordId = null;
+  state.ttsToolSelectedRecord = null;
+  stopTtsToolPlayer();
+  if (els.ttsToolText) {
+    els.ttsToolText.value = String(message.content || "").trim();
+  }
+  setInlineStatus(els.ttsToolStatus, "Последний ответ подставлен в Voice Studio.", "success");
+  renderTtsTool();
+  return true;
+}
+
+async function openTtsTool({ focusText = false } = {}) {
+  if (!els.ttsToolWindow) return;
+  state.ttsToolIsOpen = true;
+  state.ttsToolIsMinimized = false;
+  els.ttsToolWindow.hidden = false;
+  setTtsToolWindowBounds();
+
+  setInlineStatus(
+    els.ttsToolStatus,
+    state.ttsToolSelectedRecord
+      ? "Запись готова к прослушиванию или скачиванию."
+      : "Введите текст, выберите голос и нажмите «Озвучить».",
+    state.ttsToolSelectedRecord ? "success" : "warning",
+  );
+  renderTtsTool();
+  await loadTtsHistory({ silent: true });
+
+  if (focusText) {
+    els.ttsToolText?.focus();
+  }
+  renderToolDock();
+}
+
+function closeTtsTool() {
+  if (!els.ttsToolWindow) return;
+  stopTtsToolDrag();
+  stopTtsToolResize();
+  state.ttsToolIsOpen = false;
+  state.ttsToolIsMinimized = false;
+  els.ttsToolWindow.hidden = true;
+  els.ttsToolWindow.classList.remove("tool-window--fullscreen");
+  stopTtsToolPlayer();
+  renderToolDock();
+}
+
+function minimizeTtsTool() {
+  if (!els.ttsToolWindow) return;
+  stopTtsToolDrag();
+  stopTtsToolResize();
+  state.ttsToolIsOpen = false;
+  state.ttsToolIsMinimized = true;
+  els.ttsToolWindow.hidden = true;
+  els.ttsToolWindow.classList.remove("tool-window--fullscreen");
+  stopTtsToolPlayer();
+  renderToolDock();
+}
+
+function toggleTtsToolFullscreen() {
+  if (!els.ttsToolWindow) return;
+  stopTtsToolDrag();
+  stopTtsToolResize();
+  els.ttsToolWindow.classList.toggle("tool-window--fullscreen");
+  if (!els.ttsToolWindow.classList.contains("tool-window--fullscreen")) {
+    setTtsToolWindowBounds();
+  }
+  renderTtsTool();
+}
+
+async function generateFromTtsTool() {
+  const text = String(els.ttsToolText?.value || "").trim();
+  if (!text) {
+    setInlineStatus(els.ttsToolStatus, "Введите текст для озвучки.", "warning");
+    return;
+  }
+  if (!state.selectedTtsVoiceId) {
+    setInlineStatus(els.ttsToolStatus, "Сначала выберите локальный голос в настройках.", "warning");
+    return;
+  }
+  if (state.isSpeaking) return;
+
+  state.isSpeaking = true;
+  renderTtsTool();
+  setInlineStatus(els.ttsToolStatus, "Генерирую локальную озвучку…", "warning");
+  setFooter("Генерирую локальную озвучку…");
+
+  try {
+    const created = await request("/tts/generate", {
+      method: "POST",
+      body: {
+        text,
+        voice_id: state.selectedTtsVoiceId,
+        provider: state.selectedTtsProvider || "piper",
+      },
+    });
+    let record = await waitForTtsRecord(created?.id);
+    record = await ensureTtsToolSpeed(record, { silent: true, manageBusy: false });
+    await loadTtsHistory({ silent: true });
+    state.ttsToolSelectedRecordId = record.id;
+    state.ttsToolSelectedRecord = record;
+    syncTtsToolPlayer(record);
+    setInlineStatus(els.ttsToolStatus, "Озвучка готова. Можно прослушать или скачать файл.", "success");
+    setFooter("Озвучка готова.", "success");
+  } catch (error) {
+    setInlineStatus(els.ttsToolStatus, `Ошибка озвучки: ${error.message || error}`, "error");
+    setFooter(`Ошибка озвучки: ${error.message || error}`, "error");
+  } finally {
+    state.isSpeaking = false;
+    renderTtsTool();
+  }
+}
+
+async function deleteSelectedTtsToolRecord() {
+  const record = state.ttsToolSelectedRecord;
+  if (!record?.id) {
+    setInlineStatus(els.ttsToolStatus, "Сначала выберите запись в истории.", "warning");
+    return;
+  }
+  if (!window.confirm("Удалить выбранную запись озвучки?")) return;
+
+  try {
+    await request(`/tts/history/${encodeURIComponent(record.id)}`, { method: "DELETE" });
+    state.ttsToolSelectedRecordId = null;
+    state.ttsToolSelectedRecord = null;
+    stopTtsToolPlayer();
+    await loadTtsHistory({ silent: true });
+    setInlineStatus(els.ttsToolStatus, "Запись озвучки удалена.", "success");
+    setFooter("Запись озвучки удалена.", "success");
+  } catch (error) {
+    setInlineStatus(els.ttsToolStatus, `Не удалось удалить запись: ${error.message || error}`, "error");
+    setFooter(`Не удалось удалить запись озвучки: ${error.message || error}`, "error");
+  }
+}
+
+async function clearAllTtsToolHistory() {
+  if (!state.ttsHistory.length) {
+    setInlineStatus(els.ttsToolStatus, "История озвучки уже пуста.", "warning");
+    return;
+  }
+  if (!window.confirm("Удалить все генерации озвучки из Voice Studio?")) return;
+
+  try {
+    const result = await request("/tts/history", { method: "DELETE" });
+    state.ttsToolSelectedRecordId = null;
+    state.ttsToolSelectedRecord = null;
+    stopTtsToolPlayer();
+    await loadTtsHistory({ silent: true });
+    const deleted = Number(result?.deleted || 0);
+    setInlineStatus(
+      els.ttsToolStatus,
+      deleted > 0 ? `История озвучки очищена. Удалено записей: ${deleted}.` : "История озвучки очищена.",
+      "success",
+    );
+    setFooter(
+      deleted > 0 ? `История TTS очищена. Удалено записей: ${deleted}.` : "История TTS очищена.",
+      "success",
+    );
+  } catch (error) {
+    setInlineStatus(els.ttsToolStatus, `Не удалось очистить историю: ${error.message || error}`, "error");
+    setFooter(`Не удалось очистить историю TTS: ${error.message || error}`, "error");
+  }
+}
+
+async function downloadSelectedTtsToolRecord() {
+  try {
+    let record = state.ttsToolSelectedRecord;
+    if (!record) {
+      setInlineStatus(els.ttsToolStatus, "Для скачивания сначала выберите готовую запись.", "warning");
+      return;
+    }
+
+    record = await ensureTtsToolSpeed(record, { silent: false });
+    const url = getTtsToolDownloadUrl(record);
+    if (!url) {
+      setInlineStatus(els.ttsToolStatus, "Для скачивания сначала выберите готовую запись.", "warning");
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setInlineStatus(els.ttsToolStatus, "Скачивание записи запущено.", "success");
+    setFooter("Скачивание записи запущено.", "success");
+  } catch (error) {
+    setInlineStatus(els.ttsToolStatus, `Не удалось подготовить файл: ${error.message || error}`, "error");
+    setFooter(`Не удалось подготовить файл: ${error.message || error}`, "error");
+  }
 }
 
 function renderDownloads() {
@@ -1488,6 +2390,13 @@ async function loadTtsSettings({ silent = false } = {}) {
     state.ttsHealthy = Boolean(health?.tts_enabled && health?.provider?.available);
     state.selectedTtsProvider = String(health?.default_provider || state.selectedTtsProvider || "piper").trim() || "piper";
     writeStored(STORAGE_KEYS.ttsProvider, state.selectedTtsProvider);
+    state.ttsSpeedOptions = Array.isArray(health?.speed_options) && health.speed_options.length
+      ? health.speed_options.map((item) => Number(item)).filter(Number.isFinite)
+      : [...DEFAULT_TTS_SPEED_OPTIONS];
+    if (!state.ttsSpeedOptions.some((item) => formatTtsSpeedLabel(item) === formatTtsSpeedLabel(state.selectedTtsSpeed))) {
+      state.selectedTtsSpeed = formatTtsSpeedLabel(state.ttsSpeedOptions[0] || 1);
+      writeStored(STORAGE_KEYS.ttsSpeed, state.selectedTtsSpeed);
+    }
     state.ttsVoices = Array.isArray(voicesData?.items) ? voicesData.items : [];
     renderTtsControls();
     return true;
@@ -1767,17 +2676,6 @@ async function createSessionForCurrentContext() {
   return session.id;
 }
 
-function appendOptimisticMessages(userText) {
-  const now = new Date().toISOString();
-  state.messages = [
-    ...state.messages,
-    { role: "user", content: userText, created_at: now },
-    { role: "assistant", content: "Думаю…", created_at: now },
-  ];
-  renderMessages();
-  scrollMessagesToBottom({ force: true });
-}
-
 async function ensureModelInstalled(modelName) {
   if (!modelName) return true;
   if (state.installedModels.some((item) => item.name === modelName)) {
@@ -1790,7 +2688,11 @@ async function ensureModelInstalled(modelName) {
 
 async function sendCurrentPrompt() {
   const query = (els.promptInput?.value || "").trim();
-  if (!query || state.isSending) return;
+  if (state.isSending) {
+    await cancelCurrentChatGeneration();
+    return;
+  }
+  if (!query) return;
   if (!state.activeProfileId) {
     setFooter("Сначала выберите профиль.", "warning");
     return;
@@ -1805,14 +2707,16 @@ async function sendCurrentPrompt() {
   }
 
   state.isSending = true;
+  state.chatTaskId = null;
+  const controller = new AbortController();
+  state.chatTaskStartController = controller;
   updateSendButtonState();
-  appendOptimisticMessages(query);
   if (els.promptInput) {
     els.promptInput.value = "";
     autoResizePrompt();
     updateSendButtonState();
   }
-  setFooter("Генерация ответа…");
+  setFooter("Генерация ответа… Нажмите «Стоп», чтобы остановить.", "warning");
 
   try {
     const payload = {
@@ -1826,25 +2730,53 @@ async function sendCurrentPrompt() {
       payload.session_id = state.currentSessionId;
     }
 
-    const data = await request("/chat", { method: "POST", body: payload });
-    const nextSessionId = data?.session_id || state.currentSessionId;
-    state.selectedLlmModel = data?.model_name || selectedModel;
+    const task = await request("/chat/tasks", { method: "POST", body: payload, signal: controller.signal });
+    state.chatTaskStartController = null;
+    state.chatTaskId = task?.id || null;
+    const nextSessionId = task?.session_id || state.currentSessionId;
+    state.selectedLlmModel = task?.model_name || selectedModel;
     writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
 
-    await loadSessions({ preferredSessionId: nextSessionId });
+    if (nextSessionId) {
+      await loadSessions({ preferredSessionId: nextSessionId });
+    }
+
+    if (String(task?.state || "") === "completed") {
+      setFooter("Ответ готов.", "success");
+      return;
+    }
+
+    appendAssistantThinkingPlaceholder();
+    const completedTask = await waitForChatTask(task?.id || "");
+    state.chatTaskId = null;
+
+    if (String(completedTask?.state || "") === "cancelled") {
+      removeAssistantThinkingPlaceholder();
+      if (nextSessionId) {
+        await loadSessions({ preferredSessionId: nextSessionId });
+      }
+      setFooter("Генерация ответа остановлена.", "warning");
+      return;
+    }
+
+    if (nextSessionId) {
+      await loadSessions({ preferredSessionId: nextSessionId });
+    }
     setFooter("Ответ готов.", "success");
   } catch (error) {
-    state.messages = [
-      ...state.messages.slice(0, -1),
-      {
-        role: "system",
-        content: `Ошибка: ${error.message || error}`,
-        created_at: new Date().toISOString(),
-      },
-    ];
-    renderMessages();
+    if (isAbortError(error)) {
+      removeAssistantThinkingPlaceholder();
+      setFooter("Генерация ответа остановлена.", "warning");
+      return;
+    }
+    removeAssistantThinkingPlaceholder();
+    if (state.currentSessionId) {
+      await loadSessions({ preferredSessionId: state.currentSessionId });
+    }
     setFooter(`Ошибка чата: ${error.message || error}`, "error");
   } finally {
+    state.chatTaskId = null;
+    state.chatTaskStartController = null;
     state.isSending = false;
     updateSendButtonState();
     scrollMessagesToBottom({ force: true });
@@ -2237,9 +3169,9 @@ function bindEvents() {
     toggleComposerMenu(false);
     els.transcribeInput?.click();
   });
-  els.speakMenuItem?.addEventListener("click", () => {
+  els.speakMenuItem?.addEventListener("click", async () => {
     toggleComposerMenu(false);
-    speakLatestAssistantMessage();
+    await openTtsTool({ focusText: true });
   });
   els.transcribeInput?.addEventListener("change", async () => {
     const file = els.transcribeInput.files?.[0];
@@ -2249,6 +3181,19 @@ function bindEvents() {
   });
 
   els.messageList?.addEventListener("click", async (event) => {
+    const codeCopyButton = event.target.closest("[data-code-copy-index]");
+    if (codeCopyButton) {
+      try {
+        const index = Number(codeCopyButton.dataset.codeCopyIndex);
+        const code = Number.isFinite(index) ? state.renderedCodeBlocks[index] : "";
+        await copyText(code || "");
+        setFooter("Код скопирован.", "success");
+      } catch {
+        setFooter("Не удалось скопировать код.", "error");
+      }
+      return;
+    }
+
     const copyButton = event.target.closest("[data-copy-index]");
     if (!copyButton) return;
     try {
@@ -2316,6 +3261,75 @@ function bindEvents() {
     const ok = await loadTtsLibrary({ forceRefresh: true });
     if (ok) {
       setFooter("Каталог TTS-голосов обновлён.", "success");
+    }
+  });
+
+  els.ttsToolCloseButton?.addEventListener("click", () => closeTtsTool());
+  els.ttsToolMinimizeButton?.addEventListener("click", () => minimizeTtsTool());
+  els.ttsToolFullscreenButton?.addEventListener("click", () => toggleTtsToolFullscreen());
+  els.ttsToolHeader?.addEventListener("mousedown", (event) => {
+    startTtsToolDrag(event);
+  });
+  els.ttsToolResizeHandle?.addEventListener("mousedown", (event) => {
+    startTtsToolResize(event);
+  });
+  els.ttsToolVoiceSelect?.addEventListener("change", () => {
+    state.selectedTtsVoiceId = els.ttsToolVoiceSelect.value || "";
+    writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
+    renderTtsControls();
+  });
+  els.ttsToolGenerateButton?.addEventListener("click", async () => {
+    await generateFromTtsTool();
+  });
+  els.ttsToolUseAssistantButton?.addEventListener("click", () => {
+    fillTtsToolWithLatestAssistant();
+  });
+  els.ttsToolRefreshButton?.addEventListener("click", async () => {
+    const [settingsOk] = await Promise.all([
+      loadTtsSettings({ silent: true }),
+      loadTtsHistory({ silent: true }),
+    ]);
+    await loadTtsLibrary({ silent: true, forceRefresh: true });
+    if (settingsOk) {
+      setInlineStatus(els.ttsToolStatus, "Голоса и история Voice Studio обновлены.", "success");
+      setFooter("Голоса TTS обновлены.", "success");
+    }
+  });
+  els.ttsToolSpeedSelect?.addEventListener("change", async () => {
+    state.selectedTtsSpeed = formatTtsSpeedLabel(els.ttsToolSpeedSelect.value || 1);
+    writeStored(STORAGE_KEYS.ttsSpeed, state.selectedTtsSpeed);
+    renderTtsTool();
+    if (state.ttsToolSelectedRecord) {
+      try {
+        const updated = await ensureTtsToolSpeed(state.ttsToolSelectedRecord, { silent: false });
+        state.ttsToolSelectedRecord = updated;
+        renderTtsTool();
+      } catch (error) {
+        setInlineStatus(els.ttsToolStatus, `Не удалось применить скорость: ${error.message || error}`, "error");
+        setFooter(`Не удалось применить скорость: ${error.message || error}`, "error");
+      }
+    }
+  });
+  els.ttsToolDownloadButton?.addEventListener("click", async () => {
+    await downloadSelectedTtsToolRecord();
+  });
+  els.ttsToolDeleteButton?.addEventListener("click", async () => {
+    await deleteSelectedTtsToolRecord();
+  });
+  els.ttsToolClearButton?.addEventListener("click", async () => {
+    await clearAllTtsToolHistory();
+  });
+  els.ttsToolHistoryList?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-tts-history-id]");
+    if (!button) return;
+    await selectTtsToolRecord(button.dataset.ttsHistoryId);
+  });
+  els.toolDock?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-tool-dock]");
+    if (!button) return;
+    const kind = button.dataset.toolDock || "";
+    if (kind === "tts") {
+      await openTtsTool({ focusText: true });
     }
   });
 
@@ -2481,6 +3495,9 @@ function bindEvents() {
     if (event.key === "Escape") {
       closeSidebar();
       closeSettings();
+      stopTtsToolDrag();
+      stopTtsToolResize();
+      closeTtsTool();
       toggleComposerMenu(false);
     }
   });
@@ -2498,7 +3515,12 @@ function bindEvents() {
     if (!isMobileLayout()) {
       closeSidebar();
     }
+    stopTtsToolDrag();
+    stopTtsToolResize();
     toggleComposerMenu(false);
+    if (state.ttsToolIsOpen && !els.ttsToolWindow?.classList.contains("tool-window--fullscreen")) {
+      setTtsToolWindowBounds();
+    }
     autoResizePrompt();
     syncMessageScrollState();
   });
@@ -2507,6 +3529,7 @@ function bindEvents() {
 async function bootstrap() {
   renderWhisperControls();
   renderTtsControls();
+  renderToolDock();
   renderVoiceRecordButton();
   autoResizePrompt();
   updateSendButtonState();

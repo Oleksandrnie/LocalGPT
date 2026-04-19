@@ -123,6 +123,15 @@ def tts_history() -> dict[str, object]:
     return {"items": tts_service.list_history()}
 
 
+@router.delete("/tts/history")
+def tts_clear_history() -> dict[str, object]:
+    try:
+        deleted = tts_service.clear_history()
+    except tts_service.TTSServiceError as exc:
+        _raise_service_error(exc)
+    return {"ok": True, "deleted": deleted}
+
+
 @router.get("/tts/history/{record_id}")
 def tts_history_item(record_id: str) -> dict[str, object]:
     try:
