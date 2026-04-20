@@ -327,6 +327,54 @@ select {
     color: #f0b4b4;
 }
 
+.topbar__meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+.quick-model-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.quick-model-switch__label {
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.quick-model-switch__control {
+    min-width: 220px;
+    max-width: min(320px, 48vw);
+    height: 32px;
+    padding: 0 34px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    appearance: none;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+        linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 16px) 13px,
+        calc(100% - 11px) 13px;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+}
+
+.quick-model-switch__control:focus {
+    border-color: rgba(110, 168, 254, 0.56);
+}
+
 .subtle {
     margin: 0;
     color: var(--text-muted);
@@ -873,6 +921,16 @@ select {
     border: 1px solid var(--border);
     border-radius: 30px;
     box-shadow: var(--shadow);
+}
+
+.settings-panel--compact {
+    top: 50%;
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    width: min(760px, calc(100vw - 36px));
+    height: min(76vh, 680px);
+    transform: translate(-50%, -50%);
 }
 
 .settings-panel__header {
@@ -1441,6 +1499,19 @@ select {
         align-items: stretch;
     }
 
+    .topbar__meta {
+        align-items: stretch;
+    }
+
+    .quick-model-switch {
+        width: 100%;
+    }
+
+    .quick-model-switch__control {
+        width: 100%;
+        max-width: none;
+    }
+
     .topbar__actions {
         justify-content: flex-start;
     }
@@ -1469,6 +1540,11 @@ select {
 @media (max-width: 640px) {
     .topbar h2 {
         font-size: 18px;
+    }
+
+    .quick-model-switch__label,
+    .subtle {
+        font-size: 12px;
     }
 
     .message-scroll {
@@ -1508,6 +1584,13 @@ select {
         border-bottom-right-radius: 0;
         border-left: 0;
         border-right: 0;
+    }
+
+    .settings-panel--compact {
+        inset: auto 0 0 0;
+        width: 100%;
+        height: min(82vh, 680px);
+        transform: none;
     }
 
     .model-card__head,

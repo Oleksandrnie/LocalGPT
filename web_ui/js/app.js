@@ -14,6 +14,7 @@ const STORAGE_KEYS = {
 };
 
 const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
+const ASR_TOOL_ORIGIN = "asr_tool";
 
 const els = {
   sidebar: document.getElementById("sidebar"),
@@ -26,6 +27,7 @@ const els = {
   chatTitle: document.getElementById("chatTitle"),
   healthStatus: document.getElementById("healthStatus"),
   contextStatus: document.getElementById("contextStatus"),
+  quickModelSelect: document.getElementById("quickModelSelect"),
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   messageScroll: document.getElementById("messageScroll"),
@@ -37,12 +39,34 @@ const els = {
   sendButton: document.getElementById("sendButton"),
   composerMenuButton: document.getElementById("composerMenuButton"),
   composerMenu: document.getElementById("composerMenu"),
+  fileMenuItem: document.getElementById("fileMenuItem"),
   transcribeMenuItem: document.getElementById("transcribeMenuItem"),
   speakMenuItem: document.getElementById("speakMenuItem"),
   transcribeInput: document.getElementById("transcribeInput"),
+  ocrImageInput: document.getElementById("ocrImageInput"),
   scrollTopButton: document.getElementById("scrollTopButton"),
   footerStatus: document.getElementById("footerStatus"),
   toolDock: document.getElementById("toolDock"),
+  asrToolWindow: document.getElementById("asrToolWindow"),
+  asrToolHeader: document.querySelector("#asrToolWindow [data-tool-drag='asr']"),
+  asrToolResizeHandle: document.querySelector("#asrToolWindow [data-tool-resize='asr']"),
+  asrToolMinimizeButton: document.getElementById("asrToolMinimizeButton"),
+  asrToolFullscreenButton: document.getElementById("asrToolFullscreenButton"),
+  asrToolCloseButton: document.getElementById("asrToolCloseButton"),
+  asrToolModelSelect: document.getElementById("asrToolModelSelect"),
+  asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
+  asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
+  asrToolFileInput: document.getElementById("asrToolFileInput"),
+  asrToolStatus: document.getElementById("asrToolStatus"),
+  asrToolMeta: document.getElementById("asrToolMeta"),
+  asrToolOutput: document.getElementById("asrToolOutput"),
+  asrToolInsertPromptButton: document.getElementById("asrToolInsertPromptButton"),
+  asrToolSendButton: document.getElementById("asrToolSendButton"),
+  asrToolSaveButton: document.getElementById("asrToolSaveButton"),
+  asrToolClearButton: document.getElementById("asrToolClearButton"),
+  asrToolDeleteButton: document.getElementById("asrToolDeleteButton"),
+  asrToolClearHistoryButton: document.getElementById("asrToolClearHistoryButton"),
+  asrToolHistoryList: document.getElementById("asrToolHistoryList"),
   ttsToolWindow: document.getElementById("ttsToolWindow"),
   ttsToolHeader: document.querySelector("#ttsToolWindow [data-tool-drag='tts']"),
   ttsToolResizeHandle: document.querySelector("#ttsToolWindow [data-tool-resize='tts']"),
@@ -63,6 +87,14 @@ const els = {
   ttsToolClearButton: document.getElementById("ttsToolClearButton"),
   ttsToolPlayer: document.getElementById("ttsToolPlayer"),
   ttsToolHistoryList: document.getElementById("ttsToolHistoryList"),
+  ocrBackdrop: document.getElementById("ocrBackdrop"),
+  closeOcrButton: document.getElementById("closeOcrButton"),
+  ocrStatus: document.getElementById("ocrStatus"),
+  ocrMeta: document.getElementById("ocrMeta"),
+  ocrTextOutput: document.getElementById("ocrTextOutput"),
+  ocrInsertPromptButton: document.getElementById("ocrInsertPromptButton"),
+  ocrSendButton: document.getElementById("ocrSendButton"),
+  ocrClearButton: document.getElementById("ocrClearButton"),
   settingsBackdrop: document.getElementById("settingsBackdrop"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
   llmModelSelect: document.getElementById("llmModelSelect"),
@@ -166,7 +198,21 @@ const state = {
   voiceStream: null,
   ttsAudio: null,
   ttsPreviewAudio: null,
+  ocrBusy: false,
+  ocrFileName: "",
+  ocrText: "",
   ttsHistory: [],
+  asrToolHistory: [],
+  asrToolSelectedTranscriptId: null,
+  asrToolSelectedTranscript: null,
+  asrToolIsOpen: false,
+  asrToolIsMinimized: false,
+  asrToolBounds: null,
+  asrToolDragSession: null,
+  asrToolResizeSession: null,
+  asrToolTaskId: null,
+  asrToolStartController: null,
+  asrToolIsTranscribing: false,
   ttsToolSelectedRecordId: null,
   ttsToolSelectedRecord: null,
   ttsToolIsOpen: false,
@@ -364,7 +410,19 @@ function stripRichTextToPlain(value) {
 
 function formatDateTime(value) {
   if (!value) return "";
-  const parsed = new Date(value);
+  let normalized = String(value).trim();
+  if (!normalized) return "";
+
+  // Backend chat/session timestamps may be stored as UTC without an explicit timezone.
+  // Treat those naive ISO-like strings as UTC, then render them in the local computer timezone.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(normalized)) {
+    normalized = normalized.replace(" ", "T");
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(normalized)) {
+    normalized = `${normalized}Z`;
+  }
+
+  const parsed = new Date(normalized);
   if (Number.isNaN(parsed.getTime())) return "";
   return parsed.toLocaleString("ru-RU", {
     day: "2-digit",
@@ -713,16 +771,20 @@ async function cancelCurrentChatGeneration() {
   setFooter("Генерация ответа остановлена.", "warning");
 }
 
-function insertVoiceTranscript(text) {
+function insertPromptText(text, { append = true } = {}) {
   const nextText = String(text || "").trim();
   if (!els.promptInput || !nextText) return;
   const current = els.promptInput.value.trim();
-  els.promptInput.value = current ? `${current}\n${nextText}` : nextText;
+  els.promptInput.value = append && current ? `${current}\n${nextText}` : nextText;
   autoResizePrompt();
   updateSendButtonState();
   els.promptInput.focus();
   const length = els.promptInput.value.length;
   els.promptInput.setSelectionRange(length, length);
+}
+
+function insertVoiceTranscript(text) {
+  insertPromptText(text, { append: true });
 }
 
 async function waitForVoiceTranscriptionTask(taskId, { timeoutMs = 180000 } = {}) {
@@ -1259,18 +1321,29 @@ function renderModelControls() {
     ...state.recommendedModels.map((item) => item.name).filter((name) => !installedNames.has(name)),
   ];
 
-  els.llmModelSelect.innerHTML = mergedOptions
+  const optionsMarkup = mergedOptions
     .map((name) => {
       const recommended = state.recommendedModels.some((item) => item.name === name) && !installedNames.has(name);
       return `<option value="${escapeHtml(name)}">${escapeHtml(name)}${recommended ? " (рекомендовано)" : ""}</option>`;
     })
     .join("");
 
+  [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
+    select.innerHTML = optionsMarkup;
+    select.disabled = !mergedOptions.length;
+  });
+
   const preferredModel = state.selectedLlmModel || readStored(STORAGE_KEYS.llmModel, state.defaultModel);
   if (preferredModel && mergedOptions.includes(preferredModel)) {
     els.llmModelSelect.value = preferredModel;
+    if (els.quickModelSelect) {
+      els.quickModelSelect.value = preferredModel;
+    }
   } else if (mergedOptions.length) {
     els.llmModelSelect.value = mergedOptions[0];
+    if (els.quickModelSelect) {
+      els.quickModelSelect.value = mergedOptions[0];
+    }
     state.selectedLlmModel = mergedOptions[0];
     writeStored(STORAGE_KEYS.llmModel, mergedOptions[0]);
   }
@@ -1285,6 +1358,28 @@ function renderModelControls() {
 
   renderLibraryPanels();
   renderChatModelLibrary();
+}
+
+async function applySelectedLlmModel(nextModel) {
+  const modelName = String(nextModel || "").trim();
+  if (!modelName) return;
+
+  state.selectedLlmModel = modelName;
+  writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
+
+  [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
+    const hasOption = Array.from(select.options || []).some((option) => option.value === modelName);
+    if (hasOption) {
+      select.value = modelName;
+    }
+  });
+
+  renderContextSummary();
+  renderModelSettings();
+  if (state.currentSessionId && state.selectedLlmModel) {
+    await updateCurrentSessionMeta({ model_name: state.selectedLlmModel });
+  }
+  await refreshModelSettings({ silent: true });
 }
 
 function renderChatModelLibrary() {
@@ -1416,6 +1511,7 @@ function renderWhisperControls() {
 
   renderLibraryPanels();
   renderAsrModelLibrary();
+  renderAsrTool();
 }
 
 function renderAsrModelLibrary() {
@@ -1589,19 +1685,32 @@ function renderTtsVoiceLibrary() {
 
 function renderToolDock() {
   if (!els.toolDock) return;
-  if (!state.ttsToolIsMinimized) {
+  const items = [];
+  if (state.asrToolIsMinimized) {
+    items.push(`
+      <button class="tool-dock__item tool-dock__item--minimized" type="button" data-tool-dock="asr" aria-pressed="false">
+        <span class="tool-dock__title">Транскрибация</span>
+        <span class="tool-dock__meta">Свернуто</span>
+      </button>
+    `);
+  }
+  if (state.ttsToolIsMinimized) {
+    items.push(`
+      <button class="tool-dock__item tool-dock__item--minimized" type="button" data-tool-dock="tts" aria-pressed="false">
+        <span class="tool-dock__title">Озвучивание</span>
+        <span class="tool-dock__meta">Свернуто</span>
+      </button>
+    `);
+  }
+
+  if (!items.length) {
     els.toolDock.innerHTML = "";
     els.toolDock.hidden = true;
     return;
   }
 
   els.toolDock.hidden = false;
-  els.toolDock.innerHTML = `
-    <button class="tool-dock__item tool-dock__item--minimized" type="button" data-tool-dock="tts" aria-pressed="false">
-      <span class="tool-dock__title">Озвучивание</span>
-      <span class="tool-dock__meta">Свернуто</span>
-    </button>
-  `;
+  els.toolDock.innerHTML = items.join("");
 }
 
 function getDefaultTtsToolBounds() {
@@ -1945,6 +2054,616 @@ async function ensureTtsToolSpeed(record, { silent = false, manageBusy = true } 
       renderTtsTool();
     }
   }
+}
+
+async function loadAsrToolHistory({ silent = false } = {}) {
+  if (!state.activeProfileId) {
+    state.asrToolHistory = [];
+    renderAsrTool();
+    return false;
+  }
+
+  try {
+    const data = await request(
+      `/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&origin=${encodeURIComponent(ASR_TOOL_ORIGIN)}`,
+    );
+    state.asrToolHistory = Array.isArray(data?.transcripts) ? data.transcripts : [];
+    if (
+      state.asrToolSelectedTranscriptId
+      && !state.asrToolHistory.some((item) => Number(item.id) === Number(state.asrToolSelectedTranscriptId))
+    ) {
+      state.asrToolSelectedTranscriptId = null;
+      state.asrToolSelectedTranscript = null;
+    }
+    renderAsrTool();
+    return true;
+  } catch (error) {
+    state.asrToolHistory = [];
+    renderAsrTool();
+    if (!silent) {
+      setFooter(`Не удалось загрузить историю ASR: ${error.message || error}`, "error");
+    }
+    return false;
+  }
+}
+
+function renderAsrToolHistory() {
+  if (!els.asrToolHistoryList) return;
+  if (!state.asrToolHistory.length) {
+    els.asrToolHistoryList.innerHTML = '<p class="subtle">История транскрибаций пока пуста.</p>';
+    return;
+  }
+
+  const selectedId = Number(state.asrToolSelectedTranscriptId || 0);
+  const prioritized = selectedId
+    ? [
+      ...state.asrToolHistory.filter((item) => Number(item.id) === selectedId),
+      ...state.asrToolHistory.filter((item) => Number(item.id) !== selectedId),
+    ]
+    : [...state.asrToolHistory];
+
+  els.asrToolHistoryList.innerHTML = prioritized.slice(0, 6)
+    .map((item) => {
+      const active = Number(item.id) === selectedId ? " tool-history__item--active" : "";
+      const meta = [
+        item.language || null,
+        formatDateTime(item.updated_at || item.created_at),
+      ].filter(Boolean).join(" • ");
+      const preview = stripRichTextToPlain(item.content || item.name || "Без текста");
+      return `
+        <button class="tool-history__item${active}" type="button" data-asr-history-id="${escapeHtml(item.id)}">
+          <span class="tool-history__title">${escapeHtml(preview || item.name || "Транскрипт")}</span>
+          <span class="tool-history__meta">${escapeHtml(meta || item.name || "Транскрипт")}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function getDefaultAsrToolBounds() {
+  const viewportWidth = window.innerWidth || 1440;
+  const viewportHeight = window.innerHeight || 900;
+  const width = Math.max(900, Math.min(1400, viewportWidth - 36));
+  const height = Math.max(620, Math.min(880, viewportHeight - 36));
+  const left = Math.max(18, Math.round((viewportWidth - width) / 2));
+  const top = Math.max(18, Math.round((viewportHeight - height) / 2));
+  return { left, top, width, height };
+}
+
+function normalizeAsrToolBounds(bounds) {
+  const edge = 18;
+  const viewportWidth = Math.max(window.innerWidth || 0, 360);
+  const viewportHeight = Math.max(window.innerHeight || 0, 360);
+  const maxWidth = Math.max(320, viewportWidth - edge * 2);
+  const maxHeight = Math.max(320, viewportHeight - edge * 2);
+  const minWidth = Math.min(760, maxWidth);
+  const minHeight = Math.min(520, maxHeight);
+  const width = Math.min(Math.max(Math.round(bounds.width || minWidth), minWidth), maxWidth);
+  const height = Math.min(Math.max(Math.round(bounds.height || minHeight), minHeight), maxHeight);
+  const left = Math.min(Math.max(Math.round(bounds.left ?? edge), edge), Math.max(edge, viewportWidth - edge - width));
+  const top = Math.min(Math.max(Math.round(bounds.top ?? edge), edge), Math.max(edge, viewportHeight - edge - height));
+  return { left, top, width, height };
+}
+
+function applyAsrToolBounds(bounds) {
+  const tool = els.asrToolWindow;
+  if (!tool || isMobileLayout()) return;
+  const normalized = normalizeAsrToolBounds(bounds);
+  state.asrToolBounds = normalized;
+  tool.style.left = `${normalized.left}px`;
+  tool.style.top = `${normalized.top}px`;
+  tool.style.width = `${normalized.width}px`;
+  tool.style.height = `${normalized.height}px`;
+}
+
+function setAsrToolWindowBounds() {
+  const tool = els.asrToolWindow;
+  if (!tool || isMobileLayout()) return;
+  applyAsrToolBounds(state.asrToolBounds || getDefaultAsrToolBounds());
+}
+
+function stopAsrToolDrag() {
+  const session = state.asrToolDragSession;
+  if (!session) return;
+  window.removeEventListener("mousemove", session.onMove);
+  window.removeEventListener("mouseup", session.onUp);
+  state.asrToolDragSession = null;
+}
+
+function startAsrToolDrag(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!els.asrToolWindow || els.asrToolWindow.hidden || isMobileLayout()) return;
+  if (els.asrToolWindow.classList.contains("tool-window--fullscreen")) return;
+  if (target?.closest(".tool-window__actions, button, input, select, textarea, audio")) return;
+
+  event.preventDefault();
+  stopAsrToolResize();
+  stopAsrToolDrag();
+
+  const rect = els.asrToolWindow.getBoundingClientRect();
+  const session = {
+    startX: event.clientX,
+    startY: event.clientY,
+    startLeft: rect.left,
+    startTop: rect.top,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    onMove: null,
+    onUp: null,
+  };
+
+  session.onMove = (moveEvent) => {
+    applyAsrToolBounds({
+      left: session.startLeft + (moveEvent.clientX - session.startX),
+      top: session.startTop + (moveEvent.clientY - session.startY),
+      width: session.startWidth,
+      height: session.startHeight,
+    });
+  };
+
+  session.onUp = () => {
+    stopAsrToolDrag();
+  };
+
+  state.asrToolDragSession = session;
+  window.addEventListener("mousemove", session.onMove);
+  window.addEventListener("mouseup", session.onUp);
+}
+
+function stopAsrToolResize() {
+  const session = state.asrToolResizeSession;
+  if (!session) return;
+  window.removeEventListener("mousemove", session.onMove);
+  window.removeEventListener("mouseup", session.onUp);
+  state.asrToolResizeSession = null;
+}
+
+function startAsrToolResize(event) {
+  if (!els.asrToolWindow || els.asrToolWindow.hidden || isMobileLayout()) return;
+  if (els.asrToolWindow.classList.contains("tool-window--fullscreen")) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  stopAsrToolDrag();
+  stopAsrToolResize();
+
+  const rect = els.asrToolWindow.getBoundingClientRect();
+  const session = {
+    startX: event.clientX,
+    startY: event.clientY,
+    startLeft: rect.left,
+    startTop: rect.top,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    onMove: null,
+    onUp: null,
+  };
+
+  session.onMove = (moveEvent) => {
+    applyAsrToolBounds({
+      left: session.startLeft,
+      top: session.startTop,
+      width: session.startWidth + (moveEvent.clientX - session.startX),
+      height: session.startHeight + (moveEvent.clientY - session.startY),
+    });
+  };
+
+  session.onUp = () => {
+    stopAsrToolResize();
+  };
+
+  state.asrToolResizeSession = session;
+  window.addEventListener("mousemove", session.onMove);
+  window.addEventListener("mouseup", session.onUp);
+}
+
+function renderAsrTool() {
+  if (!els.asrToolWindow) return;
+
+  const historyCount = state.asrToolHistory.length;
+  const hasSelectedTranscript = Boolean(state.asrToolSelectedTranscript);
+  const hasOutput = Boolean((els.asrToolOutput?.value || "").trim());
+
+  if (els.asrToolModelSelect) {
+    const items = state.asrModels.length ? state.asrModels : WHISPER_MODELS.map((name) => ({ name, installed: false }));
+    const names = items.map((item) => item.name);
+    els.asrToolModelSelect.innerHTML = names
+      .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+      .join("");
+    els.asrToolModelSelect.value = names.includes(state.selectedWhisperModel) ? state.selectedWhisperModel : (names[0] || "small");
+  }
+
+  if (els.asrToolChooseFileButton) {
+    els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
+    els.asrToolChooseFileButton.textContent = state.asrToolIsTranscribing ? "Транскрибация…" : "Выбрать файл";
+  }
+  if (els.asrToolRefreshHistoryButton) {
+    els.asrToolRefreshHistoryButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
+  }
+  if (els.asrToolInsertPromptButton) {
+    els.asrToolInsertPromptButton.disabled = !hasOutput;
+  }
+  if (els.asrToolSendButton) {
+    els.asrToolSendButton.disabled = !hasOutput || state.isSending;
+  }
+  if (els.asrToolSaveButton) {
+    els.asrToolSaveButton.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing;
+  }
+  if (els.asrToolClearButton) {
+    els.asrToolClearButton.disabled = !hasOutput && !hasSelectedTranscript;
+  }
+  if (els.asrToolDeleteButton) {
+    els.asrToolDeleteButton.disabled = !hasSelectedTranscript || state.asrToolIsTranscribing;
+  }
+  if (els.asrToolClearHistoryButton) {
+    els.asrToolClearHistoryButton.disabled = !historyCount || state.asrToolIsTranscribing;
+  }
+  if (els.asrToolFullscreenButton) {
+    els.asrToolFullscreenButton.setAttribute(
+      "aria-pressed",
+      els.asrToolWindow.classList.contains("tool-window--fullscreen") ? "true" : "false",
+    );
+  }
+  if (els.asrToolMeta) {
+    const metaParts = [
+      state.selectedWhisperModel || "Whisper модель не выбрана",
+      hasSelectedTranscript ? (state.asrToolSelectedTranscript?.language || "Язык auto") : "Отдельная база ASR Studio",
+      hasSelectedTranscript ? formatDateTime(state.asrToolSelectedTranscript?.updated_at || state.asrToolSelectedTranscript?.created_at) : `${historyCount} записей`,
+    ].filter(Boolean);
+    els.asrToolMeta.textContent = metaParts.join(" • ");
+  }
+
+  renderAsrToolHistory();
+}
+
+async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
+  const target = Number(transcriptId || 0);
+  if (!Number.isFinite(target) || target <= 0) return;
+
+  try {
+    const transcript = await request(`/transcripts/${encodeURIComponent(target)}`);
+    if (String(transcript?.labels?.origin || "") !== ASR_TOOL_ORIGIN) {
+      throw new Error("Эта запись не относится к ASR Studio.");
+    }
+    state.asrToolSelectedTranscriptId = transcript.id;
+    state.asrToolSelectedTranscript = transcript;
+    if (els.asrToolOutput) {
+      els.asrToolOutput.value = transcript.content || "";
+    }
+    setInlineStatus(els.asrToolStatus, "Транскрипт загружен. Можно редактировать и отправить в чат.", "success");
+    renderAsrTool();
+  } catch (error) {
+    if (!silent) {
+      setInlineStatus(els.asrToolStatus, `Не удалось открыть транскрипт: ${error.message || error}`, "error");
+      setFooter(`Не удалось открыть транскрипт: ${error.message || error}`, "error");
+    }
+  }
+}
+
+async function openAsrTool({ focusText = false } = {}) {
+  if (!els.asrToolWindow) return;
+  state.asrToolIsOpen = true;
+  state.asrToolIsMinimized = false;
+  els.asrToolWindow.hidden = false;
+  setAsrToolWindowBounds();
+  setInlineStatus(
+    els.asrToolStatus,
+    state.asrToolSelectedTranscript
+      ? "Транскрипт загружен. Можно редактировать и отправить в чат."
+      : "Выберите файл и запустите отдельную транскрибацию.",
+    state.asrToolSelectedTranscript ? "success" : "warning",
+  );
+  renderAsrTool();
+  await loadAsrToolHistory({ silent: true });
+  if (focusText) {
+    els.asrToolOutput?.focus();
+  }
+  renderToolDock();
+}
+
+function closeAsrTool() {
+  if (!els.asrToolWindow) return;
+  stopAsrToolDrag();
+  stopAsrToolResize();
+  state.asrToolIsOpen = false;
+  state.asrToolIsMinimized = false;
+  els.asrToolWindow.hidden = true;
+  els.asrToolWindow.classList.remove("tool-window--fullscreen");
+  renderToolDock();
+}
+
+function minimizeAsrTool() {
+  if (!els.asrToolWindow) return;
+  stopAsrToolDrag();
+  stopAsrToolResize();
+  state.asrToolIsOpen = false;
+  state.asrToolIsMinimized = true;
+  els.asrToolWindow.hidden = true;
+  els.asrToolWindow.classList.remove("tool-window--fullscreen");
+  renderToolDock();
+}
+
+function toggleAsrToolFullscreen() {
+  if (!els.asrToolWindow) return;
+  stopAsrToolDrag();
+  stopAsrToolResize();
+  els.asrToolWindow.classList.toggle("tool-window--fullscreen");
+  if (!els.asrToolWindow.classList.contains("tool-window--fullscreen")) {
+    setAsrToolWindowBounds();
+  }
+  renderAsrTool();
+}
+
+async function runAsrToolTranscription(file) {
+  if (!file || state.asrToolIsTranscribing) return;
+  if (!state.activeProfileId) {
+    setInlineStatus(els.asrToolStatus, "Сначала выберите профиль.", "warning");
+    return;
+  }
+
+  state.asrToolIsTranscribing = true;
+  renderAsrTool();
+  setInlineStatus(els.asrToolStatus, `Транскрибирую ${file.name}…`, "warning");
+  setFooter(`ASR Studio: транскрибация ${file.name}…`);
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("profile_id", String(state.activeProfileId));
+    formData.append("model", state.selectedWhisperModel || "small");
+    formData.append("prompt_preset", state.selectedPromptPreset || "none");
+    formData.append("language", "auto");
+    formData.append("store_result", "true");
+    formData.append("origin", ASR_TOOL_ORIGIN);
+
+    const controller = new AbortController();
+    state.asrToolStartController = controller;
+    const task = await request("/transcribe/tasks", { method: "POST", body: formData, signal: controller.signal });
+    state.asrToolStartController = null;
+    state.asrToolTaskId = task?.id || null;
+
+    const result = await waitForVoiceTranscriptionTask(task?.id || "");
+    if (result?.cancelled) {
+      setInlineStatus(els.asrToolStatus, "Транскрибация остановлена.", "warning");
+      return;
+    }
+
+    if (els.asrToolOutput) {
+      els.asrToolOutput.value = result?.text || "";
+    }
+    await loadAsrToolHistory({ silent: true });
+    if (result?.transcript_id) {
+      await selectAsrToolTranscript(result.transcript_id, { silent: true });
+    } else {
+      renderAsrTool();
+    }
+    setInlineStatus(els.asrToolStatus, `Транскрибация готова: ${file.name}`, "success");
+    setFooter(`ASR Studio: ${file.name} готово.`, "success");
+  } catch (error) {
+    if (!isAbortError(error)) {
+      setInlineStatus(els.asrToolStatus, `Ошибка транскрибации: ${error.message || error}`, "error");
+      setFooter(`Ошибка ASR Studio: ${error.message || error}`, "error");
+    }
+  } finally {
+    state.asrToolTaskId = null;
+    state.asrToolStartController = null;
+    state.asrToolIsTranscribing = false;
+    renderAsrTool();
+    if (els.asrToolFileInput) {
+      els.asrToolFileInput.value = "";
+    }
+  }
+}
+
+async function saveAsrToolTranscript() {
+  const content = String(els.asrToolOutput?.value || "").trim();
+  if (!content) {
+    setInlineStatus(els.asrToolStatus, "Введите текст перед сохранением.", "warning");
+    return;
+  }
+  if (!state.activeProfileId) {
+    setInlineStatus(els.asrToolStatus, "Сначала выберите профиль.", "warning");
+    return;
+  }
+
+  try {
+    let transcript;
+    if (state.asrToolSelectedTranscriptId) {
+      transcript = await request(`/transcripts/${encodeURIComponent(state.asrToolSelectedTranscriptId)}`, {
+        method: "PATCH",
+        body: { content },
+      });
+    } else {
+      transcript = await request("/transcripts", {
+        method: "POST",
+        body: {
+          profile_id: state.activeProfileId,
+          name: "Ручная транскрибация",
+          content,
+          labels: { origin: ASR_TOOL_ORIGIN },
+        },
+      });
+    }
+    state.asrToolSelectedTranscriptId = transcript.id;
+    state.asrToolSelectedTranscript = transcript;
+    await loadAsrToolHistory({ silent: true });
+    setInlineStatus(els.asrToolStatus, "Транскрипт сохранён.", "success");
+    setFooter("Транскрипт сохранён.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось сохранить транскрипт: ${error.message || error}`, "error");
+    setFooter(`Не удалось сохранить транскрипт: ${error.message || error}`, "error");
+  }
+}
+
+function clearAsrToolEditor() {
+  state.asrToolSelectedTranscriptId = null;
+  state.asrToolSelectedTranscript = null;
+  if (els.asrToolOutput) {
+    els.asrToolOutput.value = "";
+  }
+  setInlineStatus(els.asrToolStatus, "Редактор ASR Studio очищен.", "warning");
+  renderAsrTool();
+}
+
+async function deleteSelectedAsrToolTranscript() {
+  if (!state.asrToolSelectedTranscriptId) {
+    setInlineStatus(els.asrToolStatus, "Сначала выберите запись в истории.", "warning");
+    return;
+  }
+  if (!window.confirm("Удалить выбранную запись транскрибации?")) return;
+
+  try {
+    await request(`/transcripts/${encodeURIComponent(state.asrToolSelectedTranscriptId)}`, { method: "DELETE" });
+    clearAsrToolEditor();
+    await loadAsrToolHistory({ silent: true });
+    setFooter("Запись ASR удалена.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось удалить запись: ${error.message || error}`, "error");
+    setFooter(`Не удалось удалить запись ASR: ${error.message || error}`, "error");
+  }
+}
+
+async function clearAsrToolHistory() {
+  if (!state.activeProfileId || !state.asrToolHistory.length) {
+    setInlineStatus(els.asrToolStatus, "История ASR Studio уже пуста.", "warning");
+    return;
+  }
+  if (!window.confirm("Удалить все записи из ASR Studio?")) return;
+
+  try {
+    const result = await request(
+      `/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&origin=${encodeURIComponent(ASR_TOOL_ORIGIN)}`,
+      { method: "DELETE" },
+    );
+    clearAsrToolEditor();
+    await loadAsrToolHistory({ silent: true });
+    setInlineStatus(
+      els.asrToolStatus,
+      Number(result?.deleted || 0) > 0
+        ? `История ASR очищена. Удалено записей: ${result.deleted}.`
+        : "История ASR очищена.",
+      "success",
+    );
+    setFooter("История ASR очищена.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось очистить историю: ${error.message || error}`, "error");
+    setFooter(`Не удалось очистить историю ASR: ${error.message || error}`, "error");
+  }
+}
+
+function insertAsrToolIntoPrompt() {
+  const text = String(els.asrToolOutput?.value || "").trim();
+  if (!text) {
+    setInlineStatus(els.asrToolStatus, "Нет текста для вставки в чат.", "warning");
+    return;
+  }
+  insertPromptText(text, { append: true });
+  setInlineStatus(els.asrToolStatus, "Транскрипт вставлен в поле ввода.", "success");
+  setFooter("Транскрипт вставлен в поле ввода.", "success");
+}
+
+async function sendAsrToolTextToChat() {
+  const text = String(els.asrToolOutput?.value || "").trim();
+  if (!text) {
+    setInlineStatus(els.asrToolStatus, "Нет текста для отправки в чат.", "warning");
+    return;
+  }
+  await sendPromptText(text, { clearInput: false });
+}
+
+function renderOcrEditor() {
+  if (!els.ocrBackdrop) return;
+  if (els.ocrTextOutput && els.ocrTextOutput.value !== state.ocrText) {
+    els.ocrTextOutput.value = state.ocrText || "";
+  }
+  if (els.ocrMeta) {
+    els.ocrMeta.textContent = state.ocrFileName
+      ? `Источник: ${state.ocrFileName}. Текст можно отредактировать и затем вставить в чат или отправить.`
+      : "Текст можно поправить и затем вставить в чат или сразу отправить.";
+  }
+  if (els.ocrInsertPromptButton) {
+    els.ocrInsertPromptButton.disabled = !String(state.ocrText || "").trim();
+  }
+  if (els.ocrSendButton) {
+    els.ocrSendButton.disabled = !String(state.ocrText || "").trim() || state.isSending;
+  }
+  if (els.ocrClearButton) {
+    els.ocrClearButton.disabled = !String(state.ocrText || "").trim() && !state.ocrFileName;
+  }
+}
+
+function openOcrEditor() {
+  if (!els.ocrBackdrop) return;
+  els.ocrBackdrop.hidden = false;
+  renderOcrEditor();
+}
+
+function closeOcrEditor() {
+  if (!els.ocrBackdrop) return;
+  els.ocrBackdrop.hidden = true;
+}
+
+function clearOcrEditor() {
+  state.ocrFileName = "";
+  state.ocrText = "";
+  if (els.ocrTextOutput) {
+    els.ocrTextOutput.value = "";
+  }
+  setInlineStatus(els.ocrStatus, "OCR-редактор очищен.", "warning");
+  renderOcrEditor();
+}
+
+async function runOcrForImage(file) {
+  if (!file || state.ocrBusy) return;
+  state.ocrBusy = true;
+  state.ocrFileName = file.name || "";
+  state.ocrText = "";
+  openOcrEditor();
+  setInlineStatus(els.ocrStatus, `Распознаю текст на изображении ${file.name}…`, "warning");
+  setFooter(`OCR: распознаю ${file.name}…`);
+  renderOcrEditor();
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const data = await request("/ocr/extract", { method: "POST", body: formData });
+    state.ocrText = String(data?.text || "").trim();
+    state.ocrFileName = String(data?.file_name || file.name || "").trim();
+    renderOcrEditor();
+    setInlineStatus(els.ocrStatus, "Текст с изображения извлечён. Можно редактировать и отправлять.", "success");
+    setFooter("OCR: текст извлечён.", "success");
+  } catch (error) {
+    setInlineStatus(els.ocrStatus, `Ошибка OCR: ${error.message || error}`, "error");
+    setFooter(`Ошибка OCR: ${error.message || error}`, "error");
+  } finally {
+    state.ocrBusy = false;
+    if (els.ocrImageInput) {
+      els.ocrImageInput.value = "";
+    }
+    renderOcrEditor();
+  }
+}
+
+function insertOcrIntoPrompt() {
+  const text = String(els.ocrTextOutput?.value || "").trim();
+  if (!text) {
+    setInlineStatus(els.ocrStatus, "Нет текста для вставки в чат.", "warning");
+    return;
+  }
+  state.ocrText = text;
+  insertPromptText(text, { append: true });
+  setInlineStatus(els.ocrStatus, "Текст из изображения вставлен в поле ввода.", "success");
+  setFooter("OCR: текст вставлен в поле ввода.", "success");
+}
+
+async function sendOcrTextToChat() {
+  const text = String(els.ocrTextOutput?.value || "").trim();
+  if (!text) {
+    setInlineStatus(els.ocrStatus, "Нет текста для отправки в чат.", "warning");
+    return;
+  }
+  state.ocrText = text;
+  await sendPromptText(text, { clearInput: false });
 }
 
 async function loadTtsHistory({ silent = false } = {}) {
@@ -2310,7 +3029,7 @@ async function loadHealth({ silent = false } = {}) {
     const data = await request("/health");
     state.serverHealthy = true;
     state.defaultModel = data?.model || state.defaultModel;
-    state.lanUrl = data?.ios_url || fallbackLanUrl();
+    state.lanUrl = data?.lan_url || data?.ios_url || fallbackLanUrl();
     state.modelsDir = data?.models_dir || state.modelsDir || "";
     setHealthBadge("Онлайн", "success");
     renderLanUrl();
@@ -2532,8 +3251,12 @@ async function loadSessions({ preferredSessionId = null } = {}) {
 async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   state.activeProfileId = profileId || null;
   writeStored(STORAGE_KEYS.activeProfileId, state.activeProfileId || "");
+  state.asrToolSelectedTranscriptId = null;
+  state.asrToolSelectedTranscript = null;
+  state.asrToolHistory = [];
   renderProfileOptions();
   await loadSessions({ preferredSessionId });
+  await loadAsrToolHistory({ silent: true });
   await refreshModelSettings({ silent: true });
 }
 
@@ -2686,8 +3409,8 @@ async function ensureModelInstalled(modelName) {
   return false;
 }
 
-async function sendCurrentPrompt() {
-  const query = (els.promptInput?.value || "").trim();
+async function sendPromptText(rawQuery, { clearInput = false } = {}) {
+  const query = String(rawQuery || "").trim();
   if (state.isSending) {
     await cancelCurrentChatGeneration();
     return;
@@ -2711,7 +3434,7 @@ async function sendCurrentPrompt() {
   const controller = new AbortController();
   state.chatTaskStartController = controller;
   updateSendButtonState();
-  if (els.promptInput) {
+  if (clearInput && els.promptInput) {
     els.promptInput.value = "";
     autoResizePrompt();
     updateSendButtonState();
@@ -2781,6 +3504,11 @@ async function sendCurrentPrompt() {
     updateSendButtonState();
     scrollMessagesToBottom({ force: true });
   }
+}
+
+async function sendCurrentPrompt() {
+  const query = (els.promptInput?.value || "").trim();
+  await sendPromptText(query, { clearInput: true });
 }
 
 async function handleTranscription(file) {
@@ -3165,9 +3893,13 @@ function bindEvents() {
     toggleComposerMenu();
   });
 
-  els.transcribeMenuItem?.addEventListener("click", () => {
+  els.fileMenuItem?.addEventListener("click", () => {
     toggleComposerMenu(false);
-    els.transcribeInput?.click();
+    els.ocrImageInput?.click();
+  });
+  els.transcribeMenuItem?.addEventListener("click", async () => {
+    toggleComposerMenu(false);
+    await openAsrTool({ focusText: false });
   });
   els.speakMenuItem?.addEventListener("click", async () => {
     toggleComposerMenu(false);
@@ -3177,6 +3909,12 @@ function bindEvents() {
     const file = els.transcribeInput.files?.[0];
     if (file) {
       await handleTranscription(file);
+    }
+  });
+  els.ocrImageInput?.addEventListener("change", async () => {
+    const file = els.ocrImageInput.files?.[0];
+    if (file) {
+      await runOcrForImage(file);
     }
   });
 
@@ -3223,14 +3961,11 @@ function bindEvents() {
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
 
   els.llmModelSelect?.addEventListener("change", async () => {
-    state.selectedLlmModel = (els.llmModelSelect.value || "").trim();
-    writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
-    renderContextSummary();
-    renderModelSettings();
-    if (state.currentSessionId && state.selectedLlmModel) {
-      await updateCurrentSessionMeta({ model_name: state.selectedLlmModel });
-    }
-    await refreshModelSettings({ silent: true });
+    await applySelectedLlmModel(els.llmModelSelect.value || "");
+  });
+
+  els.quickModelSelect?.addEventListener("change", async () => {
+    await applySelectedLlmModel(els.quickModelSelect.value || "");
   });
 
   els.whisperModelSelect?.addEventListener("change", () => {
@@ -3248,6 +3983,64 @@ function bindEvents() {
     state.selectedTtsVoiceId = els.ttsVoiceSelect.value || "";
     writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
     renderTtsControls();
+  });
+
+  els.asrToolCloseButton?.addEventListener("click", () => closeAsrTool());
+  els.asrToolMinimizeButton?.addEventListener("click", () => minimizeAsrTool());
+  els.asrToolFullscreenButton?.addEventListener("click", () => toggleAsrToolFullscreen());
+  els.asrToolHeader?.addEventListener("mousedown", (event) => {
+    startAsrToolDrag(event);
+  });
+  els.asrToolResizeHandle?.addEventListener("mousedown", (event) => {
+    startAsrToolResize(event);
+  });
+  els.asrToolModelSelect?.addEventListener("change", () => {
+    state.selectedWhisperModel = els.asrToolModelSelect.value || "small";
+    writeStored(STORAGE_KEYS.whisperModel, state.selectedWhisperModel);
+    renderWhisperControls();
+    renderAsrTool();
+  });
+  els.asrToolOutput?.addEventListener("input", () => {
+    renderAsrTool();
+  });
+  els.asrToolChooseFileButton?.addEventListener("click", () => {
+    els.asrToolFileInput?.click();
+  });
+  els.asrToolFileInput?.addEventListener("change", async () => {
+    const file = els.asrToolFileInput.files?.[0];
+    if (file) {
+      await runAsrToolTranscription(file);
+    }
+  });
+  els.asrToolRefreshHistoryButton?.addEventListener("click", async () => {
+    const ok = await loadAsrToolHistory();
+    if (ok) {
+      setInlineStatus(els.asrToolStatus, "История ASR Studio обновлена.", "success");
+      setFooter("История ASR обновлена.", "success");
+    }
+  });
+  els.asrToolInsertPromptButton?.addEventListener("click", () => {
+    insertAsrToolIntoPrompt();
+  });
+  els.asrToolSendButton?.addEventListener("click", async () => {
+    await sendAsrToolTextToChat();
+  });
+  els.asrToolSaveButton?.addEventListener("click", async () => {
+    await saveAsrToolTranscript();
+  });
+  els.asrToolClearButton?.addEventListener("click", () => {
+    clearAsrToolEditor();
+  });
+  els.asrToolDeleteButton?.addEventListener("click", async () => {
+    await deleteSelectedAsrToolTranscript();
+  });
+  els.asrToolClearHistoryButton?.addEventListener("click", async () => {
+    await clearAsrToolHistory();
+  });
+  els.asrToolHistoryList?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-asr-history-id]");
+    if (!button) return;
+    await selectAsrToolTranscript(button.dataset.asrHistoryId);
   });
 
   els.refreshTtsVoicesButton?.addEventListener("click", async () => {
@@ -3328,9 +4121,33 @@ function bindEvents() {
     const button = event.target.closest("[data-tool-dock]");
     if (!button) return;
     const kind = button.dataset.toolDock || "";
+    if (kind === "asr") {
+      await openAsrTool({ focusText: true });
+      return;
+    }
     if (kind === "tts") {
       await openTtsTool({ focusText: true });
     }
+  });
+
+  els.closeOcrButton?.addEventListener("click", () => closeOcrEditor());
+  els.ocrBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.ocrBackdrop) {
+      closeOcrEditor();
+    }
+  });
+  els.ocrTextOutput?.addEventListener("input", () => {
+    state.ocrText = els.ocrTextOutput.value || "";
+    renderOcrEditor();
+  });
+  els.ocrInsertPromptButton?.addEventListener("click", () => {
+    insertOcrIntoPrompt();
+  });
+  els.ocrSendButton?.addEventListener("click", async () => {
+    await sendOcrTextToChat();
+  });
+  els.ocrClearButton?.addEventListener("click", () => {
+    clearOcrEditor();
   });
 
   els.refreshModelsButton?.addEventListener("click", async () => {
@@ -3494,7 +4311,11 @@ function bindEvents() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeSidebar();
+      closeOcrEditor();
       closeSettings();
+      stopAsrToolDrag();
+      stopAsrToolResize();
+      closeAsrTool();
       stopTtsToolDrag();
       stopTtsToolResize();
       closeTtsTool();
@@ -3515,9 +4336,14 @@ function bindEvents() {
     if (!isMobileLayout()) {
       closeSidebar();
     }
+    stopAsrToolDrag();
+    stopAsrToolResize();
     stopTtsToolDrag();
     stopTtsToolResize();
     toggleComposerMenu(false);
+    if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {
+      setAsrToolWindowBounds();
+    }
     if (state.ttsToolIsOpen && !els.ttsToolWindow?.classList.contains("tool-window--fullscreen")) {
       setTtsToolWindowBounds();
     }
@@ -3529,6 +4355,8 @@ function bindEvents() {
 async function bootstrap() {
   renderWhisperControls();
   renderTtsControls();
+  renderAsrTool();
+  renderOcrEditor();
   renderToolDock();
   renderVoiceRecordButton();
   autoResizePrompt();

@@ -1,52 +1,62 @@
-# 🧠 LocalGPT — локальный chat-first ассистент
+# LocalGPT
 
-LocalGPT — полностью локальный ассистент на FastAPI + Ollama + faster-whisper.
-Проект работает без внешних облачных API: чат, хранение истории, транскрибация, профили и настройки живут внутри локального проекта.
+Локальный unified-проект для `chat + ASR + TTS + OCR` без внешних облачных API.
+Основной runtime работает на `FastAPI + Ollama + faster-whisper + Piper + Tesseract`.
 
-Текущий интерфейс упрощён до messenger-like сценария:
-- диалоги слева;
-- сообщения по центру;
-- настройки и модели в отдельной панели;
-- `+`-меню рядом с полем ввода;
-- микрофон внутри поля ввода;
-- доступ с телефона по локальной сети через Caddy.
+## Что уже есть
 
-## Что умеет сейчас
+- локальный чат с историей, профилями и model settings;
+- `ASR Studio` для отдельной транскрибации файлов:
+  история, редактирование, удаление записи, очистка истории;
+- быстрый voice-to-input сценарий через микрофон внутри поля ввода;
+- `Voice Studio` для локальной озвучки:
+  история, выбор голоса, скорость, скачивание, очистка истории;
+- `OCR v1` через `+ -> Файл`:
+  загрузка изображения, локальное распознавание текста, правка и отправка в чат;
+- запуск по локальной сети с телефона через Caddy;
+- единое хранение моделей и кэшей только внутри `/models`.
 
-- локальный чат через Ollama/OpenAI-compatible endpoint;
-- профили и отдельные истории диалогов;
-- модельные настройки на уровне профиля и модели:
-  `temperature`, `mem_turns`, `max_tokens`, `num_ctx`;
-- загрузка и удаление Ollama-моделей из UI;
-- транскрибация аудио/видео через faster-whisper;
-- голосовой ввод: запись с микрофона, распознавание через Whisper `large-v3-turbo`, вставка текста в поле ввода до отправки;
-- локальная озвучка последнего ответа через Piper TTS и кнопку `Озвучить` в меню `+`;
-- переносимое хранение путей моделей через `.env`;
-- LAN/телефонный запуск через Caddy.
+## Архитектурный принцип
 
-## Быстрый старт
+`compare-branch/` сейчас остаётся внутри проекта как `read-only reference`.
+Runtime не должен зависеть от кода внутри `compare-branch`: это только база для переноса и сверки решений.
+
+Целевая схема проекта:
+
+- `chat` — диалоги, профили, сообщения, Ollama-модели;
+- `asr` — диктовка в input и `ASR Studio`;
+- `tts` — `Voice Studio`, Piper-голоса и аудиоистория;
+- `ocr` — извлечение текста из изображений;
+- `models` — единый корень для всех model-artifacts и кэшей;
+- `runtime/LAN` — launcher, Caddy, LAN URL, shutdown-flow.
+
+## Быстрый запуск
 
 Требования:
+
 - Python 3.10+
 - Ollama
 - ffmpeg
+- Tesseract OCR
 
-Запуск из корня проекта:
+Основной запуск из корня:
 
 ```bash
 python3 run_localgpt.py
 ```
 
-Быстрые launcher-обёртки из корня:
+Wrapper-скрипты:
 
 ```bash
 ./start_localgpt.sh
+./start_localgpt_lan.sh
 ```
 
 macOS double-click:
 
 ```text
 start_localgpt.command
+start_localgpt_lan.command
 ```
 
 Windows:
@@ -55,12 +65,23 @@ Windows:
 start_localgpt.bat
 ```
 
-Что делает launcher:
+Legacy alias для LAN-запуска сохранён:
+
+```text
+LTrnsrb.command
+```
+
+Он остаётся только для backward compatibility и теперь просто вызывает `start_localgpt_lan.sh`.
+
+## Что делает launcher
+
+`run_localgpt.py`:
+
 - создаёт `venv`, если его нет;
 - ставит зависимости из `app/requirements.txt`, если они изменились;
-- проверяет доступность Ollama;
-- поднимает backend FastAPI;
-- открывает UI в браузере.
+- проверяет Ollama;
+- поднимает backend;
+- открывает локальный UI.
 
 Локальный UI:
 
@@ -68,196 +89,194 @@ start_localgpt.bat
 http://127.0.0.1:8000/ui/gui_html.html
 ```
 
-Ручной запуск:
+## Запуск с телефона по LAN
+
+Основной LAN entrypoint:
 
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r app/requirements.txt
-ollama serve &
-uvicorn app.server:app --host 127.0.0.1 --port 8000
+./start_localgpt_lan.sh
 ```
 
-## Доступ с телефона через Caddy
+или на macOS:
 
-Для macOS добавлен отдельный LAN-launcher:
-
-```bash
-./LTrnsrb.command
+```text
+start_localgpt_lan.command
 ```
 
-или
+Что делает LAN launcher:
 
-```bash
-./tools/LTrnsrb.sh
-```
-
-Что он делает:
 - запускает backend в фоне;
 - определяет LAN IP;
-- поднимает Caddy на `https://<lan-ip>:8443`;
-- открывает UI по LAN URL;
-- пишет PID и runtime-логи во временную директорию пользователя.
+- поднимает Caddy на HTTPS;
+- открывает unified UI по LAN URL;
+- пишет runtime-логи во временную директорию пользователя.
 
 Что нужно отдельно:
+
 - `brew install caddy`
 - Mac и телефон в одной Wi-Fi сети
-- если нужен доступ из Safari/iPhone, нужно доверить локальный сертификат Caddy
+- если нужен Safari/iPhone, нужно доверить локальный сертификат Caddy
 
-## Текущий UX
+Полезные LAN файлы:
 
-Главный сценарий теперь такой:
-- открыть существующий чат или создать новый;
-- написать сообщение;
-- при необходимости:
-  - через `+` прикрепить файл на транскрибацию;
-  - через микрофон записать голос и превратить его в текст;
-  - через `Озвучить` проиграть последний ответ ассистента.
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/tools/LTrnsrb.sh`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/start_localgpt_lan.sh`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/start_localgpt_lan.command`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/Caddyfile.lan`
 
-Отдельной плашки `Активный транскрипт` в чате больше нет.
-Если транскрипт прикреплён к сессии, это отражается тихо через контекст/логику backend, без лишнего визуального блока.
+## UI сценарии
 
-## Профили, сессии и память
+### Чат
 
-- профили хранятся в SQLite;
-- каждая сессия привязана к профилю;
-- история сообщений хранится в базе;
-- в prompt попадает последние `MEM_TURNS` пар `user/assistant`;
-- транскрипт для сессии может быть автоматически подхвачен как контекст;
-- model settings хранятся отдельно для пары `profile + model`.
+- диалоги слева;
+- сообщения по центру;
+- настройки и модели в отдельной панели;
+- меню `+` рядом с полем ввода;
+- микрофон внутри поля ввода;
+- LAN URL в topbar.
 
-## Транскрибация и голос
+### `+` меню
 
-### Файловая транскрибация
-- загружается аудио/видео;
-- backend вызывает `/transcribe`;
-- текст сохраняется в SQLite как transcript и становится доступным в контексте сессии.
+- `Файл` — OCR v1 для изображений;
+- `Транскрибировать` — открывает `ASR Studio`;
+- `Озвучить` — открывает `Voice Studio`.
 
-### Голосовой ввод
-- запись идёт в браузере через `MediaRecorder`;
-- после остановки запись отправляется на `/transcribe` с `store_result=false`;
-- используется Whisper `large-v3-turbo`;
-- распознанный текст вставляется в поле ввода;
-- история транскриптов при этом не засоряется.
+### `ASR Studio`
 
-### Озвучка
-- кнопка `Озвучить` в меню `+` генерирует локальный WAV через `/tts/generate`;
-- используется локальный TTS provider `Piper`;
-- выбор TTS provider и голоса вынесен в настройки.
+- отдельная транскрибация аудио/видео;
+- история транскриптов;
+- редактирование текста;
+- удаление записи;
+- очистка всей истории;
+- вставка текста в prompt;
+- отправка текста прямо в чат.
 
-## Модели и пути
+Быстрый voice-to-input при этом остаётся отдельным UX и не смешивается с `ASR Studio`.
 
-Пути управляются через `.env` и могут быть относительными к корню проекта.
+### `Voice Studio`
+
+- выбор Piper-голоса;
+- выбор скорости;
+- генерация локального WAV;
+- история генераций;
+- скачивание записи;
+- удаление записи;
+- очистка всей истории.
+
+### OCR v1
+
+- принимает изображения;
+- локально извлекает текст через Tesseract;
+- открывает OCR-редактор;
+- позволяет поправить текст;
+- позволяет вставить его в prompt или сразу отправить в чат.
+
+## Пути моделей
+
+Все модели и кэши должны жить только внутри `/models`.
+
+Базовая структура:
+
+```text
+models/
+├── ollama/
+├── whisper/
+├── tts/
+│   └── piper/
+├── hf_cache/
+└── ctranslate2_cache/
+```
+
+`.env` и `.env.example` поддерживают переносимые относительные пути.
 
 Пример:
 
 ```env
 MODELS_DIR=models
-WHISPER_MODELS_DIR=models/whisper
 OLLAMA_MODELS_DIR=models/ollama
+WHISPER_MODELS_DIR=models/whisper
 TTS_MODELS_DIR=models/tts
 PIPER_MODELS_DIR=models/tts/piper
 HF_CACHE_DIR=models/hf_cache
 CTRANSLATE2_CACHE_DIR=models/ctranslate2_cache
 
-LOCAL_BASE_URL=http://localhost:11434/v1
-LOCAL_API_KEY=LOCAL-KEY
-LOCAL_MODEL=qwen2.5:3b
-
-TEMP=0.25
-MAX_TOKENS=512
-NUM_CTX=32768
-MEM_TURNS=6
+LAN_ACCESS_URL=
+LAN_HTTPS_PORT=8443
 ```
 
-Что важно:
-- относительные пути резолвятся от корня проекта;
-- UI умеет менять базовую папку моделей и переносить существующие данные;
-- внутри `models/` структура уже разведена по feature-зонам:
-  `ollama` для чата, `whisper` для ASR, `tts` для озвучки;
-- `.env` сохраняется в переносимом виде, без обязательных абсолютных путей.
+## Ошибки загрузки моделей
 
-## Архитектура по feature-зонам
+Загрузка Ollama-моделей идёт через `/models/pull`.
+UI теперь должен показывать не только `код 1`, а реальную причину из вывода `ollama pull`.
 
-- `chat`:
-  диалоги, профили, сообщения, Ollama-модели и настройки LLM.
-- `asr`:
-  файловая транскрибация, голосовой ввод и Whisper-модели.
-- `tts`:
-  локальная озвучка ответов, Piper-голоса и история генераций.
+Для `mistral:7b` важно:
 
-Это разделение сохранено и в коде, и в папках моделей, чтобы дальше можно было отдельно дорабатывать `chat`, `asr` или `tts`.
-
-## Промпты и стили ответов
-
-Системные промпты лежат в:
-
-```text
-app/prompts/
-```
-
-Ключевые файлы:
-- `system_base.md`
-- `system_free.md`
-- `system_teacher.md`
-- `system_business_strict.md`
-- `system_explain.md`
-- `system_calc.md`
-- `system_hr.md`
-
-Важно:
-- сейчас основной UI заточен под свободный chat-first режим;
-- backend всё ещё поддерживает роли, но UI больше не строится вокруг role-switching в основном потоке;
-- prompt-файлы читаются с диска без долгоживущего кэша, поэтому изменения проще тестировать.
+- тег валиден;
+- модель может не быть установлена локально;
+- исторический сбой мог быть вызван сетевой ошибкой или проблемой доступа к Ollama;
+- такие ошибки теперь должны surfaced как человекочитаемое сообщение, а не только `ollama pull вернул код 1`.
 
 ## Структура проекта
 
 ```text
 LocalGPT/
-├── app/                  # backend, маршруты, сервисы, промпты, БД-логика
-├── web_ui/               # активный chat-first frontend
-├── models/               # единое хранилище моделей и кэшей
-│   ├── ollama/
-│   ├── whisper/
+├── app/
+│   ├── routes/
+│   ├── routers/
+│   ├── services/
+│   ├── providers/
+│   ├── prompts/
+│   ├── data/
+│   └── db/
+├── web_ui/
+├── models/
+├── compare-branch/          # reference-only, не runtime
+│   ├── chat/
+│   ├── asr/
 │   ├── tts/
-│   ├── hf_cache/
-│   └── ctranslate2_cache/
-├── app/db/localgpt.db    # SQLite: профили, сессии, сообщения, транскрипты, настройки
-├── run_localgpt.py       # основной launcher
-├── tools/LTrnsrb.sh      # LAN-launcher для macOS + Caddy
-├── LTrnsrb.command       # удобный wrapper для двойного клика
+│   └── ocr/
+├── run_localgpt.py
+├── start_localgpt.sh
+├── start_localgpt.command
+├── start_localgpt_lan.sh
+├── start_localgpt_lan.command
+├── LTrnsrb.command          # legacy alias
+├── tools/LTrnsrb.sh         # LAN launcher implementation
 ├── .env
 └── .env.example
 ```
 
-## Важные файлы
+## Ключевые файлы
 
-- `run_localgpt.py` — локальный запуск и bootstrap окружения
-- `app/server.py` — FastAPI-приложение
-- `app/routes/chat.py` — основной chat endpoint
-- `app/routes/transcribe.py` — ASR/transcribe endpoint
-- `app/routers/tts.py` — локальный TTS API
-- `app/routes/meta.py` — health, roles, runtime shutdown, LAN metadata
-- `app/routes/profiles.py` — профили, сессии, model settings
-- `web_ui/gui_html.html` — активная HTML-страница
-- `web_ui/js/app.js` — активный frontend controller
-- `web_ui/css/style.css` — активные стили
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/server.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/chat.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcribe.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcripts.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/ocr.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routers/tts.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/meta.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/services/ocr.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/services/models.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/gui_html.html`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/js/app.js`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/css/style.css`
 
 ## Диагностика
 
-Проверка health:
+Health:
 
 ```bash
 curl -s http://127.0.0.1:8000/health
 ```
 
 Полезные файлы:
+
 - `ollama.log`
 - `tmp_logs/chat.log`
 - runtime-логи launcher в `${TMPDIR}/LocalGPT-<uid>/`
 
-## Примечания
+## Текущее ограничение
 
-- Проект остаётся полностью локальным.
-- Старые frontend-модули в `web_ui/js/` могут лежать в репозитории как legacy/reference, но активный UI сейчас подключает `web_ui/js/app.js`.
-- Если меняете системные промпты или поведение модели, лучше тестировать на новом чате, без старой истории в текущей сессии.
+`compare-branch/` пока не удаляется.
+Сейчас внутри него лежат reference-папки `chat / asr / tts / ocr`.
+Удаление reference-папок выносится в отдельную cleanup-задачу после полной parity-проверки unified проекта.

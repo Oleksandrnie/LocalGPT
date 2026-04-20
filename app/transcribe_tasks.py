@@ -73,6 +73,7 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "updated_at": task.get("updated_at"),
         "model": task.get("model"),
         "source_name": task.get("source_name"),
+        "origin": task.get("origin"),
         "message": task.get("message"),
         "error_code": task.get("error_code"),
         "pid": task.get("pid"),
@@ -104,6 +105,7 @@ def _transcription_worker(
     profile_id: int,
     session_id: str | None,
     store_result: bool,
+    origin: str | None,
     result_path: str,
     error_path: str,
 ) -> None:
@@ -125,6 +127,7 @@ def _transcription_worker(
         transcript_record = None
 
         if store_result:
+            labels = {"origin": origin} if origin else None
             transcript_record = db.create_transcript(
                 profile_id=profile_id,
                 session_id=session_id,
@@ -134,6 +137,7 @@ def _transcription_worker(
                 language=detected_language or preferred_language or "auto",
                 timeline=timeline,
                 role_keywords=role_keywords,
+                labels=labels,
             )
 
         _atomic_write_json(
@@ -151,6 +155,7 @@ def _transcription_worker(
                 "profile_id": profile_id or None,
                 "session_id": session_id or None,
                 "stored": bool(store_result),
+                "origin": origin or None,
             },
         )
     except Exception as exc:  # pragma: no cover - runtime path
@@ -238,6 +243,7 @@ def start_transcription_task(
     profile_id: int,
     session_id: str | None,
     store_result: bool,
+    origin: str | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -255,6 +261,7 @@ def start_transcription_task(
             profile_id,
             session_id,
             store_result,
+            origin,
             str(result_path),
             str(error_path),
         ),
@@ -277,6 +284,7 @@ def start_transcription_task(
         "updated_at": now,
         "model": model,
         "source_name": source_name,
+        "origin": origin or None,
         "message": "Transcription started.",
         "error_code": None,
         "pid": process.pid,

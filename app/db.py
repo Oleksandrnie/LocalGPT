@@ -373,7 +373,12 @@ def create_transcript(
     return get_transcript(new_id)  # type: ignore[return-value]
 
 
-def list_transcripts(profile_id: int, session_id: str | None = None) -> list[dict[str, Any]]:
+def list_transcripts(
+    profile_id: int,
+    session_id: str | None = None,
+    *,
+    origin: str | None = None,
+) -> list[dict[str, Any]]:
     query = """
         SELECT id, profile_id, session_id, name, source_path, content, language,
                timeline_json, role_keywords_json, labels_json, created_at, updated_at
@@ -396,7 +401,18 @@ def list_transcripts(profile_id: int, session_id: str | None = None) -> list[dic
         item["role_keywords"] = _from_json(item.pop("role_keywords_json", None), {})
         item["labels"] = _from_json(item.pop("labels_json", None), {})
         result.append(item)
-    return result
+    if origin is None:
+        return result
+
+    expected_origin = str(origin).strip()
+    if not expected_origin:
+        return result
+
+    return [
+        item
+        for item in result
+        if str((item.get("labels") or {}).get("origin") or "").strip() == expected_origin
+    ]
 
 
 def get_transcript(transcript_id: int) -> dict[str, Any] | None:
@@ -462,6 +478,24 @@ def delete_transcript(transcript_id: int) -> None:
     with closing(_connect()) as conn:
         conn.execute("DELETE FROM transcripts WHERE id = ?", (transcript_id,))
         conn.commit()
+
+
+def delete_transcripts(
+    profile_id: int,
+    session_id: str | None = None,
+    *,
+    origin: str | None = None,
+) -> int:
+    items = list_transcripts(profile_id, session_id=session_id, origin=origin)
+    ids = [int(item["id"]) for item in items if item.get("id") is not None]
+    if not ids:
+        return 0
+
+    placeholders = ", ".join("?" for _ in ids)
+    with closing(_connect()) as conn:
+        conn.execute(f"DELETE FROM transcripts WHERE id IN ({placeholders})", ids)
+        conn.commit()
+    return len(ids)
 
 
 def get_latest_transcript_for_session(session_id: str) -> dict[str, Any] | None:

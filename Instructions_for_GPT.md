@@ -1,35 +1,38 @@
-# LocalGPT TTS Context
+# LocalGPT Unified Context
 
-LocalGPT в этой ветке — локальный TTS-инструмент.
+Текущий проект — единый runtime для:
 
-Технологии:
-- FastAPI backend
-- HTML/CSS/JS WebUI
-- Piper как TTS provider
-- локальное файловое хранение внутри проекта
+- `chat`
+- `asr`
+- `tts`
+- `ocr`
+- `lan`
+
+Базовые принципы:
+
+1. Все модели и кэши живут только внутри `models/`.
+2. `compare-branch/` — только reference, не runtime-источник.
+3. `+ -> Транскрибировать` открывает `ASR Studio`.
+4. `+ -> Озвучить` открывает `Voice Studio`.
+5. `+ -> Файл` запускает OCR v1 для изображений.
+6. LAN-launcher с понятным именем — `start_localgpt_lan.*`.
+7. `LTrnsrb.*` остаётся только как legacy alias.
 
 Ключевые каталоги:
-- `app/routers/tts.py`
-- `app/services/tts_service.py`
-- `app/services/audio_postprocess_service.py`
-- `app/providers/tts/`
-- `app/data/tts/`
-- `models/tts/piper/`
 
-Основной пользовательский сценарий:
-1. ввести текст;
-2. выбрать локальный голос;
-3. нажать `Generate`;
-4. получить базовый `WAV`;
-5. при необходимости применить speed post-process;
-6. скачать base или processed `WAV`.
+- `app/routes/`
+- `app/routers/`
+- `app/services/`
+- `app/data/`
+- `web_ui/`
+- `models/`
 
-API:
-- `GET /tts/health`
-- `GET /tts/voices`
-- `POST /tts/generate`
-- `POST /tts/process-speed`
-- `GET /tts/history`
-- `GET /tts/history/{id}`
-- `DELETE /tts/history/{id}`
-- `GET /tts/output/{id}`
+Feature-зоны:
+
+- `chat`: профили, диалоги, сообщения, model settings, Ollama download flow
+- `asr`: voice-to-input, файловая транскрибация, `ASR Studio`, transcript history
+- `tts`: `Voice Studio`, Piper voices, audio history, speed variants
+- `ocr`: image-to-text, OCR editor, insert/send to chat
+- `lan`: Caddy, LAN URL, launcher flow, shutdown/runtime metadata
+
+Документация и naming должны использовать `LocalGPT LAN` / `start_localgpt_lan.*` как основной путь.

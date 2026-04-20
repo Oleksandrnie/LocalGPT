@@ -16,9 +16,9 @@ def _get_profile_or_404(profile_id: int) -> dict:
 
 
 @router.get("/transcripts")
-def list_transcripts(profile_id: int, session_id: str | None = None):
+def list_transcripts(profile_id: int, session_id: str | None = None, origin: str | None = None):
     _get_profile_or_404(profile_id)
-    transcripts = db.list_transcripts(profile_id, session_id=session_id)
+    transcripts = db.list_transcripts(profile_id, session_id=session_id, origin=origin)
     return {"transcripts": transcripts}
 
 
@@ -48,6 +48,14 @@ def create_transcript(req: TranscriptCreate):
         raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Контент транскрипта обязателен"}) from exc
 
 
+@router.get("/transcripts/{transcript_id}")
+def get_transcript(transcript_id: int):
+    transcript = db.get_transcript(transcript_id)
+    if not transcript:
+        raise HTTPException(status_code=404, detail="transcript_not_found")
+    return transcript
+
+
 @router.patch("/transcripts/{transcript_id}")
 def update_transcript(transcript_id: int, req: TranscriptUpdate):
     updated = db.update_transcript(
@@ -71,3 +79,10 @@ def delete_transcript(transcript_id: int):
         raise HTTPException(status_code=404, detail="transcript_not_found")
     db.delete_transcript(transcript_id)
     return {"deleted": transcript_id}
+
+
+@router.delete("/transcripts")
+def delete_transcripts(profile_id: int, session_id: str | None = None, origin: str | None = None):
+    _get_profile_or_404(profile_id)
+    deleted = db.delete_transcripts(profile_id, session_id=session_id, origin=origin)
+    return {"deleted": deleted}

@@ -45,7 +45,9 @@ def _get_access_url(request: Request) -> str | None:
 
 
 def _get_lan_url(request: Request) -> str | None:
-    explicit = (os.getenv("IOS_ACCESS_URL", "") or "").strip()
+    explicit = (os.getenv("LAN_ACCESS_URL", "") or "").strip()
+    if not explicit:
+        explicit = (os.getenv("IOS_ACCESS_URL", "") or "").strip()
     if explicit:
         return explicit
 
@@ -57,7 +59,10 @@ def _get_lan_url(request: Request) -> str | None:
     if not lan_ip:
         return None
 
-    port = os.getenv("IOS_HTTPS_PORT", "8443").strip() or "8443"
+    port = (os.getenv("LAN_HTTPS_PORT", "") or "").strip()
+    if not port:
+        port = (os.getenv("IOS_HTTPS_PORT", "8443") or "").strip()
+    port = port or "8443"
     return f"https://{lan_ip}:{port}/ui/gui_html.html"
 
 
@@ -138,6 +143,7 @@ def health(request: Request):
             "voices_count": tts_health.get("provider", {}).get("voices_count"),
         },
         "access_url": _get_access_url(request),
+        "lan_url": _get_lan_url(request),
         "ios_url": _get_lan_url(request),
     }
 

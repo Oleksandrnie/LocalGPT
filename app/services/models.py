@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -20,6 +21,63 @@ MODEL_PULL_PROCS: dict[str, subprocess.Popen] = {}
 MODEL_PULL_LOCK = threading.Lock()
 AUTO_PULL_TRIGGERED = False
 DEFAULT_LLAMA_MODEL = os.getenv("DEFAULT_LOCAL_MODEL", config.MODEL_RECOMMENDATIONS[0]["name"])
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _normalize_pull_error_message(candidate: Any) -> str:
+    text = ANSI_ESCAPE_RE.sub("", str(candidate or ""))
+    text = text.replace("\r", "\n")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    progress_prefixes = (
+        "pulling ",
+        "verifying ",
+        "writing manifest",
+        "removing any unused layers",
+        "success",
+    )
+    noise_markers = (" MB/", " GB/", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇")
+
+    for line in reversed(lines):
+        lowered = line.lower()
+        if lowered in {"error", "failed"}:
+            continue
+        if lowered.startswith(progress_prefixes):
+            continue
+        if any(marker in line for marker in noise_markers):
+            continue
+        while lowered.startswith("error:"):
+            line = line.split(":", 1)[1].strip()
+            lowered = line.lower()
+        if not line:
+            continue
+
+        network_markers = (
+            "dial tcp",
+            "connection refused",
+            "connection reset",
+            "context deadline exceeded",
+            "tls handshake timeout",
+            "i/o timeout",
+            "no such host",
+            "network is unreachable",
+            "temporary failure",
+            "unexpected eof",
+            "service unavailable",
+            "lookup ",
+        )
+        if any(marker in lowered for marker in network_markers):
+            return f"Сетевая ошибка Ollama: {line}"
+        return line
+    return ""
+
+
+def _extract_pull_error_message(*candidates: Any) -> str:
+    for candidate in candidates:
+        text = _normalize_pull_error_message(candidate)
+        if not text:
+            continue
+        return text
+    return ""
 
 
 def _public_pull_status(data: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +182,7 @@ def _run_model_pull(task_id: str, model: str) -> None:
         last_completed = 0
         last_ts = start_ts
         raw_error = None
+        last_output_line = ""
         try:
             process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=config.OLLAMA_ENV
@@ -143,6 +202,7 @@ def _run_model_pull(task_id: str, model: str) -> None:
                 line = raw_line.strip()
                 if not line:
                     continue
+                last_output_line = line
                 with MODEL_PULL_LOCK:
                     if MODEL_PULLS.get(task_id, {}).get("state") == "canceled":
                         process.terminate()
@@ -154,9 +214,11 @@ def _run_model_pull(task_id: str, model: str) -> None:
                         if "unknown flag: --json" in line.lower():
                             raw_error = "unknown flag: --json"
                             break
+                        raw_error = line
                         continue
 
                     status_text = payload.get("status") or payload.get("digest") or ""
+                    error_text = payload.get("error") or payload.get("message") or ""
                     total = payload.get("total")
                     completed = payload.get("completed")
 
@@ -176,10 +238,10 @@ def _run_model_pull(task_id: str, model: str) -> None:
                         last_completed = completed
                         last_ts = now
 
-                    _update_pull(
+                        _update_pull(
                         task_id,
                         state="running",
-                        message=status_text,
+                        message=status_text or error_text or line,
                         completed=completed,
                         total=total,
                         percent=percent,
@@ -201,13 +263,15 @@ def _run_model_pull(task_id: str, model: str) -> None:
             if process.returncode == 0:
                 _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
             else:
+                error_message = _extract_pull_error_message(raw_error, last_output_line, f"ollama pull вернул код {process.returncode}")
                 _update_pull(
                     task_id,
                     state="error",
-                    message=f"ollama pull вернул код {process.returncode}",
+                    message=error_message,
+                    reason=error_message,
                     finished_at=finished,
                 )
-            return process.returncode, raw_error
+            return process.returncode, _extract_pull_error_message(raw_error, last_output_line)
         finally:
             with MODEL_PULL_LOCK:
                 if task_id in MODEL_PULLS:

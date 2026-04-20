@@ -1,17 +1,30 @@
-# LocalGPT TTS Short
+# LocalGPT Short
 
-Ветка сфокусирована на локальном text-to-speech.
+Unified-проект сфокусирован на:
+
+- локальном чате;
+- `ASR Studio`;
+- `Voice Studio`;
+- OCR v1 для изображений;
+- LAN-доступе с телефона.
 
 Основа:
+
 - `FastAPI`
 - `WebUI`
+- `Ollama`
+- `faster-whisper`
 - `Piper`
-- локальный `WAV` output
+- `Tesseract`
 
 Storage:
-- `models/tts/piper`
-- `app/data/tts/history`
-- `app/data/tts/output`
-- `app/data/tts/temp`
 
-Legacy speech-to-text контур в этой ветке не используется.
+- `models/ollama`
+- `models/whisper`
+- `models/tts/piper`
+- `models/hf_cache`
+- `models/ctranslate2_cache`
+- `app/data/tts`
+- `app/db/localgpt.db`
+
+Legacy `LTrnsrb` naming сохранён только как alias.

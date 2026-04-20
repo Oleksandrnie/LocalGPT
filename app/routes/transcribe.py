@@ -88,6 +88,7 @@ def _transcribe_sync(
     session_id: str | None,
     profile_id: int,
     store_result: bool,
+    origin: str | None,
 ) -> dict[str, object]:
     transcript_record = None
     transcription = transcribe_with_fallback(
@@ -105,6 +106,7 @@ def _transcribe_sync(
     role_keywords = transcription.get("role_keywords") or {} if isinstance(transcription, dict) else {}
 
     if store_result:
+        labels = {"origin": origin} if origin else None
         transcript_record = db.create_transcript(
             profile_id=profile_id,
             session_id=session_id,
@@ -114,6 +116,7 @@ def _transcribe_sync(
             language=detected_language or language_raw,
             timeline=timeline,
             role_keywords=role_keywords,
+            labels=labels,
         )
 
     return {
@@ -129,6 +132,7 @@ def _transcribe_sync(
         "profile_id": profile_id or None,
         "session_id": session_id or None,
         "stored": store_result,
+        "origin": origin or None,
     }
 
 
@@ -141,6 +145,7 @@ def transcribe(
     session_id: str = Form(default=""),
     profile_id: int = Form(default=0),
     store_result: bool = Form(default=True),
+    origin: str = Form(default=""),
 ):
     tmp_path, source_name = _store_upload_temp(file)
     model_name = (model or config.SETTINGS.whisper_default_model).strip()
@@ -164,6 +169,7 @@ def transcribe(
             session_id=sid,
             profile_id=profile_id_val,
             store_result=bool(store_result),
+            origin=(origin or "").strip() or None,
         )
     except RuntimeError as exc:
         msg = str(exc)
@@ -199,6 +205,7 @@ def start_transcription_task(
     session_id: str = Form(default=""),
     profile_id: int = Form(default=0),
     store_result: bool = Form(default=True),
+    origin: str = Form(default=""),
 ):
     tmp_path, source_name = _store_upload_temp(file)
     model_name = (model or config.SETTINGS.whisper_default_model).strip()
@@ -220,6 +227,7 @@ def start_transcription_task(
             profile_id=profile_id_val,
             session_id=sid,
             store_result=bool(store_result),
+            origin=(origin or "").strip() or None,
         )
     except Exception:
         try:
