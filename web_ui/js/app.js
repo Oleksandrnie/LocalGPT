@@ -3,6 +3,7 @@ const STORAGE_KEYS = {
   activeProfileId: "localgpt_simple_profile_id",
   activeSessionId: "localgpt_simple_session_id",
   llmModel: "localgpt_simple_llm_model",
+  chatWhisperModel: "localgpt_simple_chat_whisper_model",
   whisperModel: "localgpt_simple_whisper_model",
   promptPreset: "localgpt_simple_prompt_preset",
   ttsProvider: "localgpt_simple_tts_provider",
@@ -17,6 +18,11 @@ const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
 const ASR_TOOL_ORIGIN = "asr_tool";
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
+const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
+const MEDIA_FILE_EXTENSIONS = new Set([
+  "mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus", "aiff", "aif", "wma",
+  "mp4", "mov", "m4v", "avi", "mkv", "webm", "mpeg", "mpg", "ts", "mts", "m2ts",
+]);
 
 const els = {
   sidebar: document.getElementById("sidebar"),
@@ -29,15 +35,21 @@ const els = {
   chatTitle: document.getElementById("chatTitle"),
   healthStatus: document.getElementById("healthStatus"),
   contextStatus: document.getElementById("contextStatus"),
+  quickModelButton: document.getElementById("quickModelButton"),
+  quickModelValue: document.getElementById("quickModelValue"),
+  quickModelMeta: document.getElementById("quickModelMeta"),
+  quickModelMenu: document.getElementById("quickModelMenu"),
   quickModelSelect: document.getElementById("quickModelSelect"),
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
   openSettingsButton: document.getElementById("openSettingsButton"),
+  chatShell: document.getElementById("chatShell"),
   messageScroll: document.getElementById("messageScroll"),
   messageList: document.getElementById("messageList"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
   promptInput: document.getElementById("promptInput"),
   voiceRecordButton: document.getElementById("voiceRecordButton"),
+  voiceModelMenu: document.getElementById("voiceModelMenu"),
   sendButton: document.getElementById("sendButton"),
   composerMenuButton: document.getElementById("composerMenuButton"),
   composerMenu: document.getElementById("composerMenu"),
@@ -48,8 +60,14 @@ const els = {
   ocrImageInput: document.getElementById("ocrImageInput"),
   scrollTopButton: document.getElementById("scrollTopButton"),
   footerStatus: document.getElementById("footerStatus"),
+  chatDropOverlay: document.getElementById("chatDropOverlay"),
+  chatDropOverlayTitle: document.getElementById("chatDropOverlayTitle"),
+  chatDropOverlayMeta: document.getElementById("chatDropOverlayMeta"),
   toolDock: document.getElementById("toolDock"),
   asrToolWindow: document.getElementById("asrToolWindow"),
+  asrToolDropOverlay: document.getElementById("asrToolDropOverlay"),
+  asrToolDropOverlayTitle: document.getElementById("asrToolDropOverlayTitle"),
+  asrToolDropOverlayMeta: document.getElementById("asrToolDropOverlayMeta"),
   asrToolHeader: document.querySelector("#asrToolWindow [data-tool-drag='asr']"),
   asrToolResizeHandle: document.querySelector("#asrToolWindow [data-tool-resize='asr']"),
   asrToolMinimizeButton: document.getElementById("asrToolMinimizeButton"),
@@ -99,6 +117,17 @@ const els = {
   ocrClearButton: document.getElementById("ocrClearButton"),
   settingsBackdrop: document.getElementById("settingsBackdrop"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
+  confirmBackdrop: document.getElementById("confirmBackdrop"),
+  confirmEyebrow: document.getElementById("confirmEyebrow"),
+  confirmTitle: document.getElementById("confirmTitle"),
+  confirmMessage: document.getElementById("confirmMessage"),
+  confirmCancelButton: document.getElementById("confirmCancelButton"),
+  confirmDismissButton: document.getElementById("confirmDismissButton"),
+  confirmApproveButton: document.getElementById("confirmApproveButton"),
+  toastStack: document.getElementById("toastStack"),
+  toastNotice: document.getElementById("toastNotice"),
+  toastTitle: document.getElementById("toastTitle"),
+  toastMessage: document.getElementById("toastMessage"),
   llmModelSelect: document.getElementById("llmModelSelect"),
   refreshModelsButton: document.getElementById("refreshModelsButton"),
   deleteModelButton: document.getElementById("deleteModelButton"),
@@ -162,11 +191,12 @@ const state = {
   recommendedModels: [],
   downloads: [],
   selectedLlmModel: "",
-  selectedWhisperModel: readStored(STORAGE_KEYS.whisperModel, "medium"),
-  selectedPromptPreset: readStored(STORAGE_KEYS.promptPreset, "none"),
-  selectedTtsProvider: readStored(STORAGE_KEYS.ttsProvider, "piper"),
-  selectedTtsVoiceId: readStored(STORAGE_KEYS.ttsVoiceId, ""),
-  selectedTtsSpeed: readStored(STORAGE_KEYS.ttsSpeed, "1"),
+  selectedChatWhisperModel: "medium",
+  selectedWhisperModel: "medium",
+  selectedPromptPreset: "none",
+  selectedTtsProvider: "piper",
+  selectedTtsVoiceId: "",
+  selectedTtsSpeed: "1",
   latestTranscript: null,
   serverHealthy: false,
   ttsHealthy: false,
@@ -196,6 +226,12 @@ const state = {
     asr: readStored(STORAGE_KEYS.asrLibraryOpen, "") === "1",
     tts: readStored(STORAGE_KEYS.ttsLibraryOpen, "") === "1",
   },
+  voiceModelMenuPosition: null,
+  confirmResolver: null,
+  confirmReturnFocus: null,
+  toastTimer: null,
+  chatDropDepth: 0,
+  asrToolDropDepth: 0,
   voiceRecorder: null,
   voiceStream: null,
   ttsAudio: null,
@@ -629,10 +665,192 @@ function toggleComposerMenu(forceState) {
   els.composerMenuButton.setAttribute("aria-expanded", nextState ? "true" : "false");
 }
 
+function getChatModelItems() {
+  const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
+  const recommendedByName = new Map(state.recommendedModels.map((item) => [item.name, item]));
+  const names = [
+    ...state.installedModels.map((item) => item.name),
+    ...state.recommendedModels.map((item) => item.name).filter((name) => !installedByName.has(name)),
+  ];
+  return names.map((name) => ({
+    name,
+    installed: installedByName.get(name) || null,
+    recommended: recommendedByName.get(name) || null,
+    task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
+  }));
+}
+
+function describeChatModelItem(item) {
+  if (!item) {
+    return "Локальная модель чата";
+  }
+  if (item.task) {
+    return item.task.message || `Загрузка • ${item.task.state || "running"}`;
+  }
+  if (item.installed) {
+    const parts = ["Локальная модель"];
+    if (item.installed.size_gb) {
+      parts.push(`${item.installed.size_gb} GB`);
+    }
+    return parts.join(" • ");
+  }
+  if (item.recommended) {
+    return `${item.recommended.label || "Рекомендована"} • не загружена`;
+  }
+  return "Не загружена";
+}
+
+function closeQuickModelMenu() {
+  if (!els.quickModelMenu || !els.quickModelButton) return;
+  els.quickModelMenu.hidden = true;
+  els.quickModelButton.setAttribute("aria-expanded", "false");
+}
+
+function toggleQuickModelMenu(forceState) {
+  if (!els.quickModelMenu || !els.quickModelButton) return;
+  if (els.quickModelButton.disabled) return;
+  const nextState = typeof forceState === "boolean"
+    ? forceState
+    : els.quickModelMenu.hidden;
+  els.quickModelMenu.hidden = !nextState;
+  els.quickModelButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+}
+
+function renderQuickModelPicker() {
+  if (!els.quickModelButton || !els.quickModelValue || !els.quickModelMeta || !els.quickModelMenu) return;
+  const items = getChatModelItems();
+  const selectedName = state.selectedLlmModel || items[0]?.name || "";
+  const selectedItem = items.find((item) => item.name === selectedName) || items[0] || null;
+
+  els.quickModelButton.disabled = !items.length;
+  if (!items.length) {
+    closeQuickModelMenu();
+  }
+  els.quickModelValue.textContent = selectedItem?.name || "Модель не выбрана";
+  els.quickModelMeta.textContent = describeChatModelItem(selectedItem);
+
+  els.quickModelMenu.innerHTML = [
+    '<div class="quick-model-picker__header">Модель чата</div>',
+    ...items.map((item) => {
+      const active = item.name === selectedName;
+      return `
+        <button
+          class="quick-model-picker__item${active ? " quick-model-picker__item--active" : ""}"
+          type="button"
+          role="menuitemradio"
+          aria-checked="${active ? "true" : "false"}"
+          data-quick-model="${escapeHtml(item.name)}"
+        >
+          <span class="quick-model-picker__item-name">${escapeHtml(item.name)}</span>
+          <span class="quick-model-picker__item-meta">${escapeHtml(describeChatModelItem(item))}</span>
+        </button>
+      `;
+    }),
+    '<div class="quick-model-picker__hint">Выбор здесь переключает модель текущего чата. Управление загрузкой и удалением остаётся в настройках.</div>',
+  ].join("");
+}
+
+function getWhisperItems() {
+  return state.asrModels.length
+    ? state.asrModels
+    : WHISPER_MODELS.map((name) => ({ name, installed: false }));
+}
+
+function isWhisperModelInstalled(modelName) {
+  const target = String(modelName || "").trim();
+  if (!target) return false;
+  const item = state.asrModels.find((entry) => entry.name === target);
+  return Boolean(item?.installed);
+}
+
+function getSelectedChatWhisperModel() {
+  const items = getWhisperItems();
+  const names = items.map((item) => item.name);
+  if (!names.includes(state.selectedChatWhisperModel)) {
+    state.selectedChatWhisperModel = state.selectedWhisperModel || names[0] || "medium";
+  }
+  return state.selectedChatWhisperModel || state.selectedWhisperModel || names[0] || "medium";
+}
+
+function closeVoiceModelMenu() {
+  if (!els.voiceModelMenu) return;
+  els.voiceModelMenu.hidden = true;
+  els.voiceModelMenu.style.left = "";
+  els.voiceModelMenu.style.top = "";
+  state.voiceModelMenuPosition = null;
+}
+
+function positionVoiceModelMenu(clientX, clientY) {
+  if (!els.voiceModelMenu || els.voiceModelMenu.hidden) return;
+  const rect = els.voiceModelMenu.getBoundingClientRect();
+  const padding = 12;
+  const left = Math.max(padding, Math.min(clientX, window.innerWidth - rect.width - padding));
+  const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
+  els.voiceModelMenu.style.left = `${left}px`;
+  els.voiceModelMenu.style.top = `${top}px`;
+}
+
+function renderVoiceModelMenu() {
+  if (!els.voiceModelMenu) return;
+  const items = getWhisperItems();
+  const activeModel = getSelectedChatWhisperModel();
+  const availabilityKnown = state.asrModels.length > 0;
+
+  els.voiceModelMenu.innerHTML = [
+    '<div class="voice-model-menu__header">Модель диктовки чата</div>',
+    ...items.map((item) => {
+      const active = item.name === activeModel;
+      const meta = availabilityKnown
+        ? (item.installed ? "Загружена" : "Не загружена")
+        : "Проверяю наличие";
+      return `
+        <button
+          class="voice-model-menu__item${active ? " voice-model-menu__item--active" : ""}"
+          type="button"
+          role="menuitemradio"
+          aria-checked="${active ? "true" : "false"}"
+          data-voice-model="${escapeHtml(item.name)}"
+        >
+          <span class="voice-model-menu__name">${escapeHtml(item.name)}</span>
+          <span class="voice-model-menu__meta">${escapeHtml(meta)}</span>
+        </button>
+      `;
+    }),
+    '<div class="voice-model-menu__hint">Это влияет только на диктовку в чате. ASR Studio остаётся на своей модели.</div>',
+  ].join("");
+
+  if (!els.voiceModelMenu.hidden && state.voiceModelMenuPosition) {
+    positionVoiceModelMenu(state.voiceModelMenuPosition.x, state.voiceModelMenuPosition.y);
+  }
+}
+
+function openVoiceModelMenu({ clientX, clientY }) {
+  if (!els.voiceModelMenu) return;
+  if (state.isRecordingVoice || state.isVoiceTranscribing) {
+    setFooter("Сначала остановите запись или распознавание, затем выберите модель.", "warning");
+    return;
+  }
+  toggleComposerMenu(false);
+  state.voiceModelMenuPosition = {
+    x: Number.isFinite(clientX) ? clientX : 0,
+    y: Number.isFinite(clientY) ? clientY : 0,
+  };
+  renderVoiceModelMenu();
+  els.voiceModelMenu.hidden = false;
+  positionVoiceModelMenu(state.voiceModelMenuPosition.x, state.voiceModelMenuPosition.y);
+  if (!state.asrModels.length) {
+    void loadWhisperModels({ silent: true });
+  }
+}
+
 function renderVoiceRecordButton() {
   if (!els.voiceRecordButton) return;
   const isBusy = state.isVoiceTranscribing;
   const isRecording = state.isRecordingVoice;
+  const selectedModel = getSelectedChatWhisperModel();
+  const modelTitle = state.asrModels.length && !isWhisperModelInstalled(selectedModel)
+    ? `${selectedModel} (не загружена)`
+    : selectedModel;
   els.voiceRecordButton.disabled = false;
   els.voiceRecordButton.setAttribute("aria-disabled", "false");
   els.voiceRecordButton.classList.toggle("input-mic-button--recording", isRecording);
@@ -655,8 +873,8 @@ function renderVoiceRecordButton() {
   if (els.voiceRecordButton.innerHTML !== VOICE_RECORD_ICON) {
     els.voiceRecordButton.innerHTML = VOICE_RECORD_ICON;
   }
-  els.voiceRecordButton.setAttribute("aria-label", "Записать голос");
-  els.voiceRecordButton.title = "Записать голос";
+  els.voiceRecordButton.setAttribute("aria-label", `Записать голос. Текущая модель диктовки: ${selectedModel}`);
+  els.voiceRecordButton.title = `Записать голос. Модель диктовки: ${modelTitle}. ПКМ: выбрать модель.`;
 }
 
 function pickVoiceRecorderMimeType() {
@@ -855,7 +1073,7 @@ async function transcribeVoiceBlob(blob, mimeType) {
     const extension = audioExtensionForMimeType(mimeType || blob.type);
     const formData = new FormData();
     formData.append("file", blob, `voice-note.${extension}`);
-    formData.append("model", state.selectedWhisperModel || "medium");
+    formData.append("model", getSelectedChatWhisperModel() || "medium");
     formData.append("prompt_preset", "none");
     formData.append("language", "auto");
     formData.append("store_result", "false");
@@ -1121,8 +1339,320 @@ function setInlineStatus(element, message = "", tone = "neutral") {
   }
 }
 
+function closeToast() {
+  if (state.toastTimer) {
+    window.clearTimeout(state.toastTimer);
+    state.toastTimer = null;
+  }
+  if (!els.toastNotice) return;
+  els.toastNotice.hidden = true;
+  els.toastNotice.className = "toast";
+}
+
+function showToast(message = "", tone = "info", { title = "Уведомление", duration = 2800 } = {}) {
+  if (!els.toastNotice || !els.toastTitle || !els.toastMessage) return;
+  closeToast();
+  els.toastTitle.textContent = title;
+  els.toastMessage.textContent = message;
+  els.toastNotice.className = "toast";
+  if (tone === "success") {
+    els.toastNotice.classList.add("toast--success");
+  } else if (tone === "warning") {
+    els.toastNotice.classList.add("toast--warning");
+  } else if (tone === "error") {
+    els.toastNotice.classList.add("toast--error");
+  }
+  els.toastNotice.hidden = false;
+  state.toastTimer = window.setTimeout(() => {
+    closeToast();
+  }, Math.max(1200, Number(duration) || 2800));
+}
+
+function resolveConfirmDialog(approved = false) {
+  if (!els.confirmBackdrop) return Boolean(approved);
+  els.confirmBackdrop.hidden = true;
+  const resolver = state.confirmResolver;
+  const returnFocus = state.confirmReturnFocus;
+  state.confirmResolver = null;
+  state.confirmReturnFocus = null;
+  if (returnFocus && typeof returnFocus.focus === "function") {
+    window.setTimeout(() => returnFocus.focus(), 0);
+  }
+  if (typeof resolver === "function") {
+    resolver(Boolean(approved));
+  }
+  return Boolean(approved);
+}
+
+function openConfirmDialog({
+  eyebrow = "Подтверждение",
+  title = "Продолжить действие?",
+  message = "Подтвердите действие.",
+  confirmLabel = "Продолжить",
+  cancelLabel = "Отмена",
+  returnFocus = null,
+} = {}) {
+  if (!els.confirmBackdrop || !els.confirmTitle || !els.confirmMessage || !els.confirmApproveButton) {
+    return Promise.resolve(false);
+  }
+
+  if (typeof state.confirmResolver === "function") {
+    resolveConfirmDialog(false);
+  }
+
+  state.confirmReturnFocus = returnFocus || document.activeElement;
+  els.confirmEyebrow.textContent = eyebrow;
+  els.confirmTitle.textContent = title;
+  els.confirmMessage.textContent = message;
+  els.confirmCancelButton.textContent = cancelLabel;
+  if (els.confirmDismissButton) {
+    els.confirmDismissButton.textContent = cancelLabel;
+  }
+  els.confirmApproveButton.textContent = confirmLabel;
+  els.confirmBackdrop.hidden = false;
+
+  return new Promise((resolve) => {
+    state.confirmResolver = resolve;
+    window.setTimeout(() => els.confirmApproveButton?.focus(), 0);
+  });
+}
+
+function hasDirectoryInDataTransfer(dataTransfer) {
+  const items = Array.from(dataTransfer?.items || []);
+  return items.some((item) => {
+    if (typeof item?.webkitGetAsEntry !== "function") return false;
+    try {
+      return Boolean(item.webkitGetAsEntry()?.isDirectory);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isFileDragEvent(event) {
+  const types = Array.from(event?.dataTransfer?.types || []);
+  return types.includes("Files");
+}
+
+function fileExtension(name = "") {
+  const trimmed = String(name || "").trim().toLowerCase();
+  const index = trimmed.lastIndexOf(".");
+  return index >= 0 ? trimmed.slice(index + 1) : "";
+}
+
+function classifyFileKind(file) {
+  const mimeType = String(file?.type || "").toLowerCase();
+  const ext = fileExtension(file?.name || "");
+  if (mimeType.startsWith("image/") || IMAGE_FILE_EXTENSIONS.has(ext)) {
+    return "image";
+  }
+  if (mimeType.startsWith("audio/") || mimeType.startsWith("video/") || MEDIA_FILE_EXTENSIONS.has(ext)) {
+    return "media";
+  }
+  return "other";
+}
+
+function classifyDraggedPayload(dataTransfer) {
+  if (!dataTransfer) return "none";
+  if (hasDirectoryInDataTransfer(dataTransfer)) return "directory";
+
+  const files = Array.from(dataTransfer.files || []);
+  if (files.length > 1) return "multiple";
+  if (files.length === 1) return classifyFileKind(files[0]);
+
+  const fileItems = Array.from(dataTransfer.items || []).filter((item) => item.kind === "file");
+  if (fileItems.length > 1) return "multiple";
+  if (!fileItems.length) return "none";
+  const mimeType = String(fileItems[0]?.type || "").toLowerCase();
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/") || mimeType.startsWith("video/")) return "media";
+  return "other";
+}
+
+function extractDroppedFile(dataTransfer) {
+  if (!dataTransfer) {
+    return { error: "unsupported" };
+  }
+  if (hasDirectoryInDataTransfer(dataTransfer)) {
+    return { error: "unsupported" };
+  }
+  const files = Array.from(dataTransfer.files || []);
+  if (files.length > 1) {
+    return { error: "multiple" };
+  }
+  if (!files.length) {
+    return { error: "unsupported" };
+  }
+  return { file: files[0] };
+}
+
+function getDropOverlayContent(zone, payloadKind) {
+  if (zone === "chat") {
+    if (payloadKind === "image") {
+      return {
+        tone: "accent",
+        title: "Отпустите изображение для OCR",
+        meta: "В чате для изображений сейчас доступно только OCR-распознавание текста.",
+      };
+    }
+    if (payloadKind === "media") {
+      return {
+        tone: "accent",
+        title: "Отпустите аудио или видео",
+        meta: "После подтверждения файл откроется в ASR Studio для транскрибации.",
+      };
+    }
+  }
+
+  if (zone === "asr" && payloadKind === "media") {
+    return {
+      tone: "accent",
+      title: "Отпустите файл для ASR Studio",
+      meta: "После подтверждения будет запущена отдельная транскрибация.",
+    };
+  }
+
+  if (payloadKind === "multiple") {
+    return {
+      tone: "warning",
+      title: "Только один файл за раз",
+      meta: "Пока можно перетаскивать по одному файлу.",
+    };
+  }
+
+  return zone === "asr"
+    ? {
+        tone: "warning",
+        title: "ASR Studio принимает только аудио и видео",
+        meta: "Изображения и остальные типы файлов здесь пока не поддерживаются.",
+      }
+    : {
+        tone: "warning",
+        title: "Этот тип файла пока не поддерживается",
+        meta: "Сейчас drag and drop в чате работает только для изображений, аудио и видео.",
+      };
+}
+
+function renderDropOverlay(zone, payloadKind) {
+  const overlay = zone === "asr" ? els.asrToolDropOverlay : els.chatDropOverlay;
+  const title = zone === "asr" ? els.asrToolDropOverlayTitle : els.chatDropOverlayTitle;
+  const meta = zone === "asr" ? els.asrToolDropOverlayMeta : els.chatDropOverlayMeta;
+  if (!overlay || !title || !meta) return;
+  const content = getDropOverlayContent(zone, payloadKind);
+  overlay.dataset.tone = content.tone || "accent";
+  title.textContent = content.title;
+  meta.textContent = content.meta;
+  overlay.hidden = false;
+}
+
+function clearDropOverlay(zone) {
+  const overlay = zone === "asr" ? els.asrToolDropOverlay : els.chatDropOverlay;
+  if (overlay) {
+    overlay.hidden = true;
+    delete overlay.dataset.tone;
+  }
+  if (zone === "asr") {
+    state.asrToolDropDepth = 0;
+  } else {
+    state.chatDropDepth = 0;
+  }
+}
+
+function clearAllDropOverlays() {
+  clearDropOverlay("chat");
+  clearDropOverlay("asr");
+}
+
+function handleDropZoneDragEnter(event, zone) {
+  if (!isFileDragEvent(event)) return;
+  event.preventDefault();
+  if (zone === "asr") {
+    state.asrToolDropDepth += 1;
+  } else {
+    state.chatDropDepth += 1;
+  }
+  renderDropOverlay(zone, classifyDraggedPayload(event.dataTransfer));
+}
+
+function handleDropZoneDragOver(event, zone) {
+  if (!isFileDragEvent(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+  renderDropOverlay(zone, classifyDraggedPayload(event.dataTransfer));
+}
+
+function handleDropZoneDragLeave(event, zone) {
+  if (!isFileDragEvent(event)) return;
+  event.preventDefault();
+  if (zone === "asr") {
+    state.asrToolDropDepth = Math.max(0, state.asrToolDropDepth - 1);
+    if (!state.asrToolDropDepth) {
+      clearDropOverlay("asr");
+    }
+    return;
+  }
+  state.chatDropDepth = Math.max(0, state.chatDropDepth - 1);
+  if (!state.chatDropDepth) {
+    clearDropOverlay("chat");
+  }
+}
+
 function getActiveProfile() {
   return state.profiles.find((profile) => profile.id === state.activeProfileId) || null;
+}
+
+function getActiveProfilePreferences() {
+  return getActiveProfile()?.preferences || {};
+}
+
+function applyActiveProfilePreferences() {
+  const preferences = getActiveProfilePreferences();
+  const whisperFallback = state.asrModels[0]?.name || "medium";
+  const promptPreset = String(preferences?.asr?.prompt_preset || "").trim().toLowerCase();
+
+  state.selectedChatWhisperModel = String(preferences?.chat?.dictation_model || "").trim() || whisperFallback;
+  state.selectedWhisperModel = String(preferences?.asr?.studio_model || "").trim() || whisperFallback;
+  state.selectedPromptPreset = ["none", "ru", "en"].includes(promptPreset) ? promptPreset : "none";
+  state.selectedTtsProvider = String(preferences?.tts?.provider || state.selectedTtsProvider || "piper").trim() || "piper";
+  state.selectedTtsVoiceId = String(preferences?.tts?.voice_id || "").trim();
+  state.selectedTtsSpeed = formatTtsSpeedLabel(preferences?.tts?.speed || state.selectedTtsSpeed || 1);
+
+  renderWhisperControls();
+  renderTtsControls();
+}
+
+function replaceProfileState(profile) {
+  if (!profile?.id) return;
+  state.profiles = state.profiles.map((item) => (item.id === profile.id ? profile : item));
+}
+
+async function saveActiveProfilePreferences(preferencesPatch) {
+  if (!state.activeProfileId) {
+    setFooter("Сначала выберите профиль.", "warning");
+    return null;
+  }
+
+  try {
+    const updatedProfile = await request(`/profiles/${encodeURIComponent(state.activeProfileId)}/preferences`, {
+      method: "PATCH",
+      body: preferencesPatch,
+    });
+    replaceProfileState(updatedProfile);
+    renderProfileOptions();
+    renderProfileManagement();
+    if (updatedProfile?.id === state.activeProfileId) {
+      applyActiveProfilePreferences();
+    }
+    return updatedProfile;
+  } catch (error) {
+    if (state.activeProfileId) {
+      applyActiveProfilePreferences();
+    }
+    setFooter(`Не удалось сохранить настройки профиля: ${error.message || error}`, "error");
+    return null;
+  }
 }
 
 function fallbackLanUrl() {
@@ -1310,11 +1840,9 @@ function renderMessages() {
 function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
-  const installedNames = new Set(state.installedModels.map((item) => item.name));
-  const mergedOptions = [
-    ...state.installedModels.map((item) => item.name),
-    ...state.recommendedModels.map((item) => item.name).filter((name) => !installedNames.has(name)),
-  ];
+  const chatModelItems = getChatModelItems();
+  const installedNames = new Set(chatModelItems.filter((item) => item.installed).map((item) => item.name));
+  const mergedOptions = chatModelItems.map((item) => item.name);
 
   const optionsMarkup = mergedOptions
     .map((name) => {
@@ -1343,6 +1871,8 @@ function renderModelControls() {
     writeStored(STORAGE_KEYS.llmModel, mergedOptions[0]);
   }
 
+  renderQuickModelPicker();
+
   els.recommendedModels.innerHTML = state.recommendedModels
     .map((item) => {
       const installed = installedNames.has(item.name);
@@ -1361,6 +1891,7 @@ async function applySelectedLlmModel(nextModel) {
 
   state.selectedLlmModel = modelName;
   writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
+  closeQuickModelMenu();
 
   [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
     const hasOption = Array.from(select.options || []).some((option) => option.value === modelName);
@@ -1369,6 +1900,7 @@ async function applySelectedLlmModel(nextModel) {
     }
   });
 
+  renderQuickModelPicker();
   renderContextSummary();
   renderModelSettings();
   if (state.currentSessionId && state.selectedLlmModel) {
@@ -1480,11 +2012,10 @@ function renderModelSettings() {
 
 function renderWhisperControls() {
   if (!els.whisperModelSelect || !els.promptPresetSelect) return;
-  const items = state.asrModels.length ? state.asrModels : WHISPER_MODELS.map((name) => ({ name, installed: false }));
+  const items = getWhisperItems();
   const names = items.map((item) => item.name);
   if (!names.includes(state.selectedWhisperModel)) {
     state.selectedWhisperModel = names[0] || "small";
-    writeStored(STORAGE_KEYS.whisperModel, state.selectedWhisperModel);
   }
   els.whisperModelSelect.innerHTML = names
     .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
@@ -1498,8 +2029,8 @@ function renderWhisperControls() {
     setInlineStatus(
       els.asrSettingsStatus,
       isInstalled
-        ? `Кнопка "Транскрибировать" использует модель ${state.selectedWhisperModel}.`
-        : `Модель ${state.selectedWhisperModel} выбрана, но ещё не загружена локально.`,
+        ? `ASR Studio профиля использует модель ${state.selectedWhisperModel}.`
+        : `Для ASR Studio профиля выбрана модель ${state.selectedWhisperModel}, но она ещё не загружена локально.`,
       isInstalled ? "success" : "warning",
     );
   }
@@ -1507,6 +2038,8 @@ function renderWhisperControls() {
   renderLibraryPanels();
   renderAsrModelLibrary();
   renderAsrTool();
+  renderVoiceModelMenu();
+  renderVoiceRecordButton();
 }
 
 function renderAsrModelLibrary() {
@@ -1515,7 +2048,7 @@ function renderAsrModelLibrary() {
     els.asrModelLibrary.innerHTML = "";
     return;
   }
-  const items = state.asrModels.length ? state.asrModels : WHISPER_MODELS.map((name) => ({ name, installed: false, repo_id: "" }));
+  const items = getWhisperItems().map((item) => ({ repo_id: "", ...item }));
 
   els.asrModelLibrary.innerHTML = items
     .map((item) => {
@@ -1585,7 +2118,6 @@ function renderTtsControls() {
   const selectedExists = state.ttsVoices.some((voice) => voice.id === state.selectedTtsVoiceId);
   if (!selectedExists) {
     state.selectedTtsVoiceId = state.ttsVoices[0]?.id || "";
-    writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
   }
 
   els.ttsVoiceSelect.innerHTML = state.ttsVoices
@@ -1964,7 +2496,6 @@ function renderTtsTool() {
     selectedVoiceId = String(state.ttsVoices[0]?.id || "").trim();
     if (selectedVoiceId !== state.selectedTtsVoiceId) {
       state.selectedTtsVoiceId = selectedVoiceId;
-      writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
     }
   }
   const hasText = Boolean((els.ttsToolText?.value || "").trim());
@@ -2292,7 +2823,7 @@ function renderAsrTool() {
   const hasOutput = Boolean((els.asrToolOutput?.value || "").trim());
 
   if (els.asrToolModelSelect) {
-    const items = state.asrModels.length ? state.asrModels : WHISPER_MODELS.map((name) => ({ name, installed: false }));
+    const items = getWhisperItems();
     const names = items.map((item) => item.name);
     els.asrToolModelSelect.innerHTML = names
       .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
@@ -2392,6 +2923,7 @@ function closeAsrTool() {
   if (!els.asrToolWindow) return;
   stopAsrToolDrag();
   stopAsrToolResize();
+  clearDropOverlay("asr");
   state.asrToolIsOpen = false;
   state.asrToolIsMinimized = false;
   els.asrToolWindow.hidden = true;
@@ -2403,6 +2935,7 @@ function minimizeAsrTool() {
   if (!els.asrToolWindow) return;
   stopAsrToolDrag();
   stopAsrToolResize();
+  clearDropOverlay("asr");
   state.asrToolIsOpen = false;
   state.asrToolIsMinimized = true;
   els.asrToolWindow.hidden = true;
@@ -2422,10 +2955,15 @@ function toggleAsrToolFullscreen() {
 }
 
 async function runAsrToolTranscription(file) {
-  if (!file || state.asrToolIsTranscribing) return;
+  if (!file) return false;
+  if (state.asrToolIsTranscribing) {
+    setInlineStatus(els.asrToolStatus, "ASR Studio уже обрабатывает другой файл.", "warning");
+    setFooter("ASR Studio уже обрабатывает другой файл.", "warning");
+    return false;
+  }
   if (!state.activeProfileId) {
     setInlineStatus(els.asrToolStatus, "Сначала выберите профиль.", "warning");
-    return;
+    return false;
   }
 
   state.asrToolIsTranscribing = true;
@@ -2466,11 +3004,13 @@ async function runAsrToolTranscription(file) {
     }
     setInlineStatus(els.asrToolStatus, `Транскрибация готова: ${file.name}`, "success");
     setFooter(`ASR Studio: ${file.name} готово.`, "success");
+    return true;
   } catch (error) {
     if (!isAbortError(error)) {
       setInlineStatus(els.asrToolStatus, `Ошибка транскрибации: ${error.message || error}`, "error");
       setFooter(`Ошибка ASR Studio: ${error.message || error}`, "error");
     }
+    return false;
   } finally {
     state.asrToolTaskId = null;
     state.asrToolStartController = null;
@@ -2641,7 +3181,12 @@ function clearOcrEditor() {
 }
 
 async function runOcrForImage(file) {
-  if (!file || state.ocrBusy) return;
+  if (!file) return false;
+  if (state.ocrBusy) {
+    setInlineStatus(els.ocrStatus, "OCR уже обрабатывает другое изображение.", "warning");
+    setFooter("OCR уже обрабатывает другое изображение.", "warning");
+    return false;
+  }
   state.ocrBusy = true;
   state.ocrFileName = file.name || "";
   state.ocrText = "";
@@ -2659,9 +3204,17 @@ async function runOcrForImage(file) {
     renderOcrEditor();
     setInlineStatus(els.ocrStatus, "Текст с изображения извлечён. Можно редактировать, вставлять и отправлять.", "success");
     setFooter("OCR: текст извлечён.", "success");
+    return true;
   } catch (error) {
+    if (error?.code === "ocr_empty_result") {
+      setInlineStatus(els.ocrStatus, "OCR не нашёл текст на изображении.", "warning");
+      setFooter("OCR не нашёл текст на изображении.", "warning");
+      renderOcrEditor();
+      return false;
+    }
     setInlineStatus(els.ocrStatus, `Ошибка OCR: ${error.message || error}`, "error");
     setFooter(`Ошибка OCR: ${error.message || error}`, "error");
+    return false;
   } finally {
     state.ocrBusy = false;
     if (els.ocrImageInput) {
@@ -2691,6 +3244,85 @@ async function sendOcrTextToChat() {
   }
   state.ocrText = text;
   await sendPromptText(text, { clearInput: false });
+}
+
+async function handleChatDroppedFile(file) {
+  const fileKind = classifyFileKind(file);
+  if (fileKind === "image") {
+    const approved = await openConfirmDialog({
+      eyebrow: "Drag & Drop",
+      title: "OCR для изображения",
+      message: "Для изображений сейчас доступно только OCR-распознавание текста.",
+      confirmLabel: "Распознать OCR",
+      cancelLabel: "Отмена",
+      returnFocus: els.promptInput,
+    });
+    if (!approved) {
+      showToast("Действие отменено пользователем.", "warning");
+      return;
+    }
+    await runOcrForImage(file);
+    return;
+  }
+
+  if (fileKind === "media") {
+    const approved = await openConfirmDialog({
+      eyebrow: "Drag & Drop",
+      title: "Открыть ASR Studio",
+      message: "Для аудио и видео сейчас доступна только транскрибация в ASR Studio.",
+      confirmLabel: "Открыть ASR Studio",
+      cancelLabel: "Отмена",
+      returnFocus: els.promptInput,
+    });
+    if (!approved) {
+      showToast("Действие отменено пользователем.", "warning");
+      return;
+    }
+    await openAsrTool({ focusText: false });
+    await runAsrToolTranscription(file);
+    return;
+  }
+
+  showToast("Этот тип файла пока не поддерживается.", "warning");
+}
+
+async function handleAsrToolDroppedFile(file) {
+  if (classifyFileKind(file) !== "media") {
+    showToast("Этот тип файла пока не поддерживается.", "warning");
+    return;
+  }
+
+  const approved = await openConfirmDialog({
+    eyebrow: "ASR Studio",
+    title: "Запустить транскрибацию?",
+    message: "Будет запущена транскрибация в ASR Studio.",
+    confirmLabel: "Транскрибировать",
+    cancelLabel: "Отмена",
+    returnFocus: els.asrToolOutput,
+  });
+  if (!approved) {
+    showToast("Действие отменено пользователем.", "warning");
+    return;
+  }
+  await runAsrToolTranscription(file);
+}
+
+async function handleDroppedDataTransfer(zone, dataTransfer) {
+  const { file, error } = extractDroppedFile(dataTransfer);
+  if (error === "multiple") {
+    showToast("Пока можно перетаскивать по одному файлу.", "warning");
+    return;
+  }
+  if (!file) {
+    showToast("Этот тип файла пока не поддерживается.", "warning");
+    return;
+  }
+
+  if (zone === "asr") {
+    await handleAsrToolDroppedFile(file);
+    return;
+  }
+  await handleChatDroppedFile(file);
 }
 
 async function loadTtsHistory({ silent = false } = {}) {
@@ -2843,7 +3475,6 @@ async function generateFromTtsTool() {
   }
   if (voiceId !== state.selectedTtsVoiceId) {
     state.selectedTtsVoiceId = voiceId;
-    writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
   }
   if (!voiceId) {
     setInlineStatus(els.ttsToolStatus, "Сначала выберите локальный голос в настройках.", "warning");
@@ -3032,6 +3663,7 @@ function applyCurrentSessionMeta() {
   if (els.chatTitle) {
     els.chatTitle.textContent = title;
   }
+  renderQuickModelPicker();
   renderContextSummary();
   renderSettings();
   void refreshModelSettings({ silent: true });
@@ -3116,9 +3748,11 @@ async function loadWhisperModels({ silent = false } = {}) {
     const data = await request("/whisper/models");
     state.asrModels = Array.isArray(data?.items) ? data.items : [];
     state.asrDownloads = Array.isArray(data?.downloads) ? data.downloads : [];
-    if (!state.selectedWhisperModel) {
+    if (state.activeProfileId) {
+      applyActiveProfilePreferences();
+    } else if (!state.selectedWhisperModel) {
       state.selectedWhisperModel = data?.default || state.asrModels[0]?.name || "small";
-      writeStored(STORAGE_KEYS.whisperModel, state.selectedWhisperModel);
+      state.selectedChatWhisperModel = state.selectedWhisperModel;
     }
     renderWhisperControls();
     renderDownloads();
@@ -3153,15 +3787,16 @@ async function loadTtsSettings({ silent = false } = {}) {
     ]);
     state.ttsHealthy = Boolean(health?.tts_enabled && health?.provider?.available);
     state.selectedTtsProvider = String(health?.default_provider || state.selectedTtsProvider || "piper").trim() || "piper";
-    writeStored(STORAGE_KEYS.ttsProvider, state.selectedTtsProvider);
     state.ttsSpeedOptions = Array.isArray(health?.speed_options) && health.speed_options.length
       ? health.speed_options.map((item) => Number(item)).filter(Number.isFinite)
       : [...DEFAULT_TTS_SPEED_OPTIONS];
     if (!state.ttsSpeedOptions.some((item) => formatTtsSpeedLabel(item) === formatTtsSpeedLabel(state.selectedTtsSpeed))) {
       state.selectedTtsSpeed = formatTtsSpeedLabel(state.ttsSpeedOptions[0] || 1);
-      writeStored(STORAGE_KEYS.ttsSpeed, state.selectedTtsSpeed);
     }
     state.ttsVoices = Array.isArray(voicesData?.items) ? voicesData.items : [];
+    if (state.activeProfileId) {
+      applyActiveProfilePreferences();
+    }
     renderTtsControls();
     return true;
   } catch (error) {
@@ -3299,6 +3934,7 @@ async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   state.asrToolSelectedTranscriptId = null;
   state.asrToolSelectedTranscript = null;
   state.asrToolHistory = [];
+  applyActiveProfilePreferences();
   renderProfileOptions();
   await loadSessions({ preferredSessionId });
   await loadAsrToolHistory({ silent: true });
@@ -3575,7 +4211,7 @@ async function handleTranscription(file) {
     formData.append("file", file);
     formData.append("profile_id", String(state.activeProfileId));
     formData.append("session_id", sessionId);
-    formData.append("model", state.selectedWhisperModel || "small");
+    formData.append("model", getSelectedChatWhisperModel() || "small");
     formData.append("prompt_preset", state.selectedPromptPreset || "none");
     formData.append("language", "auto");
 
@@ -3923,11 +4559,49 @@ function bindEvents() {
 
   els.voiceRecordButton?.addEventListener("click", async () => {
     toggleComposerMenu(false);
+    closeVoiceModelMenu();
     await toggleVoiceRecording();
+  });
+  els.voiceRecordButton?.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openVoiceModelMenu({ clientX: event.clientX, clientY: event.clientY });
+  });
+  els.voiceModelMenu?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-voice-model]");
+    if (!button) return;
+    const modelName = button.dataset.voiceModel || "";
+    if (!modelName) return;
+    const updated = await saveActiveProfilePreferences({ chat: { dictation_model: modelName } });
+    if (!updated) return;
+    closeVoiceModelMenu();
+    if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
+      setFooter(`Для профиля выбрана модель диктовки ${modelName}, но она ещё не загружена локально.`, "warning");
+      return;
+    }
+    setFooter(`Модель диктовки профиля: ${modelName}`, "success");
   });
 
   els.messageScroll?.addEventListener("scroll", () => {
     syncMessageScrollState();
+  });
+
+  els.chatShell?.addEventListener("dragenter", (event) => {
+    handleDropZoneDragEnter(event, "chat");
+  });
+  els.chatShell?.addEventListener("dragover", (event) => {
+    handleDropZoneDragOver(event, "chat");
+  });
+  els.chatShell?.addEventListener("dragleave", (event) => {
+    handleDropZoneDragLeave(event, "chat");
+  });
+  els.chatShell?.addEventListener("drop", async (event) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    clearDropOverlay("chat");
+    toggleComposerMenu(false);
+    closeQuickModelMenu();
+    closeVoiceModelMenu();
+    await handleDroppedDataTransfer("chat", event.dataTransfer);
   });
 
   els.scrollTopButton?.addEventListener("click", () => {
@@ -3996,6 +4670,20 @@ function bindEvents() {
       closeSettings();
     }
   });
+  els.confirmCancelButton?.addEventListener("click", () => {
+    resolveConfirmDialog(false);
+  });
+  els.confirmDismissButton?.addEventListener("click", () => {
+    resolveConfirmDialog(false);
+  });
+  els.confirmApproveButton?.addEventListener("click", () => {
+    resolveConfirmDialog(true);
+  });
+  els.confirmBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.confirmBackdrop) {
+      resolveConfirmDialog(false);
+    }
+  });
 
   els.copyLanUrlButton?.addEventListener("click", async () => copyLanUrl());
   els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
@@ -4009,25 +4697,47 @@ function bindEvents() {
     await applySelectedLlmModel(els.llmModelSelect.value || "");
   });
 
+  els.quickModelButton?.addEventListener("click", () => {
+    toggleComposerMenu(false);
+    closeVoiceModelMenu();
+    toggleQuickModelMenu();
+  });
+
+  els.quickModelMenu?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-quick-model]");
+    if (!button) return;
+    const modelName = button.dataset.quickModel || "";
+    if (!modelName) return;
+    closeQuickModelMenu();
+    await applySelectedLlmModel(modelName);
+  });
+
   els.quickModelSelect?.addEventListener("change", async () => {
     await applySelectedLlmModel(els.quickModelSelect.value || "");
   });
 
-  els.whisperModelSelect?.addEventListener("change", () => {
-    state.selectedWhisperModel = els.whisperModelSelect.value || "small";
-    writeStored(STORAGE_KEYS.whisperModel, state.selectedWhisperModel);
-    renderWhisperControls();
+  els.whisperModelSelect?.addEventListener("change", async () => {
+    const modelName = els.whisperModelSelect.value || "small";
+    const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
+    if (!updated) return;
+    if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
+      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+      return;
+    }
+    setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
   });
 
-  els.promptPresetSelect?.addEventListener("change", () => {
-    state.selectedPromptPreset = els.promptPresetSelect.value || "none";
-    writeStored(STORAGE_KEYS.promptPreset, state.selectedPromptPreset);
+  els.promptPresetSelect?.addEventListener("change", async () => {
+    const promptPreset = els.promptPresetSelect.value || "none";
+    const updated = await saveActiveProfilePreferences({ asr: { prompt_preset: promptPreset } });
+    if (!updated) return;
   });
 
-  els.ttsVoiceSelect?.addEventListener("change", () => {
-    state.selectedTtsVoiceId = els.ttsVoiceSelect.value || "";
-    writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
-    renderTtsControls();
+  els.ttsVoiceSelect?.addEventListener("change", async () => {
+    const voiceId = els.ttsVoiceSelect.value || "";
+    const updated = await saveActiveProfilePreferences({ tts: { voice_id: voiceId } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: TTS-голос ${voiceId || "не выбран"}`, "success");
   });
 
   els.asrToolCloseButton?.addEventListener("click", () => closeAsrTool());
@@ -4036,14 +4746,33 @@ function bindEvents() {
   els.asrToolHeader?.addEventListener("mousedown", (event) => {
     startAsrToolDrag(event);
   });
+  els.asrToolWindow?.addEventListener("dragenter", (event) => {
+    handleDropZoneDragEnter(event, "asr");
+  });
+  els.asrToolWindow?.addEventListener("dragover", (event) => {
+    handleDropZoneDragOver(event, "asr");
+  });
+  els.asrToolWindow?.addEventListener("dragleave", (event) => {
+    handleDropZoneDragLeave(event, "asr");
+  });
+  els.asrToolWindow?.addEventListener("drop", async (event) => {
+    if (!isFileDragEvent(event)) return;
+    event.preventDefault();
+    clearDropOverlay("asr");
+    await handleDroppedDataTransfer("asr", event.dataTransfer);
+  });
   els.asrToolResizeHandle?.addEventListener("mousedown", (event) => {
     startAsrToolResize(event);
   });
-  els.asrToolModelSelect?.addEventListener("change", () => {
-    state.selectedWhisperModel = els.asrToolModelSelect.value || "small";
-    writeStored(STORAGE_KEYS.whisperModel, state.selectedWhisperModel);
-    renderWhisperControls();
-    renderAsrTool();
+  els.asrToolModelSelect?.addEventListener("change", async () => {
+    const modelName = els.asrToolModelSelect.value || "small";
+    const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
+    if (!updated) return;
+    if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
+      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+      return;
+    }
+    setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
   });
   els.asrToolOutput?.addEventListener("input", () => {
     renderAsrTool();
@@ -4111,10 +4840,11 @@ function bindEvents() {
   els.ttsToolResizeHandle?.addEventListener("mousedown", (event) => {
     startTtsToolResize(event);
   });
-  els.ttsToolVoiceSelect?.addEventListener("change", () => {
-    state.selectedTtsVoiceId = els.ttsToolVoiceSelect.value || "";
-    writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
-    renderTtsControls();
+  els.ttsToolVoiceSelect?.addEventListener("change", async () => {
+    const voiceId = els.ttsToolVoiceSelect.value || "";
+    const updated = await saveActiveProfilePreferences({ tts: { voice_id: voiceId } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: TTS-голос ${voiceId || "не выбран"}`, "success");
   });
   els.ttsToolText?.addEventListener("input", () => {
     renderTtsTool();
@@ -4137,8 +4867,9 @@ function bindEvents() {
     }
   });
   els.ttsToolSpeedSelect?.addEventListener("change", async () => {
-    state.selectedTtsSpeed = formatTtsSpeedLabel(els.ttsToolSpeedSelect.value || 1);
-    writeStored(STORAGE_KEYS.ttsSpeed, state.selectedTtsSpeed);
+    const nextSpeed = formatTtsSpeedLabel(els.ttsToolSpeedSelect.value || 1);
+    const updated = await saveActiveProfilePreferences({ tts: { speed: nextSpeed } });
+    if (!updated) return;
     renderTtsTool();
     if (state.ttsToolSelectedRecord) {
       try {
@@ -4250,14 +4981,7 @@ function bindEvents() {
     const modelName = button.dataset.recommendedModel || "";
     const isInstalled = state.installedModels.some((item) => item.name === modelName);
     if (isInstalled) {
-      state.selectedLlmModel = modelName;
-      writeStored(STORAGE_KEYS.llmModel, modelName);
-      renderSettings();
-      renderContextSummary();
-      if (state.currentSessionId) {
-        await updateCurrentSessionMeta({ model_name: modelName });
-      }
-      await refreshModelSettings({ silent: true });
+      await applySelectedLlmModel(modelName);
       return;
     }
     await startModelDownload(modelName);
@@ -4270,14 +4994,7 @@ function bindEvents() {
     const modelName = button.dataset.chatModel || "";
     if (!modelName) return;
     if (action === "select") {
-      state.selectedLlmModel = modelName;
-      writeStored(STORAGE_KEYS.llmModel, modelName);
-      renderSettings();
-      renderContextSummary();
-      if (state.currentSessionId) {
-        await updateCurrentSessionMeta({ model_name: modelName });
-      }
-      await refreshModelSettings({ silent: true });
+      await applySelectedLlmModel(modelName);
       return;
     }
     if (action === "download") {
@@ -4296,10 +5013,13 @@ function bindEvents() {
     const modelName = button.dataset.asrModel || "";
     if (!modelName) return;
     if (action === "select") {
-      state.selectedWhisperModel = modelName;
-      writeStored(STORAGE_KEYS.whisperModel, modelName);
-      renderWhisperControls();
-      setFooter(`Активная ASR-модель: ${modelName}`, "success");
+      const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
+      if (!updated) return;
+      if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
+        setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+        return;
+      }
+      setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
       return;
     }
     if (action === "download") {
@@ -4323,10 +5043,9 @@ function bindEvents() {
     const voiceId = button.dataset.ttsVoiceId || "";
 
     if (action === "select" && voiceId) {
-      state.selectedTtsVoiceId = voiceId;
-      writeStored(STORAGE_KEYS.ttsVoiceId, voiceId);
-      renderTtsControls();
-      setFooter(`Активный TTS-голос: ${voiceId}`, "success");
+      const updated = await saveActiveProfilePreferences({ tts: { voice_id: voiceId } });
+      if (!updated) return;
+      setFooter(`Профиль обновлён: TTS-голос ${voiceId}`, "success");
       return;
     }
     if (action === "preview") {
@@ -4358,6 +5077,10 @@ function bindEvents() {
 
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (!els.confirmBackdrop?.hidden) {
+        resolveConfirmDialog(false);
+        return;
+      }
       closeSidebar();
       closeOcrEditor();
       closeSettings();
@@ -4368,15 +5091,36 @@ function bindEvents() {
       stopTtsToolResize();
       closeTtsTool();
       toggleComposerMenu(false);
+      closeQuickModelMenu();
+      closeVoiceModelMenu();
     }
   });
 
   window.addEventListener("click", (event) => {
-    if (!els.composerMenu || !els.composerMenuButton) return;
     const target = event.target instanceof Element ? event.target : null;
-    const insideMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
-    if (!insideMenu) {
+    const insideComposerMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
+    const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
+    if (els.composerMenu && els.composerMenuButton && !insideComposerMenu) {
       toggleComposerMenu(false);
+    }
+    if (!insideQuickModelMenu) {
+      closeQuickModelMenu();
+    }
+    if (!insideVoiceMenu) {
+      closeVoiceModelMenu();
+    }
+  });
+
+  window.addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
+    const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    if (!insideQuickModelMenu) {
+      closeQuickModelMenu();
+    }
+    if (!insideVoiceMenu) {
+      closeVoiceModelMenu();
     }
   });
 
@@ -4389,6 +5133,8 @@ function bindEvents() {
     stopTtsToolDrag();
     stopTtsToolResize();
     toggleComposerMenu(false);
+    closeQuickModelMenu();
+    closeVoiceModelMenu();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {
       setAsrToolWindowBounds();
     }
@@ -4400,6 +5146,15 @@ function bindEvents() {
     }
     autoResizePrompt();
     syncMessageScrollState();
+    clearAllDropOverlays();
+  });
+
+  window.addEventListener("dragend", () => {
+    clearAllDropOverlays();
+  });
+
+  window.addEventListener("drop", () => {
+    clearAllDropOverlays();
   });
 }
 

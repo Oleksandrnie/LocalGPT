@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from .. import config, db
 from ..roles import normalize_role
-from ..schemas import ModelSettingsRequest, ModelSettingsReset, ProfileCreate, SessionCreate, SessionUpdate
+from ..schemas import ModelSettingsRequest, ModelSettingsReset, ProfileCreate, ProfilePreferencesUpdate, SessionCreate, SessionUpdate
 from ..services import criteria as criteria_service
 from ..services.chat import normalize_model_name, session_title_hint
 
@@ -17,6 +17,56 @@ def _get_profile_or_404(profile_id: int) -> dict:
     if not profile or not profile.get("is_active", 1):
         raise HTTPException(status_code=404, detail="profile_not_found")
     return profile
+
+
+def _normalize_whisper_model(model_name: str) -> str:
+    normalized = (model_name or "").strip()
+    if normalized not in config.ALLOWED_WHISPER_MODELS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_whisper_model",
+                "message": f"Недопустимая Whisper-модель: {normalized or model_name}",
+                "allowed": list(config.ALLOWED_WHISPER_MODELS),
+            },
+        )
+    return normalized
+
+
+def _normalize_prompt_preset(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized not in {"none", "ru", "en"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_prompt_preset", "message": "Допустимые prompt preset: none, ru, en."},
+        )
+    return normalized
+
+
+def _normalize_tts_provider(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized != "piper":
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_tts_provider", "message": "Сейчас поддерживается только TTS provider piper."},
+        )
+    return normalized
+
+
+def _normalize_tts_speed(value: str) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_tts_speed", "message": "Скорость TTS должна быть числом."},
+        ) from exc
+    if number <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_tts_speed", "message": "Скорость TTS должна быть больше нуля."},
+        )
+    return f"{number:.2f}".rstrip("0").rstrip(".")
 
 
 @router.get("/profiles")
@@ -32,6 +82,37 @@ def create_profile(req: ProfileCreate):
         return profile
     except ValueError:
         raise HTTPException(status_code=422, detail={"code": "profile_name_required", "message": "Укажите имя профиля"})
+
+
+@router.patch("/profiles/{profile_id}/preferences")
+def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
+    _get_profile_or_404(profile_id)
+    updates: dict[str, dict[str, str]] = {}
+
+    if req.chat and req.chat.dictation_model is not None:
+        updates.setdefault("chat", {})["dictation_model"] = _normalize_whisper_model(req.chat.dictation_model)
+
+    if req.asr:
+        if req.asr.studio_model is not None:
+            updates.setdefault("asr", {})["studio_model"] = _normalize_whisper_model(req.asr.studio_model)
+        if req.asr.prompt_preset is not None:
+            updates.setdefault("asr", {})["prompt_preset"] = _normalize_prompt_preset(req.asr.prompt_preset)
+
+    if req.tts:
+        if req.tts.provider is not None:
+            updates.setdefault("tts", {})["provider"] = _normalize_tts_provider(req.tts.provider)
+        if req.tts.voice_id is not None:
+            updates.setdefault("tts", {})["voice_id"] = req.tts.voice_id.strip()
+        if req.tts.speed is not None:
+            updates.setdefault("tts", {})["speed"] = _normalize_tts_speed(req.tts.speed)
+
+    if not updates:
+        return _get_profile_or_404(profile_id)
+
+    updated = db.update_profile_preferences(profile_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="profile_not_found")
+    return updated
 
 
 @router.delete("/profiles/{profile_id}")

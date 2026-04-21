@@ -1,10 +1,13 @@
 import json
 import sqlite3
 import uuid
+from copy import deepcopy
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
+
+from . import config
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DB_PATH = PROJECT_ROOT / "db" / "localgpt.db"
@@ -28,6 +31,17 @@ def _row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return {key: row[key] for key in row.keys()}
 
 
+def _merge_dict(target: dict[str, Any], updates: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(updates, dict):
+        return target
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_dict(target[key], value)
+        elif value is not None:
+            target[key] = value
+    return target
+
+
 def _to_json(value: Any) -> str | None:
     if value is None:
         return None
@@ -43,6 +57,40 @@ def _from_json(raw: str | None, fallback: Any = None) -> Any:
         return fallback
 
 
+def _default_profile_preferences() -> dict[str, Any]:
+    whisper_model = config.SETTINGS.whisper_default_model
+    return {
+        "chat": {
+            "dictation_model": whisper_model,
+        },
+        "asr": {
+            "studio_model": whisper_model,
+            "prompt_preset": "none",
+        },
+        "tts": {
+            "provider": config.SETTINGS.tts_default_provider,
+            "voice_id": "",
+            "speed": "1",
+        },
+        "ocr": {},
+    }
+
+
+def _normalize_profile_preferences(value: Any) -> dict[str, Any]:
+    normalized = deepcopy(_default_profile_preferences())
+    if isinstance(value, dict):
+        _merge_dict(normalized, value)
+    return normalized
+
+
+def _profile_row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    data = _row_dict(row)
+    if not data:
+        return None
+    data["preferences"] = _normalize_profile_preferences(_from_json(data.pop("preferences_json", None), {}))
+    return data
+
+
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     cursor = conn.execute(f"PRAGMA table_info({table});")
     columns = {row[1] for row in cursor.fetchall()}
@@ -51,6 +99,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 
 
 def init_db() -> None:
+    default_preferences = _to_json(_default_profile_preferences()) or "{}"
     with closing(_connect()) as conn:
         conn.executescript(
             """
@@ -59,6 +108,7 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 description TEXT NULL,
                 color TEXT NULL,
+                preferences_json TEXT NULL,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1
@@ -127,11 +177,17 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "chat_sessions", "role", "ALTER TABLE chat_sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'free';")
+        _ensure_column(conn, "profiles", "preferences_json", "ALTER TABLE profiles ADD COLUMN preferences_json TEXT NULL;")
+        conn.execute(
+            "UPDATE profiles SET preferences_json = COALESCE(preferences_json, ?)",
+            (default_preferences,),
+        )
         conn.commit()
     ensure_default_profile()
 
 
 def ensure_default_profile() -> int:
+    default_preferences = _to_json(_default_profile_preferences()) or "{}"
     with closing(_connect()) as conn:
         cur = conn.execute("SELECT id FROM profiles WHERE is_active = 1 ORDER BY id LIMIT 1;")
         row = cur.fetchone()
@@ -140,10 +196,10 @@ def ensure_default_profile() -> int:
         now = _utcnow()
         cur = conn.execute(
             """
-            INSERT INTO profiles (name, description, color, created_at, updated_at, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
+            INSERT INTO profiles (name, description, color, preferences_json, created_at, updated_at, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
             """,
-            ("Default", "Default profile", None, now, now),
+            ("Default", "Default profile", None, default_preferences, now, now),
         )
         conn.commit()
         return int(cur.lastrowid)
@@ -158,30 +214,46 @@ def list_profiles(include_inactive: bool = False) -> list[dict[str, Any]]:
     query += " ORDER BY created_at ASC"
     with closing(_connect()) as conn:
         rows = conn.execute(query, params).fetchall()
-    return [_row_dict(row) for row in rows if row]
+    return [_profile_row_dict(row) for row in rows if row]
 
 
 def get_profile(profile_id: int) -> dict[str, Any] | None:
     with closing(_connect()) as conn:
         row = conn.execute("SELECT * FROM profiles WHERE id = ?", (profile_id,)).fetchone()
-    return _row_dict(row)
+    return _profile_row_dict(row)
 
 
 def create_profile(name: str, description: str | None = None, color: str | None = None) -> dict[str, Any]:
     if not name or not name.strip():
         raise ValueError("profile_name_required")
     now = _utcnow()
+    default_preferences = _to_json(_default_profile_preferences()) or "{}"
     with closing(_connect()) as conn:
         cur = conn.execute(
             """
-            INSERT INTO profiles (name, description, color, created_at, updated_at, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
+            INSERT INTO profiles (name, description, color, preferences_json, created_at, updated_at, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
             """,
-            (name.strip(), description, color, now, now),
+            (name.strip(), description, color, default_preferences, now, now),
         )
         conn.commit()
         new_id = int(cur.lastrowid)
     return get_profile(new_id)  # type: ignore[return-value]
+
+
+def update_profile_preferences(profile_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
+    profile = get_profile(profile_id)
+    if not profile:
+        return None
+    current_preferences = _normalize_profile_preferences(profile.get("preferences"))
+    merged_preferences = _merge_dict(current_preferences, updates or {})
+    with closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE profiles SET preferences_json = ?, updated_at = ? WHERE id = ?",
+            (_to_json(merged_preferences), _utcnow(), profile_id),
+        )
+        conn.commit()
+    return get_profile(profile_id)
 
 
 def delete_profile(profile_id: int) -> None:

@@ -29,7 +29,7 @@
 
         <div class="app-backdrop" id="sidebarBackdrop" hidden></div>
 
-        <main class="chat-shell">
+        <main class="chat-shell" id="chatShell">
             <header class="topbar">
                 <div class="topbar__main">
                     <button class="icon-button" id="toggleSidebarButton" type="button" aria-label="Открыть список диалогов">
@@ -42,12 +42,29 @@
                         <div class="topbar__row">
                             <h2 id="chatTitle">Новый чат</h2>
                             <span class="status-pill" id="healthStatus">Проверка…</span>
+                            <div class="quick-model-switch quick-model-switch--inline">
+                                <span class="quick-model-switch__label">Модель</span>
+                                <div class="quick-model-picker">
+                                    <button
+                                        class="quick-model-picker__button"
+                                        id="quickModelButton"
+                                        type="button"
+                                        aria-haspopup="menu"
+                                        aria-expanded="false"
+                                        aria-label="Выбрать модель чата"
+                                    >
+                                        <span class="quick-model-picker__text">
+                                            <span class="quick-model-picker__value" id="quickModelValue">Модель не выбрана</span>
+                                            <span class="quick-model-picker__meta" id="quickModelMeta">Локальная модель чата</span>
+                                        </span>
+                                        <span class="quick-model-picker__caret" aria-hidden="true"></span>
+                                    </button>
+                                    <div class="quick-model-picker__menu" id="quickModelMenu" hidden role="menu" aria-label="Выбор модели чата"></div>
+                                    <select id="quickModelSelect" class="quick-model-switch__control" aria-label="Быстро выбрать модель чата" hidden tabindex="-1"></select>
+                                </div>
+                            </div>
                         </div>
                         <div class="topbar__meta">
-                            <label class="quick-model-switch" for="quickModelSelect">
-                                <span class="quick-model-switch__label">Модель</span>
-                                <select id="quickModelSelect" class="quick-model-switch__control" aria-label="Быстро выбрать модель чата"></select>
-                            </label>
                             <p class="subtle" id="contextStatus" hidden></p>
                         </div>
                     </div>
@@ -94,12 +111,21 @@
                             <path d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V7a3.75 3.75 0 0 0-7.5 0v4.5A3.75 3.75 0 0 0 12 15.25Zm6.25-3.75a.75.75 0 0 0-1.5 0 4.75 4.75 0 1 1-9.5 0 .75.75 0 0 0-1.5 0 6.26 6.26 0 0 0 5.5 6.21V20H9.5a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-1.75v-2.29a6.26 6.26 0 0 0 5.5-6.21Z"></path>
                         </svg>
                     </button>
+                    <div class="voice-model-menu" id="voiceModelMenu" hidden role="menu" aria-label="Выбор модели транскрибации"></div>
                 </div>
 
                 <button class="send-button" id="sendButton" type="submit" disabled>Отправить</button>
             </form>
 
             <div class="footer-status" id="footerStatus"></div>
+
+            <div class="drop-zone-overlay" id="chatDropOverlay" hidden aria-hidden="true">
+                <div class="drop-zone-overlay__card">
+                    <p class="drop-zone-overlay__eyebrow">Drag & Drop</p>
+                    <h3 class="drop-zone-overlay__title" id="chatDropOverlayTitle">Отпустите файл сюда</h3>
+                    <p class="drop-zone-overlay__meta" id="chatDropOverlayMeta">Файл будет обработан в зависимости от его типа.</p>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -150,6 +176,13 @@
                 </div>
                 <div class="tool-history" id="asrToolHistoryList"></div>
             </aside>
+        </div>
+        <div class="drop-zone-overlay drop-zone-overlay--tool" id="asrToolDropOverlay" hidden aria-hidden="true">
+            <div class="drop-zone-overlay__card drop-zone-overlay__card--compact">
+                <p class="drop-zone-overlay__eyebrow">ASR Studio</p>
+                <h3 class="drop-zone-overlay__title" id="asrToolDropOverlayTitle">Отпустите файл сюда</h3>
+                <p class="drop-zone-overlay__meta" id="asrToolDropOverlayMeta">Здесь можно запустить транскрибацию аудио или видео.</p>
+            </div>
         </div>
         <div class="tool-window__resize" data-tool-resize="asr"></div>
     </section>
@@ -490,6 +523,33 @@
                 </section>
             </div>
         </section>
+    </div>
+
+    <div class="modal-backdrop" id="confirmBackdrop" hidden>
+        <section class="settings-panel settings-panel--confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+            <header class="settings-panel__header">
+                <div>
+                    <p class="eyebrow" id="confirmEyebrow">Подтверждение</p>
+                    <h3 id="confirmTitle">Продолжить действие?</h3>
+                </div>
+                <button class="button button--ghost" id="confirmCancelButton" type="button">Отмена</button>
+            </header>
+
+            <div class="settings-panel__content settings-panel__content--confirm">
+                <p class="confirm-message" id="confirmMessage">Подтвердите действие.</p>
+                <div class="button-row button-row--end">
+                    <button class="button button--ghost" id="confirmDismissButton" type="button">Отмена</button>
+                    <button class="button button--primary" id="confirmApproveButton" type="button">Продолжить</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true">
+        <div class="toast" id="toastNotice" hidden>
+            <strong class="toast__title" id="toastTitle">Уведомление</strong>
+            <p class="toast__message" id="toastMessage">Сообщение</p>
+        </div>
     </div>
 
     <script type="module" src="js/app.js"></script>

@@ -31,6 +31,27 @@ class ProfileCreate(BaseModel):
     color: str | None = None
 
 
+class ChatPreferencesUpdate(BaseModel):
+    dictation_model: str | None = None
+
+
+class AsrPreferencesUpdate(BaseModel):
+    studio_model: str | None = None
+    prompt_preset: str | None = None
+
+
+class TtsPreferencesUpdate(BaseModel):
+    provider: str | None = None
+    voice_id: str | None = None
+    speed: str | None = None
+
+
+class ProfilePreferencesUpdate(BaseModel):
+    chat: ChatPreferencesUpdate | None = None
+    asr: AsrPreferencesUpdate | None = None
+    tts: TtsPreferencesUpdate | None = None
+
+
 class SessionCreate(BaseModel):
     profile_id: int
     title: str | None = None

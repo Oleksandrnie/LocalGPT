@@ -15,7 +15,8 @@ from fastapi import HTTPException, UploadFile
 
 _WHITESPACE_RE = re.compile(r"[ \t]+")
 _WORD_RE = re.compile(r"[\wА-Яа-яЁёЇїІіЄєҐґ'-]+", re.UNICODE)
-_DEFAULT_LANG = (os.getenv("OCR_DEFAULT_LANG") or "rus+ukr+eng").strip() or "rus+ukr+eng"
+_TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёЇїІіЄєҐґ+\-']+", re.UNICODE)
+_DEFAULT_LANG = (os.getenv("OCR_DEFAULT_LANG") or "eng+deu+fra+spa+rus+ukr").strip() or "eng+deu+fra+spa+rus+ukr"
 _DEFAULT_PSM = (os.getenv("OCR_DEFAULT_PSM") or "6").strip() or "6"
 _DEFAULT_TSV_PSM = (os.getenv("OCR_TSV_PSM") or "11").strip() or "11"
 _AUTO_CROP_ENABLED = (os.getenv("OCR_AUTO_CROP") or "1").strip().lower() not in {"0", "false", "no", "off"}
@@ -65,6 +66,59 @@ def _meaningful_char_count(text: str) -> int:
     return sum(len(word) for word in _WORD_RE.findall(str(text or "")))
 
 
+def _text_profile(text: str) -> dict[str, int]:
+    raw = str(text or "").strip()
+    tokens = [token for token in _TOKEN_RE.findall(raw) if token]
+    alpha_count = sum(1 for char in raw if char.isalpha())
+    digit_count = sum(1 for char in raw if char.isdigit())
+    alpha_tokens = 0
+    long_alpha_tokens = 0
+    numeric_tokens = 0
+    short_tokens = 0
+
+    for token in tokens:
+        token_alpha_count = sum(1 for char in token if char.isalpha())
+        if len(token) <= 2:
+            short_tokens += 1
+        if token_alpha_count:
+            alpha_tokens += 1
+            if token_alpha_count >= 3:
+                long_alpha_tokens += 1
+        else:
+            numeric_tokens += 1
+
+    return {
+        "token_count": len(tokens),
+        "alpha_count": alpha_count,
+        "digit_count": digit_count,
+        "alpha_tokens": alpha_tokens,
+        "long_alpha_tokens": long_alpha_tokens,
+        "numeric_tokens": numeric_tokens,
+        "short_tokens": short_tokens,
+    }
+
+
+def _is_low_signal_ocr_line(text: str) -> bool:
+    profile = _text_profile(text)
+    if profile["token_count"] <= 0:
+        return True
+    if profile["long_alpha_tokens"] > 0:
+        return False
+    if profile["alpha_count"] <= 1 and profile["digit_count"] >= 1:
+        return True
+    if profile["digit_count"] >= 2 and profile["alpha_count"] <= 2:
+        return True
+    if profile["token_count"] >= 2 and profile["short_tokens"] >= max(2, profile["token_count"] - 1) and profile["alpha_count"] <= 2:
+        return True
+    if profile["digit_count"] >= 1 and profile["short_tokens"] >= max(4, profile["token_count"] - 1):
+        return True
+    if profile["numeric_tokens"] >= max(2, profile["token_count"] // 2) and profile["digit_count"] > profile["alpha_count"]:
+        return True
+    if profile["token_count"] >= 4 and profile["long_alpha_tokens"] == 0 and profile["digit_count"] >= profile["alpha_count"]:
+        return True
+    return False
+
+
 def _is_ui_noise_line(text: str) -> bool:
     clean = str(text or "").strip()
     if not clean:
@@ -89,6 +143,11 @@ def _drop_ui_noise(text: str) -> str:
     if not lines:
         return ""
 
+    rich_text_detected = any(
+        _text_profile(line)["long_alpha_tokens"] > 0 or _meaningful_char_count(line) >= 10
+        for line in lines
+    )
+
     cleaned: list[str] = []
     for index, line in enumerate(lines):
         lowered = line.lower()
@@ -101,6 +160,8 @@ def _drop_ui_noise(text: str) -> str:
         if lowered.startswith("модель ") or lowered.startswith("model "):
             continue
         if _meaningful_char_count(line) <= 1 and len(line) <= 3:
+            continue
+        if rich_text_detected and _is_low_signal_ocr_line(line):
             continue
         cleaned.append(line)
 
@@ -242,12 +303,15 @@ def _build_candidate_lines(
         text = " ".join(str(item.get("text") or "").strip() for item in words).strip()
         if not text or _is_ui_noise_line(text):
             continue
+        if _is_low_signal_ocr_line(text):
+            continue
 
         left = min(int(item["left"]) for item in words)
         top = min(int(item["top"]) for item in words)
         right = max(int(item["right"]) for item in words)
         bottom = max(int(item["bottom"]) for item in words)
         confidences = [float(item["conf"]) for item in words if float(item["conf"]) >= 0]
+        profile = _text_profile(text)
         lines.append(
             {
                 "text": text,
@@ -258,11 +322,63 @@ def _build_candidate_lines(
                 "width": right - left,
                 "height": bottom - top,
                 "char_count": _meaningful_char_count(text),
+                "alpha_count": profile["alpha_count"],
+                "digit_count": profile["digit_count"],
+                "token_count": profile["token_count"],
+                "long_alpha_tokens": profile["long_alpha_tokens"],
                 "mean_conf": (sum(confidences) / len(confidences)) if confidences else 0.0,
             }
         )
 
     return lines
+
+
+def _cluster_score(
+    cluster: list[dict[str, int | float | str]],
+    *,
+    page_width: int,
+    page_height: int,
+) -> float:
+    if not cluster:
+        return -1.0
+
+    left = min(int(item["left"]) for item in cluster)
+    top = min(int(item["top"]) for item in cluster)
+    right = max(int(item["right"]) for item in cluster)
+    bottom = max(int(item["bottom"]) for item in cluster)
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    line_count = len(cluster)
+    char_count = sum(int(item["char_count"]) for item in cluster)
+    alpha_count = sum(int(item.get("alpha_count") or 0) for item in cluster)
+    digit_count = sum(int(item.get("digit_count") or 0) for item in cluster)
+    word_like_tokens = sum(int(item.get("long_alpha_tokens") or 0) for item in cluster)
+
+    width_ratio = width / max(page_width, 1)
+    height_ratio = height / max(page_height, 1)
+    top_ratio = top / max(page_height, 1)
+
+    score = float(char_count)
+    score += float(alpha_count * 1.8)
+    score += float(word_like_tokens * 34)
+    score += float(line_count * 14)
+    score += float(width_ratio * 150)
+    score -= float(digit_count * 0.45)
+
+    if word_like_tokens <= 0:
+        score *= 0.2
+    if alpha_count < 8:
+        score *= 0.35
+    if width_ratio < 0.22:
+        score *= 0.45
+    elif width_ratio < 0.34:
+        score *= 0.78
+    if height_ratio < 0.04:
+        score *= 0.75
+    if top_ratio < 0.07:
+        score *= 0.85
+
+    return score
 
 
 def _select_auto_crop_region(raw_tsv: str) -> tuple[int, int, int, int] | None:
@@ -343,35 +459,11 @@ def _select_auto_crop_region(raw_tsv: str) -> tuple[int, int, int, int] | None:
     best_score = -1.0
 
     for cluster in clusters:
-        left = min(int(item["left"]) for item in cluster)
-        top = min(int(item["top"]) for item in cluster)
-        right = max(int(item["right"]) for item in cluster)
-        bottom = max(int(item["bottom"]) for item in cluster)
-        width = max(1, right - left)
-        height = max(1, bottom - top)
         char_count = sum(int(item["char_count"]) for item in cluster)
-        line_count = len(cluster)
-
-        if char_count < 24:
+        if char_count < 18:
             continue
 
-        width_ratio = width / max(page_width, 1)
-        height_ratio = height / max(page_height, 1)
-        top_ratio = top / max(page_height, 1)
-        left_ratio = left / max(page_width, 1)
-
-        score = float(char_count) + float(line_count * 18) + float(width_ratio * 220)
-        if width_ratio < 0.22:
-            score *= 0.35
-        elif width_ratio < 0.34:
-            score *= 0.7
-        if top_ratio < 0.07:
-            score *= 0.65
-        if left_ratio < 0.06 and width_ratio < 0.35:
-            score *= 0.5
-        if height_ratio < 0.04:
-            score *= 0.6
-
+        score = _cluster_score(cluster, page_width=page_width, page_height=page_height)
         if score > best_score:
             best_score = score
             best_cluster = cluster
