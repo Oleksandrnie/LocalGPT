@@ -15,6 +15,8 @@ const STORAGE_KEYS = {
 
 const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
 const ASR_TOOL_ORIGIN = "asr_tool";
+const TTS_TOOL_MIN_WIDTH = 960;
+const TTS_TOOL_MIN_HEIGHT = 720;
 
 const els = {
   sidebar: document.getElementById("sidebar"),
@@ -1255,25 +1257,18 @@ function renderSessionList() {
 
 function renderContextSummary() {
   if (!els.contextStatus) return;
-  const model = state.currentSessionId
-    ? (state.sessions.find((item) => item.id === state.currentSessionId)?.model_name || state.selectedLlmModel)
-    : state.selectedLlmModel;
-
   if (state.latestTranscript) {
     const parts = [
       state.latestTranscript.language || "auto",
       `${(state.latestTranscript.content || "").length} символов`,
     ];
     els.contextStatus.textContent = `Транскрипт подключён • ${parts.join(" • ")}`;
+    els.contextStatus.hidden = false;
     return;
   }
 
-  if (model) {
-    els.contextStatus.textContent = `Модель ${model}`;
-    return;
-  }
-
-  els.contextStatus.textContent = "Без прикреплённого транскрипта";
+  els.contextStatus.textContent = "";
+  els.contextStatus.hidden = true;
 }
 
 function renderTranscriptStrip() {
@@ -1713,11 +1708,32 @@ function renderToolDock() {
   els.toolDock.innerHTML = items.join("");
 }
 
+function shouldForceTtsToolFullscreen() {
+  const edge = 18;
+  const viewportWidth = Math.max(window.innerWidth || 0, 360);
+  const viewportHeight = Math.max(window.innerHeight || 0, 360);
+  return viewportWidth - edge * 2 < TTS_TOOL_MIN_WIDTH || viewportHeight - edge * 2 < TTS_TOOL_MIN_HEIGHT;
+}
+
+function syncTtsToolWindowMode() {
+  const tool = els.ttsToolWindow;
+  if (!tool || isMobileLayout()) return;
+  if (shouldForceTtsToolFullscreen()) {
+    tool.classList.add("tool-window--fullscreen");
+    tool.dataset.autoFullscreen = "1";
+    return;
+  }
+  if (tool.dataset.autoFullscreen === "1") {
+    tool.classList.remove("tool-window--fullscreen");
+    delete tool.dataset.autoFullscreen;
+  }
+}
+
 function getDefaultTtsToolBounds() {
   const viewportWidth = window.innerWidth || 1440;
   const viewportHeight = window.innerHeight || 900;
-  const width = Math.max(920, Math.min(1460, viewportWidth - 36));
-  const height = Math.max(620, Math.min(900, viewportHeight - 36));
+  const width = Math.max(TTS_TOOL_MIN_WIDTH, Math.min(1460, viewportWidth - 36));
+  const height = Math.max(TTS_TOOL_MIN_HEIGHT, Math.min(900, viewportHeight - 36));
   const left = Math.max(18, Math.round((viewportWidth - width) / 2));
   const top = Math.max(18, Math.round((viewportHeight - height) / 2));
   return { left, top, width, height };
@@ -1729,8 +1745,8 @@ function normalizeTtsToolBounds(bounds) {
   const viewportHeight = Math.max(window.innerHeight || 0, 360);
   const maxWidth = Math.max(320, viewportWidth - edge * 2);
   const maxHeight = Math.max(320, viewportHeight - edge * 2);
-  const minWidth = Math.min(760, maxWidth);
-  const minHeight = Math.min(520, maxHeight);
+  const minWidth = Math.min(TTS_TOOL_MIN_WIDTH, maxWidth);
+  const minHeight = Math.min(TTS_TOOL_MIN_HEIGHT, maxHeight);
   const width = Math.min(Math.max(Math.round(bounds.width || minWidth), minWidth), maxWidth);
   const height = Math.min(Math.max(Math.round(bounds.height || minHeight), minHeight), maxHeight);
   const left = Math.min(Math.max(Math.round(bounds.left ?? edge), edge), Math.max(edge, viewportWidth - edge - width));
@@ -1752,6 +1768,8 @@ function applyTtsToolBounds(bounds) {
 function setTtsToolWindowBounds() {
   const tool = els.ttsToolWindow;
   if (!tool || isMobileLayout()) return;
+  syncTtsToolWindowMode();
+  if (tool.classList.contains("tool-window--fullscreen")) return;
   applyTtsToolBounds(state.ttsToolBounds || getDefaultTtsToolBounds());
 }
 
@@ -1940,8 +1958,17 @@ function renderTtsTool() {
 
   const selectedRecord = state.ttsToolSelectedRecord;
   const latestAssistantMessage = findLatestAssistantMessage();
+  let selectedVoiceId = String(state.selectedTtsVoiceId || "").trim();
+  const selectedVoiceExists = state.ttsVoices.some((voice) => voice.id === selectedVoiceId);
+  if (!selectedVoiceExists) {
+    selectedVoiceId = String(state.ttsVoices[0]?.id || "").trim();
+    if (selectedVoiceId !== state.selectedTtsVoiceId) {
+      state.selectedTtsVoiceId = selectedVoiceId;
+      writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
+    }
+  }
   const hasText = Boolean((els.ttsToolText?.value || "").trim());
-  const hasVoice = Boolean(state.selectedTtsVoiceId);
+  const hasVoice = Boolean(selectedVoiceId);
   const selectedSpeed = getSelectedTtsSpeed();
   const canDownload = Boolean(
     selectedRecord?.base_output_url
@@ -1962,7 +1989,7 @@ function renderTtsTool() {
       els.ttsToolVoiceSelect.innerHTML = state.ttsVoices
         .map((voice) => `<option value="${escapeHtml(voice.id)}">${escapeHtml(voice.label || voice.name || voice.id)}</option>`)
         .join("");
-      els.ttsToolVoiceSelect.value = state.selectedTtsVoiceId || state.ttsVoices[0]?.id || "";
+      els.ttsToolVoiceSelect.value = selectedVoiceId || state.ttsVoices[0]?.id || "";
       els.ttsToolVoiceSelect.disabled = false;
     }
   }
@@ -2002,7 +2029,7 @@ function renderTtsTool() {
   }
   if (els.ttsToolMeta) {
     const metaParts = [
-      selectedRecord?.voice_name || selectedRecord?.voice_id || state.selectedTtsVoiceId || "Голос не выбран",
+      selectedRecord?.voice_name || selectedRecord?.voice_id || selectedVoiceId || "Голос не выбран",
       `Скорость ${formatTtsSpeedLabel(selectedSpeed)}x`,
       selectedRecord?.status || (hasVoice ? "Готово к генерации" : "Выберите голос в настройках"),
       formatDateTime(selectedRecord?.updated_at || selectedRecord?.created_at),
@@ -2578,8 +2605,8 @@ function renderOcrEditor() {
   }
   if (els.ocrMeta) {
     els.ocrMeta.textContent = state.ocrFileName
-      ? `Источник: ${state.ocrFileName}. Текст можно отредактировать и затем вставить в чат или отправить.`
-      : "Текст можно поправить и затем вставить в чат или сразу отправить.";
+      ? `Источник: ${state.ocrFileName}. OCR-текст можно отредактировать, затем вставить в чат или сразу отправить.`
+      : "OCR-текст можно поправить и затем вставить в чат или сразу отправить.";
   }
   if (els.ocrInsertPromptButton) {
     els.ocrInsertPromptButton.disabled = !String(state.ocrText || "").trim();
@@ -2619,7 +2646,7 @@ async function runOcrForImage(file) {
   state.ocrFileName = file.name || "";
   state.ocrText = "";
   openOcrEditor();
-  setInlineStatus(els.ocrStatus, `Распознаю текст на изображении ${file.name}…`, "warning");
+  setInlineStatus(els.ocrStatus, `Запускаю OCR для изображения ${file.name}…`, "warning");
   setFooter(`OCR: распознаю ${file.name}…`);
   renderOcrEditor();
 
@@ -2630,7 +2657,7 @@ async function runOcrForImage(file) {
     state.ocrText = String(data?.text || "").trim();
     state.ocrFileName = String(data?.file_name || file.name || "").trim();
     renderOcrEditor();
-    setInlineStatus(els.ocrStatus, "Текст с изображения извлечён. Можно редактировать и отправлять.", "success");
+    setInlineStatus(els.ocrStatus, "Текст с изображения извлечён. Можно редактировать, вставлять и отправлять.", "success");
     setFooter("OCR: текст извлечён.", "success");
   } catch (error) {
     setInlineStatus(els.ocrStatus, `Ошибка OCR: ${error.message || error}`, "error");
@@ -2741,6 +2768,7 @@ async function openTtsTool({ focusText = false } = {}) {
   state.ttsToolIsOpen = true;
   state.ttsToolIsMinimized = false;
   els.ttsToolWindow.hidden = false;
+  syncTtsToolWindowMode();
   setTtsToolWindowBounds();
 
   setInlineStatus(
@@ -2787,6 +2815,13 @@ function toggleTtsToolFullscreen() {
   if (!els.ttsToolWindow) return;
   stopTtsToolDrag();
   stopTtsToolResize();
+  if (shouldForceTtsToolFullscreen()) {
+    els.ttsToolWindow.classList.add("tool-window--fullscreen");
+    els.ttsToolWindow.dataset.autoFullscreen = "1";
+    renderTtsTool();
+    return;
+  }
+  delete els.ttsToolWindow.dataset.autoFullscreen;
   els.ttsToolWindow.classList.toggle("tool-window--fullscreen");
   if (!els.ttsToolWindow.classList.contains("tool-window--fullscreen")) {
     setTtsToolWindowBounds();
@@ -2796,11 +2831,21 @@ function toggleTtsToolFullscreen() {
 
 async function generateFromTtsTool() {
   const text = String(els.ttsToolText?.value || "").trim();
+  const voiceId = String(
+    els.ttsToolVoiceSelect?.value
+      || state.selectedTtsVoiceId
+      || state.ttsVoices[0]?.id
+      || "",
+  ).trim();
   if (!text) {
     setInlineStatus(els.ttsToolStatus, "Введите текст для озвучки.", "warning");
     return;
   }
-  if (!state.selectedTtsVoiceId) {
+  if (voiceId !== state.selectedTtsVoiceId) {
+    state.selectedTtsVoiceId = voiceId;
+    writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
+  }
+  if (!voiceId) {
     setInlineStatus(els.ttsToolStatus, "Сначала выберите локальный голос в настройках.", "warning");
     return;
   }
@@ -2816,7 +2861,7 @@ async function generateFromTtsTool() {
       method: "POST",
       body: {
         text,
-        voice_id: state.selectedTtsVoiceId,
+        voice_id: voiceId,
         provider: state.selectedTtsProvider || "piper",
       },
     });
@@ -4071,6 +4116,9 @@ function bindEvents() {
     writeStored(STORAGE_KEYS.ttsVoiceId, state.selectedTtsVoiceId);
     renderTtsControls();
   });
+  els.ttsToolText?.addEventListener("input", () => {
+    renderTtsTool();
+  });
   els.ttsToolGenerateButton?.addEventListener("click", async () => {
     await generateFromTtsTool();
   });
@@ -4344,8 +4392,11 @@ function bindEvents() {
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {
       setAsrToolWindowBounds();
     }
-    if (state.ttsToolIsOpen && !els.ttsToolWindow?.classList.contains("tool-window--fullscreen")) {
-      setTtsToolWindowBounds();
+    if (state.ttsToolIsOpen) {
+      syncTtsToolWindowMode();
+      if (!els.ttsToolWindow?.classList.contains("tool-window--fullscreen")) {
+        setTtsToolWindowBounds();
+      }
     }
     autoResizePrompt();
     syncMessageScrollState();

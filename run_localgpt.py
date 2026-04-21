@@ -457,7 +457,7 @@ def build_backend_cmd(python: str, host: str, port: int, reload_enabled: bool) -
         python,
         "-m",
         "uvicorn",
-        "app.server:app",
+        "backend.server:app",
         "--host",
         host,
         "--port",
@@ -481,7 +481,7 @@ def start_backend(python: str, *, host: str, port: int, reload_enabled: bool, ex
     env["PYTHONPATH"] = str(ROOT)
     cmd = build_backend_cmd(python, host, port, reload_enabled)
 
-    print("[*] Starting FastAPI backend (uvicorn app.server:app) ...")
+    print("[*] Starting FastAPI backend (uvicorn backend.server:app) ...")
     if exec_mode:
         printable = " ".join(cmd)
         print(f">> {printable}")

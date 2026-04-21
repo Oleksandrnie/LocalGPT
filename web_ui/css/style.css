@@ -21,7 +21,6 @@
     --radius-lg: 24px;
     --radius-md: 18px;
     --radius-sm: 12px;
-    --max-width: 1520px;
 }
 
 * {
@@ -68,9 +67,8 @@ select {
 .app-shell {
     display: grid;
     grid-template-columns: 320px minmax(0, 1fr);
+    width: 100%;
     height: 100vh;
-    max-width: var(--max-width);
-    margin: 0 auto;
     overflow: hidden;
 }
 
@@ -199,6 +197,7 @@ select {
 }
 
 .session-list {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -283,13 +282,17 @@ select {
 
 .topbar__main {
     display: flex;
+    flex: 1 1 auto;
     align-items: center;
     gap: 16px;
     min-width: 0;
 }
 
 .topbar__titles {
+    display: grid;
+    gap: 2px;
     min-width: 0;
+    max-width: min(720px, 100%);
 }
 
 .topbar__row {
@@ -351,7 +354,7 @@ select {
 
 .quick-model-switch__control {
     min-width: 220px;
-    max-width: min(320px, 48vw);
+    max-width: min(320px, 42vw);
     height: 32px;
     padding: 0 34px 0 12px;
     border: 1px solid var(--border);
@@ -383,6 +386,7 @@ select {
 
 .topbar__actions {
     display: flex;
+    flex: 0 0 auto;
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 10px;
@@ -1206,31 +1210,35 @@ select {
 }
 
 .tool-dock {
-    position: fixed;
-    left: 18px;
-    bottom: 18px;
-    z-index: 75;
     display: flex;
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    flex-direction: column;
     gap: 10px;
-    pointer-events: none;
+    width: 100%;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tool-dock[hidden] {
+    display: none !important;
 }
 
 .tool-dock__item {
-    pointer-events: auto;
     display: inline-flex;
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
     gap: 4px;
-    min-width: 188px;
+    width: 100%;
+    min-width: 0;
     min-height: 58px;
     padding: 10px 14px;
     border-radius: 18px;
     border: 1px solid var(--border-strong);
     background: rgba(17, 22, 29, 0.94);
     color: var(--text);
-    box-shadow: var(--shadow);
+    box-shadow: none;
+    text-align: left;
 }
 
 .tool-dock__item--minimized {
@@ -1447,6 +1455,7 @@ select {
     }
 
     .sidebar {
+        z-index: 70;
         position: fixed;
         inset: 0 auto 0 0;
         width: min(320px, calc(100vw - 56px));
@@ -1454,6 +1463,8 @@ select {
         transform: translateX(-100%);
         transition: transform 0.22s ease;
         box-shadow: var(--shadow);
+        background: rgba(15, 19, 24, 0.98);
+        backdrop-filter: none;
     }
 
     .sidebar--open {
@@ -1472,16 +1483,25 @@ select {
         padding-right: 18px;
     }
 
+    .topbar {
+        backdrop-filter: none;
+    }
+
     .scroll-jump {
         right: 22px;
     }
 
-    .composer {
+    .settings-grid {
         grid-template-columns: 1fr;
     }
 
-    .settings-grid {
-        grid-template-columns: 1fr;
+    .composer {
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: end;
+    }
+
+    .composer__input-wrap {
+        grid-column: 1 / -1;
     }
 
     .composer__tools {
@@ -1525,6 +1545,8 @@ select {
         bottom: 10px !important;
         width: auto !important;
         height: auto !important;
+        background: rgba(16, 20, 25, 0.99);
+        backdrop-filter: none;
     }
 
     .tool-window__body {
@@ -1534,6 +1556,16 @@ select {
     .tool-sidebar {
         border-left: 0;
         border-top: 1px solid var(--border);
+    }
+
+    .modal-backdrop,
+    .app-backdrop {
+        background: rgba(6, 9, 12, 0.38);
+        backdrop-filter: none;
+    }
+
+    .app-backdrop {
+        z-index: 65;
     }
 }
 
