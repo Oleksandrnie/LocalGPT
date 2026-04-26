@@ -33,6 +33,11 @@
             <div class="tool-dock" id="toolDock" hidden></div>
         </aside>
 
+        <button class="sidebar-toggle-pill" id="sidebarCollapseButton" type="button" aria-expanded="true"
+            aria-label="Свернуть sidebar">
+            <span aria-hidden="true">‹</span>
+        </button>
+
         <div class="app-backdrop" id="sidebarBackdrop" hidden></div>
 
         <main class="chat-shell" id="chatShell">
@@ -51,22 +56,8 @@
                             <span class="status-pill" id="healthStatus">Проверка…</span>
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
-                                <div class="quick-model-picker">
-                                    <button class="quick-model-picker__button" id="quickModelButton" type="button"
-                                        aria-haspopup="menu" aria-expanded="false" aria-label="Выбрать модель чата">
-                                        <span class="quick-model-picker__text">
-                                            <span class="quick-model-picker__value" id="quickModelValue">Модель не
-                                                выбрана</span>
-                                            <span class="quick-model-picker__meta" id="quickModelMeta">Локальная модель
-                                                чата</span>
-                                        </span>
-                                        <span class="quick-model-picker__caret" aria-hidden="true"></span>
-                                    </button>
-                                    <div class="quick-model-picker__menu" id="quickModelMenu" hidden role="menu"
-                                        aria-label="Выбор модели чата"></div>
-                                    <select id="quickModelSelect" class="quick-model-switch__control"
-                                        aria-label="Быстро выбрать модель чата" hidden tabindex="-1"></select>
-                                </div>
+                                <select id="quickModelSelect" class="field__control quick-model-switch__control"
+                                    aria-label="Быстро выбрать модель чата"></select>
                             </div>
                         </div>
                         <div class="topbar__meta">
@@ -79,7 +70,11 @@
 
                 <div class="topbar__actions">
                     <button class="button button--ghost" id="copyLanUrlButton" type="button">LAN URL</button>
-                    <button class="button button--ghost" id="openRagButton" type="button">RAG</button>
+                    <button class="button button--ghost rag-status-button" id="openRagButton" type="button"
+                        aria-pressed="false" aria-label="Открыть RAG, выключен">
+                        <span>RAG</span>
+                        <span class="rag-status-button__dot" aria-hidden="true"></span>
+                    </button>
                     <button class="button button--ghost" id="openSettingsButton" type="button">Настройки</button>
                 </div>
             </header>
@@ -113,7 +108,9 @@
                 <div class="composer__tools">
                     <div class="composer-menu">
                         <button class="composer-menu__trigger" id="composerMenuButton" type="button"
-                            aria-haspopup="menu" aria-expanded="false" aria-label="Открыть меню действий">+</button>
+                            aria-haspopup="menu" aria-expanded="false" aria-label="Открыть меню действий">
+                            <span aria-hidden="true">+</span>
+                        </button>
                         <div class="composer-menu__dropdown" id="composerMenu" hidden>
                             <button class="composer-menu__item" id="fileMenuItem" type="button">Фото (OCR)</button>
                             <button class="composer-menu__item" id="transcribeMenuItem"
@@ -142,7 +139,7 @@
                 <button class="send-button" id="sendButton" type="submit" disabled>Отправить</button>
             </form>
 
-            <div class="footer-status" id="footerStatus"></div>
+            <div class="footer-status" id="footerStatus" aria-hidden="true"></div>
 
             <div class="drop-zone-overlay" id="chatDropOverlay" hidden aria-hidden="true">
                 <div class="drop-zone-overlay__card">
@@ -705,12 +702,7 @@
         </section>
     </div>
 
-    <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true">
-        <div class="toast" id="toastNotice" hidden>
-            <strong class="toast__title" id="toastTitle">Уведомление</strong>
-            <p class="toast__message" id="toastMessage">Сообщение</p>
-        </div>
-    </div>
+    <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="false"></div>
 
     <script type="module" src="js/app.js"></script>
 </body>

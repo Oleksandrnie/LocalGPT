@@ -11,6 +11,7 @@ const STORAGE_KEYS = {
   ttsProvider: "localgpt_simple_tts_provider",
   ttsVoiceId: "localgpt_simple_tts_voice_id",
   ttsSpeed: "localgpt_simple_tts_speed",
+  sidebarOpen: "sidebar_open",
   chatLibraryOpen: "localgpt_simple_chat_library_open",
   asrLibraryOpen: "localgpt_simple_asr_library_open",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
@@ -30,6 +31,7 @@ const els = {
   sidebar: document.getElementById("sidebar"),
   sidebarBackdrop: document.getElementById("sidebarBackdrop"),
   toggleSidebarButton: document.getElementById("toggleSidebarButton"),
+  sidebarCollapseButton: document.getElementById("sidebarCollapseButton"),
   newChatButton: document.getElementById("newChatButton"),
   sessionList: document.getElementById("sessionList"),
   sessionContextMenu: document.getElementById("sessionContextMenu"),
@@ -251,6 +253,7 @@ const state = {
   chatTaskStartController: null,
   isSpeaking: false,
   autoScrollPinned: true,
+  sidebarOpen: readStored(STORAGE_KEYS.sidebarOpen, "true") !== "false",
   modelsDir: "",
   ttsVoices: [],
   ttsSpeedOptions: [...DEFAULT_TTS_SPEED_OPTIONS],
@@ -269,6 +272,8 @@ const state = {
   confirmResolver: null,
   confirmReturnFocus: null,
   toastTimer: null,
+  lastToastKey: "",
+  lastToastAt: 0,
   chatDropDepth: 0,
   asrToolDropDepth: 0,
   voiceRecorder: null,
@@ -302,6 +307,8 @@ const state = {
   ttsToolDragSession: null,
   ttsToolResizeSession: null,
   renderedCodeBlocks: [],
+  appSelects: new Map(),
+  appSelectSyncFrame: null,
   modelSettingsState: {
     effective: {},
     overrides: {},
@@ -720,6 +727,34 @@ function scrollMessagesToTop() {
   els.messageScroll?.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function applySidebarOpenState() {
+  const open = state.sidebarOpen !== false;
+  document.querySelector(".app-shell")?.classList.toggle("app-shell--sidebar-closed", !open);
+  if (els.sidebarCollapseButton) {
+    els.sidebarCollapseButton.setAttribute("aria-expanded", open ? "true" : "false");
+    els.sidebarCollapseButton.setAttribute("aria-label", open ? "Свернуть sidebar" : "Развернуть sidebar");
+    const icon = els.sidebarCollapseButton.querySelector("span");
+    if (icon) {
+      icon.textContent = open ? "‹" : "›";
+    }
+  }
+}
+
+function setSidebarOpen(open) {
+  state.sidebarOpen = Boolean(open);
+  writeStored(STORAGE_KEYS.sidebarOpen, state.sidebarOpen ? "true" : "false");
+  applySidebarOpenState();
+}
+
+function toggleSidebarCollapse() {
+  setSidebarOpen(!state.sidebarOpen);
+}
+
+function isTypingTarget(target) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+}
+
 function toggleComposerMenu(forceState) {
   if (!els.composerMenu || !els.composerMenuButton) return;
   const nextState = typeof forceState === "boolean"
@@ -727,6 +762,123 @@ function toggleComposerMenu(forceState) {
     : els.composerMenu.hidden;
   els.composerMenu.hidden = !nextState;
   els.composerMenuButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+}
+
+function appSelectLabel(select) {
+  const selected = select?.selectedOptions?.[0];
+  return selected?.textContent?.trim() || select?.options?.[0]?.textContent?.trim() || "Не выбрано";
+}
+
+function closeAppSelect(select = null) {
+  const targets = select ? [select] : Array.from(state.appSelects.keys());
+  targets.forEach((item) => {
+    const entry = state.appSelects.get(item);
+    if (!entry) return;
+    entry.wrapper.classList.remove("app-select--open");
+    entry.button.setAttribute("aria-expanded", "false");
+    entry.menu.hidden = true;
+  });
+}
+
+function syncAppSelect(select) {
+  const entry = state.appSelects.get(select);
+  if (!entry) return;
+  const disabled = Boolean(select.disabled);
+  const selectedValue = String(select.value || "");
+  entry.button.disabled = disabled;
+  entry.button.setAttribute("aria-disabled", disabled ? "true" : "false");
+  entry.value.textContent = appSelectLabel(select);
+  entry.menu.innerHTML = Array.from(select.options || [])
+    .map((option) => {
+      const active = String(option.value) === selectedValue ? " app-select__option--active" : "";
+      return `<button class="app-select__option${active}" type="button" role="option" aria-selected="${active ? "true" : "false"}" data-app-select-value="${escapeHtml(option.value)}">${escapeHtml(option.textContent || option.value)}</button>`;
+    })
+    .join("");
+}
+
+function syncAllAppSelects() {
+  state.appSelects.forEach((_, select) => syncAppSelect(select));
+}
+
+function queueSyncAppSelects() {
+  if (state.appSelectSyncFrame) return;
+  state.appSelectSyncFrame = window.requestAnimationFrame(() => {
+    state.appSelectSyncFrame = null;
+    syncAllAppSelects();
+  });
+}
+
+function enhanceAppSelect(select) {
+  if (!select || state.appSelects.has(select) || select.hidden) {
+    return;
+  }
+
+  select.classList.add("app-select__native");
+  select.setAttribute("aria-hidden", "true");
+  select.tabIndex = -1;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "app-select";
+  wrapper.dataset.appSelectFor = select.id || "";
+
+  const button = document.createElement("button");
+  button.className = "app-select__button";
+  button.type = "button";
+  button.setAttribute("aria-haspopup", "listbox");
+  button.setAttribute("aria-expanded", "false");
+  const labelText = select.closest(".field")?.querySelector(".field__label")?.textContent?.trim();
+  if (labelText) {
+    button.setAttribute("aria-label", labelText);
+  }
+
+  const value = document.createElement("span");
+  value.className = "app-select__value";
+
+  const caret = document.createElement("span");
+  caret.className = "app-select__caret";
+  caret.setAttribute("aria-hidden", "true");
+
+  const menu = document.createElement("div");
+  menu.className = "app-select__menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "listbox");
+
+  button.append(value, caret);
+  wrapper.append(button, menu);
+  select.insertAdjacentElement("afterend", wrapper);
+
+  const observer = new MutationObserver(() => syncAppSelect(select));
+  observer.observe(select, { attributes: true, childList: true, subtree: true, attributeFilter: ["disabled"] });
+
+  state.appSelects.set(select, { wrapper, button, value, menu, observer });
+  syncAppSelect(select);
+
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (select.disabled) return;
+    const willOpen = menu.hidden;
+    closeAppSelect();
+    wrapper.classList.toggle("app-select--open", willOpen);
+    button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    menu.hidden = !willOpen;
+  });
+
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const optionButton = event.target instanceof Element
+      ? event.target.closest("[data-app-select-value]")
+      : null;
+    if (!optionButton) return;
+    select.value = optionButton.dataset.appSelectValue || "";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    closeAppSelect(select);
+    syncAppSelect(select);
+  });
+}
+
+function initAppSelects() {
+  document.querySelectorAll("select.field__control, select.quick-model-switch__control").forEach((select) => enhanceAppSelect(select));
+  queueSyncAppSelects();
 }
 
 function getChatModelItems() {
@@ -1355,7 +1507,7 @@ async function speakLatestAssistantMessage() {
 function autoResizePrompt() {
   if (!els.promptInput) return;
   els.promptInput.style.height = "0px";
-  const nextHeight = Math.min(Math.max(els.promptInput.scrollHeight, 60), 200);
+  const nextHeight = Math.min(Math.max(els.promptInput.scrollHeight, 44), 132);
   els.promptInput.style.height = `${nextHeight}px`;
 }
 
@@ -1385,16 +1537,15 @@ function renderChatModelNotice() {
 }
 
 function setFooter(message = "", tone = "info") {
-  if (!els.footerStatus) return;
-  els.footerStatus.textContent = message;
-  els.footerStatus.className = "footer-status";
-  if (tone === "success") {
-    els.footerStatus.classList.add("footer-status--success");
-  } else if (tone === "warning") {
-    els.footerStatus.classList.add("footer-status--warning");
-  } else if (tone === "error") {
-    els.footerStatus.classList.add("footer-status--error");
+  if (els.footerStatus) {
+    els.footerStatus.textContent = "";
+    els.footerStatus.className = "footer-status";
   }
+  if (!message) return;
+  showToast(message, tone, {
+    title: tone === "success" ? "Готово" : tone === "error" ? "Ошибка" : tone === "warning" ? "Внимание" : "Статус",
+    duration: tone === "error" ? 4200 : tone === "warning" ? 3400 : 2800,
+  });
 }
 
 function setHealthBadge(message, tone = "neutral") {
@@ -1426,28 +1577,37 @@ function closeToast() {
     window.clearTimeout(state.toastTimer);
     state.toastTimer = null;
   }
-  if (!els.toastNotice) return;
-  els.toastNotice.hidden = true;
-  els.toastNotice.className = "toast";
+  els.toastStack?.querySelectorAll(".toast").forEach((toast) => toast.remove());
 }
 
 function showToast(message = "", tone = "info", { title = "Уведомление", duration = 2800 } = {}) {
-  if (!els.toastNotice || !els.toastTitle || !els.toastMessage) return;
-  closeToast();
-  els.toastTitle.textContent = title;
-  els.toastMessage.textContent = message;
-  els.toastNotice.className = "toast";
-  if (tone === "success") {
-    els.toastNotice.classList.add("toast--success");
-  } else if (tone === "warning") {
-    els.toastNotice.classList.add("toast--warning");
-  } else if (tone === "error") {
-    els.toastNotice.classList.add("toast--error");
+  if (!els.toastStack || !message) return;
+  const dedupeKey = `${tone}:${title}:${message}`;
+  const now = Date.now();
+  if (state.lastToastKey === dedupeKey && now - state.lastToastAt < 8000) return;
+  state.lastToastKey = dedupeKey;
+  state.lastToastAt = now;
+  const toast = document.createElement("div");
+  const normalizedTone = ["success", "warning", "error"].includes(tone) ? tone : "info";
+  toast.className = `toast toast--${normalizedTone}`;
+  toast.innerHTML = `
+    <span class="toast__mark" aria-hidden="true"></span>
+    <span class="toast__content">
+      <strong class="toast__title">${escapeHtml(title)}</strong>
+      <span class="toast__message">${escapeHtml(message)}</span>
+    </span>
+    <button class="toast__close" type="button" aria-label="Закрыть уведомление">×</button>
+  `;
+  const close = () => {
+    toast.classList.add("toast--closing");
+    window.setTimeout(() => toast.remove(), 180);
+  };
+  toast.querySelector(".toast__close")?.addEventListener("click", close);
+  while (els.toastStack.children.length >= 2) {
+    els.toastStack.firstElementChild?.remove();
   }
-  els.toastNotice.hidden = false;
-  state.toastTimer = window.setTimeout(() => {
-    closeToast();
-  }, Math.max(1200, Number(duration) || 2800));
+  els.toastStack.append(toast);
+  window.setTimeout(close, Math.max(1200, Number(duration) || 2800));
 }
 
 function resolveConfirmDialog(approved = false) {
@@ -1704,6 +1864,7 @@ function applyActiveProfilePreferences() {
   state.selectedTtsVoiceId = String(preferences?.tts?.voice_id || "").trim();
   state.selectedTtsSpeed = formatTtsSpeedLabel(preferences?.tts?.speed || state.selectedTtsSpeed || 1);
 
+  renderRagButton();
   renderWhisperControls();
   renderTtsControls();
 }
@@ -1826,6 +1987,7 @@ function renderProfileOptions() {
     if (els.profileField) {
       els.profileField.hidden = false;
     }
+    queueSyncAppSelects();
     return;
   }
 
@@ -1841,6 +2003,7 @@ function renderProfileOptions() {
   if (els.profileField) {
     els.profileField.hidden = false;
   }
+  queueSyncAppSelects();
 }
 
 function enterProfileCreateMode() {
@@ -1898,6 +2061,7 @@ function renderProfileManagement() {
     els.deleteProfileButton.hidden = isCreateMode;
     els.deleteProfileButton.disabled = isCreateMode || !activeProfile || state.profiles.length <= 1;
   }
+  queueSyncAppSelects();
 }
 
 function renderSessionList() {
@@ -2055,6 +2219,7 @@ function renderModelControls() {
   renderLibraryPanels();
   renderChatModelLibrary();
   renderChatModelNotice();
+  queueSyncAppSelects();
 }
 
 async function applySelectedLlmModel(nextModel) {
@@ -2215,6 +2380,7 @@ function renderWhisperControls() {
   renderAsrTool();
   renderVoiceModelMenu();
   renderVoiceRecordButton();
+  queueSyncAppSelects();
 }
 
 function renderAsrModelLibrary() {
@@ -2287,6 +2453,7 @@ function renderTtsControls() {
     renderTtsTool();
     renderLibraryPanels();
     renderTtsVoiceLibrary();
+    queueSyncAppSelects();
     return;
   }
 
@@ -2312,6 +2479,7 @@ function renderTtsControls() {
   renderTtsTool();
   renderLibraryPanels();
   renderTtsVoiceLibrary();
+  queueSyncAppSelects();
 }
 
 function renderTtsVoiceLibrary() {
@@ -2745,6 +2913,7 @@ function renderTtsTool() {
 
   syncTtsToolPlayer(selectedRecord);
   renderTtsToolHistory();
+  queueSyncAppSelects();
 }
 
 async function ensureTtsToolSpeed(record, { silent = false, manageBusy = true } = {}) {
@@ -3075,6 +3244,7 @@ function renderAsrTool() {
   }
 
   renderAsrToolHistory();
+  queueSyncAppSelects();
 }
 
 async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
@@ -4228,8 +4398,18 @@ function activeProfileRagEnabled() {
   return Boolean(preferences?.settings?.rag_enabled);
 }
 
+function renderRagButton() {
+  if (!els.openRagButton) return;
+  const enabled = activeProfileRagEnabled();
+  els.openRagButton.classList.toggle("rag-status-button--on", enabled);
+  els.openRagButton.setAttribute("aria-pressed", enabled ? "true" : "false");
+  els.openRagButton.setAttribute("aria-label", enabled ? "Открыть RAG, включён" : "Открыть RAG, выключен");
+  els.openRagButton.title = enabled ? "RAG включён для активного профиля" : "RAG выключен для активного профиля";
+}
+
 function renderRagPanel() {
   const status = state.ragStatus || {};
+  renderRagButton();
   if (els.ragSourceDirValue) {
     els.ragSourceDirValue.textContent = status.source_dir || "rag_sources";
   }
@@ -5314,6 +5494,7 @@ async function shutdownRuntime() {
 function bindEvents() {
   els.toggleSidebarButton?.addEventListener("click", () => openSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());
+  els.sidebarCollapseButton?.addEventListener("click", () => toggleSidebarCollapse());
   els.newChatButton?.addEventListener("click", async () => {
     state.currentSessionId = null;
     writeStored(STORAGE_KEYS.activeSessionId, "");
@@ -5966,7 +6147,18 @@ function bindEvents() {
   });
 
   window.addEventListener("keydown", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b" && !event.altKey && !isTypingTarget(target)) {
+      event.preventDefault();
+      toggleSidebarCollapse();
+      return;
+    }
     if (event.key === "Escape") {
+      const appSelectOpen = Array.from(state.appSelects.values()).some((entry) => entry.wrapper.classList.contains("app-select--open"));
+      if (appSelectOpen) {
+        closeAppSelect();
+        return;
+      }
       closeSessionContextMenu();
       if (!els.confirmBackdrop?.hidden) {
         resolveConfirmDialog(false);
@@ -5984,6 +6176,7 @@ function bindEvents() {
       toggleComposerMenu(false);
       closeQuickModelMenu();
       closeVoiceModelMenu();
+      closeAppSelect();
     }
   });
 
@@ -5993,6 +6186,7 @@ function bindEvents() {
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
+    const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
       closeSessionContextMenu();
     }
@@ -6005,6 +6199,9 @@ function bindEvents() {
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
     }
+    if (!insideAppSelect) {
+      closeAppSelect();
+    }
   });
 
   window.addEventListener("contextmenu", (event) => {
@@ -6012,6 +6209,7 @@ function bindEvents() {
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
+    const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
       closeSessionContextMenu();
     }
@@ -6020,6 +6218,9 @@ function bindEvents() {
     }
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
+    }
+    if (!insideAppSelect) {
+      closeAppSelect();
     }
   });
 
@@ -6034,6 +6235,7 @@ function bindEvents() {
     toggleComposerMenu(false);
     closeQuickModelMenu();
     closeVoiceModelMenu();
+    closeAppSelect();
     closeSessionContextMenu();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {
       setAsrToolWindowBounds();
@@ -6059,6 +6261,8 @@ function bindEvents() {
 }
 
 async function bootstrap() {
+  applySidebarOpenState();
+  initAppSelects();
   renderWhisperControls();
   renderTtsControls();
   renderAsrTool();
