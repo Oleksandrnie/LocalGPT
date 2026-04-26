@@ -32,6 +32,8 @@ const els = {
   toggleSidebarButton: document.getElementById("toggleSidebarButton"),
   newChatButton: document.getElementById("newChatButton"),
   sessionList: document.getElementById("sessionList"),
+  sessionContextMenu: document.getElementById("sessionContextMenu"),
+  renameSessionMenuItem: document.getElementById("renameSessionMenuItem"),
   profileField: document.getElementById("profileField"),
   profileSelect: document.getElementById("profileSelect"),
   chatTitle: document.getElementById("chatTitle"),
@@ -221,6 +223,7 @@ const state = {
   profileManagementMode: "edit",
   sessions: [],
   currentSessionId: null,
+  sessionContextMenuSessionId: null,
   messages: [],
   installedModels: [],
   recommendedModels: [],
@@ -1795,7 +1798,17 @@ function syncDownloadsPolling() {
 }
 
 function renderProfileOptions() {
-  if (!els.profileSelect || !els.profileField) return;
+  if (!els.profileSelect) return;
+  if (!state.profiles.length) {
+    els.profileSelect.innerHTML = '<option value="">Нет профилей</option>';
+    els.profileSelect.disabled = true;
+    if (els.profileField) {
+      els.profileField.hidden = false;
+    }
+    return;
+  }
+
+  els.profileSelect.disabled = false;
   els.profileSelect.innerHTML = state.profiles
     .map((profile) => `<option value="${profile.id}">${escapeHtml(profile.name)}</option>`)
     .join("");
@@ -1804,7 +1817,9 @@ function renderProfileOptions() {
     els.profileSelect.value = String(state.activeProfileId);
   }
 
-  els.profileField.hidden = state.profiles.length <= 1;
+  if (els.profileField) {
+    els.profileField.hidden = false;
+  }
 }
 
 function enterProfileCreateMode() {
@@ -1891,6 +1906,27 @@ function renderSessionList() {
       `;
     })
     .join("");
+}
+
+function closeSessionContextMenu() {
+  state.sessionContextMenuSessionId = null;
+  if (els.sessionContextMenu) {
+    els.sessionContextMenu.hidden = true;
+  }
+}
+
+function openSessionContextMenu(sessionId, clientX, clientY) {
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session || !els.sessionContextMenu) return;
+  state.sessionContextMenuSessionId = sessionId;
+  els.sessionContextMenu.hidden = false;
+
+  const rect = els.sessionContextMenu.getBoundingClientRect();
+  const margin = 10;
+  const left = Math.min(Math.max(margin, clientX), window.innerWidth - rect.width - margin);
+  const top = Math.min(Math.max(margin, clientY), window.innerHeight - rect.height - margin);
+  els.sessionContextMenu.style.left = `${left}px`;
+  els.sessionContextMenu.style.top = `${top}px`;
 }
 
 function renderContextSummary() {
@@ -5119,6 +5155,35 @@ async function updateCurrentSessionMeta(patch) {
   }
 }
 
+async function renameSessionById(sessionId) {
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (!session) return;
+  const currentTitle = session.title || "Новый чат";
+  const nextTitle = window.prompt("Новое название чата", currentTitle);
+  if (nextTitle === null) return;
+  const title = nextTitle.trim();
+  if (!title) {
+    setFooter("Название чата не может быть пустым.", "warning");
+    return;
+  }
+  if (title === currentTitle) return;
+
+  try {
+    const updated = await request(`/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      body: { title },
+    });
+    state.sessions = state.sessions.map((item) => (item.id === updated.id ? updated : item));
+    renderSessionList();
+    if (updated.id === state.currentSessionId) {
+      applyCurrentSessionMeta();
+    }
+    setFooter("Чат переименован.", "success");
+  } catch (error) {
+    setFooter(`Не удалось переименовать чат: ${error.message || error}`, "error");
+  }
+}
+
 async function saveModelsDir(moveExisting) {
   const target = (els.modelsDirInput?.value || "").trim();
   if (!target) {
@@ -5232,9 +5297,11 @@ function bindEvents() {
   });
 
   els.sessionList?.addEventListener("click", async (event) => {
-    const openButton = event.target.closest("[data-action='open']");
-    const deleteButton = event.target.closest("[data-action='delete']");
-    const card = event.target.closest("[data-session-id]");
+    closeSessionContextMenu();
+    const target = event.target instanceof Element ? event.target : null;
+    const openButton = target?.closest("[data-action='open']");
+    const deleteButton = target?.closest("[data-action='delete']");
+    const card = target?.closest("[data-session-id]");
 
     if (deleteButton) {
       await deleteSessionById(deleteButton.dataset.sessionId);
@@ -5244,6 +5311,21 @@ function bindEvents() {
     const sessionId = openButton?.dataset.sessionId || card?.dataset.sessionId;
     if (sessionId) {
       await openSession(sessionId);
+    }
+  });
+  els.sessionList?.addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const card = target?.closest("[data-session-id]");
+    const sessionId = card?.dataset.sessionId;
+    if (!sessionId) return;
+    event.preventDefault();
+    openSessionContextMenu(sessionId, event.clientX, event.clientY);
+  });
+  els.renameSessionMenuItem?.addEventListener("click", async () => {
+    const sessionId = state.sessionContextMenuSessionId;
+    closeSessionContextMenu();
+    if (sessionId) {
+      await renameSessionById(sessionId);
     }
   });
 
@@ -5861,6 +5943,7 @@ function bindEvents() {
 
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      closeSessionContextMenu();
       if (!els.confirmBackdrop?.hidden) {
         resolveConfirmDialog(false);
         return;
@@ -5885,6 +5968,10 @@ function bindEvents() {
     const insideComposerMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
+    const insideSessionContextMenu = target?.closest("#sessionContextMenu");
+    if (!insideSessionContextMenu) {
+      closeSessionContextMenu();
+    }
     if (els.composerMenu && els.composerMenuButton && !insideComposerMenu) {
       toggleComposerMenu(false);
     }
@@ -5900,6 +5987,10 @@ function bindEvents() {
     const target = event.target instanceof Element ? event.target : null;
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
+    if (!insideSessionContextMenu) {
+      closeSessionContextMenu();
+    }
     if (!insideQuickModelMenu) {
       closeQuickModelMenu();
     }
@@ -5919,6 +6010,7 @@ function bindEvents() {
     toggleComposerMenu(false);
     closeQuickModelMenu();
     closeVoiceModelMenu();
+    closeSessionContextMenu();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {
       setAsrToolWindowBounds();
     }
