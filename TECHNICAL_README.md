@@ -162,7 +162,11 @@ profile RAG files
 - JSON — source of truth;
 - если JSON конфликтует с Markdown, prompt говорит использовать JSON;
 - если `.md` добавлен без `.json`, система создаёт авто-JSON;
-- если `.json` уже существует, авто-генератор его не перезаписывает.
+- ручной `.json` не перезаписывается;
+- UI-кнопка `Индексировать` запускает force ingest: пересобирает chunks/embeddings и авто-JSON с `generated_by: localgpt_auto_structurer`, не трогая ручные JSON;
+- файлы удаляются через `DELETE /rag/files?profile_id=...&path=...`; при удалении `.md` также удаляется его авто-JSON companion, если он был создан LocalGPT.
+
+Если `rag_enabled=true`, chat runtime выполняет retrieval для каждого сообщения активного профиля. Поиск использует текущий user query плюс несколько последних user-сообщений из short history, чтобы короткие follow-up фразы вроде “для этого есть rag” всё равно могли найти релевантный контекст. В `used_settings` возвращаются `rag_enabled_effective`, `rag_chunks_used` и `rag_context_chars`.
 
 Больше деталей: `rag_sources/README.md`.
 

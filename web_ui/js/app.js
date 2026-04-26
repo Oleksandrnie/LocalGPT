@@ -4153,7 +4153,12 @@ function renderRagPanel() {
   if (els.ragFileList) {
     const files = Array.isArray(status.files) ? status.files : [];
     els.ragFileList.innerHTML = files.length
-      ? files.slice(0, 12).map((file) => `<div class="rag-file-list__item">${escapeHtml(file)}</div>`).join("")
+      ? files.slice(0, 100).map((file) => `
+        <div class="rag-file-list__item">
+          <span>${escapeHtml(file)}</span>
+          <button class="rag-file-list__delete" type="button" data-rag-delete-file="${escapeHtml(file)}" aria-label="Удалить ${escapeHtml(file)}">✕</button>
+        </div>
+      `).join("")
       : '<p class="subtle">Для активного профиля RAG-файлов нет. Нажмите «Добавить файлы», затем «Индексировать».</p>';
   }
 }
@@ -4249,11 +4254,45 @@ async function uploadRagFiles(files) {
   }
 }
 
+async function deleteRagFile(sourceId, returnFocus = null) {
+  const target = String(sourceId || "").trim();
+  if (!target || !state.activeProfileId) return;
+  const approved = await openConfirmDialog({
+    eyebrow: "RAG",
+    title: "Удалить RAG-файл?",
+    message: `Файл «${target}» будет удалён из папки активного профиля и из индекса.`,
+    confirmLabel: "Удалить",
+    cancelLabel: "Отмена",
+    returnFocus,
+  });
+  if (!approved) return;
+  state.ragBusy = true;
+  renderRagPanel();
+  try {
+    const query = new URLSearchParams({ profile_id: String(state.activeProfileId), path: target });
+    const result = await request(`/rag/files?${query.toString()}`, { method: "DELETE" });
+    state.ragStatus = result?.status || state.ragStatus;
+    await loadRagStatus({ silent: true });
+    const deleted = Array.isArray(result?.deleted) ? result.deleted : [target];
+    setFooter(`RAG: удалено файлов ${deleted.length}.`, "success");
+  } catch (error) {
+    setFooter(`Не удалось удалить RAG-файл: ${error.message || error}`, "error");
+  } finally {
+    state.ragBusy = false;
+    renderRagPanel();
+  }
+}
+
 async function toggleRagForActiveProfile(enabled) {
   const updated = await saveActiveProfilePreferences({ settings: { rag_enabled: Boolean(enabled) } });
   if (updated) {
     renderRagPanel();
-    setFooter(enabled ? "RAG включён для активного профиля." : "RAG выключен для активного профиля.", "success");
+    setFooter(
+      enabled
+        ? "RAG включён: локальный контекст будет подмешиваться в каждый chat prompt активного профиля."
+        : "RAG выключен: локальные документы не будут использоваться в chat prompt.",
+      "success",
+    );
   } else {
     renderRagPanel();
   }
@@ -5300,14 +5339,17 @@ function bindEvents() {
       closeRagPanel();
     }
   });
-  els.ragRefreshButton?.addEventListener("click", async () => loadRagStatus());
+  els.ragRefreshButton?.addEventListener("click", async () => {
+    await loadRagStatus();
+    setFooter("RAG: список файлов и статистика обновлены.", "success");
+  });
   els.ragAddFilesButton?.addEventListener("click", () => {
     els.ragFileInput?.click();
   });
   els.ragFileInput?.addEventListener("change", async () => {
     await uploadRagFiles(els.ragFileInput.files);
   });
-  els.ragIngestButton?.addEventListener("click", async () => ingestRagSources(false));
+  els.ragIngestButton?.addEventListener("click", async () => ingestRagSources(true));
   els.ragForceIngestButton?.addEventListener("click", async () => ingestRagSources(true));
   els.ragCopyPathButton?.addEventListener("click", async () => {
     await copyText(state.ragStatus?.source_dir || "rag_sources");
@@ -5315,6 +5357,11 @@ function bindEvents() {
   });
   els.ragEnabledToggle?.addEventListener("change", async () => {
     await toggleRagForActiveProfile(Boolean(els.ragEnabledToggle.checked));
+  });
+  els.ragFileList?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-rag-delete-file]");
+    if (!button) return;
+    await deleteRagFile(button.dataset.ragDeleteFile, button);
   });
   els.confirmCancelButton?.addEventListener("click", () => {
     resolveConfirmDialog(false);

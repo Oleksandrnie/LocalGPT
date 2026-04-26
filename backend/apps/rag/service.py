@@ -71,6 +71,21 @@ def _relative_source_id(path: Path, profile_id: int | None = None) -> str:
         raise HTTPException(status_code=400, detail="rag_file_outside_source_dir") from exc
 
 
+def _resolve_source_file(profile_id: int, source_id: str) -> Path:
+    clean_source_id = (source_id or "").strip().lstrip("/\\")
+    if not clean_source_id:
+        raise HTTPException(status_code=422, detail="rag_file_required")
+    root = source_dir(profile_id).resolve()
+    path = (root / clean_source_id).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="rag_file_outside_source_dir") from exc
+    if path.name.startswith(".") or path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        raise HTTPException(status_code=400, detail="rag_file_unsupported")
+    return path
+
+
 def _iter_source_files(profile_id: int) -> list[Path]:
     root = source_dir(profile_id)
     files: list[Path] = []
@@ -104,10 +119,14 @@ def _read_text_file(path: Path) -> str:
 def _extract_sections(text: str) -> list[dict[str, Any]]:
     sections: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
+    intro: list[str] = []
     for raw_line in (text or "").splitlines():
         line = raw_line.strip()
         heading = HEADING_RE.match(line)
         if heading:
+            if current is None and intro:
+                sections.append({"level": 1, "title": "Основной текст", "bullets": [], "text": intro})
+                intro = []
             current = {
                 "level": len(heading.group(1)),
                 "title": heading.group(2).strip(),
@@ -117,11 +136,15 @@ def _extract_sections(text: str) -> list[dict[str, Any]]:
             sections.append(current)
             continue
         if current is None:
+            if line:
+                intro.append(line[2:].strip() if line.startswith(("- ", "* ")) else line)
             continue
         if line.startswith(("- ", "* ")):
             current["bullets"].append(line[2:].strip())
         elif line:
             current["text"].append(line)
+    if current is None and intro:
+        sections.append({"level": 1, "title": "Основной текст", "bullets": [], "text": intro})
     return sections
 
 
@@ -198,6 +221,8 @@ def _flatten_section_facts(sections: list[dict[str, Any]]) -> list[dict[str, Any
                         "text": text,
                     }
                 )
+            else:
+                facts.append({"section": title, "text": text})
     return facts[:250]
 
 
@@ -263,7 +288,14 @@ def ensure_structured_json_files(profile_id: int, *, force: bool = False) -> lis
             continue
         json_path = md_path.with_suffix(".json")
         if json_path.exists():
-            continue
+            if not force:
+                continue
+            try:
+                existing = json.loads(json_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = None
+            if not isinstance(existing, dict) or existing.get("generated_by") != "localgpt_auto_structurer":
+                continue
         payload = structured_payload_for_markdown(md_path)
         json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         created.append(_relative_source_id(json_path, profile_id))
@@ -551,6 +583,35 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
         "errors": errors,
         "status": status(profile_id),
     }
+
+
+def delete_file(profile_id: int, source_id: str) -> dict[str, Any]:
+    target = _resolve_source_file(profile_id, source_id)
+    deleted: list[str] = []
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="rag_file_not_found")
+
+    delete_targets = [target]
+    if target.suffix.lower() == ".md":
+        companion = target.with_suffix(".json")
+        if companion.exists() and companion.is_file():
+            try:
+                companion_payload = json.loads(companion.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                companion_payload = None
+            if isinstance(companion_payload, dict) and companion_payload.get("generated_by") == "localgpt_auto_structurer":
+                delete_targets.append(companion)
+
+    for path in delete_targets:
+        source = _relative_source_id(path, profile_id)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        db.delete_source_document(profile_id, SOURCE_TYPE, source)
+        deleted.append(source)
+
+    return {"profile_id": profile_id, "deleted": deleted, "status": status(profile_id)}
 
 
 def migrate_legacy_root_files(profile_id: int) -> dict[str, Any]:

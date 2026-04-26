@@ -94,6 +94,15 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertTrue(any("Профильный system prompt" in item for item in contents))
         self.assertTrue(any("Отвечай только по базе профиля." in item for item in contents))
 
+    def test_language_policy_follows_last_user_message(self):
+        prepared = _prepare_chat_request(
+            ChatRequest(query="do you speak english?", profile_id=self.profile_id, model_name="qwen2.5:3b")
+        )
+        contents = [item["content"] for item in prepared["messages"]]
+
+        self.assertFalse(any("ТОЛЬКО на русском" in item for item in contents))
+        self.assertTrue(any("языке последнего сообщения пользователя" in item.lower() for item in contents))
+
     def test_rag_ingest_and_prompt_context(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
         (source_dir / "project.md").write_text(
@@ -117,6 +126,62 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertLess(rag_index, query_index)
         self.assertIn("Alpha project deadline", contents[rag_index])
         self.assertIn("JSON chunks are source of truth", contents[rag_index])
+        self.assertEqual(prepared["effective_settings"]["rag_enabled_effective"], True)
+        self.assertGreater(prepared["effective_settings"]["rag_chunks_used"], 0)
+
+    def test_rag_search_uses_recent_user_history_for_short_followup(self):
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        (source_dir / "interests.md").write_text(
+            "Интересы пользователя: гитара, PUBG Mobile, футбол и наведение порядка в CRM-процессах.",
+            encoding="utf-8",
+        )
+        db.update_profile_preferences(self.profile_id, {"settings": {"rag_enabled": True}})
+        rag_service.ingest_sources(self.profile_id)
+        session = db.create_session(self.profile_id, "RAG followup", "qwen2.5:3b")
+        db.add_message(session["id"], "user", "На основании моих интересов что можешь предложить?")
+        db.add_message(session["id"], "assistant", "Уточню интересы.")
+
+        prepared = _prepare_chat_request(
+            ChatRequest(query="для этого есть rag", session_id=session["id"], model_name="qwen2.5:3b")
+        )
+        contents = [item["content"] for item in prepared["messages"]]
+        rag_block = next(item for item in contents if "Relevant RAG context" in item)
+
+        self.assertIn("PUBG Mobile", rag_block)
+
+    def test_force_reindex_regenerates_only_auto_json(self):
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        md_path = source_dir / "plain.md"
+        md_path.write_text("Первичная заметка.", encoding="utf-8")
+        generated = rag_service.ensure_structured_json_files(self.profile_id)
+        self.assertEqual(generated, ["plain.json"])
+
+        md_path.write_text("Обновленная заметка с гитарой.", encoding="utf-8")
+        generated_again = rag_service.ensure_structured_json_files(self.profile_id, force=True)
+        self.assertEqual(generated_again, ["plain.json"])
+        self.assertIn("гитарой", (source_dir / "plain.json").read_text(encoding="utf-8"))
+
+        manual_json = source_dir / "manual.json"
+        manual_json.write_text('{"generated_by":"human","facts":[{"text":"do not overwrite"}]}', encoding="utf-8")
+        (source_dir / "manual.md").write_text("Авто не должен перезаписать ручной JSON.", encoding="utf-8")
+        rag_service.ensure_structured_json_files(self.profile_id, force=True)
+        self.assertIn("do not overwrite", manual_json.read_text(encoding="utf-8"))
+
+    def test_rag_delete_file_removes_file_and_auto_companion(self):
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        md_path = source_dir / "delete-me.md"
+        md_path.write_text("Удаляемая заметка.", encoding="utf-8")
+        rag_service.ingest_sources(self.profile_id, force=True)
+        self.assertTrue((source_dir / "delete-me.json").exists())
+        self.assertGreater(db.rag_stats(self.profile_id)["documents"], 0)
+
+        result = rag_service.delete_file(self.profile_id, "delete-me.md")
+
+        self.assertIn("delete-me.md", result["deleted"])
+        self.assertIn("delete-me.json", result["deleted"])
+        self.assertFalse(md_path.exists())
+        self.assertFalse((source_dir / "delete-me.json").exists())
+        self.assertEqual(db.rag_stats(self.profile_id)["documents"], 0)
 
     def test_rag_files_are_scoped_per_profile(self):
         first_dir = rag_service.ensure_profile_source_dir(self.profile_id)

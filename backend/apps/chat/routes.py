@@ -113,11 +113,24 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     )
     rag_chunks = []
     rag_context = ""
-    if effective_settings.get("rag_enabled", False):
+    rag_enabled = bool(effective_settings.get("rag_enabled", False))
+    if rag_enabled:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
-        rag_chunks = rag_service.search(int(profile_id), user_query, top_k=rag_top_k)
+        history_user_queries = [
+            str(item.get("content") or "")
+            for item in history
+            if item.get("role") == "user" and str(item.get("content") or "").strip()
+        ][-3:]
+        rag_query = "\n".join([*history_user_queries, user_query]).strip()
+        rag_chunks = rag_service.search(int(profile_id), rag_query or user_query, top_k=rag_top_k)
         rag_context = rag_service.build_context(rag_chunks, max_chars=rag_max_chars)
+    effective_settings = {
+        **effective_settings,
+        "rag_enabled_effective": rag_enabled,
+        "rag_chunks_used": len(rag_chunks),
+        "rag_context_chars": len(rag_context or ""),
+    }
 
     request_criteria = [c for c in (req.criteria or []) if isinstance(c, str)]
     cleaned_criteria = criteria_service.normalize_criteria_list(request_criteria) if request_criteria else []

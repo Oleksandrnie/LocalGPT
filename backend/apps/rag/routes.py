@@ -23,6 +23,11 @@ def rag_upload_files(profile_id: int = Query(...), files: list[UploadFile] = Fil
     return service.save_uploaded_files(profile_id, files)
 
 
+@router.delete("/rag/files")
+def rag_delete_file(profile_id: int = Query(...), path: str = Query(...)) -> dict[str, object]:
+    return service.delete_file(profile_id, path)
+
+
 @router.post("/rag/migrate-legacy")
 def rag_migrate_legacy(req: RagIngestRequest) -> dict[str, object]:
     return service.migrate_legacy_root_files(req.profile_id)

@@ -1799,11 +1799,35 @@ select {
 }
 
 .rag-file-list__item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 10px 12px;
     background: var(--bg-elevated);
     overflow-wrap: anywhere;
+}
+
+.rag-file-list__delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+    font-size: 15px;
+    line-height: 1;
+}
+
+.rag-file-list__delete:hover {
+    color: #ffd3d3;
+    border-color: rgba(255, 120, 120, 0.45);
+    background: rgba(255, 80, 80, 0.08);
 }
 
 .inline-status {

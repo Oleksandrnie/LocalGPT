@@ -32,7 +32,8 @@
         <main class="chat-shell" id="chatShell">
             <header class="topbar">
                 <div class="topbar__main">
-                    <button class="icon-button" id="toggleSidebarButton" type="button" aria-label="Открыть список диалогов">
+                    <button class="icon-button" id="toggleSidebarButton" type="button"
+                        aria-label="Открыть список диалогов">
                         <span></span>
                         <span></span>
                         <span></span>
@@ -45,28 +46,27 @@
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
                                 <div class="quick-model-picker">
-                                    <button
-                                        class="quick-model-picker__button"
-                                        id="quickModelButton"
-                                        type="button"
-                                        aria-haspopup="menu"
-                                        aria-expanded="false"
-                                        aria-label="Выбрать модель чата"
-                                    >
+                                    <button class="quick-model-picker__button" id="quickModelButton" type="button"
+                                        aria-haspopup="menu" aria-expanded="false" aria-label="Выбрать модель чата">
                                         <span class="quick-model-picker__text">
-                                            <span class="quick-model-picker__value" id="quickModelValue">Модель не выбрана</span>
-                                            <span class="quick-model-picker__meta" id="quickModelMeta">Локальная модель чата</span>
+                                            <span class="quick-model-picker__value" id="quickModelValue">Модель не
+                                                выбрана</span>
+                                            <span class="quick-model-picker__meta" id="quickModelMeta">Локальная модель
+                                                чата</span>
                                         </span>
                                         <span class="quick-model-picker__caret" aria-hidden="true"></span>
                                     </button>
-                                    <div class="quick-model-picker__menu" id="quickModelMenu" hidden role="menu" aria-label="Выбор модели чата"></div>
-                                    <select id="quickModelSelect" class="quick-model-switch__control" aria-label="Быстро выбрать модель чата" hidden tabindex="-1"></select>
+                                    <div class="quick-model-picker__menu" id="quickModelMenu" hidden role="menu"
+                                        aria-label="Выбор модели чата"></div>
+                                    <select id="quickModelSelect" class="quick-model-switch__control"
+                                        aria-label="Быстро выбрать модель чата" hidden tabindex="-1"></select>
                                 </div>
                             </div>
                         </div>
                         <div class="topbar__meta">
                             <p class="subtle" id="contextStatus" hidden></p>
-                            <button class="context-clear-button" id="clearContextButton" type="button" hidden>Удалить context</button>
+                            <button class="context-clear-button" id="clearContextButton" type="button" hidden>Удалить
+                                context</button>
                         </div>
                     </div>
                 </div>
@@ -84,7 +84,8 @@
                         <strong>Нет загруженных моделей.</strong>
                         <span>Перейдите в настройки и скачайте модель.</span>
                     </div>
-                    <button class="button button--primary" id="chatModelNoticeSettingsButton" type="button">Открыть настройки</button>
+                    <button class="button button--primary" id="chatModelNoticeSettingsButton" type="button">Открыть
+                        настройки</button>
                 </div>
 
                 <div class="empty-state" id="emptyState">
@@ -92,21 +93,25 @@
                         <p class="eyebrow">Локальный чат</p>
                         <h3>Только диалог и ответы</h3>
                         <p>Выберите существующий чат или начните новый. Фото, аудио и видео можно прикрепить через меню
-                            <code>+</code> возле поля ввода.</p>
+                            <code>+</code> возле поля ввода.
+                        </p>
                     </div>
                 </div>
 
                 <div class="message-list" id="messageList"></div>
-                <button class="scroll-jump" id="scrollTopButton" type="button" hidden aria-label="К началу чата">↑</button>
+                <button class="scroll-jump" id="scrollTopButton" type="button" hidden
+                    aria-label="К началу чата">↑</button>
             </section>
 
             <form class="composer" id="composerForm">
                 <div class="composer__tools">
                     <div class="composer-menu">
-                        <button class="composer-menu__trigger" id="composerMenuButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Открыть меню действий">+</button>
+                        <button class="composer-menu__trigger" id="composerMenuButton" type="button"
+                            aria-haspopup="menu" aria-expanded="false" aria-label="Открыть меню действий">+</button>
                         <div class="composer-menu__dropdown" id="composerMenu" hidden>
                             <button class="composer-menu__item" id="fileMenuItem" type="button">Фото (OCR)</button>
-                            <button class="composer-menu__item" id="transcribeMenuItem" type="button">Транскрибировать</button>
+                            <button class="composer-menu__item" id="transcribeMenuItem"
+                                type="button">Транскрибировать</button>
                             <button class="composer-menu__item" id="speakMenuItem" type="button">Озвучить</button>
                         </div>
                     </div>
@@ -116,12 +121,16 @@
 
                 <div class="composer__input-wrap">
                     <textarea id="promptInput" rows="1" placeholder="Напишите сообщение…"></textarea>
-                    <button class="input-mic-button" id="voiceRecordButton" type="button" aria-label="Записать голос" title="Записать голос">
+                    <button class="input-mic-button" id="voiceRecordButton" type="button" aria-label="Записать голос"
+                        title="Записать голос">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V7a3.75 3.75 0 0 0-7.5 0v4.5A3.75 3.75 0 0 0 12 15.25Zm6.25-3.75a.75.75 0 0 0-1.5 0 4.75 4.75 0 1 1-9.5 0 .75.75 0 0 0-1.5 0 6.26 6.26 0 0 0 5.5 6.21V20H9.5a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-1.75v-2.29a6.26 6.26 0 0 0 5.5-6.21Z"></path>
+                            <path
+                                d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V7a3.75 3.75 0 0 0-7.5 0v4.5A3.75 3.75 0 0 0 12 15.25Zm6.25-3.75a.75.75 0 0 0-1.5 0 4.75 4.75 0 1 1-9.5 0 .75.75 0 0 0-1.5 0 6.26 6.26 0 0 0 5.5 6.21V20H9.5a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-1.75v-2.29a6.26 6.26 0 0 0 5.5-6.21Z">
+                            </path>
                         </svg>
                     </button>
-                    <div class="voice-model-menu" id="voiceModelMenu" hidden role="menu" aria-label="Выбор модели транскрибации"></div>
+                    <div class="voice-model-menu" id="voiceModelMenu" hidden role="menu"
+                        aria-label="Выбор модели транскрибации"></div>
                 </div>
 
                 <button class="send-button" id="sendButton" type="submit" disabled>Отправить</button>
@@ -133,7 +142,8 @@
                 <div class="drop-zone-overlay__card">
                     <p class="drop-zone-overlay__eyebrow">Drag & Drop</p>
                     <h3 class="drop-zone-overlay__title" id="chatDropOverlayTitle">Отпустите файл сюда</h3>
-                    <p class="drop-zone-overlay__meta" id="chatDropOverlayMeta">Файл будет обработан в зависимости от его типа.</p>
+                    <p class="drop-zone-overlay__meta" id="chatDropOverlayMeta">Файл будет обработан в зависимости от
+                        его типа.</p>
                 </div>
             </div>
         </main>
@@ -147,8 +157,10 @@
             </div>
             <div class="tool-window__actions">
                 <button class="tool-window__icon" id="asrToolMinimizeButton" type="button" title="Свернуть">_</button>
-                <button class="tool-window__icon" id="asrToolFullscreenButton" type="button" title="На весь экран">□</button>
-                <button class="tool-window__icon tool-window__icon--danger" id="asrToolCloseButton" type="button" title="Закрыть">✕</button>
+                <button class="tool-window__icon" id="asrToolFullscreenButton" type="button"
+                    title="На весь экран">□</button>
+                <button class="tool-window__icon tool-window__icon--danger" id="asrToolCloseButton" type="button"
+                    title="Закрыть">✕</button>
             </div>
         </header>
         <div class="tool-window__body">
@@ -159,8 +171,10 @@
                         <select id="asrToolModelSelect" class="field__control"></select>
                     </label>
                     <div class="button-row">
-                        <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать файл</button>
-                        <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить базу</button>
+                        <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
+                            файл</button>
+                        <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
+                            базу</button>
                     </div>
                     <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
                 </div>
@@ -168,20 +182,27 @@
                 <p class="inline-status" id="asrToolStatus">Выберите файл и запустите отдельную транскрибацию.</p>
                 <p class="subtle" id="asrToolMeta">История ниже хранится отдельно от диктовки в поле ввода.</p>
 
-                <textarea id="asrToolOutput" class="tool-textarea" placeholder="Результат транскрибации появится здесь..."></textarea>
+                <textarea id="asrToolOutput" class="tool-textarea"
+                    placeholder="Результат транскрибации появится здесь..."></textarea>
 
                 <div class="button-row">
                     <button class="button button--ghost" id="asrToolCleanButton" type="button">Очистить</button>
-                    <button class="button button--ghost" id="asrToolSummaryButton" type="button">Сделать summary</button>
-                    <button class="button button--ghost" id="asrToolTasksButton" type="button">Разобрать по задачам</button>
-                    <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в промпт</button>
+                    <button class="button button--ghost" id="asrToolSummaryButton" type="button">Сделать
+                        summary</button>
+                    <button class="button button--ghost" id="asrToolTasksButton" type="button">Разобрать по
+                        задачам</button>
+                    <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в
+                        промпт</button>
                     <button class="button button--ghost" id="asrToolSendButton" type="button">Отправить в чат</button>
-                    <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как context</button>
+                    <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как
+                        context</button>
                     <button class="button button--ghost" id="asrToolCopyButton" type="button">Скопировать</button>
                     <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить правки</button>
-                    <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить редактор</button>
+                    <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить
+                        редактор</button>
                     <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить запись</button>
-                    <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить историю</button>
+                    <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить
+                        историю</button>
                 </div>
 
                 <div class="pipeline-output" id="asrToolPipelinePanel" hidden>
@@ -203,8 +224,10 @@
                         <div class="speaker-editor" id="asrToolSpeakerEditor"></div>
                     </section>
                     <div class="button-row">
-                        <button class="button button--ghost" id="asrToolSaveSpeakersButton" type="button">Сохранить роли</button>
-                        <button class="button button--ghost" id="asrToolRegenerateSummaryButton" type="button">Пересобрать summary</button>
+                        <button class="button button--ghost" id="asrToolSaveSpeakersButton" type="button">Сохранить
+                            роли</button>
+                        <button class="button button--ghost" id="asrToolRegenerateSummaryButton"
+                            type="button">Пересобрать summary</button>
                     </div>
                 </div>
             </div>
@@ -220,7 +243,8 @@
             <div class="drop-zone-overlay__card drop-zone-overlay__card--compact">
                 <p class="drop-zone-overlay__eyebrow">ASR Studio</p>
                 <h3 class="drop-zone-overlay__title" id="asrToolDropOverlayTitle">Отпустите файл сюда</h3>
-                <p class="drop-zone-overlay__meta" id="asrToolDropOverlayMeta">Здесь можно запустить транскрибацию аудио или видео.</p>
+                <p class="drop-zone-overlay__meta" id="asrToolDropOverlayMeta">Здесь можно запустить транскрибацию аудио
+                    или видео.</p>
             </div>
         </div>
         <div class="tool-window__resize" data-tool-resize="asr"></div>
@@ -234,8 +258,10 @@
             </div>
             <div class="tool-window__actions">
                 <button class="tool-window__icon" id="ttsToolMinimizeButton" type="button" title="Свернуть">_</button>
-                <button class="tool-window__icon" id="ttsToolFullscreenButton" type="button" title="На весь экран">□</button>
-                <button class="tool-window__icon tool-window__icon--danger" id="ttsToolCloseButton" type="button" title="Закрыть">✕</button>
+                <button class="tool-window__icon" id="ttsToolFullscreenButton" type="button"
+                    title="На весь экран">□</button>
+                <button class="tool-window__icon tool-window__icon--danger" id="ttsToolCloseButton" type="button"
+                    title="Закрыть">✕</button>
             </div>
         </header>
         <div class="tool-window__body">
@@ -260,12 +286,15 @@
                 <p class="inline-status" id="ttsToolStatus">Введите текст или выберите запись из истории.</p>
                 <p class="subtle" id="ttsToolMeta">Текущий голос синхронизирован с глобальными настройками TTS.</p>
 
-                <textarea id="ttsToolText" class="tool-textarea" placeholder="Текст для локальной озвучки..."></textarea>
+                <textarea id="ttsToolText" class="tool-textarea"
+                    placeholder="Текст для локальной озвучки..."></textarea>
 
                 <div class="button-row">
                     <button class="button button--primary" id="ttsToolGenerateButton" type="button">Озвучить</button>
-                    <button class="button button--ghost" id="ttsToolUseAssistantButton" type="button">Последний ответ</button>
-                    <button class="button button--ghost" id="ttsToolRefreshButton" type="button">Обновить голоса</button>
+                    <button class="button button--ghost" id="ttsToolUseAssistantButton" type="button">Последний
+                        ответ</button>
+                    <button class="button button--ghost" id="ttsToolRefreshButton" type="button">Обновить
+                        голоса</button>
                     <button class="button button--ghost" id="ttsToolDownloadButton" type="button">Скачать</button>
                     <button class="button button--ghost" id="ttsToolDeleteButton" type="button">Удалить запись</button>
                     <button class="button button--ghost" id="ttsToolClearButton" type="button">Очистить историю</button>
@@ -285,7 +314,8 @@
     </section>
 
     <div class="modal-backdrop" id="ocrBackdrop" hidden>
-        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true" aria-labelledby="ocrTitle">
+        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true"
+            aria-labelledby="ocrTitle">
             <header class="settings-panel__header">
                 <div>
                     <p class="eyebrow">OCR</p>
@@ -295,11 +325,15 @@
             </header>
 
             <div class="settings-panel__content">
-                <p class="inline-status" id="ocrStatus">Выберите фото или изображение через меню <code>+</code> и дождитесь OCR.</p>
-                <p class="subtle" id="ocrMeta">OCR по изображению: текст можно поправить и затем вставить в чат или сразу отправить.</p>
-                <textarea id="ocrTextOutput" class="tool-textarea" placeholder="Здесь появится текст из изображения..."></textarea>
+                <p class="inline-status" id="ocrStatus">Выберите фото или изображение через меню <code>+</code> и
+                    дождитесь OCR.</p>
+                <p class="subtle" id="ocrMeta">OCR по изображению: текст можно поправить и затем вставить в чат или
+                    сразу отправить.</p>
+                <textarea id="ocrTextOutput" class="tool-textarea"
+                    placeholder="Здесь появится текст из изображения..."></textarea>
                 <div class="button-row">
-                    <button class="button button--primary" id="ocrInsertPromptButton" type="button">Вставить в промпт</button>
+                    <button class="button button--primary" id="ocrInsertPromptButton" type="button">Вставить в
+                        промпт</button>
                     <button class="button button--ghost" id="ocrSendButton" type="button">Отправить в чат</button>
                     <button class="button button--ghost" id="ocrClearButton" type="button">Очистить</button>
                 </div>
@@ -333,24 +367,29 @@
 
                     <label class="field">
                         <span class="field__label">Название нового профиля</span>
-                        <input id="profileNameInput" class="field__control" type="text" placeholder="Например: Основной" />
+                        <input id="profileNameInput" class="field__control" type="text"
+                            placeholder="Например: Основной" />
                     </label>
 
                     <label class="field">
                         <span class="field__label">Описание профиля</span>
-                        <input id="profileDescriptionInput" class="field__control" type="text" placeholder="Необязательно" />
+                        <input id="profileDescriptionInput" class="field__control" type="text"
+                            placeholder="Необязательно" />
                     </label>
 
                     <label class="field">
                         <span class="field__label">Системный промпт активного профиля</span>
                         <textarea id="profileSystemPromptInput" class="field__control field__control--textarea" rows="5"
-                            placeholder="Необязательно. Например: отвечай как аккаунт-менеджер HardCode, опирайся на RAG и не выдумывай факты."></textarea>
+                            placeholder="Необязательно. Например: отвечай как {придуйма роль/должность/что-то еще}, и/или опирайся на RAG и не выдумывай факты."></textarea>
                     </label>
 
                     <div class="button-row">
-                        <button class="button button--primary" id="createProfileButton" type="button">Создать профиль</button>
-                        <button class="button button--ghost" id="saveProfileSystemPromptButton" type="button">Сохранить prompt профиля</button>
-                        <button class="button button--ghost" id="deleteProfileButton" type="button">Удалить текущий</button>
+                        <button class="button button--primary" id="createProfileButton" type="button">Создать
+                            профиль</button>
+                        <button class="button button--ghost" id="saveProfileSystemPromptButton" type="button">Сохранить
+                            prompt профиля</button>
+                        <button class="button button--ghost" id="deleteProfileButton" type="button">Удалить
+                            текущий</button>
                     </div>
 
                     <p class="inline-status" id="profileStatus"></p>
@@ -374,18 +413,22 @@
                         <div class="inline-field">
                             <input id="downloadModelInput" class="field__control" type="text"
                                 placeholder="Например: qwen2.5:7b-instruct" />
-                            <button class="button button--primary" id="downloadModelButton" type="button">Запустить</button>
+                            <button class="button button--primary" id="downloadModelButton"
+                                type="button">Запустить</button>
                         </div>
                     </label>
 
                     <div class="button-row">
-                        <button class="button button--ghost" id="refreshModelsButton" type="button">Обновить список</button>
-                        <button class="button button--ghost" id="deleteModelButton" type="button">Удалить текущую</button>
+                        <button class="button button--ghost" id="refreshModelsButton" type="button">Обновить
+                            список</button>
+                        <button class="button button--ghost" id="deleteModelButton" type="button">Удалить
+                            текущую</button>
                     </div>
 
                     <div class="chip-list" id="recommendedModels"></div>
                     <div class="library-block">
-                        <button class="library-toggle" id="chatLibraryToggle" type="button" aria-expanded="false" aria-controls="chatLibraryPanel">
+                        <button class="library-toggle" id="chatLibraryToggle" type="button" aria-expanded="false"
+                            aria-controls="chatLibraryPanel">
                             <span class="library-toggle__copy">
                                 <span class="library-toggle__title">Библиотека загрузки LLM</span>
                                 <span class="library-toggle__meta" id="chatLibraryMeta">Свернуто</span>
@@ -405,28 +448,34 @@
                     <div class="settings-grid">
                         <label class="field">
                             <span class="field__label">Temperature</span>
-                            <input id="temperatureInput" class="field__control" type="number" min="0" max="2" step="0.01" placeholder="0.25" />
+                            <input id="temperatureInput" class="field__control" type="number" min="0" max="2"
+                                step="0.01" placeholder="0.25" />
                         </label>
 
                         <label class="field">
                             <span class="field__label">Память диалога</span>
-                            <input id="memTurnsInput" class="field__control" type="number" min="1" step="1" placeholder="6" />
+                            <input id="memTurnsInput" class="field__control" type="number" min="1" step="1"
+                                placeholder="6" />
                         </label>
 
                         <label class="field">
                             <span class="field__label">Макс. токенов ответа</span>
-                            <input id="maxTokensInput" class="field__control" type="number" min="1" step="1" placeholder="512" />
+                            <input id="maxTokensInput" class="field__control" type="number" min="1" step="1"
+                                placeholder="512" />
                         </label>
 
                         <label class="field">
                             <span class="field__label">Макс. токенов контекста</span>
-                            <input id="numCtxInput" class="field__control" type="number" min="1" step="1" placeholder="32768" />
+                            <input id="numCtxInput" class="field__control" type="number" min="1" step="1"
+                                placeholder="32768" />
                         </label>
                     </div>
 
                     <div class="button-row">
-                        <button class="button button--primary" id="saveModelSettingsButton" type="button">Сохранить</button>
-                        <button class="button button--ghost" id="resetModelSettingsButton" type="button">Сбросить к умолчанию</button>
+                        <button class="button button--primary" id="saveModelSettingsButton"
+                            type="button">Сохранить</button>
+                        <button class="button button--ghost" id="resetModelSettingsButton" type="button">Сбросить к
+                            умолчанию</button>
                     </div>
 
                     <p class="inline-status" id="modelSettingsStatus"></p>
@@ -455,12 +504,16 @@
                     </label>
 
                     <div class="button-row">
-                        <button class="button button--ghost" id="refreshAsrModelsButton" type="button">Обновить модели</button>
+                        <button class="button button--ghost" id="refreshAsrModelsButton" type="button">Обновить
+                            модели</button>
                     </div>
 
-                    <p class="inline-status" id="asrSettingsStatus">Кнопка <code>Транскрибировать</code> в меню <code>+</code> использует эти ASR-настройки.</p>
+                    <p class="inline-status" id="asrSettingsStatus">Кнопка <code>Транскрибировать</code> в меню
+                        <code>+</code> использует эти ASR-настройки.
+                    </p>
                     <div class="library-block">
-                        <button class="library-toggle" id="asrLibraryToggle" type="button" aria-expanded="false" aria-controls="asrLibraryPanel">
+                        <button class="library-toggle" id="asrLibraryToggle" type="button" aria-expanded="false"
+                            aria-controls="asrLibraryPanel">
                             <span class="library-toggle__copy">
                                 <span class="library-toggle__title">Библиотека Whisper-моделей</span>
                                 <span class="library-toggle__meta" id="asrLibraryMeta">Свернуто</span>
@@ -494,13 +547,17 @@
                     </label>
 
                     <div class="button-row">
-                        <button class="button button--ghost" id="refreshTtsVoicesButton" type="button">Обновить голоса</button>
-                        <button class="button button--ghost" id="refreshTtsLibraryButton" type="button">Обновить библиотеку</button>
+                        <button class="button button--ghost" id="refreshTtsVoicesButton" type="button">Обновить
+                            голоса</button>
+                        <button class="button button--ghost" id="refreshTtsLibraryButton" type="button">Обновить
+                            библиотеку</button>
                     </div>
 
-                    <p class="inline-status" id="ttsSettingsStatus">Кнопка <code>Озвучить</code> в меню <code>+</code> использует выбранный локальный голос.</p>
+                    <p class="inline-status" id="ttsSettingsStatus">Кнопка <code>Озвучить</code> в меню <code>+</code>
+                        использует выбранный локальный голос.</p>
                     <div class="library-block">
-                        <button class="library-toggle" id="ttsLibraryToggle" type="button" aria-expanded="false" aria-controls="ttsLibraryPanel">
+                        <button class="library-toggle" id="ttsLibraryToggle" type="button" aria-expanded="false"
+                            aria-controls="ttsLibraryPanel">
                             <span class="library-toggle__copy">
                                 <span class="library-toggle__title">Каталог голосов Piper</span>
                                 <span class="library-toggle__meta" id="ttsLibraryMeta">Свернуто</span>
@@ -510,7 +567,8 @@
                         <div class="library-panel" id="ttsLibraryPanel" hidden>
                             <label class="field">
                                 <span class="field__label">Поиск по каталогу голосов</span>
-                                <input id="ttsVoiceSearchInput" class="field__control" type="text" placeholder="Имя, язык, страна, quality..." />
+                                <input id="ttsVoiceSearchInput" class="field__control" type="text"
+                                    placeholder="Имя, язык, страна, quality..." />
                             </label>
                             <div class="model-library" id="ttsVoiceLibrary"></div>
                         </div>
@@ -531,8 +589,10 @@
                     </label>
 
                     <div class="button-row">
-                        <button class="button button--ghost" id="applyModelsDirButton" type="button">Сохранить путь</button>
-                        <button class="button button--ghost" id="moveModelsDirButton" type="button">Перенести данные</button>
+                        <button class="button button--ghost" id="applyModelsDirButton" type="button">Сохранить
+                            путь</button>
+                        <button class="button button--ghost" id="moveModelsDirButton" type="button">Перенести
+                            данные</button>
                     </div>
                 </section>
 
@@ -550,8 +610,10 @@
                     </div>
 
                     <div class="button-row">
-                        <button class="button button--ghost" id="copyLanUrlFromSettingsButton" type="button">Скопировать URL</button>
-                        <button class="button button--ghost" id="shutdownButton" type="button">Остановить приложение</button>
+                        <button class="button button--ghost" id="copyLanUrlFromSettingsButton" type="button">Скопировать
+                            URL</button>
+                        <button class="button button--ghost" id="shutdownButton" type="button">Остановить
+                            приложение</button>
                     </div>
                 </section>
 
@@ -572,7 +634,8 @@
     </div>
 
     <div class="modal-backdrop" id="ragBackdrop" hidden>
-        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true" aria-labelledby="ragTitle">
+        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true"
+            aria-labelledby="ragTitle">
             <header class="settings-panel__header">
                 <div>
                     <p class="eyebrow">RAG</p>
@@ -594,13 +657,14 @@
                     </label>
 
                     <div class="button-row">
-                        <button class="button button--primary" id="ragAddFilesButton" type="button">Добавить файлы</button>
+                        <button class="button button--primary" id="ragAddFilesButton" type="button">Добавить
+                            файлы</button>
                         <button class="button button--primary" id="ragIngestButton" type="button">Индексировать</button>
-                        <button class="button button--ghost" id="ragForceIngestButton" type="button">Переиндексировать всё</button>
-                        <button class="button button--ghost" id="ragRefreshButton" type="button">Обновить статус</button>
-                        <button class="button button--ghost" id="ragCopyPathButton" type="button">Скопировать путь</button>
+                        <button class="button button--ghost" id="ragRefreshButton" type="button">Обновить
+                            список</button>
                     </div>
-                    <input id="ragFileInput" type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" multiple hidden />
+                    <input id="ragFileInput" type="file"
+                        accept=".txt,.md,.json,text/plain,text/markdown,application/json" multiple hidden />
 
                     <p class="inline-status" id="ragStatusText">RAG индексируется вручную после добавления файлов.</p>
                     <div class="rag-file-list" id="ragFileList"></div>
@@ -610,7 +674,8 @@
     </div>
 
     <div class="modal-backdrop" id="confirmBackdrop" hidden>
-        <section class="settings-panel settings-panel--confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <section class="settings-panel settings-panel--confirm" role="dialog" aria-modal="true"
+            aria-labelledby="confirmTitle">
             <header class="settings-panel__header">
                 <div>
                     <p class="eyebrow" id="confirmEyebrow">Подтверждение</p>

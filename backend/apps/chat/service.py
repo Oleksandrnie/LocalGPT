@@ -245,7 +245,17 @@ def build_messages(
         )
         messages.append({"role": "user", "content": f"Summary memory:\n{memory_block}"})
     if rag_context:
-        messages.append({"role": "user", "content": f"Relevant RAG context:\n{rag_context}"})
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Authoritative local RAG context for the active profile follows. "
+                    "Use it when answering questions about the user's profile, company, tariffs, templates, rules, or local documents. "
+                    "If the answer is not present in this context, say that the local RAG context does not contain enough data instead of inventing facts.\n\n"
+                    f"Relevant RAG context:\n{rag_context}"
+                ),
+            }
+        )
     if processed_transcript:
         messages.append({"role": "user", "content": f"Обработанный transcript/context:\n{processed_transcript}"})
     elif transcript:
@@ -257,7 +267,10 @@ def build_messages(
     messages.append(
         {
             "role": "system",
-            "content": "Отвечай на последний вопрос пользователя, без повторения уже выданных ответов и без пересказа предыдущего анализа.",
+            "content": (
+                "Отвечай на последний вопрос пользователя, без повторения уже выданных ответов и без пересказа предыдущего анализа. "
+                "Язык ответа должен соответствовать последнему сообщению пользователя, если профильный system prompt явно не требует иначе."
+            ),
         }
     )
     if history:
