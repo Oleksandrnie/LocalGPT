@@ -66,6 +66,7 @@
                         </div>
                         <div class="topbar__meta">
                             <p class="subtle" id="contextStatus" hidden></p>
+                            <button class="context-clear-button" id="clearContextButton" type="button" hidden>Удалить context</button>
                         </div>
                     </div>
                 </div>
@@ -185,11 +186,22 @@
 
                 <div class="pipeline-output" id="asrToolPipelinePanel" hidden>
                     <div class="pipeline-output__header">
-                        <strong>Pipeline result</strong>
+                        <strong>Результат обработки</strong>
                         <span id="asrToolPipelineMeta"></span>
                     </div>
                     <pre id="asrToolPipelineOutput"></pre>
-                    <div class="speaker-editor" id="asrToolSpeakerEditor"></div>
+                    <section class="speaker-editor-panel" id="asrToolSpeakerPanel" hidden>
+                        <div class="speaker-editor-panel__head">
+                            <strong>Роли участников</strong>
+                            <span>Можно вручную указать, кто говорит в каждом сегменте</span>
+                        </div>
+                        <div class="speaker-editor__columns" aria-hidden="true">
+                            <span>Сегмент</span>
+                            <span>Говорящий</span>
+                            <span>Текст</span>
+                        </div>
+                        <div class="speaker-editor" id="asrToolSpeakerEditor"></div>
+                    </section>
                     <div class="button-row">
                         <button class="button button--ghost" id="asrToolSaveSpeakersButton" type="button">Сохранить роли</button>
                         <button class="button button--ghost" id="asrToolRegenerateSummaryButton" type="button">Пересобрать summary</button>
@@ -329,8 +341,15 @@
                         <input id="profileDescriptionInput" class="field__control" type="text" placeholder="Необязательно" />
                     </label>
 
+                    <label class="field">
+                        <span class="field__label">Системный промпт активного профиля</span>
+                        <textarea id="profileSystemPromptInput" class="field__control field__control--textarea" rows="5"
+                            placeholder="Необязательно. Например: отвечай как аккаунт-менеджер HardCode, опирайся на RAG и не выдумывай факты."></textarea>
+                    </label>
+
                     <div class="button-row">
                         <button class="button button--primary" id="createProfileButton" type="button">Создать профиль</button>
+                        <button class="button button--ghost" id="saveProfileSystemPromptButton" type="button">Сохранить prompt профиля</button>
                         <button class="button button--ghost" id="deleteProfileButton" type="button">Удалить текущий</button>
                     </div>
 
@@ -575,11 +594,13 @@
                     </label>
 
                     <div class="button-row">
+                        <button class="button button--primary" id="ragAddFilesButton" type="button">Добавить файлы</button>
                         <button class="button button--primary" id="ragIngestButton" type="button">Индексировать</button>
                         <button class="button button--ghost" id="ragForceIngestButton" type="button">Переиндексировать всё</button>
                         <button class="button button--ghost" id="ragRefreshButton" type="button">Обновить статус</button>
                         <button class="button button--ghost" id="ragCopyPathButton" type="button">Скопировать путь</button>
                     </div>
+                    <input id="ragFileInput" type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" multiple hidden />
 
                     <p class="inline-status" id="ragStatusText">RAG индексируется вручную после добавления файлов.</p>
                     <div class="rag-file-list" id="ragFileList"></div>

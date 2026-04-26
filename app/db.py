@@ -73,6 +73,7 @@ def _default_profile_preferences() -> dict[str, Any]:
     preferences = {
         "chat": {
             "dictation_model": whisper_model,
+            "system_prompt": "",
         },
         "asr": {
             "studio_model": config.ASR_STUDIO_DEFAULT_MODEL,
@@ -195,6 +196,9 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 source_path TEXT NULL,
                 content TEXT NOT NULL,
+                summary TEXT NULL,
+                structured_json TEXT NULL,
+                latest_pipeline_run_id INTEGER NULL,
                 language TEXT NULL,
                 timeline_json TEXT NULL,
                 role_keywords_json TEXT NULL,
@@ -345,6 +349,9 @@ def init_db() -> None:
         _ensure_column(conn, "model_settings", "rag_top_k", "ALTER TABLE model_settings ADD COLUMN rag_top_k INTEGER NULL;")
         _ensure_column(conn, "model_settings", "rag_max_context_chars", "ALTER TABLE model_settings ADD COLUMN rag_max_context_chars INTEGER NULL;")
         _ensure_column(conn, "model_settings", "pipeline_json", "ALTER TABLE model_settings ADD COLUMN pipeline_json TEXT NULL;")
+        _ensure_column(conn, "transcripts", "summary", "ALTER TABLE transcripts ADD COLUMN summary TEXT NULL;")
+        _ensure_column(conn, "transcripts", "structured_json", "ALTER TABLE transcripts ADD COLUMN structured_json TEXT NULL;")
+        _ensure_column(conn, "transcripts", "latest_pipeline_run_id", "ALTER TABLE transcripts ADD COLUMN latest_pipeline_run_id INTEGER NULL;")
         conn.execute(
             "UPDATE profiles SET preferences_json = COALESCE(preferences_json, ?)",
             (default_preferences,),
@@ -581,6 +588,9 @@ def create_transcript(
     timeline: Iterable[dict[str, Any]] | None = None,
     role_keywords: dict[str, Any] | None = None,
     labels: dict[str, Any] | None = None,
+    summary: str | None = None,
+    structured_json: dict[str, Any] | list[Any] | None = None,
+    latest_pipeline_run_id: int | None = None,
 ) -> dict[str, Any]:
     if not content.strip():
         raise ValueError("transcript_required")
@@ -589,10 +599,10 @@ def create_transcript(
         cur = conn.execute(
             """
             INSERT INTO transcripts (
-                profile_id, session_id, name, source_path, content, language,
+                profile_id, session_id, name, source_path, content, summary, structured_json, latest_pipeline_run_id, language,
                 timeline_json, role_keywords_json, labels_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
@@ -600,6 +610,9 @@ def create_transcript(
                 name.strip(),
                 source_path,
                 content,
+                summary,
+                _to_json(structured_json),
+                latest_pipeline_run_id,
                 language,
                 _to_json(list(timeline) if timeline is not None else None),
                 _to_json(role_keywords),
@@ -620,7 +633,8 @@ def list_transcripts(
     origin: str | None = None,
 ) -> list[dict[str, Any]]:
     query = """
-        SELECT id, profile_id, session_id, name, source_path, content, language,
+        SELECT id, profile_id, session_id, name, source_path, content,
+               summary, structured_json, latest_pipeline_run_id, language,
                timeline_json, role_keywords_json, labels_json, created_at, updated_at
         FROM transcripts
         WHERE profile_id = ?
@@ -640,6 +654,7 @@ def list_transcripts(
         item["timeline"] = _from_json(item.pop("timeline_json", None), [])
         item["role_keywords"] = _from_json(item.pop("role_keywords_json", None), {})
         item["labels"] = _from_json(item.pop("labels_json", None), {})
+        item["structured_json"] = _from_json(item.get("structured_json"), None)
         result.append(item)
     if origin is None:
         return result
@@ -659,7 +674,8 @@ def get_transcript(transcript_id: int) -> dict[str, Any] | None:
     with closing(_connect()) as conn:
         row = conn.execute(
             """
-            SELECT id, profile_id, session_id, name, source_path, content, language,
+            SELECT id, profile_id, session_id, name, source_path, content,
+                   summary, structured_json, latest_pipeline_run_id, language,
                    timeline_json, role_keywords_json, labels_json, created_at, updated_at
             FROM transcripts WHERE id = ?
             """,
@@ -671,6 +687,7 @@ def get_transcript(transcript_id: int) -> dict[str, Any] | None:
     item["timeline"] = _from_json(item.pop("timeline_json", None), [])
     item["role_keywords"] = _from_json(item.pop("role_keywords_json", None), {})
     item["labels"] = _from_json(item.pop("labels_json", None), {})
+    item["structured_json"] = _from_json(item.get("structured_json"), None)
     return item
 
 
@@ -683,6 +700,9 @@ def update_transcript(
     timeline: Iterable[dict[str, Any]] | None = None,
     role_keywords: dict[str, Any] | None = None,
     labels: dict[str, Any] | None = None,
+    summary: str | None = None,
+    structured_json: dict[str, Any] | list[Any] | None = None,
+    latest_pipeline_run_id: int | None = None,
 ) -> dict[str, Any] | None:
     now = _utcnow()
     fields: list[str] = []
@@ -705,6 +725,15 @@ def update_transcript(
     if labels is not None:
         fields.append("labels_json = ?")
         params.append(_to_json(labels))
+    if summary is not None:
+        fields.append("summary = ?")
+        params.append(summary)
+    if structured_json is not None:
+        fields.append("structured_json = ?")
+        params.append(_to_json(structured_json))
+    if latest_pipeline_run_id is not None:
+        fields.append("latest_pipeline_run_id = ?")
+        params.append(latest_pipeline_run_id)
     if not fields:
         return get_transcript(transcript_id)
     params.extend([now, transcript_id])

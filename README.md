@@ -1,14 +1,19 @@
 # LocalGPT
 
-Локальный unified-проект для `chat + ASR + TTS + OCR` без внешних облачных API.
-Основной runtime работает на `FastAPI + Ollama + faster-whisper + Piper + Tesseract`.
+Локальный unified-проект для `chat + ASR + TTS + OCR + LAN + RAG` без внешних облачных API.
+Основной runtime работает на `FastAPI + Ollama + faster-whisper + Piper + Tesseract + SQLite`.
 
 ## Что уже есть
 
 - `backend/apps/*` mini-app layout для chat/asr/tts/ocr (transitional migration от legacy `app/...`);
 - локальный чат с историей, профилями и model settings;
+- profile-scoped RAG:
+  отдельная папка документов на каждый профиль, ручная индексация, JSON как source of truth, Markdown как пояснение;
+- profile-level system prompt, который подмешивается в prompt только для активного профиля;
+- summary memory для длинных диалогов:
+  старое raw history не обязано целиком попадать в prompt, `mem_turns` остаётся short-term window;
 - `ASR Studio` для отдельной транскрибации файлов:
-  история, редактирование, удаление записи, очистка истории;
+  история, редактирование, pipeline-обработка, роли, summary, tasks, сохранение context;
 - быстрый voice-to-input сценарий через микрофон внутри поля ввода;
 - `Voice Studio` для локальной озвучки:
   история, выбор голоса, скорость, скачивание, очистка истории;
@@ -21,6 +26,8 @@
 
 ## Последние изменения (по свежим коммитам)
 
+- **2026-04-26** — добавлен ASR pipeline, summary memory, debug endpoints, profile-scoped RAG и UX отсутствующих моделей.
+- **2026-04-26** — RAG переведён на отдельные папки профилей, добавлена загрузка файлов из UI и авто-JSON для `.md`.
 - **2026-04-22** — улучшен OCR для мультиязычных UI-скриншотов, обновлён drag-and-drop сценарий для чата/ASR.
 - **2026-04-22** — переход к `backend/apps/*`, обновление роутов и адаптивного UI.
 - **2026-04-20** — упрощён UX `Voice Studio`.
@@ -43,6 +50,7 @@ Runtime не должен зависеть от кода внутри `compare-b
 - `asr` — диктовка в input и `ASR Studio`;
 - `tts` — `Voice Studio`, Piper-голоса и аудиоистория;
 - `ocr` — извлечение текста из изображений;
+- `rag` — локальные документы, chunks/embeddings, профильная изоляция;
 - `models` — единый корень для всех model-artifacts и кэшей;
 - `runtime/LAN` — launcher, Caddy, LAN URL, shutdown-flow.
 
@@ -162,10 +170,15 @@ start_localgpt_lan.command
 - отдельная транскрибация аудио/видео;
 - история транскриптов;
 - редактирование текста;
+- действия `Очистить`, `Сделать summary`, `Разобрать по задачам`;
+- speaker role editor с ручными overrides;
+- пересборка summary с учётом исправленных ролей;
+- summary/tasks сохраняются в записи транскрибации и используются для названия записи в истории;
+- сохранение processed context в текущий чат;
 - удаление записи;
 - очистка всей истории;
-- вставка текста в prompt;
-- отправка текста прямо в чат.
+- вставка processed context в prompt;
+- отправка processed context прямо в чат.
 
 Быстрый voice-to-input при этом остаётся отдельным UX и не смешивается с `ASR Studio`.
 
@@ -186,6 +199,29 @@ start_localgpt_lan.command
 - открывает OCR-редактор;
 - позволяет поправить текст;
 - позволяет вставить его в prompt или сразу отправить в чат.
+
+### RAG
+
+- кнопка `RAG` в topbar открывает компактную панель документов;
+- каждый профиль имеет свою папку `rag_sources/profile_<id>_<name>`;
+- новый профиль стартует с пустой RAG-папкой;
+- при удалении профиля его RAG-папка удаляется;
+- файлы добавляются через `Добавить файлы`;
+- после добавления или правки файлов нужно нажать `Индексировать`;
+- `Переиндексировать всё` пересобирает chunks/embeddings;
+- поддерживаются `.md`, `.json`, `.txt`;
+- если рядом с `.md` нет `.json`, LocalGPT создаёт базовый structured JSON;
+- если `.json` уже есть, он не перезаписывается и считается source of truth.
+
+Подробная инструкция по подготовке RAG-документов:
+
+- [`rag_sources/README.md`](rag_sources/README.md)
+
+Практическое правило:
+
+- `.md` — объяснение для человека и модели;
+- `.json` — точные факты, таблицы, тарифы, SLA, ограничения;
+- при конфликте JSON считается правым.
 
 ## Пути моделей
 
@@ -223,7 +259,8 @@ LAN_HTTPS_PORT=8443
 ## Ошибки загрузки моделей
 
 Загрузка Ollama-моделей идёт через `/models/pull`.
-UI теперь должен показывать не только `код 1`, а реальную причину из вывода `ollama pull`.
+UI показывает stderr/stdout tail от `ollama pull` и человекочитаемое сообщение.
+Список моделей больше не запускает auto-pull: если chat-моделей нет, composer блокируется, а ASR/TTS/OCR остаются доступны.
 
 Для `mistral:7b` важно:
 
@@ -246,6 +283,7 @@ LocalGPT/
 │   └── db/
 ├── web_ui/
 ├── models/
+├── rag_sources/
 ├── compare-branch/          # reference-only, не runtime
 │   ├── chat/
 │   ├── asr/
@@ -264,8 +302,12 @@ LocalGPT/
 
 ## Ключевые файлы
 
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/server.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/chat.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/server.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/chat/routes.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/chat/service.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/asr/pipeline.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/rag/service.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/rag/routes.py`
 - `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcribe.py`
 - `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcripts.py`
 - `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/ocr.py`
@@ -285,10 +327,23 @@ Health:
 curl -s http://127.0.0.1:8000/health
 ```
 
+Prompt debug:
+
+```bash
+curl -s http://127.0.0.1:8000/chat/debug/prompt
+```
+
+Pipeline debug:
+
+```bash
+curl -s 'http://127.0.0.1:8000/chat/debug/pipeline?run_id=<id>'
+```
+
 Полезные файлы:
 
 - `ollama.log`
 - `tmp_logs/chat.log`
+- `tmp_logs/pipeline.log`
 - runtime-логи launcher в `${TMPDIR}/LocalGPT-<uid>/`
 
 ## Текущее ограничение

@@ -169,6 +169,7 @@ tmp_logs/**
 !tmp_logs/.gitkeep
 rag_sources/**
 !rag_sources/.gitkeep
+!rag_sources/README.md
 *.wav
 *.mp3
 *.m4a

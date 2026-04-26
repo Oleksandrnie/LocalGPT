@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -24,7 +25,73 @@ BACKEND_PID_FILE = RUNTIME_DIR / "backend.pid"
 CADDY_PID_FILE = RUNTIME_DIR / "caddy.pid"
 
 
+def _is_private_lan_ipv4(value: str | None) -> bool:
+    ip = (value or "").strip()
+    if not ip:
+        return False
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        octets = [int(part) for part in parts]
+    except ValueError:
+        return False
+    if any(part < 0 or part > 255 for part in octets):
+        return False
+    return (
+        octets[0] == 10
+        or (octets[0] == 192 and octets[1] == 168)
+        or (octets[0] == 172 and 16 <= octets[1] <= 31)
+    )
+
+
+def _command_output(args: list[str]) -> str:
+    try:
+        result = subprocess.run(args, check=False, capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "").strip()
+
+
+def _detect_wifi_interface() -> str | None:
+    output = _command_output(["/usr/sbin/networksetup", "-listallhardwareports"])
+    want_wifi = False
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line == "Hardware Port: Wi-Fi":
+            want_wifi = True
+            continue
+        if want_wifi and line.startswith("Device:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
+
+
+def _ipconfig_addr(interface: str | None) -> str | None:
+    if not interface:
+        return None
+    value = _command_output(["/usr/sbin/ipconfig", "getifaddr", interface])
+    return value if _is_private_lan_ipv4(value) else None
+
+
 def _detect_lan_ip() -> str | None:
+    for interface in [_detect_wifi_interface(), "en0", "en1", "en2"]:
+        lan_ip = _ipconfig_addr(interface)
+        if lan_ip:
+            return lan_ip
+
+    default_route = _command_output(["/sbin/route", "get", "default"])
+    default_interface = ""
+    for raw_line in default_route.splitlines():
+        line = raw_line.strip()
+        if line.startswith("interface:"):
+            default_interface = line.split(":", 1)[1].strip()
+            break
+    lan_ip = _ipconfig_addr(default_interface)
+    if lan_ip:
+        return lan_ip
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("1.1.1.1", 80))
@@ -32,7 +99,7 @@ def _detect_lan_ip() -> str | None:
     except OSError:
         return None
 
-    if not lan_ip or lan_ip.startswith("127."):
+    if not _is_private_lan_ipv4(lan_ip):
         return None
     return lan_ip
 

@@ -8,12 +8,15 @@
   - `routes.py` — chat API
   - `service.py` — LLM/chat logic
   - `tasks.py` — background generation tasks
+  - debug endpoints for assembled prompt inspection
 
 - `backend/apps/asr/`
   - `routes.py` — transcribe API
-  - `transcripts.py` — transcript history CRUD
+  - `transcripts.py` — transcript history CRUD, including latest summary/structured result fields
+  - `pipeline_routes.py` — ASR pipeline API
+  - `pipeline.py` — cleaner/segmenter/speaker resolver/structurer/summary flow and transcript result sync
   - `models_routes.py` — Whisper model management
-  - `whisper.py` — ASR pipeline
+  - `whisper.py` — faster-whisper integration
   - `tasks.py` — background transcription tasks
   - `downloads.py` — local Whisper model downloads/update checks
 
@@ -27,6 +30,10 @@
   - `audio_postprocess.py` — speed post-processing
   - `providers/` — concrete TTS providers
   - `schemas.py` — TTS request schemas
+
+- `backend/apps/rag/`
+  - `routes.py` — RAG status/ingest/upload/search API
+  - `service.py` — profile folders, MD->JSON companions, chunking, local embeddings, retrieval context
 
 ## Shared/core layer
 
@@ -50,3 +57,11 @@
 - runtime уже может стартовать через `backend.server:app`;
 - старые `app/...` импорты оставлены как compatibility shim;
 - следующая cleanup-итерация может вынести shared/core слой из `app/` в отдельный `backend/core/`.
+
+## Current runtime contracts
+
+- Runtime не зависит от `compare-branch/`.
+- Все модели и кэши должны лежать внутри `/models`.
+- SQLite и runtime-артефакты не коммитятся.
+- RAG-файлы профилей не коммитятся; в git остаётся только `rag_sources/README.md` и `.gitkeep`.
+- OCR v1 ограничен изображениями, PDF OCR не входит в текущую итерацию.

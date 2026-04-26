@@ -36,6 +36,7 @@ const els = {
   chatTitle: document.getElementById("chatTitle"),
   healthStatus: document.getElementById("healthStatus"),
   contextStatus: document.getElementById("contextStatus"),
+  clearContextButton: document.getElementById("clearContextButton"),
   quickModelButton: document.getElementById("quickModelButton"),
   quickModelValue: document.getElementById("quickModelValue"),
   quickModelMeta: document.getElementById("quickModelMeta"),
@@ -99,6 +100,7 @@ const els = {
   asrToolPipelinePanel: document.getElementById("asrToolPipelinePanel"),
   asrToolPipelineMeta: document.getElementById("asrToolPipelineMeta"),
   asrToolPipelineOutput: document.getElementById("asrToolPipelineOutput"),
+  asrToolSpeakerPanel: document.getElementById("asrToolSpeakerPanel"),
   asrToolSpeakerEditor: document.getElementById("asrToolSpeakerEditor"),
   asrToolSaveSpeakersButton: document.getElementById("asrToolSaveSpeakersButton"),
   asrToolRegenerateSummaryButton: document.getElementById("asrToolRegenerateSummaryButton"),
@@ -136,6 +138,8 @@ const els = {
   closeRagButton: document.getElementById("closeRagButton"),
   ragSourceDirValue: document.getElementById("ragSourceDirValue"),
   ragEnabledToggle: document.getElementById("ragEnabledToggle"),
+  ragAddFilesButton: document.getElementById("ragAddFilesButton"),
+  ragFileInput: document.getElementById("ragFileInput"),
   ragIngestButton: document.getElementById("ragIngestButton"),
   ragForceIngestButton: document.getElementById("ragForceIngestButton"),
   ragRefreshButton: document.getElementById("ragRefreshButton"),
@@ -166,6 +170,8 @@ const els = {
   activeProfileSummary: document.getElementById("activeProfileSummary"),
   profileNameInput: document.getElementById("profileNameInput"),
   profileDescriptionInput: document.getElementById("profileDescriptionInput"),
+  profileSystemPromptInput: document.getElementById("profileSystemPromptInput"),
+  saveProfileSystemPromptButton: document.getElementById("saveProfileSystemPromptButton"),
   createProfileButton: document.getElementById("createProfileButton"),
   deleteProfileButton: document.getElementById("deleteProfileButton"),
   profileStatus: document.getElementById("profileStatus"),
@@ -1802,6 +1808,16 @@ function renderProfileManagement() {
   if (els.activeProfileSummary) {
     els.activeProfileSummary.textContent = activeProfile?.name || "Не выбран";
   }
+  if (els.profileSystemPromptInput) {
+    const prompt = activeProfile?.preferences?.chat?.system_prompt || "";
+    if (document.activeElement !== els.profileSystemPromptInput) {
+      els.profileSystemPromptInput.value = prompt;
+    }
+    els.profileSystemPromptInput.disabled = !activeProfile;
+  }
+  if (els.saveProfileSystemPromptButton) {
+    els.saveProfileSystemPromptButton.disabled = !activeProfile;
+  }
   if (els.deleteProfileButton) {
     els.deleteProfileButton.disabled = !activeProfile || state.profiles.length <= 1;
   }
@@ -1845,11 +1861,17 @@ function renderContextSummary() {
     ];
     els.contextStatus.textContent = `Транскрипт подключён • ${parts.join(" • ")}`;
     els.contextStatus.hidden = false;
+    if (els.clearContextButton) {
+      els.clearContextButton.hidden = false;
+    }
     return;
   }
 
   els.contextStatus.textContent = "";
   els.contextStatus.hidden = true;
+  if (els.clearContextButton) {
+    els.clearContextButton.hidden = true;
+  }
 }
 
 function renderTranscriptStrip() {
@@ -2722,11 +2744,12 @@ function renderAsrToolHistory() {
         item.language || null,
         formatDateTime(item.updated_at || item.created_at),
       ].filter(Boolean).join(" • ");
-      const preview = stripRichTextToPlain(item.content || item.name || "Без текста");
+      const title = stripRichTextToPlain(item.name || item.summary || "Транскрипт");
+      const preview = stripRichTextToPlain(item.summary || item.content || "");
       return `
         <button class="tool-history__item${active}" type="button" data-asr-history-id="${escapeHtml(item.id)}">
-          <span class="tool-history__title">${escapeHtml(preview || item.name || "Транскрипт")}</span>
-          <span class="tool-history__meta">${escapeHtml(meta || item.name || "Транскрипт")}</span>
+          <span class="tool-history__title">${escapeHtml(title || "Транскрипт")}</span>
+          <span class="tool-history__meta">${escapeHtml([meta, preview].filter(Boolean).join(" • ") || "Транскрипт")}</span>
         </button>
       `;
     })
@@ -3230,6 +3253,114 @@ async function sendAsrToolTextToChat() {
   await sendPromptText(text, { clearInput: false });
 }
 
+function normalizeStructuredItems(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized && !["не указано", "не зафиксировано", "requires clarification"].includes(normalized.toLowerCase())) {
+      return [normalized];
+    }
+  }
+  return [];
+}
+
+function formatStructuredItem(item) {
+  if (typeof item === "string") {
+    return isEmptyStructuredValue(item) ? "" : item;
+  }
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const title = item.task || item.title || item.name || item.text || item.value || "";
+  const details = [
+    item.responsible && item.responsible !== "не указано" ? `ответственный: ${item.responsible}` : "",
+    item.status && item.status !== "не указано" ? `статус: ${item.status}` : "",
+    item.deadline && item.deadline !== "не указано" ? `срок: ${item.deadline}` : "",
+  ].filter(Boolean);
+  return [title, details.length ? `(${details.join(", ")})` : ""].filter(Boolean).join(" ");
+}
+
+function isEmptyStructuredValue(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return !text || [
+    "no specific agreement found",
+    "not specified",
+    "none",
+    "n/a",
+    "не указано",
+    "не зафиксировано",
+  ].includes(text);
+}
+
+function formatTaskItem(item) {
+  if (typeof item === "string") {
+    return isEmptyStructuredValue(item) ? "" : `- ${item}`;
+  }
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  const task = item.task || item.title || item.name || item.text || "";
+  if (isEmptyStructuredValue(task)) return "";
+  const lines = [`- ${task}`];
+  const context = item.context || item.details || item.description || item.evidence || "";
+  if (!isEmptyStructuredValue(context)) {
+    lines.push(`  Контекст: ${context}`);
+  }
+  const responsible = item.responsible || item.owner || "";
+  if (!isEmptyStructuredValue(responsible)) {
+    lines.push(`  Ответственный: ${responsible}`);
+  }
+  const status = item.status || "";
+  if (!isEmptyStructuredValue(status)) {
+    lines.push(`  Статус: ${status}`);
+  }
+  const deadline = item.deadline || "";
+  if (!isEmptyStructuredValue(deadline)) {
+    lines.push(`  Срок: ${deadline}`);
+  }
+  return lines.join("\n");
+}
+
+function formatStructuredSection(title, value, kind = "") {
+  const items = normalizeStructuredItems(value).map(formatStructuredItem).filter(Boolean);
+  if (!items.length) return "";
+  if (kind === "tasks") {
+    const taskItems = normalizeStructuredItems(value).map(formatTaskItem).filter(Boolean);
+    if (!taskItems.length) return "";
+    return [`## ${title}`, ...taskItems].join("\n");
+  }
+  return [`## ${title}`, ...items.map((item) => `- ${item}`)].join("\n");
+}
+
+function formatStructuredData(structured) {
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) {
+    return "";
+  }
+  const parts = [];
+  const topic = structured.topic || structured.theme;
+  if (topic) {
+    parts.push(`## Тема\n${topic}`);
+  }
+  if (structured.summary) {
+    parts.push(`## Суть\n${structured.summary}`);
+  }
+  [
+    ["Подтверждённые решения", structured.decisions],
+    ["Предложения / варианты", structured.proposals || structured.solutions],
+    ["Договорённости", structured.agreements],
+    ["Задачи", structured.tasks, "tasks"],
+    ["Риски", structured.risks],
+    ["Открытые вопросы", structured.open_questions],
+    ["Следующие действия", structured.next_steps],
+    ["Ответственные", structured.owners || structured.responsible],
+    ["Сроки", structured.deadlines || structured.schedules],
+  ].forEach(([title, value, kind]) => {
+    const block = formatStructuredSection(title, value, kind);
+    if (block) parts.push(block);
+  });
+  return parts.join("\n\n").trim();
+}
+
 function formatAsrPipelineRun(run) {
   if (!run) return "";
   const parts = [];
@@ -3237,7 +3368,8 @@ function formatAsrPipelineRun(run) {
     parts.push(run.summary);
   }
   if (run.structured_json) {
-    parts.push(`Structured JSON:\n${JSON.stringify(run.structured_json, null, 2)}`);
+    const formatted = formatStructuredData(run.structured_json);
+    parts.push(formatted || `Structured JSON:\n${JSON.stringify(run.structured_json, null, 2)}`);
   }
   if (!parts.length && run.cleaned_transcript) {
     parts.push(run.cleaned_transcript);
@@ -3253,18 +3385,24 @@ function renderAsrSpeakerEditor(run) {
   const mapping = Array.isArray(run?.speaker_mapping) ? run.speaker_mapping : [];
   if (!mapping.length) {
     els.asrToolSpeakerEditor.innerHTML = "";
+    if (els.asrToolSpeakerPanel) {
+      els.asrToolSpeakerPanel.hidden = true;
+    }
     return;
+  }
+  if (els.asrToolSpeakerPanel) {
+    els.asrToolSpeakerPanel.hidden = false;
   }
   els.asrToolSpeakerEditor.innerHTML = mapping.slice(0, 24).map((item) => {
     const segmentId = item.segment_id;
     const speaker = item.speaker || "Unknown speaker";
     const confidence = typeof item.confidence === "number" ? ` • ${Math.round(item.confidence * 100)}%` : "";
-    const uncertain = item.uncertain ? " • uncertain" : "";
-    const text = stripRichTextToPlain(item.text || "").slice(0, 120);
+    const uncertain = item.uncertain ? " • неуверенно" : "";
+    const text = stripRichTextToPlain(item.text || "").slice(0, 700);
     return `
       <label class="speaker-editor__row">
         <span class="speaker-editor__meta">#${escapeHtml(segmentId)}${escapeHtml(confidence)}${escapeHtml(uncertain)}</span>
-        <input class="field__control" data-speaker-segment="${escapeHtml(segmentId)}" value="${escapeHtml(speaker)}" />
+        <input class="field__control" data-speaker-segment="${escapeHtml(segmentId)}" value="${escapeHtml(speaker)}" aria-label="Говорящий в сегменте ${escapeHtml(segmentId)}" />
         <span class="speaker-editor__text">${escapeHtml(text)}</span>
       </label>
     `;
@@ -3312,6 +3450,13 @@ async function runAsrPipelineAction(action, preset = "balanced") {
     if (action === "clean" && run?.cleaned_transcript && els.asrToolOutput) {
       els.asrToolOutput.value = run.cleaned_transcript;
     }
+    try {
+      state.asrToolSelectedTranscript = await request(`/transcripts/${encodeURIComponent(transcript.id)}`);
+      state.asrToolSelectedTranscriptId = state.asrToolSelectedTranscript?.id || transcript.id;
+      await loadAsrToolHistory({ silent: true });
+    } catch {
+      // Pipeline result is still usable even if the history refresh failed.
+    }
     setInlineStatus(els.asrToolStatus, "Pipeline готов.", "success");
     setFooter("ASR pipeline готов.", "success");
   } catch (error) {
@@ -3337,8 +3482,11 @@ async function saveAsrPipelineAsContext() {
         labels: { origin: "asr_context", source_run_id: state.asrToolPipelineRun?.id || null },
       },
     });
+    state.latestTranscript = transcript;
+    renderTranscriptStrip();
+    renderContextSummary();
     setInlineStatus(els.asrToolStatus, "Processed context сохранён.", "success");
-    setFooter("ASR context сохранён.", "success");
+    setFooter("ASR context сохранён и подключён к текущему чату.", "success");
     return transcript;
   } catch (error) {
     setInlineStatus(els.asrToolStatus, `Не удалось сохранить context: ${error.message || error}`, "error");
@@ -3397,6 +3545,12 @@ async function regenerateAsrSummary() {
       { method: "POST", body: { save_memory: true } },
     );
     state.asrToolPipelineRun = updated;
+    try {
+      state.asrToolSelectedTranscript = await request(`/transcripts/${encodeURIComponent(transcriptId)}`);
+      await loadAsrToolHistory({ silent: true });
+    } catch {
+      // Summary was regenerated; stale history title is non-blocking.
+    }
     setInlineStatus(els.asrToolStatus, "Summary пересобрано с учётом ролей.", "success");
   } catch (error) {
     setInlineStatus(els.asrToolStatus, `Не удалось пересобрать summary: ${error.message || error}`, "error");
@@ -3982,7 +4136,7 @@ function renderRagPanel() {
     els.ragEnabledToggle.disabled = !state.activeProfileId || state.ragBusy;
     els.ragEnabledToggle.checked = activeProfileRagEnabled();
   }
-  [els.ragIngestButton, els.ragForceIngestButton, els.ragRefreshButton, els.ragCopyPathButton]
+  [els.ragAddFilesButton, els.ragIngestButton, els.ragForceIngestButton, els.ragRefreshButton, els.ragCopyPathButton]
     .filter(Boolean)
     .forEach((button) => {
       button.disabled = state.ragBusy || (!state.activeProfileId && button !== els.ragRefreshButton && button !== els.ragCopyPathButton);
@@ -4000,7 +4154,7 @@ function renderRagPanel() {
     const files = Array.isArray(status.files) ? status.files : [];
     els.ragFileList.innerHTML = files.length
       ? files.slice(0, 12).map((file) => `<div class="rag-file-list__item">${escapeHtml(file)}</div>`).join("")
-      : '<p class="subtle">Положите .txt, .md или .json файлы в папку RAG и нажмите «Индексировать».</p>';
+      : '<p class="subtle">Для активного профиля RAG-файлов нет. Нажмите «Добавить файлы», затем «Индексировать».</p>';
   }
 }
 
@@ -4057,6 +4211,41 @@ async function ingestRagSources(force = false) {
   } finally {
     state.ragBusy = false;
     renderRagPanel();
+  }
+}
+
+async function uploadRagFiles(files) {
+  const selectedFiles = Array.from(files || []);
+  if (!selectedFiles.length) return;
+  if (!state.activeProfileId) {
+    setFooter("Сначала выберите профиль для RAG.", "warning");
+    return;
+  }
+  const formData = new FormData();
+  selectedFiles.forEach((file) => formData.append("files", file));
+  state.ragBusy = true;
+  renderRagPanel();
+  try {
+    const result = await request(`/rag/files?profile_id=${encodeURIComponent(state.activeProfileId)}`, {
+      method: "POST",
+      body: formData,
+    });
+    state.ragStatus = result?.status || state.ragStatus;
+    await loadRagStatus({ silent: true });
+    const savedCount = Array.isArray(result?.saved) ? result.saved.length : 0;
+    const errorCount = Array.isArray(result?.errors) ? result.errors.length : 0;
+    setFooter(
+      `RAG: добавлено файлов ${savedCount}${errorCount ? `, ошибок ${errorCount}` : ""}. Теперь можно индексировать.`,
+      errorCount ? "warning" : "success",
+    );
+  } catch (error) {
+    setFooter(`Не удалось добавить RAG-файлы: ${error.message || error}`, "error");
+  } finally {
+    state.ragBusy = false;
+    renderRagPanel();
+    if (els.ragFileInput) {
+      els.ragFileInput.value = "";
+    }
   }
 }
 
@@ -4311,10 +4500,12 @@ async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   state.asrToolSelectedTranscriptId = null;
   state.asrToolSelectedTranscript = null;
   state.asrToolHistory = [];
+  state.ragStatus = null;
   applyActiveProfilePreferences();
   renderProfileOptions();
   await loadSessions({ preferredSessionId });
   await loadAsrToolHistory({ silent: true });
+  await loadRagStatus({ silent: true });
   await refreshModelSettings({ silent: true });
 }
 
@@ -4405,6 +4596,24 @@ async function resetModelSettingsFlow() {
   } catch (error) {
     setInlineStatus(els.modelSettingsStatus, `Не удалось сбросить настройки: ${error.message || error}`, "error");
   }
+}
+
+async function saveProfileSystemPromptFlow() {
+  if (!state.activeProfileId) {
+    setInlineStatus(els.profileStatus, "Сначала выберите профиль.", "warning");
+    return;
+  }
+  const systemPrompt = String(els.profileSystemPromptInput?.value || "").trim();
+  const updated = await saveActiveProfilePreferences({ chat: { system_prompt: systemPrompt } });
+  if (!updated) {
+    setInlineStatus(els.profileStatus, "Не удалось сохранить system prompt.", "error");
+    return;
+  }
+  setInlineStatus(
+    els.profileStatus,
+    systemPrompt ? "System prompt профиля сохранён." : "System prompt профиля очищен.",
+    "success",
+  );
 }
 
 async function createProfileFlow() {
@@ -4859,6 +5068,29 @@ async function deleteSessionById(sessionId) {
   }
 }
 
+async function deleteCurrentContext() {
+  const transcriptId = state.latestTranscript?.id;
+  if (!transcriptId) return;
+  const approved = await openConfirmDialog({
+    eyebrow: "Context",
+    title: "Удалить подключённый context?",
+    message: "Запись transcript/context будет удалена из базы для текущего чата.",
+    confirmLabel: "Удалить",
+    cancelLabel: "Отмена",
+    returnFocus: els.clearContextButton,
+  });
+  if (!approved) return;
+  try {
+    await request(`/transcripts/${encodeURIComponent(transcriptId)}`, { method: "DELETE" });
+    state.latestTranscript = null;
+    renderTranscriptStrip();
+    renderContextSummary();
+    setFooter("Подключённый context удалён.", "success");
+  } catch (error) {
+    setFooter(`Не удалось удалить context: ${error.message || error}`, "error");
+  }
+}
+
 async function copyLanUrl() {
   if (!state.lanUrl) {
     setFooter("LAN URL пока недоступен.", "warning");
@@ -5069,6 +5301,12 @@ function bindEvents() {
     }
   });
   els.ragRefreshButton?.addEventListener("click", async () => loadRagStatus());
+  els.ragAddFilesButton?.addEventListener("click", () => {
+    els.ragFileInput?.click();
+  });
+  els.ragFileInput?.addEventListener("change", async () => {
+    await uploadRagFiles(els.ragFileInput.files);
+  });
   els.ragIngestButton?.addEventListener("click", async () => ingestRagSources(false));
   els.ragForceIngestButton?.addEventListener("click", async () => ingestRagSources(true));
   els.ragCopyPathButton?.addEventListener("click", async () => {
@@ -5094,9 +5332,11 @@ function bindEvents() {
   });
 
   els.copyLanUrlButton?.addEventListener("click", async () => copyLanUrl());
+  els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
   els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
   els.shutdownButton?.addEventListener("click", async () => shutdownRuntime());
   els.createProfileButton?.addEventListener("click", async () => createProfileFlow());
+  els.saveProfileSystemPromptButton?.addEventListener("click", async () => saveProfileSystemPromptFlow());
   els.deleteProfileButton?.addEventListener("click", async () => deleteCurrentProfileFlow());
   els.saveModelSettingsButton?.addEventListener("click", async () => saveModelSettingsFlow());
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());

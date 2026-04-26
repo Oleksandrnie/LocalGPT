@@ -8,6 +8,7 @@ from ..roles import normalize_role
 from ..schemas import ModelSettingsRequest, ModelSettingsReset, ProfileCreate, ProfilePreferencesUpdate, SessionCreate, SessionUpdate
 from ..services import criteria as criteria_service
 from ..services.chat import normalize_model_name, session_title_hint
+from backend.apps.rag import service as rag_service
 
 router = APIRouter()
 
@@ -115,6 +116,7 @@ def list_profiles():
 def create_profile(req: ProfileCreate):
     try:
         profile = db.create_profile(req.name, req.description, req.color)
+        rag_service.ensure_profile_source_dir(int(profile["id"]))
         return profile
     except ValueError:
         raise HTTPException(status_code=422, detail={"code": "profile_name_required", "message": "Укажите имя профиля"})
@@ -127,6 +129,8 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
 
     if req.chat and req.chat.dictation_model is not None:
         updates.setdefault("chat", {})["dictation_model"] = _normalize_whisper_model(req.chat.dictation_model)
+    if req.chat and req.chat.system_prompt is not None:
+        updates.setdefault("chat", {})["system_prompt"] = req.chat.system_prompt.strip()
 
     if req.asr:
         if req.asr.studio_model is not None:
@@ -163,6 +167,7 @@ def delete_profile(profile_id: int):
             status_code=400,
             detail={"code": "cannot_delete_last_profile", "message": "Нельзя удалить единственный профиль"},
         )
+    rag_service.delete_profile_source_dir(profile_id)
     db.delete_profile(profile_id)
     db.ensure_default_profile()
     return {"deleted": profile_id}

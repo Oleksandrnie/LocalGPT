@@ -42,6 +42,9 @@ def create_transcript(req: TranscriptCreate):
             timeline=req.timeline,
             role_keywords=req.role_keywords,
             labels=req.labels,
+            summary=req.summary,
+            structured_json=req.structured_json,
+            latest_pipeline_run_id=req.latest_pipeline_run_id,
         )
         return transcript
     except ValueError as exc:
@@ -66,6 +69,9 @@ def update_transcript(transcript_id: int, req: TranscriptUpdate):
         timeline=req.timeline,
         role_keywords=req.role_keywords,
         labels=req.labels,
+        summary=req.summary,
+        structured_json=req.structured_json,
+        latest_pipeline_run_id=req.latest_pipeline_run_id,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="transcript_not_found")

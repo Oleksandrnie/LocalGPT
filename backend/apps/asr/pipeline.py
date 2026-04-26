@@ -166,14 +166,120 @@ def _segment_fallback(text: str) -> list[dict[str, Any]]:
 def _empty_structure() -> dict[str, Any]:
     return {
         "topic": "не указано",
+        "summary": "",
         "tasks": [],
         "decisions": [],
+        "proposals": [],
         "agreements": [],
         "risks": [],
         "open_questions": [],
+        "next_steps": [],
         "owners": "не указано",
         "deadlines": "не указано",
     }
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized or normalized.lower() in {"no specific agreement found", "none", "not specified"}:
+            return []
+        return [normalized]
+    return [value]
+
+
+def _normalize_structured_output(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return _empty_structure()
+    result = _empty_structure()
+    aliases = {
+        "topic": ("topic", "theme", "тема"),
+        "summary": ("summary", "резюме", "суть"),
+        "decisions": ("decisions", "решения", "confirmed_decisions"),
+        "proposals": ("proposals", "solutions", "предложения", "варианты"),
+        "agreements": ("agreements", "договоренности", "договорённости"),
+        "tasks": ("tasks", "задачи"),
+        "risks": ("risks", "риски"),
+        "open_questions": ("open_questions", "questions", "вопросы", "открытые_вопросы"),
+        "next_steps": ("next_steps", "следующие_действия"),
+        "owners": ("owners", "responsible", "ответственные", "ответственность"),
+        "deadlines": ("deadlines", "schedules", "сроки", "графики"),
+    }
+    for target, keys in aliases.items():
+        for key in keys:
+            if key in value:
+                result[target] = value.get(key)
+                break
+
+    result["topic"] = str(result.get("topic") or "не указано").strip() or "не указано"
+    result["summary"] = str(result.get("summary") or "").strip()
+    for key in ("decisions", "proposals", "agreements", "risks", "open_questions", "next_steps"):
+        result[key] = _as_list(result.get(key))
+    result["owners"] = _as_list(result.get("owners")) or ["не указано"]
+    result["deadlines"] = _as_list(result.get("deadlines")) or ["не указано"]
+
+    tasks: list[dict[str, Any]] = []
+    for item in _as_list(result.get("tasks")):
+        if isinstance(item, dict):
+            task_text = str(item.get("task") or item.get("title") or item.get("name") or item.get("text") or "").strip()
+            context = str(item.get("context") or item.get("details") or item.get("description") or item.get("evidence") or "").strip()
+            responsible = str(item.get("responsible") or item.get("owner") or "не указано").strip() or "не указано"
+            status = str(item.get("status") or "open").strip() or "open"
+        else:
+            task_text = str(item).strip()
+            context = ""
+            responsible = "не указано"
+            status = "open"
+        if not task_text:
+            continue
+        tasks.append({"task": task_text, "context": context, "responsible": responsible, "status": status})
+    result["tasks"] = tasks
+    return result
+
+
+def _derive_transcript_name(summary: str | None, structured: Any, cleaned: str | None) -> str:
+    candidates: list[str] = []
+    if isinstance(structured, dict):
+        candidates.extend([str(structured.get("topic") or ""), str(structured.get("summary") or "")])
+    candidates.append(str(summary or ""))
+    candidates.append(str(cleaned or ""))
+    for candidate in candidates:
+        text = re.sub(r"^#+\s*", "", candidate.strip())
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r"^[*-]\s*", "", text)
+        if len(text) >= 8 and text.lower() not in {"не указано", "не зафиксировано"}:
+            return text[:86].rstrip(" .,;:-") or "ASR transcript"
+    return "ASR transcript"
+
+
+def _sync_transcript_pipeline_fields(transcript_id: int, run: dict[str, Any]) -> None:
+    structured = run.get("structured_json")
+    summary = str(run.get("summary") or "").strip()
+    if not summary and isinstance(structured, dict):
+        summary = str(structured.get("summary") or "").strip()
+    name = _derive_transcript_name(summary, structured, run.get("cleaned_transcript"))
+    labels = dict((db.get_transcript(transcript_id) or {}).get("labels") or {})
+    labels.update(
+        {
+            "latest_pipeline_run_id": run.get("id"),
+            "latest_pipeline_action": run.get("action"),
+            "latest_pipeline_preset": run.get("preset"),
+            "has_summary": bool(summary),
+            "has_structured_json": bool(structured),
+        }
+    )
+    db.update_transcript(
+        transcript_id,
+        name=name,
+        summary=summary,
+        structured_json=structured,
+        latest_pipeline_run_id=int(run["id"]),
+        labels=labels,
+    )
 
 
 def _speaker_name(value: Any) -> str:
@@ -436,12 +542,35 @@ def run_transcript_pipeline(
     if _stage_enabled("structurer", action_value, preset_value, pipeline_cfg):
         stage_cfg = _stage_settings(settings, "structurer")
         prompt = [
-            {"role": "system", "content": "Return only JSON object. Do not add facts."},
+            {
+                "role": "system",
+                "content": (
+                    "Return only one valid JSON object. All field values must be in Russian. Do not add facts. "
+                    "Separate confirmed decisions, proposals, agreements, tasks, risks, open questions, and next steps."
+                ),
+            },
             {
                 "role": "user",
                 "content": (
-                    "Извлеки тему, задачи, решения, договорённости, риски, открытые вопросы, ответственных и сроки. "
-                    "Если данных нет, пиши 'не указано', 'не зафиксировано' или 'требует уточнения'.\n\n"
+                    "Разбери transcript для постановки задачи.\n"
+                    "Верни строго такую JSON-схему:\n"
+                    "{\n"
+                    '  "topic": "краткая тема",\n'
+                    '  "summary": "1-2 предложения о сути",\n'
+                    '  "decisions": ["только подтверждённые решения"],\n'
+                    '  "proposals": ["то, что было предложено или обсуждалось как вариант"],\n'
+                    '  "agreements": ["только зафиксированные договорённости"],\n'
+                    '  "tasks": [{"task":"что сделать","context":"контекст/почему это задача из разговора","responsible":"не указано|имя/роль если явно указано","status":"open|proposed|agreed|blocked"}],\n'
+                    '  "risks": ["последствия неопределённости, не вопросы"],\n'
+                    '  "open_questions": ["вопросы, которые нужно уточнить"],\n'
+                    '  "next_steps": ["следующие действия"],\n'
+                    '  "owners": ["ответственные, если явно указаны"],\n'
+                    '  "deadlines": ["сроки, если явно указаны"]\n'
+                    "}\n"
+                    "Поле tasks должно быть пригодно для постановки задачи: короткое действие + отдельный контекст/основание. "
+                    "Не помещай в decisions то, что было только предложено, обсуждалось как гипотеза или требует подтверждения. "
+                    "Если данных нет, пиши 'не указано', 'не зафиксировано' или 'требует уточнения'. "
+                    "Не переводись на английский, даже если модель обычно отвечает на английском.\n\n"
                     f"{json.dumps(speaker_mapping, ensure_ascii=False)}"
                 ),
             },
@@ -459,7 +588,7 @@ def run_transcript_pipeline(
             warnings=warnings,
         )
         parsed = _extract_json(response, _empty_structure())
-        structured = parsed if isinstance(parsed, dict) else _empty_structure()
+        structured = _normalize_structured_output(parsed)
     elif action_value in {"tasks", "full"}:
         structured = _empty_structure()
 
@@ -493,6 +622,7 @@ def run_transcript_pipeline(
         used_settings=settings,
         debug=debug,
     )
+    _sync_transcript_pipeline_fields(int(transcript["id"]), run)
 
     if summary and (PIPELINE_PRESETS[preset_value].get("memory_save") or action_value == "summary"):
         db.create_session_summary(
@@ -542,8 +672,9 @@ def generate_summary(
         {
             "role": "system",
             "content": (
-                "Generate concise transcript summary. Do not add facts. "
-                "If speaker attribution is uncertain, do not base conclusions on it."
+                "Generate concise transcript summary in Russian. Do not add facts. "
+                "If speaker attribution is uncertain, do not base conclusions on it. "
+                "Do not label proposals as decisions."
             ),
         },
         {
@@ -551,7 +682,10 @@ def generate_summary(
             "content": (
                 "Сформируй summary строго в формате:\n"
                 "## Краткое резюме\n...\n## Ключевые решения\n- ...\n## Задачи\n- ...\n"
+                "## Предложения / варианты дальнейших действий\n- ...\n"
                 "## Риски\n- ...\n## Вопросы для уточнения\n- ...\n## Следующие действия\n- ...\n\n"
+                "В 'Ключевые решения' помещай только подтверждённые решения. "
+                "Если были только варианты, оставь решения пустыми или напиши 'не зафиксировано'.\n\n"
                 f"{json.dumps(summary_input, ensure_ascii=False)}"
             ),
         },
@@ -602,6 +736,8 @@ def regenerate_summary(run_id: int, *, save_memory: bool = True) -> dict[str, An
         debug=debug,
     )
     updated = db.update_pipeline_run(run_id, summary=summary, stage_timings=timings, warnings=warnings, debug=debug)
+    if updated:
+        _sync_transcript_pipeline_fields(int(run["transcript_id"]), updated)
     if save_memory and summary:
         db.create_session_summary(
             profile_id=int(run["profile_id"]),

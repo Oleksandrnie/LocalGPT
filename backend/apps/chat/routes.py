@@ -98,6 +98,9 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
 
     model_name = session["model_name"] if session else normalize_model_name(req.model or req.model_name)
     target_model = normalize_model_name(model_name, fallback=config.SETTINGS.model)
+    profile = _get_profile_or_404(int(profile_id))
+    profile_preferences = profile.get("preferences") or {}
+    profile_system_prompt = str(((profile_preferences.get("chat") or {}).get("system_prompt") or "")).strip()
     settings_bundle = db.effective_settings(profile_id, model_name, config.DEFAULT_SETTINGS)  # type: ignore[arg-type]
     effective_settings = settings_bundle.get("effective") or {}
     mem_turns = int(effective_settings.get("mem_turns") or config.SETTINGS.mem_turns)
@@ -136,6 +139,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         role=role_key,
         user_query=user_query,
         context=req.context,
+        profile_system_prompt=profile_system_prompt,
         transcript=None if latest_transcript else transcript_text,
         processed_transcript=transcript_text if latest_transcript else None,
         criteria=active_criteria,
@@ -145,6 +149,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     )
     blocks = prompt_blocks(
         context=req.context,
+        profile_system_prompt=profile_system_prompt,
         summary_memory=summary_memory,
         rag_context=rag_context,
         processed_transcript=transcript_text if latest_transcript else None,
@@ -168,6 +173,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "prompt_blocks": blocks,
         "prompt_input_chars": estimate_messages_chars(messages),
         "summary_memory": summary_memory,
+        "profile_system_prompt": profile_system_prompt,
         "rag_chunks": rag_chunks,
         "rag_context": rag_context,
         "prompt_warnings": transcript_warnings,

@@ -225,6 +225,7 @@ def build_messages(
     role: str,
     user_query: str,
     context: str | None,
+    profile_system_prompt: str | None,
     transcript: str | None,
     criteria: Iterable[str],
     history: list[dict[str, str]],
@@ -233,6 +234,8 @@ def build_messages(
     processed_transcript: str | None = None,
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt_for(role)}]
+    if profile_system_prompt:
+        messages.append({"role": "system", "content": f"Профильный system prompt:\n{profile_system_prompt}"})
     if context:
         messages.append({"role": "user", "content": f"Контекст профиля/пользователя:\n{context}"})
     memory_items = [item for item in (summary_memory or []) if item and item.get("summary")]
@@ -266,6 +269,7 @@ def build_messages(
 def prompt_blocks(
     *,
     context: str | None,
+    profile_system_prompt: str | None,
     summary_memory: Iterable[dict[str, Any]] | None,
     rag_context: str | None,
     processed_transcript: str | None,
@@ -275,6 +279,7 @@ def prompt_blocks(
     user_query: str,
 ) -> list[dict[str, Any]]:
     return [
+        {"name": "profile_system_prompt", "included": bool(profile_system_prompt), "chars": len(profile_system_prompt or "")},
         {"name": "profile_context", "included": bool(context), "chars": len(context or "")},
         {
             "name": "summary_memory",

@@ -137,6 +137,12 @@ select {
     background: rgba(40, 52, 67, 0.9);
 }
 
+.field__control--textarea {
+    min-height: 120px;
+    resize: vertical;
+    line-height: 1.45;
+}
+
 .field--checkbox {
     display: flex;
     flex-direction: row;
@@ -236,10 +242,16 @@ select {
 }
 
 .pipeline-output {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 10px;
-    min-height: 120px;
+    min-width: 0;
+    flex: 0 0 auto;
+    min-height: 220px;
+    max-height: min(72vh, 820px);
     padding: 12px;
+    overflow: auto;
+    resize: vertical;
     border: 1px solid var(--border);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.025);
@@ -251,6 +263,7 @@ select {
 
 .pipeline-output__header {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
@@ -259,13 +272,67 @@ select {
 }
 
 .pipeline-output pre {
-    min-height: 80px;
-    max-height: 280px;
+    flex: 0 0 auto;
+    min-height: 120px;
+    max-height: min(56vh, 620px);
     margin: 0;
+    padding: 10px;
     overflow: auto;
+    resize: vertical;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.12);
     color: var(--text);
     font: inherit;
+}
+
+.speaker-editor-panel {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    min-height: 180px;
+    max-height: min(62vh, 680px);
+    padding: 12px;
+    overflow: auto;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.16);
+}
+
+.speaker-editor-panel[hidden] {
+    display: none;
+}
+
+.speaker-editor-panel__head {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.speaker-editor-panel__head strong {
+    color: var(--text);
+    font-size: 14px;
+}
+
+.speaker-editor-panel__head span,
+.speaker-editor__columns {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.speaker-editor__columns {
+    display: grid;
+    flex: 0 0 auto;
+    grid-template-columns: 86px minmax(220px, 280px) minmax(320px, 1fr);
+    gap: 12px;
+    padding: 0 10px;
 }
 
 .download-card__log {
@@ -283,7 +350,8 @@ select {
 .speaker-editor {
     display: grid;
     gap: 8px;
-    max-height: 280px;
+    min-height: 120px;
+    max-height: none;
     overflow: auto;
 }
 
@@ -293,28 +361,54 @@ select {
 
 .speaker-editor__row {
     display: grid;
-    grid-template-columns: 86px minmax(120px, 180px) minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
+    grid-template-columns: 86px minmax(220px, 280px) minmax(320px, 1fr);
+    align-items: stretch;
+    gap: 12px;
+    min-height: 78px;
+    padding: 12px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
 }
 
 .speaker-editor__row .field__control {
-    min-height: 36px;
-    padding: 7px 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 9px 12px;
     border-radius: 10px;
+    font-size: 14px;
 }
 
 .speaker-editor__meta,
 .speaker-editor__text {
     min-width: 0;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 13px;
 }
 
 .speaker-editor__text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-height: 130px;
+    overflow: auto;
+    line-height: 1.4;
+    white-space: normal;
+}
+
+@media (max-width: 720px) {
+    .speaker-editor__columns {
+        display: none;
+    }
+
+    .speaker-editor-panel__head {
+        display: grid;
+    }
+
+    .speaker-editor__row {
+        grid-template-columns: 1fr;
+    }
+
+    .speaker-editor__text {
+        grid-column: auto;
+    }
 }
 
 .session-list {
@@ -457,10 +551,25 @@ select {
 .topbar__meta {
     display: flex;
     align-items: center;
-    gap: 0;
+    gap: 8px;
     min-width: 0;
     margin-top: 0;
     flex-wrap: wrap;
+}
+
+.context-clear-button {
+    min-height: 28px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.context-clear-button:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .quick-model-switch {
@@ -1766,8 +1875,11 @@ select {
     z-index: 80;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    align-items: stretch;
     min-width: 420px;
     min-height: 320px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
     overflow: hidden;
     border: 1px solid var(--border-strong);
     border-radius: 22px;
@@ -1826,27 +1938,49 @@ select {
 
 .tool-window__body {
     display: grid;
-    grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.7fr);
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 16px;
+    width: 100%;
+    min-width: 0;
     min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
 }
 
 .tool-panel,
 .tool-sidebar {
+    min-width: 0;
     min-height: 0;
+    max-height: 100%;
     padding: 18px;
 }
 
 .tool-panel {
-    display: grid;
-    grid-template-rows: auto auto auto auto minmax(110px, 1fr) auto auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: scroll;
+    overscroll-behavior: contain;
+    padding-bottom: 34px;
+    scrollbar-gutter: stable;
 }
 
 .tool-sidebar {
+    min-width: 260px;
+    width: 100%;
+    min-height: 0;
+    max-height: 100%;
     border-left: 1px solid var(--border);
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
     gap: 10px;
+    overflow: hidden;
     background: rgba(255, 255, 255, 0.02);
 }
 
@@ -1856,15 +1990,20 @@ select {
 }
 
 .tool-toolbar {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     gap: 12px;
+    align-items: center;
+    min-width: 0;
 }
 
 .tool-textarea {
     width: 100%;
-    min-height: 140px;
-    height: 100%;
-    resize: none;
+    flex: 0 0 auto;
+    min-height: 180px;
+    max-height: min(42vh, 520px);
+    resize: vertical;
+    overflow: auto;
     padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: 16px;
@@ -1881,13 +2020,20 @@ select {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    height: 100%;
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
 }
 
 .tool-history__item {
     display: grid;
     gap: 6px;
+    min-width: 0;
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 14px;
@@ -1915,10 +2061,11 @@ select {
 }
 
 .tool-panel .button-row {
-    align-items: flex-start;
+    align-items: center;
     align-content: flex-start;
     flex-wrap: wrap;
     gap: 10px;
+    min-width: 0;
 }
 
 .tool-panel .button-row .button {
@@ -1932,6 +2079,36 @@ select {
     border-radius: 999px;
     font-size: 13px;
     line-height: 1;
+    white-space: nowrap;
+}
+
+.tool-panel .field {
+    min-width: 180px;
+}
+
+.pipeline-output pre {
+    max-width: 100%;
+    min-width: 0;
+    overflow: auto;
+    resize: vertical;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.pipeline-output pre:focus,
+.speaker-editor-panel:focus-within {
+    border-color: rgba(110, 168, 254, 0.36);
+}
+
+.speaker-editor__row,
+.speaker-editor__text {
+    min-width: 0;
+}
+
+.speaker-editor__text,
+.tool-history__title,
+.tool-history__meta {
+    overflow-wrap: anywhere;
 }
 
 .tool-window__resize {
@@ -2084,11 +2261,26 @@ select {
 
     .tool-window__body {
         grid-template-columns: 1fr;
+        gap: 0;
+        overflow-y: auto;
     }
 
     .tool-sidebar {
+        min-width: 0;
         border-left: 0;
         border-top: 1px solid var(--border);
+        overflow: visible;
+    }
+
+    .tool-panel {
+        height: auto;
+        overflow: visible;
+    }
+
+    .tool-history {
+        height: auto;
+        max-height: none;
+        overflow: visible;
     }
 
     .modal-backdrop,

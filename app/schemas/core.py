@@ -35,6 +35,7 @@ class ProfileCreate(BaseModel):
 
 class ChatPreferencesUpdate(BaseModel):
     dictation_model: str | None = None
+    system_prompt: str | None = None
 
 
 class AsrPreferencesUpdate(BaseModel):
@@ -113,6 +114,9 @@ class TranscriptCreate(BaseModel):
     timeline: list[dict] | None = None
     role_keywords: dict | None = None
     labels: dict | None = None
+    summary: str | None = None
+    structured_json: dict[str, Any] | list[Any] | None = None
+    latest_pipeline_run_id: int | None = None
 
 
 class TranscriptUpdate(BaseModel):
@@ -122,6 +126,9 @@ class TranscriptUpdate(BaseModel):
     timeline: list[dict] | None = None
     role_keywords: dict | None = None
     labels: dict | None = None
+    summary: str | None = None
+    structured_json: dict[str, Any] | list[Any] | None = None
+    latest_pipeline_run_id: int | None = None
 
 
 class ResetRequest(BaseModel):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Query, UploadFile
 
 from app.schemas import RagIngestRequest, RagSearchRequest
 from backend.apps.rag import service
@@ -16,6 +16,16 @@ def rag_status(profile_id: int | None = Query(default=None)) -> dict[str, object
 @router.post("/rag/ingest")
 def rag_ingest(req: RagIngestRequest) -> dict[str, object]:
     return service.ingest_sources(req.profile_id, force=req.force)
+
+
+@router.post("/rag/files")
+def rag_upload_files(profile_id: int = Query(...), files: list[UploadFile] = File(...)) -> dict[str, object]:
+    return service.save_uploaded_files(profile_id, files)
+
+
+@router.post("/rag/migrate-legacy")
+def rag_migrate_legacy(req: RagIngestRequest) -> dict[str, object]:
+    return service.migrate_legacy_root_files(req.profile_id)
 
 
 @router.post("/rag/search")
