@@ -5,7 +5,15 @@ from pydantic import BaseModel
 
 from .. import config, db
 from ..roles import normalize_role
-from ..schemas import ModelSettingsRequest, ModelSettingsReset, ProfileCreate, ProfilePreferencesUpdate, SessionCreate, SessionUpdate
+from ..schemas import (
+    ModelSettingsRequest,
+    ModelSettingsReset,
+    ProfileCreate,
+    ProfilePreferencesUpdate,
+    ProfileUpdate,
+    SessionCreate,
+    SessionUpdate,
+)
 from ..services import criteria as criteria_service
 from ..services.chat import normalize_model_name, session_title_hint
 from backend.apps.rag import service as rag_service
@@ -116,10 +124,41 @@ def list_profiles():
 def create_profile(req: ProfileCreate):
     try:
         profile = db.create_profile(req.name, req.description, req.color)
+        system_prompt = str(req.system_prompt or "").strip()
+        if system_prompt:
+            profile = db.update_profile_preferences(int(profile["id"]), {"chat": {"system_prompt": system_prompt}}) or profile
         rag_service.ensure_profile_source_dir(int(profile["id"]))
         return profile
     except ValueError:
         raise HTTPException(status_code=422, detail={"code": "profile_name_required", "message": "Укажите имя профиля"})
+
+
+@router.patch("/profiles/{profile_id}")
+def update_profile(profile_id: int, req: ProfileUpdate):
+    _get_profile_or_404(profile_id)
+    fields_set = getattr(req, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(req, "__fields_set__", set())
+    profile_updates = {}
+    if "name" in fields_set:
+        profile_updates["name"] = req.name
+    if "description" in fields_set:
+        profile_updates["description"] = req.description
+    if "color" in fields_set:
+        profile_updates["color"] = req.color
+    try:
+        profile = db.update_profile(profile_id, **profile_updates)
+    except ValueError:
+        raise HTTPException(status_code=422, detail={"code": "profile_name_required", "message": "Укажите имя профиля"})
+    if not profile:
+        raise HTTPException(status_code=404, detail="profile_not_found")
+
+    if "system_prompt" in fields_set:
+        profile = db.update_profile_preferences(
+            profile_id,
+            {"chat": {"system_prompt": str(req.system_prompt or "").strip()}},
+        ) or profile
+    return profile
 
 
 @router.patch("/profiles/{profile_id}/preferences")

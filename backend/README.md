@@ -50,6 +50,10 @@
 - `app/routes/meta.py`
 - `app/routes/models.py`
 - `app/routes/profiles.py`
+  - `GET /profiles`
+  - `POST /profiles` creates a profile with required `name` and optional `description`, `color`, `system_prompt`
+  - `PATCH /profiles/{profile_id}` updates profile metadata and profile-level `system_prompt`
+  - `PATCH /profiles/{profile_id}/preferences` updates runtime preferences such as ASR/TTS/chat settings
 - `app/routes/storage.py`
 - `app/routes/criteria.py`
 

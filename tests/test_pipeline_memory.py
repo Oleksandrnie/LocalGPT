@@ -6,7 +6,8 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app import config, db
-from app.schemas import ChatRequest
+from app.routes import profiles as profile_routes
+from app.schemas import ChatRequest, ProfileCreate, ProfileUpdate
 from app.services import models as model_service
 from backend.apps.asr import pipeline
 from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, start_chat_task
@@ -43,6 +44,23 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
         self.assertEqual(profile["preferences"]["asr"]["studio_model"], "large-v3-turbo")
         self.assertEqual(profile["preferences"]["chat"]["dictation_model"], config.SETTINGS.whisper_default_model)
+
+    def test_profile_create_and_update_accept_system_prompt(self):
+        profile = profile_routes.create_profile(
+            ProfileCreate(name="  Work  ", description="  Client work  ", system_prompt="  Use profile context.  ")
+        )
+
+        self.assertEqual(profile["name"], "Work")
+        self.assertEqual(profile["description"], "Client work")
+        self.assertEqual(profile["preferences"]["chat"]["system_prompt"], "Use profile context.")
+
+        updated = profile_routes.update_profile(
+            profile["id"],
+            ProfileUpdate(description="  Updated description  ", system_prompt="  Updated prompt  "),
+        )
+
+        self.assertEqual(updated["description"], "Updated description")
+        self.assertEqual(updated["preferences"]["chat"]["system_prompt"], "Updated prompt")
 
     def test_chat_model_missing_is_readable(self):
         with patch.object(model_service, "is_model_installed", return_value=False):

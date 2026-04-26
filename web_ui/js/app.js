@@ -1,5 +1,6 @@
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
+const CREATE_PROFILE_VALUE = "__create_profile__";
 const STORAGE_KEYS = {
   activeProfileId: "localgpt_simple_profile_id",
   activeSessionId: "localgpt_simple_session_id",
@@ -168,6 +169,8 @@ const els = {
   chatLibraryPanel: document.getElementById("chatLibraryPanel"),
   chatModelLibrary: document.getElementById("chatModelLibrary"),
   activeProfileSummary: document.getElementById("activeProfileSummary"),
+  profileManagementSelect: document.getElementById("profileManagementSelect"),
+  profileNameField: document.getElementById("profileNameField"),
   profileNameInput: document.getElementById("profileNameInput"),
   profileDescriptionInput: document.getElementById("profileDescriptionInput"),
   profileSystemPromptInput: document.getElementById("profileSystemPromptInput"),
@@ -215,6 +218,7 @@ const VOICE_RECORD_ICON = els.voiceRecordButton?.innerHTML || "";
 const state = {
   profiles: [],
   activeProfileId: null,
+  profileManagementMode: "edit",
   sessions: [],
   currentSessionId: null,
   messages: [],
@@ -1803,23 +1807,60 @@ function renderProfileOptions() {
   els.profileField.hidden = state.profiles.length <= 1;
 }
 
-function renderProfileManagement() {
-  const activeProfile = getActiveProfile();
-  if (els.activeProfileSummary) {
-    els.activeProfileSummary.textContent = activeProfile?.name || "Не выбран";
+function enterProfileCreateMode() {
+  state.profileManagementMode = "create";
+  if (els.profileNameInput) {
+    els.profileNameInput.value = "";
+  }
+  if (els.profileDescriptionInput) {
+    els.profileDescriptionInput.value = "";
   }
   if (els.profileSystemPromptInput) {
-    const prompt = activeProfile?.preferences?.chat?.system_prompt || "";
-    if (document.activeElement !== els.profileSystemPromptInput) {
+    els.profileSystemPromptInput.value = "";
+  }
+  renderProfileManagement();
+}
+
+function renderProfileManagement() {
+  const activeProfile = getActiveProfile();
+  const isCreateMode = state.profileManagementMode === "create";
+  if (els.activeProfileSummary) {
+    els.activeProfileSummary.textContent = isCreateMode ? "Создание нового профиля" : (activeProfile?.name || "Не выбран");
+  }
+  if (els.profileManagementSelect) {
+    const options = state.profiles
+      .map((profile) => `<option value="${profile.id}">${escapeHtml(profile.name)}</option>`)
+      .join("");
+    els.profileManagementSelect.innerHTML = `<option value="${CREATE_PROFILE_VALUE}">Создать новый профиль</option>${options}`;
+    els.profileManagementSelect.value = isCreateMode ? CREATE_PROFILE_VALUE : String(state.activeProfileId || "");
+  }
+  if (els.profileNameField) {
+    els.profileNameField.hidden = !isCreateMode;
+  }
+  if (els.profileDescriptionInput) {
+    if (!isCreateMode && document.activeElement !== els.profileDescriptionInput) {
+      els.profileDescriptionInput.value = activeProfile?.description || "";
+    }
+    els.profileDescriptionInput.disabled = !isCreateMode && !activeProfile;
+  }
+  if (els.profileSystemPromptInput) {
+    const prompt = isCreateMode ? "" : (activeProfile?.preferences?.chat?.system_prompt || "");
+    if (!isCreateMode && document.activeElement !== els.profileSystemPromptInput) {
       els.profileSystemPromptInput.value = prompt;
     }
-    els.profileSystemPromptInput.disabled = !activeProfile;
+    els.profileSystemPromptInput.disabled = !isCreateMode && !activeProfile;
+  }
+  if (els.createProfileButton) {
+    els.createProfileButton.hidden = !isCreateMode;
+    els.createProfileButton.disabled = !isCreateMode || !(els.profileNameInput?.value || "").trim();
   }
   if (els.saveProfileSystemPromptButton) {
-    els.saveProfileSystemPromptButton.disabled = !activeProfile;
+    els.saveProfileSystemPromptButton.hidden = isCreateMode;
+    els.saveProfileSystemPromptButton.disabled = isCreateMode || !activeProfile;
   }
   if (els.deleteProfileButton) {
-    els.deleteProfileButton.disabled = !activeProfile || state.profiles.length <= 1;
+    els.deleteProfileButton.hidden = isCreateMode;
+    els.deleteProfileButton.disabled = isCreateMode || !activeProfile || state.profiles.length <= 1;
   }
 }
 
@@ -4535,6 +4576,7 @@ async function loadSessions({ preferredSessionId = null } = {}) {
 
 async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   state.activeProfileId = profileId || null;
+  state.profileManagementMode = "edit";
   writeStored(STORAGE_KEYS.activeProfileId, state.activeProfileId || "");
   state.asrToolSelectedTranscriptId = null;
   state.asrToolSelectedTranscript = null;
@@ -4542,6 +4584,7 @@ async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   state.ragStatus = null;
   applyActiveProfilePreferences();
   renderProfileOptions();
+  renderProfileManagement();
   await loadSessions({ preferredSessionId });
   await loadAsrToolHistory({ silent: true });
   await loadRagStatus({ silent: true });
@@ -4642,24 +4685,41 @@ async function saveProfileSystemPromptFlow() {
     setInlineStatus(els.profileStatus, "Сначала выберите профиль.", "warning");
     return;
   }
-  const systemPrompt = String(els.profileSystemPromptInput?.value || "").trim();
-  const updated = await saveActiveProfilePreferences({ chat: { system_prompt: systemPrompt } });
-  if (!updated) {
-    setInlineStatus(els.profileStatus, "Не удалось сохранить system prompt.", "error");
+  if (state.profileManagementMode === "create") {
+    setInlineStatus(els.profileStatus, "Сначала создайте профиль или выберите существующий.", "warning");
     return;
   }
-  setInlineStatus(
-    els.profileStatus,
-    systemPrompt ? "System prompt профиля сохранён." : "System prompt профиля очищен.",
-    "success",
-  );
+  const systemPrompt = String(els.profileSystemPromptInput?.value || "").trim();
+  const description = String(els.profileDescriptionInput?.value || "").trim();
+  try {
+    const updatedProfile = await request(`/profiles/${encodeURIComponent(state.activeProfileId)}`, {
+      method: "PATCH",
+      body: {
+        description: description || null,
+        system_prompt: systemPrompt,
+      },
+    });
+    replaceProfileState(updatedProfile);
+    renderProfileOptions();
+    renderProfileManagement();
+    applyActiveProfilePreferences();
+    setInlineStatus(els.profileStatus, "Профиль сохранён.", "success");
+  } catch (error) {
+    setInlineStatus(els.profileStatus, `Не удалось сохранить профиль: ${error.message || error}`, "error");
+  }
 }
 
 async function createProfileFlow() {
+  if (state.profileManagementMode !== "create") {
+    enterProfileCreateMode();
+    return;
+  }
   const name = (els.profileNameInput?.value || "").trim();
   const description = (els.profileDescriptionInput?.value || "").trim();
+  const systemPrompt = (els.profileSystemPromptInput?.value || "").trim();
   if (!name) {
     setInlineStatus(els.profileStatus, "Введите название профиля.", "warning");
+    renderProfileManagement();
     return;
   }
 
@@ -4669,17 +4729,11 @@ async function createProfileFlow() {
       body: {
         name,
         description: description || null,
+        system_prompt: systemPrompt || null,
       },
     });
     state.profiles = [...state.profiles, profile];
-    renderProfileOptions();
-    renderProfileManagement();
-    if (els.profileNameInput) {
-      els.profileNameInput.value = "";
-    }
-    if (els.profileDescriptionInput) {
-      els.profileDescriptionInput.value = "";
-    }
+    state.profileManagementMode = "edit";
     await setActiveProfile(profile.id);
     setInlineStatus(els.profileStatus, `Профиль «${profile.name}» создан.`, "success");
   } catch (error) {
@@ -5199,6 +5253,19 @@ function bindEvents() {
       await setActiveProfile(nextId);
     }
   });
+  els.profileManagementSelect?.addEventListener("change", async () => {
+    const value = els.profileManagementSelect.value;
+    if (value === CREATE_PROFILE_VALUE) {
+      enterProfileCreateMode();
+      setInlineStatus(els.profileStatus, "", "neutral");
+      return;
+    }
+    const nextId = Number(value);
+    if (Number.isFinite(nextId)) {
+      await setActiveProfile(nextId);
+    }
+  });
+  els.profileNameInput?.addEventListener("input", () => renderProfileManagement());
 
   els.composerForm?.addEventListener("submit", async (event) => {
     event.preventDefault();

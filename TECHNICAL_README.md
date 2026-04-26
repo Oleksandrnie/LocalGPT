@@ -204,6 +204,14 @@ profile RAG files
 - `rag_max_context_chars`;
 - per-stage pipeline settings.
 
+Profile metadata редактируется отдельно от model settings:
+
+- `POST /profiles` принимает `name`, `description`, `color`, `system_prompt`;
+- `name` trim-ится и обязателен при создании;
+- `description` и `system_prompt` необязательны;
+- `PATCH /profiles/{profile_id}` обновляет metadata профиля и profile-level system prompt одним запросом;
+- UI settings имеет два режима: редактирование существующего профиля и создание нового профиля.
+
 Рекомендуемые температуры:
 
 - chat/factual/RAG: `0.2-0.4`;
@@ -273,6 +281,7 @@ LAN launcher стартует backend на `127.0.0.1:8000` и Caddy на `https
 - empty Ollama model list не запускает auto-pull;
 - readable `chat_model_missing`;
 - ASR Studio default model `large-v3-turbo`;
+- profile create/update with optional system prompt;
 - summary memory before short history;
 - profile system prompt in prompt;
 - RAG profile isolation;

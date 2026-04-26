@@ -31,6 +31,14 @@ class ProfileCreate(BaseModel):
     name: str
     description: str | None = None
     color: str | None = None
+    system_prompt: str | None = None
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    color: str | None = None
+    system_prompt: str | None = None
 
 
 class ChatPreferencesUpdate(BaseModel):

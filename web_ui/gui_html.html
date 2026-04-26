@@ -366,6 +366,11 @@
                     </div>
 
                     <label class="field">
+                        <span class="field__label">Профиль</span>
+                        <select id="profileManagementSelect" class="field__control"></select>
+                    </label>
+
+                    <label class="field" id="profileNameField" hidden>
                         <span class="field__label">Название нового профиля</span>
                         <input id="profileNameInput" class="field__control" type="text"
                             placeholder="Например: Основной" />
@@ -378,7 +383,7 @@
                     </label>
 
                     <label class="field">
-                        <span class="field__label">Системный промпт активного профиля</span>
+                        <span class="field__label">Системный промпт профиля</span>
                         <textarea id="profileSystemPromptInput" class="field__control field__control--textarea" rows="5"
                             placeholder="Необязательно. Например: отвечай как {придуйма роль/должность/что-то еще}, и/или опирайся на RAG и не выдумывай факты."></textarea>
                     </label>
@@ -387,7 +392,7 @@
                         <button class="button button--primary" id="createProfileButton" type="button">Создать
                             профиль</button>
                         <button class="button button--ghost" id="saveProfileSystemPromptButton" type="button">Сохранить
-                            prompt профиля</button>
+                            профиль</button>
                         <button class="button button--ghost" id="deleteProfileButton" type="button">Удалить
                             текущий</button>
                     </div>

@@ -403,17 +403,65 @@ def create_profile(name: str, description: str | None = None, color: str | None 
         raise ValueError("profile_name_required")
     now = _utcnow()
     default_preferences = _to_json(_default_profile_preferences()) or "{}"
+    clean_description = description.strip() if isinstance(description, str) and description.strip() else None
     with closing(_connect()) as conn:
         cur = conn.execute(
             """
             INSERT INTO profiles (name, description, color, preferences_json, created_at, updated_at, is_active)
             VALUES (?, ?, ?, ?, ?, ?, 1)
             """,
-            (name.strip(), description, color, default_preferences, now, now),
+            (name.strip(), clean_description, color, default_preferences, now, now),
         )
         conn.commit()
         new_id = int(cur.lastrowid)
     return get_profile(new_id)  # type: ignore[return-value]
+
+
+_PROFILE_UNSET = object()
+
+
+def update_profile(
+    profile_id: int,
+    *,
+    name: Any = _PROFILE_UNSET,
+    description: Any = _PROFILE_UNSET,
+    color: Any = _PROFILE_UNSET,
+) -> dict[str, Any] | None:
+    profile = get_profile(profile_id)
+    if not profile:
+        return None
+
+    updates: list[str] = []
+    params: list[Any] = []
+
+    if name is not _PROFILE_UNSET:
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            raise ValueError("profile_name_required")
+        updates.append("name = ?")
+        params.append(clean_name)
+
+    if description is not _PROFILE_UNSET:
+        clean_description = description.strip() if isinstance(description, str) and description.strip() else None
+        updates.append("description = ?")
+        params.append(clean_description)
+
+    if color is not _PROFILE_UNSET:
+        clean_color = color.strip() if isinstance(color, str) and color.strip() else None
+        updates.append("color = ?")
+        params.append(clean_color)
+
+    if not updates:
+        return profile
+
+    updates.append("updated_at = ?")
+    params.append(_utcnow())
+    params.append(profile_id)
+
+    with closing(_connect()) as conn:
+        conn.execute(f"UPDATE profiles SET {', '.join(updates)} WHERE id = ?", tuple(params))
+        conn.commit()
+    return get_profile(profile_id)
 
 
 def update_profile_preferences(profile_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
