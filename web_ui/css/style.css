@@ -137,6 +137,18 @@ select {
     background: rgba(40, 52, 67, 0.9);
 }
 
+.field--checkbox {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+
+.field--checkbox input {
+    width: 16px;
+    height: 16px;
+}
+
 .inline-field {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -194,6 +206,115 @@ select {
 
 .button--ghost {
     background: rgba(255, 255, 255, 0.02);
+}
+
+.chat-model-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin: 14px;
+    padding: 14px 16px;
+    border: 1px solid rgba(211, 164, 88, 0.35);
+    border-radius: 14px;
+    background: rgba(211, 164, 88, 0.12);
+    color: var(--text);
+}
+
+.chat-model-notice[hidden] {
+    display: none;
+}
+
+.chat-model-notice div {
+    display: grid;
+    gap: 4px;
+}
+
+.chat-model-notice span {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.pipeline-output {
+    display: grid;
+    gap: 10px;
+    min-height: 120px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.pipeline-output[hidden] {
+    display: none;
+}
+
+.pipeline-output__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.pipeline-output pre {
+    min-height: 80px;
+    max-height: 280px;
+    margin: 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    color: var(--text);
+    font: inherit;
+}
+
+.download-card__log {
+    max-height: 96px;
+    margin: 8px 0 0;
+    padding: 8px;
+    overflow: auto;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.22);
+    color: var(--text-muted);
+    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+}
+
+.speaker-editor {
+    display: grid;
+    gap: 8px;
+    max-height: 280px;
+    overflow: auto;
+}
+
+.speaker-editor:empty {
+    display: none;
+}
+
+.speaker-editor__row {
+    display: grid;
+    grid-template-columns: 86px minmax(120px, 180px) minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+}
+
+.speaker-editor__row .field__control {
+    min-height: 36px;
+    padding: 7px 10px;
+    border-radius: 10px;
+}
+
+.speaker-editor__meta,
+.speaker-editor__text {
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.speaker-editor__text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .session-list {
@@ -1561,6 +1682,19 @@ select {
 .info-card code {
     overflow-wrap: anywhere;
     color: #d8e8ff;
+}
+
+.rag-file-list {
+    display: grid;
+    gap: 8px;
+}
+
+.rag-file-list__item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: var(--bg-elevated);
+    overflow-wrap: anywhere;
 }
 
 .inline-status {

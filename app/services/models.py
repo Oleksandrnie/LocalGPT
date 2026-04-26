@@ -19,9 +19,9 @@ LOGGER = logging.getLogger(__name__)
 MODEL_PULLS: dict[str, dict[str, Any]] = {}
 MODEL_PULL_PROCS: dict[str, subprocess.Popen] = {}
 MODEL_PULL_LOCK = threading.Lock()
-AUTO_PULL_TRIGGERED = False
 DEFAULT_LLAMA_MODEL = os.getenv("DEFAULT_LOCAL_MODEL", config.MODEL_RECOMMENDATIONS[0]["name"])
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+PULL_LOG_TAIL_LIMIT = 80
 
 
 def _normalize_pull_error_message(candidate: Any) -> str:
@@ -85,6 +85,19 @@ def _public_pull_status(data: dict[str, Any]) -> dict[str, Any]:
     copy.pop("_last_completed", None)
     copy.pop("_last_ts", None)
     return copy
+
+
+def _append_pull_output(task_id: str, line: str) -> None:
+    clean = ANSI_ESCAPE_RE.sub("", str(line or "")).replace("\r", "\n").strip()
+    if not clean:
+        return
+    with MODEL_PULL_LOCK:
+        entry = MODEL_PULLS.get(task_id)
+        if not entry:
+            return
+        tail = list(entry.get("output_tail") or [])
+        tail.append(clean)
+        entry["output_tail"] = tail[-PULL_LOG_TAIL_LIMIT:]
 
 
 def _pull_statuses() -> list[dict[str, Any]]:
@@ -202,6 +215,7 @@ def _run_model_pull(task_id: str, model: str) -> None:
                 line = raw_line.strip()
                 if not line:
                     continue
+                _append_pull_output(task_id, line)
                 last_output_line = line
                 with MODEL_PULL_LOCK:
                     if MODEL_PULLS.get(task_id, {}).get("state") == "canceled":
@@ -239,17 +253,17 @@ def _run_model_pull(task_id: str, model: str) -> None:
                         last_ts = now
 
                         _update_pull(
-                        task_id,
-                        state="running",
-                        message=status_text or error_text or line,
-                        completed=completed,
-                        total=total,
-                        percent=percent,
-                        speed_mbps=speed_mbps,
-                        eta_seconds=eta_seconds,
-                        _last_completed=last_completed,
-                        _last_ts=last_ts,
-                    )
+                            task_id,
+                            state="running",
+                            message=status_text or error_text or line,
+                            completed=completed,
+                            total=total,
+                            percent=percent,
+                            speed_mbps=speed_mbps,
+                            eta_seconds=eta_seconds,
+                            _last_completed=last_completed,
+                            _last_ts=last_ts,
+                        )
                 else:
                     _update_pull(task_id, state="running", message=line)
 
@@ -263,7 +277,12 @@ def _run_model_pull(task_id: str, model: str) -> None:
             if process.returncode == 0:
                 _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
             else:
-                error_message = _extract_pull_error_message(raw_error, last_output_line, f"ollama pull вернул код {process.returncode}")
+                error_message = _extract_pull_error_message(raw_error, last_output_line)
+                if not error_message:
+                    error_message = (
+                        "Не удалось скачать модель. Проверьте подключение к интернету, "
+                        "доступность Ollama и корректность тега модели."
+                    )
                 _update_pull(
                     task_id,
                     state="error",
@@ -295,6 +314,7 @@ def start_model_pull(model: str) -> dict[str, Any]:
         "finished_at": None,
         "completed": None,
         "total": None,
+        "output_tail": [],
     }
     with MODEL_PULL_LOCK:
         active = next(
@@ -312,19 +332,6 @@ def start_model_pull(model: str) -> dict[str, Any]:
     thread = threading.Thread(target=_run_model_pull, args=(task_id, model), daemon=True)
     thread.start()
     return _public_pull_status(entry)
-
-
-def _maybe_trigger_default_pull(installed: list[dict[str, Any]], downloads: list[dict[str, Any]]) -> None:
-    global AUTO_PULL_TRIGGERED
-    if AUTO_PULL_TRIGGERED:
-        return
-    if installed:
-        return
-    active = [item for item in downloads if item.get("state") in {"pending", "running"}]
-    if active:
-        return
-    AUTO_PULL_TRIGGERED = True
-    downloads.append(start_model_pull(DEFAULT_LLAMA_MODEL))
 
 
 def cancel_model_pull(task_id: str) -> dict[str, Any]:
@@ -392,8 +399,6 @@ def list_models() -> dict[str, Any]:
         error = exc.detail
         LOGGER.warning("Оllama list failed: %s", exc.detail)
     downloads = _pull_statuses()
-    if not error:
-        _maybe_trigger_default_pull(installed, downloads)
     return {
         "installed": installed,
         "models": [item.get("name") for item in installed if item.get("name")],
@@ -401,6 +406,13 @@ def list_models() -> dict[str, Any]:
         "downloads": downloads,
         "error": error,
     }
+
+
+def is_model_installed(model_name: str) -> bool:
+    target = (model_name or "").strip()
+    if not target:
+        return False
+    return any(item.get("name") == target for item in _list_local_models())
 
 
 def delete_model(model_name: str) -> dict[str, Any]:

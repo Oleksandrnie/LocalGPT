@@ -26,6 +26,7 @@ def whisper_models() -> dict[str, object]:
         "items": whisper_downloads.list_local_models(),
         "models": list(config.ALLOWED_WHISPER_MODELS),
         "default": config.SETTINGS.whisper_default_model,
+        "studio_default": config.ASR_STUDIO_DEFAULT_MODEL,
         "downloads": whisper_downloads.list_prepare_tasks(),
     }
 

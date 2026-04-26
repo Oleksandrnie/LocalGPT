@@ -69,6 +69,42 @@ def _normalize_tts_speed(value: str) -> str:
     return f"{number:.2f}".rstrip("0").rstrip(".")
 
 
+def _normalize_runtime_settings(value: dict | None) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    allowed = {
+        "pipeline_enabled",
+        "summary_memory_enabled",
+        "rag_enabled",
+        "default_pipeline_preset",
+        "max_transcript_chars",
+        "max_context_chars",
+        "summary_memory_limit",
+        "rag_top_k",
+        "rag_max_context_chars",
+        "pipeline",
+    }
+    cleaned = {key: value[key] for key in allowed if key in value}
+    preset = cleaned.get("default_pipeline_preset")
+    if preset is not None and str(preset).strip().lower() not in {"fast", "balanced", "deep"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_pipeline_preset", "message": "Pipeline preset must be fast, balanced или deep."},
+        )
+    if preset is not None:
+        cleaned["default_pipeline_preset"] = str(preset).strip().lower()
+    for key in ("max_transcript_chars", "max_context_chars", "summary_memory_limit", "rag_top_k", "rag_max_context_chars"):
+        if key in cleaned and cleaned[key] is not None:
+            try:
+                cleaned[key] = max(1, int(cleaned[key]))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": f"invalid_{key}", "message": f"{key} must be a positive integer."},
+                ) from exc
+    return cleaned
+
+
 @router.get("/profiles")
 def list_profiles():
     profiles = db.list_profiles()
@@ -105,6 +141,10 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
             updates.setdefault("tts", {})["voice_id"] = req.tts.voice_id.strip()
         if req.tts.speed is not None:
             updates.setdefault("tts", {})["speed"] = _normalize_tts_speed(req.tts.speed)
+
+    runtime_settings = _normalize_runtime_settings(req.settings)
+    if runtime_settings:
+        updates["settings"] = runtime_settings
 
     if not updates:
         return _get_profile_or_404(profile_id)
@@ -220,6 +260,16 @@ def save_model_settings(req: ModelSettingsRequest):
         max_tokens=req.max_tokens,
         num_ctx=req.num_ctx,
         mem_turns=req.mem_turns,
+        pipeline_enabled=req.pipeline_enabled,
+        summary_memory_enabled=req.summary_memory_enabled,
+        rag_enabled=req.rag_enabled,
+        default_pipeline_preset=req.default_pipeline_preset,
+        max_transcript_chars=req.max_transcript_chars,
+        max_context_chars=req.max_context_chars,
+        summary_memory_limit=req.summary_memory_limit,
+        rag_top_k=req.rag_top_k,
+        rag_max_context_chars=req.rag_max_context_chars,
+        pipeline=req.pipeline,
     )
     return db.effective_settings(req.profile_id, model, config.DEFAULT_SETTINGS)
 

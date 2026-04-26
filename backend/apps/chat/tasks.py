@@ -12,7 +12,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from app import config, db
-from backend.apps.chat.service import ChatService
+from backend.apps.chat.service import ChatService, maybe_compress_session_history
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,6 +87,7 @@ def _chat_worker(
     messages: list[dict[str, str]],
     settings: dict[str, Any],
     session_id: str,
+    profile_id: int | None,
     result_path: str,
     error_path: str,
 ) -> None:
@@ -95,6 +96,17 @@ def _chat_worker(
         reply = service.chat_completion(model_name, messages, settings=settings)
         if session_id:
             db.add_message(session_id, "assistant", reply)
+            if profile_id:
+                try:
+                    maybe_compress_session_history(
+                        service=service,
+                        session_id=session_id,
+                        profile_id=profile_id,
+                        model_name=model_name,
+                        settings=settings,
+                    )
+                except Exception:
+                    pass
         _atomic_write_json(result_path, {"reply": reply})
     except Exception as exc:  # pragma: no cover - runtime path
         message = getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
@@ -221,6 +233,7 @@ def start_chat_task(
             messages,
             used_settings,
             session_id,
+            profile_id,
             str(result_path),
             str(error_path),
         ),

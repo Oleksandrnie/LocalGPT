@@ -3,23 +3,59 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app import config, db
 from app.roles import normalize_role
-from app.schemas import ChatRequest, ResetRequest
+from app.schemas import ChatDebugPromptRequest, ChatRequest, ResetRequest
 from app.services import criteria as criteria_service
+from app.services import models as model_service
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.service import (
     ChatService,
     build_messages,
     evaluate_math_expression,
+    estimate_messages_chars,
+    maybe_compress_session_history,
     normalize_model_name,
+    processed_transcript_context,
+    prompt_blocks,
     session_title_hint,
 )
+from backend.apps.rag import service as rag_service
 
 router = APIRouter()
 chat_service = ChatService()
+
+
+def _debug_allowed(admin_token: str | None = None) -> bool:
+    if config.SETTINGS.env in {"local", "dev", "development"}:
+        return True
+    return bool(config.SETTINGS.admin_token and admin_token == config.SETTINGS.admin_token)
+
+
+def _ensure_chat_model_available(model_name: str) -> None:
+    try:
+        installed = model_service.is_model_installed(model_name)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "ollama_unavailable",
+                "message": detail.get("message") or "Ollama недоступна. Проверьте, что Ollama запущена.",
+            },
+        ) from exc
+    if installed:
+        return
+    raise HTTPException(
+        status_code=424,
+        detail={
+            "code": "chat_model_missing",
+            "model": model_name,
+            "message": "Нет загруженных моделей. Перейдите в настройки и скачайте модель.",
+        },
+    )
 
 
 def _get_profile_or_404(profile_id: int) -> dict:
@@ -66,6 +102,19 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     effective_settings = settings_bundle.get("effective") or {}
     mem_turns = int(effective_settings.get("mem_turns") or config.SETTINGS.mem_turns)
     history = db.get_messages(session_id, limit_pairs=mem_turns) if session_id else []
+    summary_limit = int(effective_settings.get("summary_memory_limit") or 0)
+    summary_memory = (
+        db.list_session_summaries(session_id, limit=summary_limit)
+        if session_id and effective_settings.get("summary_memory_enabled", True) and summary_limit > 0
+        else []
+    )
+    rag_chunks = []
+    rag_context = ""
+    if effective_settings.get("rag_enabled", False):
+        rag_top_k = int(effective_settings.get("rag_top_k") or 5)
+        rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
+        rag_chunks = rag_service.search(int(profile_id), user_query, top_k=rag_top_k)
+        rag_context = rag_service.build_context(rag_chunks, max_chars=rag_max_chars)
 
     request_criteria = [c for c in (req.criteria or []) if isinstance(c, str)]
     cleaned_criteria = criteria_service.normalize_criteria_list(request_criteria) if request_criteria else []
@@ -74,18 +123,35 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     stored_criteria = db.get_session_criteria(session_id) if session_id else []
     active_criteria = cleaned_criteria or stored_criteria or []
 
+    latest_transcript = None
     if not transcript_text and session_id:
         latest_transcript = db.get_latest_transcript_for_session(session_id)
-        transcript_text = (latest_transcript.get("content") if latest_transcript else "") or ""
+        max_transcript_chars = int(effective_settings.get("max_transcript_chars") or 24000)
+        transcript_text, transcript_warnings = processed_transcript_context(latest_transcript, max_transcript_chars)
+    else:
+        transcript_warnings = []
 
     calc_result = evaluate_math_expression(user_query) if role_key == "calc" else None
     messages = build_messages(
         role=role_key,
         user_query=user_query,
         context=req.context,
-        transcript=transcript_text,
+        transcript=None if latest_transcript else transcript_text,
+        processed_transcript=transcript_text if latest_transcript else None,
         criteria=active_criteria,
         history=history,
+        summary_memory=summary_memory,
+        rag_context=rag_context,
+    )
+    blocks = prompt_blocks(
+        context=req.context,
+        summary_memory=summary_memory,
+        rag_context=rag_context,
+        processed_transcript=transcript_text if latest_transcript else None,
+        transcript=None if latest_transcript else transcript_text,
+        criteria=active_criteria,
+        history=history,
+        user_query=user_query,
     )
 
     return {
@@ -99,6 +165,12 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "effective_settings": effective_settings,
         "active_criteria": active_criteria,
         "messages": messages,
+        "prompt_blocks": blocks,
+        "prompt_input_chars": estimate_messages_chars(messages),
+        "summary_memory": summary_memory,
+        "rag_chunks": rag_chunks,
+        "rag_context": rag_context,
+        "prompt_warnings": transcript_warnings,
         "calc_result": calc_result,
     }
 
@@ -143,6 +215,7 @@ def chat(req: ChatRequest):
         effective_settings = prepared["effective_settings"]
         calc_result = prepared["calc_result"]
         messages = prepared["messages"]
+        prompt_warnings = prepared.get("prompt_warnings") or []
 
         if calc_result is not None:
             if session_id:
@@ -156,13 +229,34 @@ def chat(req: ChatRequest):
                 "model_name": target_model,
                 "role": role_key,
                 "used_settings": effective_settings,
+                "warnings": prompt_warnings,
             }
 
+        _ensure_chat_model_available(target_model)
         text = chat_service.chat_completion(target_model, messages, settings=effective_settings)
 
         if session_id:
             db.add_message(session_id, "user", user_query)
             db.add_message(session_id, "assistant", text)
+            try:
+                maybe_compress_session_history(
+                    service=chat_service,
+                    session_id=session_id,
+                    profile_id=profile_id,
+                    model_name=target_model,
+                    settings=effective_settings,
+                )
+            except Exception as exc:
+                chat_service.log_chat_event(
+                    {
+                        "ts": datetime.utcnow().isoformat(),
+                        "status": "memory_compression_error",
+                        "session_id": session_id,
+                        "profile_id": profile_id,
+                        "model": target_model,
+                        "error": str(exc),
+                    }
+                )
 
         _log("ok", reply=text)
         return {
@@ -172,6 +266,7 @@ def chat(req: ChatRequest):
             "model_name": target_model,
             "role": role_key,
             "used_settings": effective_settings,
+            "warnings": prompt_warnings,
         }
     except HTTPException as exc:
         _log("error", error=str(exc.detail))
@@ -192,6 +287,7 @@ def start_chat_task(req: ChatRequest):
     effective_settings = prepared["effective_settings"]
     calc_result = prepared["calc_result"]
     messages = prepared["messages"]
+    prompt_warnings = prepared.get("prompt_warnings") or []
 
     if calc_result is not None:
         if session_id:
@@ -207,6 +303,7 @@ def start_chat_task(req: ChatRequest):
         )
 
     try:
+        _ensure_chat_model_available(target_model)
         task = chat_tasks.start_chat_task(
             session_id=session_id or "",
             profile_id=profile_id,
@@ -217,7 +314,10 @@ def start_chat_task(req: ChatRequest):
         )
         if session_id:
             db.add_message(session_id, "user", user_query)
+        task["warnings"] = prompt_warnings
         return task
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM task error: {exc}") from exc
 
@@ -242,6 +342,55 @@ def cancel_chat_task(task_id: str) -> dict[str, object]:
             detail={"code": "chat_task_not_found", "message": "Задача генерации ответа не найдена"},
         )
     return task
+
+
+@router.get("/chat/debug/prompt")
+def debug_prompt_get(
+    session_id: str | None = None,
+    profile_id: int | None = None,
+    query: str = "debug",
+    model_name: str | None = None,
+    admin_token: str | None = Query(default=None),
+):
+    if not _debug_allowed(admin_token):
+        raise HTTPException(status_code=403, detail="forbidden")
+    req = ChatRequest(query=query, session_id=session_id, profile_id=profile_id, model_name=model_name)
+    prepared = _prepare_chat_request(req)
+    return {
+        "messages": prepared["messages"],
+        "blocks": prepared["prompt_blocks"],
+        "input_chars": prepared["prompt_input_chars"],
+        "used_settings": prepared["effective_settings"],
+        "active_profile": db.get_profile(prepared["profile_id"]),
+        "active_model": prepared["target_model"],
+        "warnings": prepared.get("prompt_warnings") or [],
+    }
+
+
+@router.post("/chat/debug/prompt")
+def debug_prompt_post(req: ChatDebugPromptRequest):
+    if not _debug_allowed(req.admin_token):
+        raise HTTPException(status_code=403, detail="forbidden")
+    prepared = _prepare_chat_request(req)
+    return {
+        "messages": prepared["messages"],
+        "blocks": prepared["prompt_blocks"],
+        "input_chars": prepared["prompt_input_chars"],
+        "used_settings": prepared["effective_settings"],
+        "active_profile": db.get_profile(prepared["profile_id"]),
+        "active_model": prepared["target_model"],
+        "warnings": prepared.get("prompt_warnings") or [],
+    }
+
+
+@router.get("/chat/debug/pipeline")
+def debug_pipeline(run_id: int, admin_token: str | None = Query(default=None)):
+    if not _debug_allowed(admin_token):
+        raise HTTPException(status_code=403, detail="forbidden")
+    run = db.get_pipeline_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="pipeline_run_not_found")
+    return run
 
 
 @router.post("/session/reset")

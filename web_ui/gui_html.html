@@ -72,11 +72,20 @@
 
                 <div class="topbar__actions">
                     <button class="button button--ghost" id="copyLanUrlButton" type="button">LAN URL</button>
+                    <button class="button button--ghost" id="openRagButton" type="button">RAG</button>
                     <button class="button button--ghost" id="openSettingsButton" type="button">Настройки</button>
                 </div>
             </header>
 
             <section class="message-scroll" id="messageScroll">
+                <div class="chat-model-notice" id="chatModelNotice" hidden>
+                    <div>
+                        <strong>Нет загруженных моделей.</strong>
+                        <span>Перейдите в настройки и скачайте модель.</span>
+                    </div>
+                    <button class="button button--primary" id="chatModelNoticeSettingsButton" type="button">Открыть настройки</button>
+                </div>
+
                 <div class="empty-state" id="emptyState">
                     <div class="empty-state__card">
                         <p class="eyebrow">Локальный чат</p>
@@ -161,12 +170,30 @@
                 <textarea id="asrToolOutput" class="tool-textarea" placeholder="Результат транскрибации появится здесь..."></textarea>
 
                 <div class="button-row">
+                    <button class="button button--ghost" id="asrToolCleanButton" type="button">Очистить</button>
+                    <button class="button button--ghost" id="asrToolSummaryButton" type="button">Сделать summary</button>
+                    <button class="button button--ghost" id="asrToolTasksButton" type="button">Разобрать по задачам</button>
                     <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в промпт</button>
                     <button class="button button--ghost" id="asrToolSendButton" type="button">Отправить в чат</button>
+                    <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как context</button>
+                    <button class="button button--ghost" id="asrToolCopyButton" type="button">Скопировать</button>
                     <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить правки</button>
-                    <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить</button>
+                    <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить редактор</button>
                     <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить запись</button>
                     <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить историю</button>
+                </div>
+
+                <div class="pipeline-output" id="asrToolPipelinePanel" hidden>
+                    <div class="pipeline-output__header">
+                        <strong>Pipeline result</strong>
+                        <span id="asrToolPipelineMeta"></span>
+                    </div>
+                    <pre id="asrToolPipelineOutput"></pre>
+                    <div class="speaker-editor" id="asrToolSpeakerEditor"></div>
+                    <div class="button-row">
+                        <button class="button button--ghost" id="asrToolSaveSpeakersButton" type="button">Сохранить роли</button>
+                        <button class="button button--ghost" id="asrToolRegenerateSummaryButton" type="button">Пересобрать summary</button>
+                    </div>
                 </div>
             </div>
 
@@ -520,6 +547,42 @@
                     <div class="download-list" id="downloadList">
                         <p class="subtle">Активных загрузок нет.</p>
                     </div>
+                </section>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-backdrop" id="ragBackdrop" hidden>
+        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true" aria-labelledby="ragTitle">
+            <header class="settings-panel__header">
+                <div>
+                    <p class="eyebrow">RAG</p>
+                    <h3 id="ragTitle">Локальные документы</h3>
+                </div>
+                <button class="button button--ghost" id="closeRagButton" type="button">Закрыть</button>
+            </header>
+
+            <div class="settings-panel__content">
+                <section class="settings-group">
+                    <div class="info-card">
+                        <span class="info-card__label">Папка источников</span>
+                        <code id="ragSourceDirValue">rag_sources</code>
+                    </div>
+
+                    <label class="field field--checkbox">
+                        <input id="ragEnabledToggle" type="checkbox" />
+                        <span>Подмешивать RAG-контекст в чат для активного профиля</span>
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button--primary" id="ragIngestButton" type="button">Индексировать</button>
+                        <button class="button button--ghost" id="ragForceIngestButton" type="button">Переиндексировать всё</button>
+                        <button class="button button--ghost" id="ragRefreshButton" type="button">Обновить статус</button>
+                        <button class="button button--ghost" id="ragCopyPathButton" type="button">Скопировать путь</button>
+                    </div>
+
+                    <p class="inline-status" id="ragStatusText">RAG индексируется вручную после добавления файлов.</p>
+                    <div class="rag-file-list" id="ragFileList"></div>
                 </section>
             </div>
         </section>

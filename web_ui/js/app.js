@@ -1,4 +1,5 @@
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
+const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
 const STORAGE_KEYS = {
   activeProfileId: "localgpt_simple_profile_id",
   activeSessionId: "localgpt_simple_session_id",
@@ -42,8 +43,11 @@ const els = {
   quickModelSelect: document.getElementById("quickModelSelect"),
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
   openSettingsButton: document.getElementById("openSettingsButton"),
+  openRagButton: document.getElementById("openRagButton"),
   chatShell: document.getElementById("chatShell"),
   messageScroll: document.getElementById("messageScroll"),
+  chatModelNotice: document.getElementById("chatModelNotice"),
+  chatModelNoticeSettingsButton: document.getElementById("chatModelNoticeSettingsButton"),
   messageList: document.getElementById("messageList"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
@@ -80,13 +84,24 @@ const els = {
   asrToolStatus: document.getElementById("asrToolStatus"),
   asrToolMeta: document.getElementById("asrToolMeta"),
   asrToolOutput: document.getElementById("asrToolOutput"),
+  asrToolCleanButton: document.getElementById("asrToolCleanButton"),
+  asrToolSummaryButton: document.getElementById("asrToolSummaryButton"),
+  asrToolTasksButton: document.getElementById("asrToolTasksButton"),
   asrToolInsertPromptButton: document.getElementById("asrToolInsertPromptButton"),
   asrToolSendButton: document.getElementById("asrToolSendButton"),
+  asrToolSaveContextButton: document.getElementById("asrToolSaveContextButton"),
+  asrToolCopyButton: document.getElementById("asrToolCopyButton"),
   asrToolSaveButton: document.getElementById("asrToolSaveButton"),
   asrToolClearButton: document.getElementById("asrToolClearButton"),
   asrToolDeleteButton: document.getElementById("asrToolDeleteButton"),
   asrToolClearHistoryButton: document.getElementById("asrToolClearHistoryButton"),
   asrToolHistoryList: document.getElementById("asrToolHistoryList"),
+  asrToolPipelinePanel: document.getElementById("asrToolPipelinePanel"),
+  asrToolPipelineMeta: document.getElementById("asrToolPipelineMeta"),
+  asrToolPipelineOutput: document.getElementById("asrToolPipelineOutput"),
+  asrToolSpeakerEditor: document.getElementById("asrToolSpeakerEditor"),
+  asrToolSaveSpeakersButton: document.getElementById("asrToolSaveSpeakersButton"),
+  asrToolRegenerateSummaryButton: document.getElementById("asrToolRegenerateSummaryButton"),
   ttsToolWindow: document.getElementById("ttsToolWindow"),
   ttsToolHeader: document.querySelector("#ttsToolWindow [data-tool-drag='tts']"),
   ttsToolResizeHandle: document.querySelector("#ttsToolWindow [data-tool-resize='tts']"),
@@ -117,6 +132,16 @@ const els = {
   ocrClearButton: document.getElementById("ocrClearButton"),
   settingsBackdrop: document.getElementById("settingsBackdrop"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
+  ragBackdrop: document.getElementById("ragBackdrop"),
+  closeRagButton: document.getElementById("closeRagButton"),
+  ragSourceDirValue: document.getElementById("ragSourceDirValue"),
+  ragEnabledToggle: document.getElementById("ragEnabledToggle"),
+  ragIngestButton: document.getElementById("ragIngestButton"),
+  ragForceIngestButton: document.getElementById("ragForceIngestButton"),
+  ragRefreshButton: document.getElementById("ragRefreshButton"),
+  ragCopyPathButton: document.getElementById("ragCopyPathButton"),
+  ragStatusText: document.getElementById("ragStatusText"),
+  ragFileList: document.getElementById("ragFileList"),
   confirmBackdrop: document.getElementById("confirmBackdrop"),
   confirmEyebrow: document.getElementById("confirmEyebrow"),
   confirmTitle: document.getElementById("confirmTitle"),
@@ -190,9 +215,10 @@ const state = {
   installedModels: [],
   recommendedModels: [],
   downloads: [],
+  chatModelsError: null,
   selectedLlmModel: "",
   selectedChatWhisperModel: "medium",
-  selectedWhisperModel: "medium",
+  selectedWhisperModel: ASR_STUDIO_DEFAULT_MODEL,
   selectedPromptPreset: "none",
   selectedTtsProvider: "piper",
   selectedTtsVoiceId: "",
@@ -243,6 +269,10 @@ const state = {
   asrToolHistory: [],
   asrToolSelectedTranscriptId: null,
   asrToolSelectedTranscript: null,
+  asrToolPipelineRun: null,
+  asrToolPipelineBusy: false,
+  ragStatus: null,
+  ragBusy: false,
   asrToolIsOpen: false,
   asrToolIsMinimized: false,
   asrToolBounds: null,
@@ -1298,8 +1328,26 @@ function autoResizePrompt() {
 function updateSendButtonState() {
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
-  els.sendButton.disabled = state.isSending ? false : !hasText;
+  const hasInstalledChatModel = state.installedModels.length > 0;
+  const selectedInstalled = state.installedModels.some((item) => item.name === (state.selectedLlmModel || state.defaultModel));
+  if (els.promptInput) {
+    els.promptInput.disabled = !hasInstalledChatModel;
+    els.promptInput.placeholder = hasInstalledChatModel
+      ? "Напишите сообщение…"
+      : "Нет загруженных моделей. Откройте настройки и скачайте модель.";
+  }
+  els.sendButton.disabled = state.isSending ? false : (!hasText || !hasInstalledChatModel || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
+}
+
+function renderChatModelNotice() {
+  if (!els.chatModelNotice) return;
+  const missing = !state.installedModels.length;
+  els.chatModelNotice.hidden = !missing;
+  if (missing && !state.isSending) {
+    setFooter("Нет загруженных моделей. Перейдите в настройки и скачайте модель.", "warning");
+  }
+  updateSendButtonState();
 }
 
 function setFooter(message = "", tone = "info") {
@@ -1610,10 +1658,13 @@ function getActiveProfilePreferences() {
 function applyActiveProfilePreferences() {
   const preferences = getActiveProfilePreferences();
   const whisperFallback = state.asrModels[0]?.name || "medium";
+  const asrStudioFallback = state.asrModels.some((item) => item.name === ASR_STUDIO_DEFAULT_MODEL)
+    ? ASR_STUDIO_DEFAULT_MODEL
+    : (state.asrModels[0]?.name || ASR_STUDIO_DEFAULT_MODEL);
   const promptPreset = String(preferences?.asr?.prompt_preset || "").trim().toLowerCase();
 
   state.selectedChatWhisperModel = String(preferences?.chat?.dictation_model || "").trim() || whisperFallback;
-  state.selectedWhisperModel = String(preferences?.asr?.studio_model || "").trim() || whisperFallback;
+  state.selectedWhisperModel = String(preferences?.asr?.studio_model || "").trim() || asrStudioFallback;
   state.selectedPromptPreset = ["none", "ru", "en"].includes(promptPreset) ? promptPreset : "none";
   state.selectedTtsProvider = String(preferences?.tts?.provider || state.selectedTtsProvider || "piper").trim() || "piper";
   state.selectedTtsVoiceId = String(preferences?.tts?.voice_id || "").trim();
@@ -1883,6 +1934,7 @@ function renderModelControls() {
 
   renderLibraryPanels();
   renderChatModelLibrary();
+  renderChatModelNotice();
 }
 
 async function applySelectedLlmModel(nextModel) {
@@ -2001,6 +2053,7 @@ function renderModelSettings() {
   if (els.memTurnsInput) {
     els.memTurnsInput.disabled = disabled;
     els.memTurnsInput.value = values.mem_turns === "" ? "" : String(values.mem_turns);
+    els.memTurnsInput.title = "Большие значения памяти увеличивают prompt. Для длинных диалогов лучше summary memory.";
   }
   if (els.saveModelSettingsButton) {
     els.saveModelSettingsButton.disabled = disabled;
@@ -2015,7 +2068,9 @@ function renderWhisperControls() {
   const items = getWhisperItems();
   const names = items.map((item) => item.name);
   if (!names.includes(state.selectedWhisperModel)) {
-    state.selectedWhisperModel = names[0] || "small";
+    state.selectedWhisperModel = names.includes(ASR_STUDIO_DEFAULT_MODEL)
+      ? ASR_STUDIO_DEFAULT_MODEL
+      : (names[0] || ASR_STUDIO_DEFAULT_MODEL);
   }
   els.whisperModelSelect.innerHTML = names
     .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
@@ -2828,7 +2883,9 @@ function renderAsrTool() {
     els.asrToolModelSelect.innerHTML = names
       .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
       .join("");
-    els.asrToolModelSelect.value = names.includes(state.selectedWhisperModel) ? state.selectedWhisperModel : (names[0] || "small");
+    els.asrToolModelSelect.value = names.includes(state.selectedWhisperModel)
+      ? state.selectedWhisperModel
+      : (names.includes(ASR_STUDIO_DEFAULT_MODEL) ? ASR_STUDIO_DEFAULT_MODEL : (names[0] || ASR_STUDIO_DEFAULT_MODEL));
   }
 
   if (els.asrToolChooseFileButton) {
@@ -2842,7 +2899,22 @@ function renderAsrTool() {
     els.asrToolInsertPromptButton.disabled = !hasOutput;
   }
   if (els.asrToolSendButton) {
-    els.asrToolSendButton.disabled = !hasOutput || state.isSending;
+    els.asrToolSendButton.disabled = (!hasOutput && !state.asrToolPipelineRun) || state.isSending;
+  }
+  [els.asrToolCleanButton, els.asrToolSummaryButton, els.asrToolTasksButton].filter(Boolean).forEach((button) => {
+    button.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolPipelineBusy;
+  });
+  if (els.asrToolSaveContextButton) {
+    els.asrToolSaveContextButton.disabled = !state.asrToolPipelineRun || !state.activeProfileId;
+  }
+  if (els.asrToolCopyButton) {
+    els.asrToolCopyButton.disabled = !hasOutput && !state.asrToolPipelineRun;
+  }
+  if (els.asrToolSaveSpeakersButton) {
+    els.asrToolSaveSpeakersButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy;
+  }
+  if (els.asrToolRegenerateSummaryButton) {
+    els.asrToolRegenerateSummaryButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy;
   }
   if (els.asrToolSaveButton) {
     els.asrToolSaveButton.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing;
@@ -2870,6 +2942,16 @@ function renderAsrTool() {
     ].filter(Boolean);
     els.asrToolMeta.textContent = metaParts.join(" • ");
   }
+  if (els.asrToolPipelinePanel && els.asrToolPipelineOutput && els.asrToolPipelineMeta) {
+    const run = state.asrToolPipelineRun;
+    const text = formatAsrPipelineRun(run);
+    els.asrToolPipelinePanel.hidden = !text;
+    els.asrToolPipelineOutput.textContent = text;
+    els.asrToolPipelineMeta.textContent = run
+      ? `${run.preset || "pipeline"} • ${run.action || "full"} • ${formatDateTime(run.updated_at || run.created_at)}`
+      : "";
+    renderAsrSpeakerEditor(run);
+  }
 
   renderAsrToolHistory();
 }
@@ -2885,8 +2967,15 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
     }
     state.asrToolSelectedTranscriptId = transcript.id;
     state.asrToolSelectedTranscript = transcript;
+    state.asrToolPipelineRun = null;
     if (els.asrToolOutput) {
       els.asrToolOutput.value = transcript.content || "";
+    }
+    try {
+      const latestRun = await request(`/transcripts/${encodeURIComponent(target)}/pipeline/latest`);
+      state.asrToolPipelineRun = latestRun || null;
+    } catch {
+      state.asrToolPipelineRun = null;
     }
     setInlineStatus(els.asrToolStatus, "Транскрипт загружен. Можно редактировать и отправить в чат.", "success");
     renderAsrTool();
@@ -2975,7 +3064,7 @@ async function runAsrToolTranscription(file) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("profile_id", String(state.activeProfileId));
-    formData.append("model", state.selectedWhisperModel || "small");
+    formData.append("model", state.selectedWhisperModel || ASR_STUDIO_DEFAULT_MODEL);
     formData.append("prompt_preset", state.selectedPromptPreset || "none");
     formData.append("language", "auto");
     formData.append("store_result", "true");
@@ -3056,6 +3145,8 @@ async function saveAsrToolTranscript() {
     await loadAsrToolHistory({ silent: true });
     setInlineStatus(els.asrToolStatus, "Транскрипт сохранён.", "success");
     setFooter("Транскрипт сохранён.", "success");
+    renderAsrTool();
+    return transcript;
   } catch (error) {
     setInlineStatus(els.asrToolStatus, `Не удалось сохранить транскрипт: ${error.message || error}`, "error");
     setFooter(`Не удалось сохранить транскрипт: ${error.message || error}`, "error");
@@ -3065,6 +3156,7 @@ async function saveAsrToolTranscript() {
 function clearAsrToolEditor() {
   state.asrToolSelectedTranscriptId = null;
   state.asrToolSelectedTranscript = null;
+  state.asrToolPipelineRun = null;
   if (els.asrToolOutput) {
     els.asrToolOutput.value = "";
   }
@@ -3119,9 +3211,9 @@ async function clearAsrToolHistory() {
 }
 
 function insertAsrToolIntoPrompt() {
-  const text = String(els.asrToolOutput?.value || "").trim();
+  const text = getAsrToolChatPayload();
   if (!text) {
-    setInlineStatus(els.asrToolStatus, "Нет текста для вставки в чат.", "warning");
+    setInlineStatus(els.asrToolStatus, "Сначала обработайте transcript через pipeline.", "warning");
     return;
   }
   insertPromptText(text, { append: true });
@@ -3130,12 +3222,188 @@ function insertAsrToolIntoPrompt() {
 }
 
 async function sendAsrToolTextToChat() {
-  const text = String(els.asrToolOutput?.value || "").trim();
+  const text = getAsrToolChatPayload();
   if (!text) {
-    setInlineStatus(els.asrToolStatus, "Нет текста для отправки в чат.", "warning");
+    setInlineStatus(els.asrToolStatus, "Сначала обработайте transcript через pipeline.", "warning");
     return;
   }
   await sendPromptText(text, { clearInput: false });
+}
+
+function formatAsrPipelineRun(run) {
+  if (!run) return "";
+  const parts = [];
+  if (run.summary) {
+    parts.push(run.summary);
+  }
+  if (run.structured_json) {
+    parts.push(`Structured JSON:\n${JSON.stringify(run.structured_json, null, 2)}`);
+  }
+  if (!parts.length && run.cleaned_transcript) {
+    parts.push(run.cleaned_transcript);
+  }
+  if (Array.isArray(run.warnings) && run.warnings.length) {
+    parts.push(`Warnings:\n${run.warnings.map((item) => `- ${item}`).join("\n")}`);
+  }
+  return parts.join("\n\n").trim();
+}
+
+function renderAsrSpeakerEditor(run) {
+  if (!els.asrToolSpeakerEditor) return;
+  const mapping = Array.isArray(run?.speaker_mapping) ? run.speaker_mapping : [];
+  if (!mapping.length) {
+    els.asrToolSpeakerEditor.innerHTML = "";
+    return;
+  }
+  els.asrToolSpeakerEditor.innerHTML = mapping.slice(0, 24).map((item) => {
+    const segmentId = item.segment_id;
+    const speaker = item.speaker || "Unknown speaker";
+    const confidence = typeof item.confidence === "number" ? ` • ${Math.round(item.confidence * 100)}%` : "";
+    const uncertain = item.uncertain ? " • uncertain" : "";
+    const text = stripRichTextToPlain(item.text || "").slice(0, 120);
+    return `
+      <label class="speaker-editor__row">
+        <span class="speaker-editor__meta">#${escapeHtml(segmentId)}${escapeHtml(confidence)}${escapeHtml(uncertain)}</span>
+        <input class="field__control" data-speaker-segment="${escapeHtml(segmentId)}" value="${escapeHtml(speaker)}" />
+        <span class="speaker-editor__text">${escapeHtml(text)}</span>
+      </label>
+    `;
+  }).join("");
+}
+
+function getAsrToolChatPayload() {
+  const pipelineText = formatAsrPipelineRun(state.asrToolPipelineRun);
+  if (pipelineText) {
+    return pipelineText;
+  }
+  return "";
+}
+
+async function ensureAsrToolTranscriptSaved() {
+  if (state.asrToolSelectedTranscriptId) {
+    const content = String(els.asrToolOutput?.value || "").trim();
+    if (content && content !== String(state.asrToolSelectedTranscript?.content || "")) {
+      return saveAsrToolTranscript();
+    }
+    return state.asrToolSelectedTranscript;
+  }
+  return saveAsrToolTranscript();
+}
+
+async function runAsrPipelineAction(action, preset = "balanced") {
+  if (state.asrToolPipelineBusy) return;
+  const content = String(els.asrToolOutput?.value || "").trim();
+  if (!content) {
+    setInlineStatus(els.asrToolStatus, "Нет текста для обработки.", "warning");
+    return;
+  }
+  const transcript = await ensureAsrToolTranscriptSaved();
+  if (!transcript?.id) return;
+
+  state.asrToolPipelineBusy = true;
+  renderAsrTool();
+  setInlineStatus(els.asrToolStatus, "Pipeline обрабатывает transcript…", "warning");
+  try {
+    const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
+      method: "POST",
+      body: { action, preset, model_name: state.selectedLlmModel || state.defaultModel },
+    });
+    state.asrToolPipelineRun = run;
+    if (action === "clean" && run?.cleaned_transcript && els.asrToolOutput) {
+      els.asrToolOutput.value = run.cleaned_transcript;
+    }
+    setInlineStatus(els.asrToolStatus, "Pipeline готов.", "success");
+    setFooter("ASR pipeline готов.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Pipeline error: ${error.message || error}`, "error");
+    setFooter(`ASR pipeline error: ${error.message || error}`, "error");
+  } finally {
+    state.asrToolPipelineBusy = false;
+    renderAsrTool();
+  }
+}
+
+async function saveAsrPipelineAsContext() {
+  const text = getAsrToolChatPayload();
+  if (!text || !state.activeProfileId) return;
+  try {
+    const transcript = await request("/transcripts", {
+      method: "POST",
+      body: {
+        profile_id: state.activeProfileId,
+        session_id: state.currentSessionId || undefined,
+        name: "ASR processed context",
+        content: text,
+        labels: { origin: "asr_context", source_run_id: state.asrToolPipelineRun?.id || null },
+      },
+    });
+    setInlineStatus(els.asrToolStatus, "Processed context сохранён.", "success");
+    setFooter("ASR context сохранён.", "success");
+    return transcript;
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось сохранить context: ${error.message || error}`, "error");
+  }
+}
+
+async function copyAsrToolText() {
+  const text = getAsrToolChatPayload();
+  if (!text) return;
+  try {
+    await copyText(text);
+    setInlineStatus(els.asrToolStatus, "Текст скопирован.", "success");
+  } catch {
+    setInlineStatus(els.asrToolStatus, "Не удалось скопировать текст.", "error");
+  }
+}
+
+async function saveAsrSpeakerOverrides() {
+  const run = state.asrToolPipelineRun;
+  const transcriptId = state.asrToolSelectedTranscriptId;
+  if (!run?.id || !transcriptId || !els.asrToolSpeakerEditor) return;
+  const overrides = {};
+  els.asrToolSpeakerEditor.querySelectorAll("[data-speaker-segment]").forEach((input) => {
+    const segmentId = input.dataset.speakerSegment;
+    const value = String(input.value || "").trim();
+    if (segmentId && value) {
+      overrides[segmentId] = value;
+    }
+  });
+  state.asrToolPipelineBusy = true;
+  renderAsrTool();
+  try {
+    const updated = await request(
+      `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/speakers`,
+      { method: "PATCH", body: { overrides } },
+    );
+    state.asrToolPipelineRun = updated;
+    setInlineStatus(els.asrToolStatus, "Роли сохранены.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось сохранить роли: ${error.message || error}`, "error");
+  } finally {
+    state.asrToolPipelineBusy = false;
+    renderAsrTool();
+  }
+}
+
+async function regenerateAsrSummary() {
+  const run = state.asrToolPipelineRun;
+  const transcriptId = state.asrToolSelectedTranscriptId;
+  if (!run?.id || !transcriptId) return;
+  state.asrToolPipelineBusy = true;
+  renderAsrTool();
+  try {
+    const updated = await request(
+      `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/summary`,
+      { method: "POST", body: { save_memory: true } },
+    );
+    state.asrToolPipelineRun = updated;
+    setInlineStatus(els.asrToolStatus, "Summary пересобрано с учётом ролей.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось пересобрать summary: ${error.message || error}`, "error");
+  } finally {
+    state.asrToolPipelineBusy = false;
+    renderAsrTool();
+  }
 }
 
 function renderOcrEditor() {
@@ -3605,11 +3873,14 @@ function renderDownloads() {
     .map((item) => {
       const percent = typeof item.percent === "number" ? Math.max(0, Math.min(100, item.percent)) : 0;
       const eta = item.eta_seconds ? ` • ETA ${item.eta_seconds}s` : "";
-      const downloaded = item.downloaded_bytes ? formatBytes(item.downloaded_bytes) : "";
-      const total = item.total_bytes ? formatBytes(item.total_bytes) : "";
+      const downloaded = (item.downloaded_bytes || item.completed) ? formatBytes(item.downloaded_bytes || item.completed) : "";
+      const total = (item.total_bytes || item.total) ? formatBytes(item.total_bytes || item.total) : "";
       const transfer = downloaded && total ? ` • ${downloaded} / ${total}` : downloaded ? ` • ${downloaded}` : "";
       const canCancel = item.source === "chat" && ["pending", "running", "paused"].includes(item.state);
       const sourceLabel = item.source === "asr" ? "ASR" : item.source === "tts" ? "TTS" : "CHAT";
+      const outputTail = Array.isArray(item.output_tail) && item.output_tail.length
+        ? `<pre class="download-card__log">${escapeHtml(item.output_tail.slice(-4).join("\n"))}</pre>`
+        : "";
       return `
         <article class="download-card">
           <div class="download-card__top">
@@ -3618,6 +3889,7 @@ function renderDownloads() {
           </div>
           <div class="download-progress"><div class="download-progress__bar" style="width:${percent}%;"></div></div>
           <div class="subtle">${escapeHtml(item.message || "Ожидание")}${escapeHtml(eta)}${escapeHtml(transfer)}</div>
+          ${outputTail}
           ${canCancel ? `<div class="button-row"><button class="button button--ghost" type="button" data-cancel-download="${escapeHtml(item.task_id || "")}">Остановить</button></div>` : ""}
         </article>
       `;
@@ -3696,6 +3968,108 @@ function closeSettings() {
   els.settingsBackdrop.hidden = true;
 }
 
+function activeProfileRagEnabled() {
+  const preferences = getActiveProfilePreferences();
+  return Boolean(preferences?.settings?.rag_enabled);
+}
+
+function renderRagPanel() {
+  const status = state.ragStatus || {};
+  if (els.ragSourceDirValue) {
+    els.ragSourceDirValue.textContent = status.source_dir || "rag_sources";
+  }
+  if (els.ragEnabledToggle) {
+    els.ragEnabledToggle.disabled = !state.activeProfileId || state.ragBusy;
+    els.ragEnabledToggle.checked = activeProfileRagEnabled();
+  }
+  [els.ragIngestButton, els.ragForceIngestButton, els.ragRefreshButton, els.ragCopyPathButton]
+    .filter(Boolean)
+    .forEach((button) => {
+      button.disabled = state.ragBusy || (!state.activeProfileId && button !== els.ragRefreshButton && button !== els.ragCopyPathButton);
+    });
+  if (els.ragIngestButton) {
+    els.ragIngestButton.textContent = state.ragBusy ? "Индексация…" : "Индексировать";
+  }
+  if (els.ragStatusText) {
+    const stats = status.stats || {};
+    els.ragStatusText.textContent = state.ragBusy
+      ? "RAG индексирует файлы из папки…"
+      : `Файлов: ${status.file_count ?? 0} • документов: ${stats.documents ?? 0} • chunks: ${stats.chunks ?? 0} • embeddings: ${stats.embeddings ?? 0}`;
+  }
+  if (els.ragFileList) {
+    const files = Array.isArray(status.files) ? status.files : [];
+    els.ragFileList.innerHTML = files.length
+      ? files.slice(0, 12).map((file) => `<div class="rag-file-list__item">${escapeHtml(file)}</div>`).join("")
+      : '<p class="subtle">Положите .txt, .md или .json файлы в папку RAG и нажмите «Индексировать».</p>';
+  }
+}
+
+async function loadRagStatus({ silent = false } = {}) {
+  try {
+    const query = state.activeProfileId ? `?profile_id=${encodeURIComponent(state.activeProfileId)}` : "";
+    state.ragStatus = await request(`/rag/status${query}`);
+    renderRagPanel();
+  } catch (error) {
+    if (!silent) {
+      setFooter(`Не удалось загрузить статус RAG: ${error.message || error}`, "error");
+    }
+  }
+}
+
+async function openRagPanel() {
+  if (!els.ragBackdrop) return;
+  els.ragBackdrop.hidden = false;
+  renderRagPanel();
+  await loadRagStatus({ silent: true });
+}
+
+function closeRagPanel() {
+  if (!els.ragBackdrop) return;
+  els.ragBackdrop.hidden = true;
+}
+
+async function ingestRagSources(force = false) {
+  if (!state.activeProfileId) {
+    setFooter("Сначала выберите профиль для RAG.", "warning");
+    return;
+  }
+  state.ragBusy = true;
+  renderRagPanel();
+  try {
+    const result = await request("/rag/ingest", {
+      method: "POST",
+      body: { profile_id: state.activeProfileId, force },
+    });
+    state.ragStatus = {
+      ...(state.ragStatus || {}),
+      source_dir: result.source_dir,
+      supported_suffixes: result.supported_suffixes,
+      stats: result.stats,
+    };
+    await loadRagStatus({ silent: true });
+    const errorCount = Array.isArray(result.errors) ? result.errors.length : 0;
+    setFooter(
+      `RAG индекс готов: файлов ${result.indexed}, chunks ${result.chunks_indexed}${errorCount ? `, ошибок ${errorCount}` : ""}.`,
+      errorCount ? "warning" : "success",
+    );
+  } catch (error) {
+    setFooter(`Не удалось индексировать RAG: ${error.message || error}`, "error");
+  } finally {
+    state.ragBusy = false;
+    renderRagPanel();
+  }
+}
+
+async function toggleRagForActiveProfile(enabled) {
+  const updated = await saveActiveProfilePreferences({ settings: { rag_enabled: Boolean(enabled) } });
+  if (updated) {
+    renderRagPanel();
+    setFooter(enabled ? "RAG включён для активного профиля." : "RAG выключен для активного профиля.", "success");
+  } else {
+    renderRagPanel();
+  }
+}
+
 async function copyText(value) {
   if (!value) return;
   await navigator.clipboard.writeText(value);
@@ -3728,6 +4102,7 @@ async function loadModels({ silent = false } = {}) {
     state.installedModels = Array.isArray(data?.installed) ? data.installed : [];
     state.recommendedModels = Array.isArray(data?.recommended) ? data.recommended : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
+    state.chatModelsError = data?.error || null;
     const savedModel = readStored(STORAGE_KEYS.llmModel, state.defaultModel);
     if (!state.selectedLlmModel) {
       state.selectedLlmModel = savedModel || state.installedModels[0]?.name || state.recommendedModels[0]?.name || state.defaultModel;
@@ -3737,6 +4112,8 @@ async function loadModels({ silent = false } = {}) {
     void refreshModelSettings({ silent: true });
     syncDownloadsPolling();
   } catch (error) {
+    state.chatModelsError = error.message || String(error);
+    renderChatModelNotice();
     if (!silent) {
       setFooter(`Не удалось получить список моделей: ${error.message || error}`, "error");
     }
@@ -3751,8 +4128,8 @@ async function loadWhisperModels({ silent = false } = {}) {
     if (state.activeProfileId) {
       applyActiveProfilePreferences();
     } else if (!state.selectedWhisperModel) {
-      state.selectedWhisperModel = data?.default || state.asrModels[0]?.name || "small";
-      state.selectedChatWhisperModel = state.selectedWhisperModel;
+      state.selectedWhisperModel = data?.studio_default || ASR_STUDIO_DEFAULT_MODEL;
+      state.selectedChatWhisperModel = data?.default || state.asrModels[0]?.name || "medium";
     }
     renderWhisperControls();
     renderDownloads();
@@ -3973,6 +4350,17 @@ async function saveModelSettingsFlow() {
   }
 
   try {
+    const memTurnsValue = parseOptionalNumber(els.memTurnsInput?.value, "int");
+    const memTurnsWarning = memTurnsValue && memTurnsValue > 12
+      ? "Большое значение памяти увеличивает размер prompt, замедляет ответы и может ухудшить качество. Для длинных диалогов лучше использовать summary memory."
+      : "";
+    if (memTurnsWarning) {
+      setInlineStatus(
+        els.modelSettingsStatus,
+        memTurnsWarning,
+        "warning",
+      );
+    }
     const data = await request("/model_settings", {
       method: "POST",
       body: {
@@ -3981,12 +4369,16 @@ async function saveModelSettingsFlow() {
         temperature: parseOptionalNumber(els.temperatureInput?.value, "float"),
         max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
-        mem_turns: parseOptionalNumber(els.memTurnsInput?.value, "int"),
+        mem_turns: memTurnsValue,
       },
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
-    setInlineStatus(els.modelSettingsStatus, "Настройки модели сохранены.", "success");
+    setInlineStatus(
+      els.modelSettingsStatus,
+      memTurnsWarning ? `Настройки модели сохранены. ${memTurnsWarning}` : "Настройки модели сохранены.",
+      memTurnsWarning ? "warning" : "success",
+    );
   } catch (error) {
     setInlineStatus(els.modelSettingsStatus, `Не удалось сохранить настройки: ${error.message || error}`, "error");
   }
@@ -4085,8 +4477,8 @@ async function ensureModelInstalled(modelName) {
   if (state.installedModels.some((item) => item.name === modelName)) {
     return true;
   }
-
-  await startModelDownload(modelName);
+  setFooter("Нет загруженных моделей. Перейдите в настройки и скачайте модель.", "warning");
+  openSettings();
   return false;
 }
 
@@ -4105,8 +4497,6 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
   const selectedModel = state.selectedLlmModel || state.defaultModel;
   const modelAvailable = await ensureModelInstalled(selectedModel);
   if (!modelAvailable) {
-    setFooter(`Модель ${selectedModel} загружается. Повторите отправку после завершения.`, "warning");
-    openSettings();
     return;
   }
 
@@ -4664,11 +5054,29 @@ function bindEvents() {
   });
 
   els.openSettingsButton?.addEventListener("click", () => openSettings());
+  els.openRagButton?.addEventListener("click", async () => openRagPanel());
+  els.chatModelNoticeSettingsButton?.addEventListener("click", () => openSettings());
   els.closeSettingsButton?.addEventListener("click", () => closeSettings());
   els.settingsBackdrop?.addEventListener("click", (event) => {
     if (event.target === els.settingsBackdrop) {
       closeSettings();
     }
+  });
+  els.closeRagButton?.addEventListener("click", () => closeRagPanel());
+  els.ragBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.ragBackdrop) {
+      closeRagPanel();
+    }
+  });
+  els.ragRefreshButton?.addEventListener("click", async () => loadRagStatus());
+  els.ragIngestButton?.addEventListener("click", async () => ingestRagSources(false));
+  els.ragForceIngestButton?.addEventListener("click", async () => ingestRagSources(true));
+  els.ragCopyPathButton?.addEventListener("click", async () => {
+    await copyText(state.ragStatus?.source_dir || "rag_sources");
+    setFooter("Путь RAG скопирован.", "success");
+  });
+  els.ragEnabledToggle?.addEventListener("change", async () => {
+    await toggleRagForActiveProfile(Boolean(els.ragEnabledToggle.checked));
   });
   els.confirmCancelButton?.addEventListener("click", () => {
     resolveConfirmDialog(false);
@@ -4765,7 +5173,7 @@ function bindEvents() {
     startAsrToolResize(event);
   });
   els.asrToolModelSelect?.addEventListener("change", async () => {
-    const modelName = els.asrToolModelSelect.value || "small";
+    const modelName = els.asrToolModelSelect.value || ASR_STUDIO_DEFAULT_MODEL;
     const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
     if (!updated) return;
     if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
@@ -4775,6 +5183,7 @@ function bindEvents() {
     setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
   });
   els.asrToolOutput?.addEventListener("input", () => {
+    state.asrToolPipelineRun = null;
     renderAsrTool();
   });
   els.asrToolChooseFileButton?.addEventListener("click", () => {
@@ -4793,11 +5202,32 @@ function bindEvents() {
       setFooter("История ASR обновлена.", "success");
     }
   });
+  els.asrToolCleanButton?.addEventListener("click", async () => {
+    await runAsrPipelineAction("clean", "fast");
+  });
+  els.asrToolSummaryButton?.addEventListener("click", async () => {
+    await runAsrPipelineAction("summary", "balanced");
+  });
+  els.asrToolTasksButton?.addEventListener("click", async () => {
+    await runAsrPipelineAction("tasks", "balanced");
+  });
   els.asrToolInsertPromptButton?.addEventListener("click", () => {
     insertAsrToolIntoPrompt();
   });
   els.asrToolSendButton?.addEventListener("click", async () => {
     await sendAsrToolTextToChat();
+  });
+  els.asrToolSaveContextButton?.addEventListener("click", async () => {
+    await saveAsrPipelineAsContext();
+  });
+  els.asrToolCopyButton?.addEventListener("click", async () => {
+    await copyAsrToolText();
+  });
+  els.asrToolSaveSpeakersButton?.addEventListener("click", async () => {
+    await saveAsrSpeakerOverrides();
+  });
+  els.asrToolRegenerateSummaryButton?.addEventListener("click", async () => {
+    await regenerateAsrSummary();
   });
   els.asrToolSaveButton?.addEventListener("click", async () => {
     await saveAsrToolTranscript();

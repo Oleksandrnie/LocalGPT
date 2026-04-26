@@ -36,6 +36,12 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Environment files with local secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
@@ -140,14 +146,29 @@ ollama_models/**
 app/db/*.db
 app/db/*.sqlite
 app/db/*.sqlite3
+app/db/*.db-journal
+app/db/*.db-shm
+app/db/*.db-wal
+app/db/*.sqlite-journal
+app/db/*.sqlite-shm
+app/db/*.sqlite-wal
+app/db/*.sqlite3-journal
+app/db/*.sqlite3-shm
+app/db/*.sqlite3-wal
 app/db/localgpt.db
 !app/db/.gitkeep
 app/data/transcripts/*.json
 !app/data/transcripts/.gitkeep
+app/data/chat_tasks/*.json
+!app/data/chat_tasks/.gitkeep
+app/data/transcribe_tasks/*.json
+!app/data/transcribe_tasks/.gitkeep
 app/data/tts/history/*.json
 !app/data/tts/history/.gitkeep
 tmp_logs/**
 !tmp_logs/.gitkeep
+rag_sources/**
+!rag_sources/.gitkeep
 *.wav
 *.mp3
 *.m4a

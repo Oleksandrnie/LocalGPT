@@ -16,7 +16,9 @@ PROMPTS_DIR = Path(__file__).with_name("prompts")
 LOG_DIR = PROJECT_ROOT / "tmp_logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 CHAT_LOG_FILE = LOG_DIR / "chat.log"
+PIPELINE_LOG_FILE = LOG_DIR / "pipeline.log"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
+RAG_SOURCE_DIR = PROJECT_ROOT / "rag_sources"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
 ALLOWED_WHISPER_MODELS = (
     "tiny",
@@ -26,6 +28,7 @@ ALLOWED_WHISPER_MODELS = (
     "large-v3",
     "large-v3-turbo",
 )
+ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo"
 
 
 def _parse_bool(name: str, default: bool) -> bool:
@@ -159,6 +162,52 @@ MODEL_RECOMMENDATIONS = [
     {"name": "mistral:7b", "label": "Mistral 7B"},
 ]
 
+DEFAULT_PIPELINE = {
+    "cleaner": {
+        "enabled": True,
+        "model": "qwen2.5:3b",
+        "temperature": 0.2,
+        "max_tokens": 1200,
+    },
+    "segmenter": {
+        "enabled": True,
+        "model": "qwen2.5:3b",
+        "temperature": 0.1,
+        "max_tokens": 1600,
+    },
+    "speaker_resolver": {
+        "enabled": True,
+        "model": "qwen2.5:3b",
+        "temperature": 0.1,
+        "max_tokens": 1800,
+    },
+    "structurer": {
+        "enabled": True,
+        "model": "mistral:7b",
+        "temperature": 0.3,
+        "max_tokens": 2000,
+    },
+    "summary": {
+        "enabled": True,
+        "model": "mistral:7b",
+        "temperature": 0.3,
+        "max_tokens": 2000,
+    },
+}
+
+DEFAULT_RUNTIME_SETTINGS = {
+    "pipeline_enabled": True,
+    "summary_memory_enabled": True,
+    "rag_enabled": False,
+    "default_pipeline_preset": "balanced",
+    "max_transcript_chars": 24000,
+    "max_context_chars": 16000,
+    "summary_memory_limit": 5,
+    "rag_top_k": 5,
+    "rag_max_context_chars": 6000,
+    "pipeline": DEFAULT_PIPELINE,
+}
+
 
 def build_model_paths(base_dir: Path | str | None = None) -> ModelPaths:
     use_env_overrides = base_dir is None
@@ -247,6 +296,7 @@ DEFAULT_SETTINGS = {
     "max_tokens": SETTINGS.max_tokens,
     "num_ctx": SETTINGS.num_ctx,
     "mem_turns": SETTINGS.mem_turns,
+    **DEFAULT_RUNTIME_SETTINGS,
 }
 OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(MODEL_PATHS.ollama)}
 
@@ -255,7 +305,7 @@ TTS_OUTPUT_DIR = _resolve_path(os.getenv("TTS_OUTPUT_DIR"), TTS_DATA_DIR / "outp
 TTS_HISTORY_DIR = _resolve_path(os.getenv("TTS_HISTORY_DIR"), TTS_DATA_DIR / "history")
 TTS_TEMP_DIR = _resolve_path(os.getenv("TTS_TEMP_DIR"), TTS_DATA_DIR / "temp")
 
-for path in (DATA_DIR, TTS_DATA_DIR, TTS_OUTPUT_DIR, TTS_HISTORY_DIR, TTS_TEMP_DIR):
+for path in (DATA_DIR, RAG_SOURCE_DIR, TTS_DATA_DIR, TTS_OUTPUT_DIR, TTS_HISTORY_DIR, TTS_TEMP_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 os.environ["TTS_DATA_DIR"] = str(TTS_DATA_DIR)

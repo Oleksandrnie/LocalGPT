@@ -10,10 +10,12 @@ from fastapi.staticfiles import StaticFiles
 from app import config, db
 from app.routes import criteria, meta, models, profiles, storage
 from backend.apps.asr import models_routes as asr_models
+from backend.apps.asr import pipeline_routes as asr_pipeline
 from backend.apps.asr import routes as transcribe
 from backend.apps.asr import transcripts
 from backend.apps.chat import routes as chat
 from backend.apps.ocr import routes as ocr
+from backend.apps.rag import routes as rag
 from backend.apps.tts import router as tts
 
 logging.basicConfig(level=logging.INFO)
@@ -38,8 +40,10 @@ app.include_router(asr_models.router)
 app.include_router(profiles.router)
 app.include_router(criteria.router)
 app.include_router(transcripts.router)
+app.include_router(asr_pipeline.router)
 app.include_router(transcribe.router)
 app.include_router(ocr.router)
+app.include_router(rag.router)
 app.include_router(chat.router)
 app.include_router(storage.router)
 app.include_router(tts.router)

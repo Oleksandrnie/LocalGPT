@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -50,6 +52,7 @@ class ProfilePreferencesUpdate(BaseModel):
     chat: ChatPreferencesUpdate | None = None
     asr: AsrPreferencesUpdate | None = None
     tts: TtsPreferencesUpdate | None = None
+    settings: dict[str, Any] | None = None
 
 
 class SessionCreate(BaseModel):
@@ -72,6 +75,27 @@ class ModelSettingsRequest(BaseModel):
     max_tokens: int | None = None
     num_ctx: int | None = None
     mem_turns: int | None = None
+    pipeline_enabled: bool | None = None
+    summary_memory_enabled: bool | None = None
+    rag_enabled: bool | None = None
+    default_pipeline_preset: str | None = None
+    max_transcript_chars: int | None = None
+    max_context_chars: int | None = None
+    summary_memory_limit: int | None = None
+    rag_top_k: int | None = None
+    rag_max_context_chars: int | None = None
+    pipeline: dict[str, Any] | None = None
+
+
+class RagIngestRequest(BaseModel):
+    profile_id: int
+    force: bool = False
+
+
+class RagSearchRequest(BaseModel):
+    profile_id: int
+    query: str
+    top_k: int | None = None
 
 
 class ModelSettingsReset(BaseModel):
@@ -108,3 +132,21 @@ class ResetRequest(BaseModel):
 class StorageUpdateRequest(BaseModel):
     models_dir: str
     move_existing: bool = False
+
+
+class TranscriptPipelineRequest(BaseModel):
+    preset: str | None = None
+    action: str | None = None
+    model_name: str | None = None
+
+
+class TranscriptSpeakerOverridesRequest(BaseModel):
+    overrides: dict[str, str] | None = None
+
+
+class TranscriptSummaryRequest(BaseModel):
+    save_memory: bool = True
+
+
+class ChatDebugPromptRequest(ChatRequest):
+    admin_token: str | None = None
