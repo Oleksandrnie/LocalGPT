@@ -489,6 +489,27 @@ function stripRichTextToPlain(value) {
     .trim();
 }
 
+function normalizeTextForSpeech(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/```[a-zA-Z0-9_-]*\n?([\s\S]*?)```/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1")
+    .replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, "$1")
+    .replace(/__([^_\n](?:[\s\S]*?[^_\n])?)__/g, "$1")
+    .replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,!?:;]|$)/g, "$1$2")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function formatDateTime(value) {
   if (!value) return "";
   let normalized = String(value).trim();
@@ -3887,7 +3908,7 @@ function fillTtsToolWithLatestAssistant({ silent = false } = {}) {
   state.ttsToolSelectedRecord = null;
   stopTtsToolPlayer();
   if (els.ttsToolText) {
-    els.ttsToolText.value = String(message.content || "").trim();
+    els.ttsToolText.value = normalizeTextForSpeech(message.content || "");
   }
   setInlineStatus(els.ttsToolStatus, "Последний ответ подставлен в Voice Studio.", "success");
   renderTtsTool();
@@ -3961,7 +3982,7 @@ function toggleTtsToolFullscreen() {
 }
 
 async function generateFromTtsTool() {
-  const text = String(els.ttsToolText?.value || "").trim();
+  const text = normalizeTextForSpeech(els.ttsToolText?.value || "");
   const voiceId = String(
     els.ttsToolVoiceSelect?.value
       || state.selectedTtsVoiceId
@@ -3971,6 +3992,9 @@ async function generateFromTtsTool() {
   if (!text) {
     setInlineStatus(els.ttsToolStatus, "Введите текст для озвучки.", "warning");
     return;
+  }
+  if (els.ttsToolText && els.ttsToolText.value !== text) {
+    els.ttsToolText.value = text;
   }
   if (voiceId !== state.selectedTtsVoiceId) {
     state.selectedTtsVoiceId = voiceId;

@@ -376,6 +376,15 @@
                         <select id="profileManagementSelect" class="field__control"></select>
                     </label>
 
+                    <div class="button-row">
+                        <button class="button button--primary" id="createProfileButton" type="button">Создать
+                            профиль</button>
+                        <button class="button button--ghost" id="saveProfileSystemPromptButton" type="button">Сохранить
+                            профиль</button>
+                        <button class="button button--ghost" id="deleteProfileButton" type="button">Удалить
+                            текущий</button>
+                    </div>
+
                     <label class="field" id="profileNameField" hidden>
                         <span class="field__label">Название нового профиля</span>
                         <input id="profileNameInput" class="field__control" type="text"
@@ -393,15 +402,6 @@
                         <textarea id="profileSystemPromptInput" class="field__control field__control--textarea" rows="5"
                             placeholder="Необязательно. Например: отвечай как {придуйма роль/должность/что-то еще}, и/или опирайся на RAG и не выдумывай факты."></textarea>
                     </label>
-
-                    <div class="button-row">
-                        <button class="button button--primary" id="createProfileButton" type="button">Создать
-                            профиль</button>
-                        <button class="button button--ghost" id="saveProfileSystemPromptButton" type="button">Сохранить
-                            профиль</button>
-                        <button class="button button--ghost" id="deleteProfileButton" type="button">Удалить
-                            текущий</button>
-                    </div>
 
                     <p class="inline-status" id="profileStatus"></p>
                 </section>
@@ -566,6 +566,11 @@
 
                     <p class="inline-status" id="ttsSettingsStatus">Кнопка <code>Озвучить</code> в меню <code>+</code>
                         использует выбранный локальный голос.</p>
+                    <label class="field">
+                        <span class="field__label">Поиск по каталогу голосов</span>
+                        <input id="ttsVoiceSearchInput" class="field__control" type="text"
+                            placeholder="Имя, язык, страна, quality..." />
+                    </label>
                     <div class="library-block">
                         <button class="library-toggle" id="ttsLibraryToggle" type="button" aria-expanded="false"
                             aria-controls="ttsLibraryPanel">
@@ -576,11 +581,6 @@
                             <span class="library-toggle__icon" aria-hidden="true">⌄</span>
                         </button>
                         <div class="library-panel" id="ttsLibraryPanel" hidden>
-                            <label class="field">
-                                <span class="field__label">Поиск по каталогу голосов</span>
-                                <input id="ttsVoiceSearchInput" class="field__control" type="text"
-                                    placeholder="Имя, язык, страна, quality..." />
-                            </label>
                             <div class="model-library" id="ttsVoiceLibrary"></div>
                         </div>
                     </div>

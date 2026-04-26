@@ -355,8 +355,28 @@ def _history_summary(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_text_for_speech(text: str) -> str:
+    clean = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    clean = re.sub(r"```[a-zA-Z0-9_-]*\n?([\s\S]*?)```", r"\1", clean)
+    clean = re.sub(r"`([^`\n]+)`", r"\1", clean)
+    clean = re.sub(r"^#{1,6}\s*", "", clean, flags=re.MULTILINE)
+    clean = re.sub(r"^\s*>\s?", "", clean, flags=re.MULTILINE)
+    clean = re.sub(r"^\s*[-*+]\s+", "", clean, flags=re.MULTILINE)
+    clean = re.sub(r"^\s*\d+\.\s+", "", clean, flags=re.MULTILINE)
+    clean = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", clean)
+    clean = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", clean)
+    clean = re.sub(r"\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*", r"\1", clean)
+    clean = re.sub(r"__([^_\n](?:[\s\S]*?[^_\n])?)__", r"\1", clean)
+    clean = re.sub(r"(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,!?:;]|$)", r"\1\2", clean)
+    clean = re.sub(r"<[^>]+>", "", clean)
+    clean = re.sub(r"[ \t]+\n", "\n", clean)
+    clean = re.sub(r"\n{3,}", "\n\n", clean)
+    clean = re.sub(r"[ \t]{2,}", " ", clean)
+    return clean.strip()
+
+
 def _validate_text(text: str) -> str:
-    clean = (text or "").strip()
+    clean = _normalize_text_for_speech(text)
     if not clean:
         raise TTSServiceError(422, "text_required", "Введите текст для озвучки.")
     if len(clean) > config.SETTINGS.tts_max_text_chars:
