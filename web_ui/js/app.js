@@ -20,6 +20,13 @@ const STORAGE_KEYS = {
 
 const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
 const ASR_TOOL_ORIGIN = "asr_tool";
+const ASR_PIPELINE_STAGES = [
+  { key: "cleaner", label: "Очистка" },
+  { key: "segmenter", label: "Сегменты" },
+  { key: "speaker_resolver", label: "Роли" },
+  { key: "structurer", label: "Структура" },
+  { key: "summary", label: "Саммари" },
+];
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
@@ -89,6 +96,13 @@ const els = {
   asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
   asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
   asrToolFileInput: document.getElementById("asrToolFileInput"),
+  asrToolFileCard: document.getElementById("asrToolFileCard"),
+  asrToolFileTitle: document.getElementById("asrToolFileTitle"),
+  asrToolFileMeta: document.getElementById("asrToolFileMeta"),
+  asrToolRetranscribeButton: document.getElementById("asrToolRetranscribeButton"),
+  asrToolSearchInput: document.getElementById("asrToolSearchInput"),
+  asrToolHistorySearchInput: document.getElementById("asrToolHistorySearchInput"),
+  asrToolDownloadButton: document.getElementById("asrToolDownloadButton"),
   asrToolStatus: document.getElementById("asrToolStatus"),
   asrToolMeta: document.getElementById("asrToolMeta"),
   asrToolOutput: document.getElementById("asrToolOutput"),
@@ -106,11 +120,16 @@ const els = {
   asrToolHistoryList: document.getElementById("asrToolHistoryList"),
   asrToolPipelinePanel: document.getElementById("asrToolPipelinePanel"),
   asrToolPipelineMeta: document.getElementById("asrToolPipelineMeta"),
+  asrToolPipelineSteps: document.getElementById("asrToolPipelineSteps"),
   asrToolPipelineOutput: document.getElementById("asrToolPipelineOutput"),
   asrToolSpeakerPanel: document.getElementById("asrToolSpeakerPanel"),
   asrToolSpeakerEditor: document.getElementById("asrToolSpeakerEditor"),
   asrToolSaveSpeakersButton: document.getElementById("asrToolSaveSpeakersButton"),
   asrToolRegenerateSummaryButton: document.getElementById("asrToolRegenerateSummaryButton"),
+  asrToolTasksOutput: document.getElementById("asrToolTasksOutput"),
+  asrToolRolesButton: document.getElementById("asrToolRolesButton"),
+  asrToolFullAnalysisButton: document.getElementById("asrToolFullAnalysisButton"),
+  asrToolOpenAnalysisButton: document.getElementById("asrToolOpenAnalysisButton"),
   ttsToolWindow: document.getElementById("ttsToolWindow"),
   ttsToolHeader: document.querySelector("#ttsToolWindow [data-tool-drag='tts']"),
   ttsToolResizeHandle: document.querySelector("#ttsToolWindow [data-tool-resize='tts']"),
@@ -292,6 +311,11 @@ const state = {
   asrToolSelectedTranscript: null,
   asrToolPipelineRun: null,
   asrToolPipelineBusy: false,
+  asrToolPipelineAction: "",
+  asrToolPipelinePreset: "",
+  asrToolActiveTab: "text",
+  asrToolTextSearch: "",
+  asrToolHistorySearch: "",
   ragStatus: null,
   ragBusy: false,
   asrToolIsOpen: false,
@@ -302,6 +326,7 @@ const state = {
   asrToolTaskId: null,
   asrToolStartController: null,
   asrToolIsTranscribing: false,
+  asrToolLastFile: null,
   ttsToolSelectedRecordId: null,
   ttsToolSelectedRecord: null,
   ttsToolIsOpen: false,
@@ -3033,12 +3058,29 @@ function renderAsrToolHistory() {
   }
 
   const selectedId = Number(state.asrToolSelectedTranscriptId || 0);
+  const search = String(state.asrToolHistorySearch || "").trim().toLowerCase();
+  const visibleHistory = search
+    ? state.asrToolHistory.filter((item) => {
+      const haystack = [
+        item.name,
+        item.summary,
+        item.content,
+        item.language,
+        item.labels?.file_name,
+      ].filter(Boolean).join("\n").toLowerCase();
+      return haystack.includes(search);
+    })
+    : state.asrToolHistory;
+  if (!visibleHistory.length) {
+    els.asrToolHistoryList.innerHTML = '<p class="subtle">Ничего не найдено.</p>';
+    return;
+  }
   const prioritized = selectedId
     ? [
-      ...state.asrToolHistory.filter((item) => Number(item.id) === selectedId),
-      ...state.asrToolHistory.filter((item) => Number(item.id) !== selectedId),
+      ...visibleHistory.filter((item) => Number(item.id) === selectedId),
+      ...visibleHistory.filter((item) => Number(item.id) !== selectedId),
     ]
-    : [...state.asrToolHistory];
+    : [...visibleHistory];
 
   els.asrToolHistoryList.innerHTML = prioritized.slice(0, 6)
     .map((item) => {
@@ -3047,16 +3089,226 @@ function renderAsrToolHistory() {
         item.language || null,
         formatDateTime(item.updated_at || item.created_at),
       ].filter(Boolean).join(" • ");
-      const title = stripRichTextToPlain(item.name || item.summary || "Транскрипт");
+      const title = getAsrTranscriptTitle(item);
       const preview = stripRichTextToPlain(item.summary || item.content || "");
       return `
         <button class="tool-history__item${active}" type="button" data-asr-history-id="${escapeHtml(item.id)}">
           <span class="tool-history__title">${escapeHtml(title || "Транскрипт")}</span>
-          <span class="tool-history__meta">${escapeHtml([meta, preview].filter(Boolean).join(" • ") || "Транскрипт")}</span>
+          <span class="tool-history__meta">${escapeHtml(meta || "Транскрипт")}</span>
+          <span class="tool-history__preview">${escapeHtml(preview || "Нет превью")}</span>
         </button>
       `;
     })
     .join("");
+}
+
+function getAsrActionLabel(action) {
+  return {
+    clean: "очистка",
+    summary: "саммари",
+    tasks: "задачи",
+    full: "полный анализ",
+  }[action] || "обработка";
+}
+
+function getAsrStageStatus(stageKey, run) {
+  const timings = run?.stage_timings && typeof run.stage_timings === "object" ? run.stage_timings : {};
+  if (timings[stageKey]) return "completed";
+  const warningText = Array.isArray(run?.warnings) ? run.warnings.join("\n") : "";
+  if (warningText.includes(`${stageKey}_failed`)) return "error";
+  return "pending";
+}
+
+function renderAsrPipelineSteps(run) {
+  if (!els.asrToolPipelineSteps) return;
+  const activeAction = state.asrToolPipelineBusy ? state.asrToolPipelineAction : "";
+  const activePreset = state.asrToolPipelineBusy ? state.asrToolPipelinePreset : "";
+  let hasActiveStage = false;
+  const html = ASR_PIPELINE_STAGES.map((stage) => {
+    let status = getAsrStageStatus(stage.key, run);
+    if (status === "pending" && activeAction && !hasActiveStage) {
+      status = "active";
+      hasActiveStage = true;
+    }
+    const icon = status === "completed" ? "✓" : status === "error" ? "!" : "•";
+    return `
+      <span class="pipeline-step pipeline-step--${escapeHtml(status)}">
+        <span class="pipeline-step__icon" aria-hidden="true">${escapeHtml(icon)}</span>
+        <span>${escapeHtml(stage.label)}</span>
+      </span>
+    `;
+  }).join("");
+  els.asrToolPipelineSteps.innerHTML = html;
+  els.asrToolPipelineSteps.hidden = !run && !activeAction && !activePreset;
+}
+
+function getAsrTranscriptTitle(transcript) {
+  if (!transcript) return "Файл не выбран";
+  const labels = transcript.labels && typeof transcript.labels === "object" ? transcript.labels : {};
+  return stripRichTextToPlain(labels.file_name || transcript.name || transcript.summary || "Транскрипт");
+}
+
+function getAsrTranscriptMeta(transcript) {
+  if (!transcript) return "Загрузите аудио или видео для транскрибации";
+  return [
+    transcript.language || "Язык auto",
+    formatDateTime(transcript.updated_at || transcript.created_at),
+    state.asrToolPipelineRun ? "анализ готов" : "текст готов",
+  ].filter(Boolean).join(" • ");
+}
+
+function getAsrWorkflowStatus(stepKey) {
+  const hasOutput = Boolean((els.asrToolOutput?.value || "").trim());
+  const hasRun = Boolean(state.asrToolPipelineRun);
+  if (stepKey === "upload") {
+    if (hasOutput || state.asrToolSelectedTranscript) return "completed";
+    return state.asrToolIsTranscribing ? "completed" : "active";
+  }
+  if (stepKey === "transcribe") {
+    if (state.asrToolIsTranscribing) return "active";
+    return hasOutput ? "completed" : "pending";
+  }
+  if (stepKey === "analysis") {
+    if (state.asrToolPipelineBusy) return "active";
+    return hasRun ? "completed" : (hasOutput ? "active" : "pending");
+  }
+  if (stepKey === "export") {
+    return hasRun ? "active" : "pending";
+  }
+  return "pending";
+}
+
+function renderAsrWorkflow() {
+  document.querySelectorAll("[data-asr-workflow-step]").forEach((step) => {
+    const status = getAsrWorkflowStatus(step.dataset.asrWorkflowStep || "");
+    step.dataset.status = status;
+    const index = step.querySelector(".asr-workflow__index");
+    if (index) {
+      index.textContent = status === "completed" ? "✓" : (step.dataset.asrWorkflowStep === "upload" ? "1"
+        : step.dataset.asrWorkflowStep === "transcribe" ? "2"
+          : step.dataset.asrWorkflowStep === "analysis" ? "3"
+            : "4");
+    }
+    const sub = step.querySelector("small");
+    if (sub) {
+      const labels = {
+        upload: status === "completed" ? "Файл загружен" : "Выберите файл",
+        transcribe: state.asrToolIsTranscribing ? "В работе" : (status === "completed" ? "Готово" : "Ожидает файл"),
+        analysis: state.asrToolPipelineBusy ? "В работе" : (status === "completed" ? "Готово" : "Выберите действие"),
+        export: status === "active" ? "Можно сохранить" : "Сохраните результат",
+      };
+      sub.textContent = labels[step.dataset.asrWorkflowStep] || "";
+    }
+  });
+}
+
+function setAsrToolTab(tabName) {
+  const allowed = new Set(["text", "summary", "tasks", "roles"]);
+  state.asrToolActiveTab = allowed.has(tabName) ? tabName : "text";
+  renderAsrTool();
+}
+
+function renderAsrTabs() {
+  document.querySelectorAll("[data-asr-tab]").forEach((button) => {
+    const active = button.dataset.asrTab === state.asrToolActiveTab;
+    button.classList.toggle("asr-tab--active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll("[data-asr-tab-panel]").forEach((panel) => {
+    panel.classList.toggle("asr-tab-panel--active", panel.dataset.asrTabPanel === state.asrToolActiveTab);
+  });
+}
+
+function formatAsrTasksOutput(run) {
+  const structured = run?.structured_json;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) {
+    return "Задачи появятся после анализа транскрипта.";
+  }
+  const parts = [];
+  [
+    ["Задачи", structured.tasks, "tasks"],
+    ["Предложения / варианты", structured.proposals || structured.solutions],
+    ["Подтверждённые решения", structured.decisions],
+    ["Риски", structured.risks],
+    ["Открытые вопросы", structured.open_questions],
+    ["Следующие действия", structured.next_steps],
+  ].forEach(([title, value, kind]) => {
+    const block = formatStructuredSection(title, value, kind);
+    if (block) parts.push(block);
+  });
+  return parts.join("\n\n").trim() || "В анализе нет выделенных задач.";
+}
+
+function formatAsrRolesOutput(run) {
+  const mapping = Array.isArray(run?.speaker_mapping) ? run.speaker_mapping : [];
+  if (!mapping.length) return "";
+  return mapping.map((item) => {
+    const speaker = item.speaker || "Unknown speaker";
+    const confidence = typeof item.confidence === "number" ? `, уверенность ${Math.round(item.confidence * 100)}%` : "";
+    return `#${item.segment_id}: ${speaker}${confidence}\n${stripRichTextToPlain(item.text || "")}`;
+  }).join("\n\n");
+}
+
+function getAsrToolSelectedContent() {
+  const run = state.asrToolPipelineRun;
+  if (state.asrToolActiveTab === "text") {
+    return String(els.asrToolOutput?.value || "").trim();
+  }
+  if (state.asrToolActiveTab === "tasks") {
+    const text = formatAsrTasksOutput(run);
+    return text.startsWith("Задачи появятся") ? "" : text;
+  }
+  if (state.asrToolActiveTab === "roles") {
+    return formatAsrRolesOutput(run);
+  }
+  return formatAsrPipelineRun(run);
+}
+
+function renderAsrFileCard() {
+  if (els.asrToolFileTitle) {
+    els.asrToolFileTitle.textContent = getAsrTranscriptTitle(state.asrToolSelectedTranscript);
+  }
+  if (els.asrToolFileMeta) {
+    els.asrToolFileMeta.textContent = getAsrTranscriptMeta(state.asrToolSelectedTranscript);
+  }
+}
+
+function applyAsrTextSearch() {
+  const textarea = els.asrToolOutput;
+  const query = String(els.asrToolSearchInput?.value || "").trim();
+  if (!textarea || !query) return;
+  const haystack = textarea.value.toLowerCase();
+  const index = haystack.indexOf(query.toLowerCase());
+  if (index >= 0) {
+    textarea.focus();
+    textarea.setSelectionRange(index, index + query.length);
+  }
+}
+
+function downloadAsrToolText() {
+  const text = getAsrToolSelectedContent() || String(els.asrToolOutput?.value || "").trim();
+  if (!text) {
+    setInlineStatus(els.asrToolStatus, "Нет текста для скачивания.", "warning");
+    return;
+  }
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const link = document.createElement("a");
+  const title = getAsrTranscriptTitle(state.asrToolSelectedTranscript).replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 80) || "transcript";
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.download = `${title}.txt`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function retranscribeAsrToolFile() {
+  if (!state.asrToolLastFile) {
+    setInlineStatus(els.asrToolStatus, "Исходный файл доступен только в текущей сессии. Выберите файл заново.", "warning");
+    return;
+  }
+  await runAsrToolTranscription(state.asrToolLastFile);
 }
 
 function getDefaultAsrToolBounds() {
@@ -3202,6 +3454,7 @@ function renderAsrTool() {
   const historyCount = state.asrToolHistory.length;
   const hasSelectedTranscript = Boolean(state.asrToolSelectedTranscript);
   const hasOutput = Boolean((els.asrToolOutput?.value || "").trim());
+  const selectedContent = getAsrToolSelectedContent();
 
   if (els.asrToolModelSelect) {
     const items = getWhisperItems();
@@ -3222,19 +3475,34 @@ function renderAsrTool() {
     els.asrToolRefreshHistoryButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
   }
   if (els.asrToolInsertPromptButton) {
-    els.asrToolInsertPromptButton.disabled = !hasOutput;
+    els.asrToolInsertPromptButton.disabled = !selectedContent;
   }
   if (els.asrToolSendButton) {
-    els.asrToolSendButton.disabled = (!hasOutput && !state.asrToolPipelineRun) || state.isSending;
+    els.asrToolSendButton.disabled = !formatAsrPipelineRun(state.asrToolPipelineRun) || state.isSending;
   }
-  [els.asrToolCleanButton, els.asrToolSummaryButton, els.asrToolTasksButton].filter(Boolean).forEach((button) => {
+  [
+    els.asrToolCleanButton,
+    els.asrToolSummaryButton,
+    els.asrToolTasksButton,
+    els.asrToolRolesButton,
+    els.asrToolFullAnalysisButton,
+  ].filter(Boolean).forEach((button) => {
     button.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolPipelineBusy;
   });
+  if (els.asrToolOpenAnalysisButton) {
+    els.asrToolOpenAnalysisButton.disabled = !hasOutput && !state.asrToolPipelineRun;
+  }
+  if (els.asrToolDownloadButton) {
+    els.asrToolDownloadButton.disabled = !selectedContent && !hasOutput;
+  }
+  if (els.asrToolRetranscribeButton) {
+    els.asrToolRetranscribeButton.disabled = !state.asrToolLastFile || state.asrToolIsTranscribing;
+  }
   if (els.asrToolSaveContextButton) {
     els.asrToolSaveContextButton.disabled = !state.asrToolPipelineRun || !state.activeProfileId;
   }
   if (els.asrToolCopyButton) {
-    els.asrToolCopyButton.disabled = !hasOutput && !state.asrToolPipelineRun;
+    els.asrToolCopyButton.disabled = !selectedContent && !hasOutput;
   }
   if (els.asrToolSaveSpeakersButton) {
     els.asrToolSaveSpeakersButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy;
@@ -3271,15 +3539,27 @@ function renderAsrTool() {
   if (els.asrToolPipelinePanel && els.asrToolPipelineOutput && els.asrToolPipelineMeta) {
     const run = state.asrToolPipelineRun;
     const text = formatAsrPipelineRun(run);
-    els.asrToolPipelinePanel.hidden = !text;
-    els.asrToolPipelineOutput.textContent = text;
+    const busyText = state.asrToolPipelineBusy ? "Обработка выполняется..." : "";
+    const emptyText = state.asrToolActiveTab === "summary" ? "Саммари появится после анализа транскрипта." : "";
+    const outputText = text || busyText || emptyText;
+    els.asrToolPipelinePanel.hidden = !outputText;
+    els.asrToolPipelineOutput.textContent = outputText;
     els.asrToolPipelineMeta.textContent = run
-      ? `${run.preset || "pipeline"} • ${run.action || "full"} • ${formatDateTime(run.updated_at || run.created_at)}`
-      : "";
+      ? `${run.preset || "balanced"} • ${getAsrActionLabel(run.action || "full")} • ${formatDateTime(run.updated_at || run.created_at)}`
+      : (state.asrToolPipelineBusy
+        ? `${state.asrToolPipelinePreset || "balanced"} • ${getAsrActionLabel(state.asrToolPipelineAction || "full")}`
+        : "");
+    renderAsrPipelineSteps(run);
     renderAsrSpeakerEditor(run);
+  }
+  if (els.asrToolTasksOutput) {
+    els.asrToolTasksOutput.textContent = formatAsrTasksOutput(state.asrToolPipelineRun);
   }
 
   renderAsrToolHistory();
+  renderAsrFileCard();
+  renderAsrWorkflow();
+  renderAsrTabs();
   queueSyncAppSelects();
 }
 
@@ -3306,6 +3586,7 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
     }
     setInlineStatus(els.asrToolStatus, "Транскрипт загружен. Можно редактировать и отправить в чат.", "success");
     renderAsrTool();
+    requestAnimationFrame(() => els.asrToolOutput?.focus({ preventScroll: true }));
   } catch (error) {
     if (!silent) {
       setInlineStatus(els.asrToolStatus, `Не удалось открыть транскрипт: ${error.message || error}`, "error");
@@ -3324,7 +3605,7 @@ async function openAsrTool({ focusText = false } = {}) {
     els.asrToolStatus,
     state.asrToolSelectedTranscript
       ? "Транскрипт загружен. Можно редактировать и отправить в чат."
-      : "Выберите файл и запустите отдельную транскрибацию.",
+      : "Выберите аудио или видео для транскрибации.",
     state.asrToolSelectedTranscript ? "success" : "warning",
   );
   renderAsrTool();
@@ -3383,6 +3664,7 @@ async function runAsrToolTranscription(file) {
   }
 
   state.asrToolIsTranscribing = true;
+  state.asrToolLastFile = file;
   renderAsrTool();
   setInlineStatus(els.asrToolStatus, `Транскрибирую ${file.name}…`, "warning");
   setFooter(`ASR Studio: транскрибация ${file.name}…`);
@@ -3538,20 +3820,20 @@ async function clearAsrToolHistory() {
 }
 
 function insertAsrToolIntoPrompt() {
-  const text = getAsrToolChatPayload();
+  const text = getAsrToolSelectedContent();
   if (!text) {
-    setInlineStatus(els.asrToolStatus, "Сначала обработайте transcript через pipeline.", "warning");
+    setInlineStatus(els.asrToolStatus, "Нет выбранного содержимого для вставки.", "warning");
     return;
   }
   insertPromptText(text, { append: true });
-  setInlineStatus(els.asrToolStatus, "Транскрипт вставлен в поле ввода.", "success");
-  setFooter("Транскрипт вставлен в поле ввода.", "success");
+  setInlineStatus(els.asrToolStatus, "Выбранное содержимое вставлено в поле ввода.", "success");
+  setFooter("ASR содержимое вставлено в поле ввода.", "success");
 }
 
 async function sendAsrToolTextToChat() {
   const text = getAsrToolChatPayload();
   if (!text) {
-    setInlineStatus(els.asrToolStatus, "Сначала обработайте transcript через pipeline.", "warning");
+    setInlineStatus(els.asrToolStatus, "Сначала обработайте транскрипт.", "warning");
     return;
   }
   await sendPromptText(text, { clearInput: false });
@@ -3673,13 +3955,13 @@ function formatAsrPipelineRun(run) {
   }
   if (run.structured_json) {
     const formatted = formatStructuredData(run.structured_json);
-    parts.push(formatted || `Structured JSON:\n${JSON.stringify(run.structured_json, null, 2)}`);
+    parts.push(formatted || `Структурированные данные:\n${JSON.stringify(run.structured_json, null, 2)}`);
   }
   if (!parts.length && run.cleaned_transcript) {
     parts.push(run.cleaned_transcript);
   }
   if (Array.isArray(run.warnings) && run.warnings.length) {
-    parts.push(`Warnings:\n${run.warnings.map((item) => `- ${item}`).join("\n")}`);
+    parts.push(`Предупреждения:\n${run.warnings.map((item) => `- ${item}`).join("\n")}`);
   }
   return parts.join("\n\n").trim();
 }
@@ -3688,9 +3970,9 @@ function renderAsrSpeakerEditor(run) {
   if (!els.asrToolSpeakerEditor) return;
   const mapping = Array.isArray(run?.speaker_mapping) ? run.speaker_mapping : [];
   if (!mapping.length) {
-    els.asrToolSpeakerEditor.innerHTML = "";
+    els.asrToolSpeakerEditor.innerHTML = '<p class="subtle">Роли появятся после анализа транскрипта.</p>';
     if (els.asrToolSpeakerPanel) {
-      els.asrToolSpeakerPanel.hidden = true;
+      els.asrToolSpeakerPanel.hidden = false;
     }
     return;
   }
@@ -3714,11 +3996,7 @@ function renderAsrSpeakerEditor(run) {
 }
 
 function getAsrToolChatPayload() {
-  const pipelineText = formatAsrPipelineRun(state.asrToolPipelineRun);
-  if (pipelineText) {
-    return pipelineText;
-  }
-  return "";
+  return formatAsrPipelineRun(state.asrToolPipelineRun);
 }
 
 async function ensureAsrToolTranscriptSaved() {
@@ -3743,8 +4021,10 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   if (!transcript?.id) return;
 
   state.asrToolPipelineBusy = true;
+  state.asrToolPipelineAction = action;
+  state.asrToolPipelinePreset = preset;
   renderAsrTool();
-  setInlineStatus(els.asrToolStatus, "Pipeline обрабатывает transcript…", "warning");
+  setInlineStatus(els.asrToolStatus, "Идёт обработка транскрипта…", "warning");
   try {
     const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
       method: "POST",
@@ -3761,13 +4041,15 @@ async function runAsrPipelineAction(action, preset = "balanced") {
     } catch {
       // Pipeline result is still usable even if the history refresh failed.
     }
-    setInlineStatus(els.asrToolStatus, "Pipeline готов.", "success");
-    setFooter("ASR pipeline готов.", "success");
+    setInlineStatus(els.asrToolStatus, "Обработка готова.", "success");
+    setFooter("ASR обработка готова.", "success");
   } catch (error) {
-    setInlineStatus(els.asrToolStatus, `Pipeline error: ${error.message || error}`, "error");
-    setFooter(`ASR pipeline error: ${error.message || error}`, "error");
+    setInlineStatus(els.asrToolStatus, `Ошибка обработки: ${error.message || error}`, "error");
+    setFooter(`Ошибка ASR обработки: ${error.message || error}`, "error");
   } finally {
     state.asrToolPipelineBusy = false;
+    state.asrToolPipelineAction = "";
+    state.asrToolPipelinePreset = "";
     renderAsrTool();
   }
 }
@@ -3781,7 +4063,7 @@ async function saveAsrPipelineAsContext() {
       body: {
         profile_id: state.activeProfileId,
         session_id: state.currentSessionId || undefined,
-        name: "ASR processed context",
+        name: "ASR обработанный контекст",
         content: text,
         labels: { origin: "asr_context", source_run_id: state.asrToolPipelineRun?.id || null },
       },
@@ -3789,16 +4071,16 @@ async function saveAsrPipelineAsContext() {
     state.latestTranscript = transcript;
     renderTranscriptStrip();
     renderContextSummary();
-    setInlineStatus(els.asrToolStatus, "Processed context сохранён.", "success");
-    setFooter("ASR context сохранён и подключён к текущему чату.", "success");
+    setInlineStatus(els.asrToolStatus, "Обработанный контекст сохранён.", "success");
+    setFooter("ASR контекст сохранён и подключён к текущему чату.", "success");
     return transcript;
   } catch (error) {
-    setInlineStatus(els.asrToolStatus, `Не удалось сохранить context: ${error.message || error}`, "error");
+    setInlineStatus(els.asrToolStatus, `Не удалось сохранить контекст: ${error.message || error}`, "error");
   }
 }
 
 async function copyAsrToolText() {
-  const text = getAsrToolChatPayload();
+  const text = getAsrToolSelectedContent() || String(els.asrToolOutput?.value || "").trim();
   if (!text) return;
   try {
     await copyText(text);
@@ -3842,6 +4124,8 @@ async function regenerateAsrSummary() {
   const transcriptId = state.asrToolSelectedTranscriptId;
   if (!run?.id || !transcriptId) return;
   state.asrToolPipelineBusy = true;
+  state.asrToolPipelineAction = "summary";
+  state.asrToolPipelinePreset = run.preset || "balanced";
   renderAsrTool();
   try {
     const updated = await request(
@@ -3855,11 +4139,13 @@ async function regenerateAsrSummary() {
     } catch {
       // Summary was regenerated; stale history title is non-blocking.
     }
-    setInlineStatus(els.asrToolStatus, "Summary пересобрано с учётом ролей.", "success");
+    setInlineStatus(els.asrToolStatus, "Саммари пересобрано с учётом ролей.", "success");
   } catch (error) {
-    setInlineStatus(els.asrToolStatus, `Не удалось пересобрать summary: ${error.message || error}`, "error");
+    setInlineStatus(els.asrToolStatus, `Не удалось пересобрать саммари: ${error.message || error}`, "error");
   } finally {
     state.asrToolPipelineBusy = false;
+    state.asrToolPipelineAction = "";
+    state.asrToolPipelinePreset = "";
     renderAsrTool();
   }
 }
@@ -5864,6 +6150,31 @@ function bindEvents() {
     state.asrToolPipelineRun = null;
     renderAsrTool();
   });
+  els.asrToolSearchInput?.addEventListener("input", () => {
+    state.asrToolTextSearch = els.asrToolSearchInput.value || "";
+    applyAsrTextSearch();
+  });
+  els.asrToolHistorySearchInput?.addEventListener("input", () => {
+    state.asrToolHistorySearch = els.asrToolHistorySearchInput.value || "";
+    renderAsrToolHistory();
+  });
+  document.querySelectorAll("[data-asr-tab]").forEach((button) => {
+    button.addEventListener("click", () => setAsrToolTab(button.dataset.asrTab || "text"));
+  });
+  els.asrToolFileCard?.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("button")) return;
+    els.asrToolOutput?.focus({ preventScroll: true });
+  });
+  els.asrToolFileCard?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      els.asrToolOutput?.focus({ preventScroll: true });
+    }
+  });
+  els.asrToolRetranscribeButton?.addEventListener("click", async () => {
+    await retranscribeAsrToolFile();
+  });
   els.asrToolChooseFileButton?.addEventListener("click", () => {
     els.asrToolFileInput?.click();
   });
@@ -5881,16 +6192,35 @@ function bindEvents() {
     }
   });
   els.asrToolCleanButton?.addEventListener("click", async () => {
+    setAsrToolTab("text");
     await runAsrPipelineAction("clean", "fast");
   });
   els.asrToolSummaryButton?.addEventListener("click", async () => {
+    setAsrToolTab("summary");
     await runAsrPipelineAction("summary", "balanced");
   });
   els.asrToolTasksButton?.addEventListener("click", async () => {
+    setAsrToolTab("tasks");
     await runAsrPipelineAction("tasks", "balanced");
+  });
+  els.asrToolRolesButton?.addEventListener("click", async () => {
+    setAsrToolTab("roles");
+    if (!state.asrToolPipelineRun?.speaker_mapping?.length) {
+      await runAsrPipelineAction("full", "balanced");
+    }
+  });
+  els.asrToolFullAnalysisButton?.addEventListener("click", async () => {
+    setAsrToolTab("summary");
+    await runAsrPipelineAction("full", "balanced");
   });
   els.asrToolInsertPromptButton?.addEventListener("click", () => {
     insertAsrToolIntoPrompt();
+  });
+  els.asrToolOpenAnalysisButton?.addEventListener("click", () => {
+    setAsrToolTab(state.asrToolPipelineRun?.structured_json ? "tasks" : "summary");
+  });
+  els.asrToolDownloadButton?.addEventListener("click", () => {
+    downloadAsrToolText();
   });
   els.asrToolSendButton?.addEventListener("click", async () => {
     await sendAsrToolTextToChat();

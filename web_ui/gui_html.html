@@ -180,9 +180,40 @@
                     title="Закрыть">✕</button>
             </div>
         </header>
-        <div class="tool-window__body">
-            <div class="tool-panel">
-                <div class="tool-toolbar">
+        <div class="tool-window__body tool-window__body--asr">
+            <div class="asr-workflow" id="asrToolWorkflow" aria-label="Статус ASR Studio">
+                <div class="asr-workflow__step" data-asr-workflow-step="upload">
+                    <span class="asr-workflow__index">1</span>
+                    <span>
+                        <strong>Загрузка</strong>
+                        <small>Выберите файл</small>
+                    </span>
+                </div>
+                <div class="asr-workflow__step" data-asr-workflow-step="transcribe">
+                    <span class="asr-workflow__index">2</span>
+                    <span>
+                        <strong>Транскрибация</strong>
+                        <small>Ожидает файл</small>
+                    </span>
+                </div>
+                <div class="asr-workflow__step" data-asr-workflow-step="analysis">
+                    <span class="asr-workflow__index">3</span>
+                    <span>
+                        <strong>Анализ</strong>
+                        <small>Выберите действие</small>
+                    </span>
+                </div>
+                <div class="asr-workflow__step" data-asr-workflow-step="export">
+                    <span class="asr-workflow__index">4</span>
+                    <span>
+                        <strong>Экспорт</strong>
+                        <small>Сохраните результат</small>
+                    </span>
+                </div>
+            </div>
+
+            <div class="tool-panel asr-studio-main">
+                <div class="tool-toolbar asr-studio-toolbar">
                     <label class="field">
                         <span class="field__label">ASR модель</span>
                         <select id="asrToolModelSelect" class="field__control"></select>
@@ -191,67 +222,140 @@
                         <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
                             файл</button>
                         <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
-                            базу</button>
+                            список</button>
                     </div>
                     <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
                 </div>
 
-                <p class="inline-status" id="asrToolStatus">Выберите файл и запустите отдельную транскрибацию.</p>
-                <p class="subtle" id="asrToolMeta">История ниже хранится отдельно от диктовки в поле ввода.</p>
-
-                <textarea id="asrToolOutput" class="tool-textarea"
-                    placeholder="Результат транскрибации появится здесь..."></textarea>
-
-                <div class="button-row">
-                    <button class="button button--ghost" id="asrToolCleanButton" type="button">Очистить</button>
-                    <button class="button button--ghost" id="asrToolSummaryButton" type="button">Сделать
-                        summary</button>
-                    <button class="button button--ghost" id="asrToolTasksButton" type="button">Разобрать по
-                        задачам</button>
-                    <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в
-                        промпт</button>
-                    <button class="button button--ghost" id="asrToolSendButton" type="button">Отправить в чат</button>
-                    <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как
-                        context</button>
-                    <button class="button button--ghost" id="asrToolCopyButton" type="button">Скопировать</button>
-                    <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить правки</button>
-                    <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить
-                        редактор</button>
-                    <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить запись</button>
-                    <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить
-                        историю</button>
+                <div class="asr-file-card" id="asrToolFileCard" role="button" tabindex="0">
+                    <span class="asr-file-card__play" aria-hidden="true">▶</span>
+                    <span class="asr-file-card__body">
+                        <strong id="asrToolFileTitle">Файл не выбран</strong>
+                        <small id="asrToolFileMeta">Загрузите аудио или видео для транскрибации</small>
+                    </span>
+                    <span class="asr-file-card__actions">
+                        <button class="asr-file-card__action" id="asrToolRetranscribeButton"
+                            type="button">Пересоздать</button>
+                    </span>
                 </div>
 
-                <div class="pipeline-output" id="asrToolPipelinePanel" hidden>
-                    <div class="pipeline-output__header">
-                        <strong>Результат обработки</strong>
-                        <span id="asrToolPipelineMeta"></span>
+                <div class="asr-tabs" role="tablist" aria-label="Разделы ASR Studio">
+                    <button class="asr-tab asr-tab--active" type="button" data-asr-tab="text">Текст</button>
+                    <button class="asr-tab" type="button" data-asr-tab="summary">Саммари</button>
+                    <button class="asr-tab" type="button" data-asr-tab="tasks">Задачи</button>
+                    <button class="asr-tab" type="button" data-asr-tab="roles">Роли</button>
+                </div>
+
+                <div class="asr-content-grid">
+                    <div class="asr-tab-stack">
+                        <section class="asr-tab-panel asr-tab-panel--active" data-asr-tab-panel="text">
+                            <div class="asr-tab-toolbar">
+                                <label class="asr-search">
+                                    <span aria-hidden="true">⌕</span>
+                                    <input id="asrToolSearchInput" type="search" placeholder="Поиск в тексте" />
+                                </label>
+                                <button class="button button--ghost" id="asrToolDownloadButton" type="button">Скачать
+                                    .txt</button>
+                                <button class="button button--ghost" id="asrToolCopyButton"
+                                    type="button">Копировать</button>
+                            </div>
+                            <textarea id="asrToolOutput" class="tool-textarea asr-transcript-textarea"
+                                placeholder="Результат транскрибации появится здесь..."></textarea>
+                        </section>
+
+                        <section class="asr-tab-panel" data-asr-tab-panel="summary">
+                            <div class="pipeline-output" id="asrToolPipelinePanel" hidden>
+                                <div class="pipeline-output__header">
+                                    <strong>Результат обработки</strong>
+                                    <span id="asrToolPipelineMeta"></span>
+                                </div>
+                                <div class="pipeline-steps" id="asrToolPipelineSteps" aria-label="Статусы обработки">
+                                </div>
+                                <pre id="asrToolPipelineOutput"></pre>
+                            </div>
+                        </section>
+
+                        <section class="asr-tab-panel" data-asr-tab-panel="tasks">
+                            <pre class="asr-tasks-output" id="asrToolTasksOutput">Задачи появятся после анализа транскрипта.</pre>
+                        </section>
+
+                        <section class="asr-tab-panel" data-asr-tab-panel="roles">
+                            <section class="speaker-editor-panel" id="asrToolSpeakerPanel" hidden>
+                                <div class="speaker-editor-panel__head">
+                                    <strong>Роли участников</strong>
+                                    <span>Можно вручную указать, кто говорит в каждом сегменте</span>
+                                </div>
+                                <div class="speaker-editor__columns" aria-hidden="true">
+                                    <span>Сегмент</span>
+                                    <span>Говорящий</span>
+                                    <span>Текст</span>
+                                </div>
+                                <div class="speaker-editor" id="asrToolSpeakerEditor"></div>
+                                <div class="button-row">
+                                    <button class="button button--ghost" id="asrToolSaveSpeakersButton"
+                                        type="button">Сохранить роли</button>
+                                    <button class="button button--ghost" id="asrToolRegenerateSummaryButton"
+                                        type="button">Пересобрать саммари</button>
+                                </div>
+                            </section>
+                        </section>
                     </div>
-                    <pre id="asrToolPipelineOutput"></pre>
-                    <section class="speaker-editor-panel" id="asrToolSpeakerPanel" hidden>
-                        <div class="speaker-editor-panel__head">
-                            <strong>Роли участников</strong>
-                            <span>Можно вручную указать, кто говорит в каждом сегменте</span>
-                        </div>
-                        <div class="speaker-editor__columns" aria-hidden="true">
-                            <span>Сегмент</span>
-                            <span>Говорящий</span>
-                            <span>Текст</span>
-                        </div>
-                        <div class="speaker-editor" id="asrToolSpeakerEditor"></div>
-                    </section>
+
+                    <aside class="asr-next-panel">
+                        <h4>Что дальше?</h4>
+                        <p class="subtle">Выберите действие для анализа транскрипции</p>
+                        <button class="asr-next-action" id="asrToolSummaryButton" type="button" data-asr-open-tab="summary">
+                            <span class="asr-next-action__icon">☷</span>
+                            <span><strong>Саммари</strong><small>Получить краткое резюме разговора</small></span>
+                        </button>
+                        <button class="asr-next-action" id="asrToolTasksButton" type="button" data-asr-open-tab="tasks">
+                            <span class="asr-next-action__icon asr-next-action__icon--success">✓</span>
+                            <span><strong>Разобрать по задачам</strong><small>Выделить задачи и договорённости</small></span>
+                        </button>
+                        <button class="asr-next-action" id="asrToolRolesButton" type="button" data-asr-open-tab="roles">
+                            <span class="asr-next-action__icon asr-next-action__icon--blue">♙</span>
+                            <span><strong>Определить роли</strong><small>Кто говорил и о чём</small></span>
+                        </button>
+                        <button class="asr-next-action" id="asrToolFullAnalysisButton" type="button"
+                            data-asr-open-tab="summary">
+                            <span class="asr-next-action__icon">✧</span>
+                            <span><strong>Полный анализ</strong><small>Саммари + задачи + роли</small></span>
+                        </button>
+                    </aside>
+                </div>
+
+                <div class="asr-bottom-bar">
+                    <p class="inline-status" id="asrToolStatus">Выберите аудио или видео для транскрибации.</p>
+                    <p class="subtle" id="asrToolMeta">История ASR Studio хранится отдельно от быстрой диктовки.</p>
                     <div class="button-row">
-                        <button class="button button--ghost" id="asrToolSaveSpeakersButton" type="button">Сохранить
-                            роли</button>
-                        <button class="button button--ghost" id="asrToolRegenerateSummaryButton"
-                            type="button">Пересобрать summary</button>
+                        <button class="button button--ghost" id="asrToolCleanButton" type="button">Очистить</button>
+                        <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить
+                            правки</button>
+                        <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как
+                            контекст</button>
+                        <button class="button button--ghost" id="asrToolSendButton" type="button">Отправить в
+                            чат</button>
+                        <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить
+                            редактор</button>
+                        <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить
+                            запись</button>
+                        <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить
+                            историю</button>
+                        <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в
+                            промпт</button>
+                        <button class="button button--primary" id="asrToolOpenAnalysisButton" type="button">Открыть
+                            анализ</button>
                     </div>
                 </div>
             </div>
 
-            <aside class="tool-sidebar">
+            <aside class="tool-sidebar asr-history-sidebar">
                 <div class="tool-sidebar__head">
                     <h4>База транскрибаций</h4>
+                    <label class="asr-search">
+                        <span aria-hidden="true">⌕</span>
+                        <input id="asrToolHistorySearchInput" type="search" placeholder="Поиск" />
+                    </label>
                 </div>
                 <div class="tool-history" id="asrToolHistoryList"></div>
             </aside>
