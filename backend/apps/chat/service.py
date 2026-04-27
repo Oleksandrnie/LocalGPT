@@ -19,6 +19,13 @@ LOGGER = logging.getLogger(__name__)
 ALLOWED_BIN_OPS = (ast.Add, ast.Sub, ast.Mult, ast.Div)
 ALLOWED_UNARY_OPS = (ast.UAdd, ast.USub)
 
+RESPONSE_FORMATTING_GUARDRAIL = (
+    "Правила оформления расчётов и цен:\n"
+    "- Не используй LaTeX, MathML, markdown-формулы и синтаксис вида \\[...\\], \\( ... \\), \\text{...}.\n"
+    "- Не используй запятую как разделитель тысяч: неправильно 35,690 ₽, правильно 35 690 ₽.\n"
+    "- Денежные суммы пиши обычным текстом в человекочитаемом русском формате."
+)
+
 
 TIME_TOKEN_PATTERN = re.compile(r"\d+:\d{1,2}|\d+(?:\.\d+)?|[+\-*/\(\)]")
 TIME_HINT_PATTERN = re.compile(r"\b(?:час|ч\.?|hour|hrs?)", re.IGNORECASE)
@@ -29,6 +36,12 @@ def sanitize_reply(text: str) -> str:
     import re
 
     text = re.sub(r"[\u4e00-\u9fff]{2,}.*?(?:[.!?。！？]|$)", "", text)
+    text = re.sub(r"\\\[(.*?)\\\]", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"\\\((.*?)\\\)", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"\\text\{([^{}]+)\}", r"\1", text)
+    text = text.replace(r"\,", " ")
+    text = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", " ", text)
+    text = re.sub(r"(\d)\s+₽", r"\1 ₽", text)
 
     def _drop_section(src: str, heading: str) -> str:
         pattern = re.compile(rf"(^##\s*{heading}.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
@@ -269,7 +282,8 @@ def build_messages(
             "role": "system",
             "content": (
                 "Отвечай на последний вопрос пользователя, без повторения уже выданных ответов и без пересказа предыдущего анализа. "
-                "Язык ответа должен соответствовать последнему сообщению пользователя, если профильный system prompt явно не требует иначе."
+                "Язык ответа должен соответствовать последнему сообщению пользователя, если профильный system prompt явно не требует иначе.\n\n"
+                f"{RESPONSE_FORMATTING_GUARDRAIL}"
             ),
         }
     )

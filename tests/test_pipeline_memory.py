@@ -11,6 +11,7 @@ from app.schemas import ChatRequest, ProfileCreate, ProfileUpdate
 from app.services import models as model_service
 from backend.apps.asr import pipeline
 from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, start_chat_task
+from backend.apps.chat.service import sanitize_reply
 from backend.apps.rag import service as rag_service
 
 
@@ -120,6 +121,24 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
         self.assertFalse(any("ТОЛЬКО на русском" in item for item in contents))
         self.assertTrue(any("языке последнего сообщения пользователя" in item.lower() for item in contents))
+
+    def test_response_formatting_guardrail_is_global(self):
+        prepared = _prepare_chat_request(
+            ChatRequest(query="проверь расчет 23730 + 11960", profile_id=self.profile_id, model_name="qwen2.5:3b")
+        )
+        contents = [item["content"] for item in prepared["messages"]]
+
+        self.assertTrue(any("Не используй LaTeX" in item for item in contents))
+        self.assertTrue(any("35,690 ₽" in item and "35 690 ₽" in item for item in contents))
+
+    def test_sanitize_reply_normalizes_latex_currency_format(self):
+        raw = r"Итого: \[ 23,730 \, \text{₽} + 11,960 \, \text{₽} = 35,690 \, \text{₽} \]"
+
+        cleaned = sanitize_reply(raw)
+
+        self.assertNotIn(r"\[", cleaned)
+        self.assertNotIn(r"\text", cleaned)
+        self.assertIn("23 730 ₽ + 11 960 ₽ = 35 690 ₽", cleaned)
 
     def test_rag_ingest_and_prompt_context(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
