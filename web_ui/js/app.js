@@ -11,6 +11,7 @@ const STORAGE_KEYS = {
   ttsProvider: "localgpt_simple_tts_provider",
   ttsVoiceId: "localgpt_simple_tts_voice_id",
   ttsSpeed: "localgpt_simple_tts_speed",
+  theme: "localgpt_simple_theme",
   sidebarOpen: "sidebar_open",
   chatLibraryOpen: "localgpt_simple_chat_library_open",
   asrLibraryOpen: "localgpt_simple_asr_library_open",
@@ -50,6 +51,7 @@ const els = {
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   openRagButton: document.getElementById("openRagButton"),
+  themeToggleButton: document.getElementById("themeToggleButton"),
   chatShell: document.getElementById("chatShell"),
   messageScroll: document.getElementById("messageScroll"),
   chatModelNotice: document.getElementById("chatModelNotice"),
@@ -253,6 +255,7 @@ const state = {
   chatTaskStartController: null,
   isSpeaking: false,
   autoScrollPinned: true,
+  theme: "dark",
   sidebarOpen: readStored(STORAGE_KEYS.sidebarOpen, "true") !== "false",
   modelsDir: "",
   ttsVoices: [],
@@ -748,6 +751,39 @@ function setSidebarOpen(open) {
 
 function toggleSidebarCollapse() {
   setSidebarOpen(!state.sidebarOpen);
+}
+
+function normalizeTheme(value) {
+  return value === "light" ? "light" : "dark";
+}
+
+function renderThemeToggle() {
+  if (!els.themeToggleButton) return;
+  const isLight = state.theme === "light";
+  els.themeToggleButton.classList.toggle("theme-toggle-button--light", isLight);
+  els.themeToggleButton.classList.toggle("theme-toggle-button--dark", !isLight);
+  els.themeToggleButton.setAttribute("aria-pressed", isLight ? "true" : "false");
+  els.themeToggleButton.setAttribute("aria-label", isLight ? "Включить тёмную тему" : "Включить светлую тему");
+  els.themeToggleButton.title = isLight ? "Светлая тема включена" : "Тёмная тема включена";
+}
+
+function applyTheme(theme, { persist = true } = {}) {
+  state.theme = normalizeTheme(theme);
+  document.body.classList.toggle("theme-light", state.theme === "light");
+  document.body.classList.toggle("theme-dark", state.theme !== "light");
+  document.documentElement.style.colorScheme = state.theme === "light" ? "light" : "dark";
+  if (persist) {
+    writeStored(STORAGE_KEYS.theme, state.theme);
+  }
+  renderThemeToggle();
+}
+
+function initTheme() {
+  applyTheme(readStored(STORAGE_KEYS.theme, "dark"), { persist: false });
+}
+
+function toggleTheme() {
+  applyTheme(state.theme === "light" ? "dark" : "light");
 }
 
 function isTypingTarget(target) {
@@ -5680,6 +5716,7 @@ function bindEvents() {
 
   els.openSettingsButton?.addEventListener("click", () => openSettings());
   els.openRagButton?.addEventListener("click", async () => openRagPanel());
+  els.themeToggleButton?.addEventListener("click", () => toggleTheme());
   els.chatModelNoticeSettingsButton?.addEventListener("click", () => openSettings());
   els.closeSettingsButton?.addEventListener("click", () => closeSettings());
   els.settingsBackdrop?.addEventListener("click", (event) => {
@@ -6261,6 +6298,7 @@ function bindEvents() {
 }
 
 async function bootstrap() {
+  initTheme();
   applySidebarOpenState();
   initAppSelects();
   renderWhisperControls();

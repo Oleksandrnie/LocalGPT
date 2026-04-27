@@ -22,11 +22,16 @@
   загрузка изображения, локальное распознавание текста, правка и отправка в чат;
 - OCR-пайплайн улучшен для мультиязычных UI-скриншотов (авто-очистка/нормализация извлечённого текста);
 - drag-and-drop файлов в chat/ASR и более устойчивое поведение адаптивного UI;
+- обновлённый static Web UI:
+  collapsible sidebar, toast-уведомления под topbar, единый `AppSelect`, мягкие карточки сообщений, RAG status button, переключатель dark/light theme;
 - запуск по локальной сети с телефона через Caddy;
 - единое хранение моделей и кэшей только внутри `/models`.
 
 ## Последние изменения (по свежим коммитам)
 
+- **2026-04-27** — добавлена светлая тема UI с `ThemeToggle`, сохранением в `localStorage`, light tokens и glass-слоями для topbar/sidebar/cards/modals/tools.
+- **2026-04-27** — добавлен общий guardrail форматирования расчётов: без LaTeX/MathML/markdown-формул и без запятых как разделителя тысяч в ценах.
+- **2026-04-27** — доработан UI v2: floating topbar, collapsible sidebar, toast system, unified `AppSelect`, RAG ON/OFF dot, мягкие message cards и compact composer.
 - **2026-04-26** — добавлен ASR pipeline, summary memory, debug endpoints, profile-scoped RAG и UX отсутствующих моделей.
 - **2026-04-26** — RAG переведён на отдельные папки профилей, добавлена загрузка файлов из UI и авто-JSON для `.md`.
 - **2026-04-26** — настройки профилей разделены на режим редактирования существующего профиля и создание нового профиля.
@@ -167,7 +172,27 @@ start_localgpt_lan.command
 - настройки и модели в отдельной панели;
 - меню `+` рядом с полем ввода;
 - микрофон внутри поля ввода;
-- LAN URL в topbar.
+- LAN URL в topbar;
+- правый клик по чату в sidebar открывает контекстное меню для переименования.
+
+### UI / темы
+
+- topbar сделан как floating glass-панель без жёсткого разделителя;
+- sidebar можно свернуть/развернуть центральной pill-кнопкой;
+- состояние sidebar сохраняется в `localStorage.sidebar_open`;
+- горячая клавиша `Cmd+B` на macOS и `Ctrl+B` на Windows/Linux открывает или закрывает sidebar;
+- системные статусы показываются toast-уведомлениями под topbar по центру;
+- нижняя зона оставлена только под ввод сообщения;
+- `RAG` в topbar показывает состояние активного профиля через dot:
+  серый OFF, фиолетовый ON;
+- `ThemeToggle` в topbar переключает dark/light theme;
+- тема сохраняется в `localStorage` через ключ `localgpt_simple_theme`;
+- светлая тема использует мягкий фон `#F6F7FB`, radial-пятна, glass-слои, blur и тени;
+- кастомный `AppSelect` используется как единый видимый select-компонент.
+
+UI component guide:
+
+- [`docs/ui-components.md`](docs/ui-components.md)
 
 ### `+` меню
 
@@ -283,6 +308,17 @@ UI показывает stderr/stdout tail от `ollama pull` и человек�
 - исторический сбой мог быть вызван сетевой ошибкой или проблемой доступа к Ollama;
 - такие ошибки теперь должны surfaced как человекочитаемое сообщение, а не только `ollama pull вернул код 1`.
 
+## Форматирование ответов
+
+Chat runtime добавляет общий system guardrail для оформления расчётов и цен:
+
+- не использовать LaTeX, MathML, markdown-формулы и синтаксис вида `\[...\]`, `\( ... \)`, `\text{...}`;
+- не использовать запятую как разделитель тысяч:
+  неправильно `35,690 ₽`, правильно `35 690 ₽`;
+- суммы выводить обычным человекочитаемым текстом.
+
+Дополнительно `sanitize_reply()` чистит типичный LaTeX-мусор из ответа модели и нормализует записи вроде `23,730 \, \text{₽}` в `23 730 ₽`.
+
 ## Структура проекта
 
 ```text
@@ -332,6 +368,7 @@ LocalGPT/
 - `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/gui_html.html`
 - `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/js/app.js`
 - `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/css/style.css`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/docs/ui-components.md`
 
 ## Диагностика
 

@@ -37,7 +37,7 @@ Shared/core слой пока остаётся в `app/`: `config`, `db`, `schem
 7. Если включён RAG, выполняется retrieval по активному профилю.
 8. Собирается `messages[]`.
 9. Запрос отправляется в Ollama OpenAI-compatible endpoint.
-10. Ответ очищается, сохраняется в SQLite и возвращается UI.
+10. Ответ очищается через `sanitize_reply()`, сохраняется в SQLite и возвращается UI.
 
 ## 4. Prompt assembly order
 
@@ -54,6 +54,14 @@ Shared/core слой пока остаётся в `app/`: `config`, `db`, `schem
 9. current user query.
 
 Сырой длинный transcript не должен быть основным способом передачи контекста. Для ASR Studio используется processed pipeline output.
+
+В финальный system guardrail также добавляются правила оформления расчётов и цен:
+
+- не использовать LaTeX, MathML, markdown-формулы и синтаксис `\[...\]`, `\( ... \)`, `\text{...}`;
+- не использовать запятую как разделитель тысяч (`35,690 ₽` -> `35 690 ₽`);
+- суммы писать обычным человекочитаемым текстом.
+
+`sanitize_reply()` дополнительно чистит типичный LaTeX-output локальных моделей и нормализует валютные тысячи.
 
 ## 5. Memory
 
@@ -261,7 +269,39 @@ Legacy alias:
 LAN launcher стартует backend на `127.0.0.1:8000` и Caddy на `https://<lan-ip>:8443`.
 Определение LAN IP предпочитает Wi-Fi/private IPv4 (`192.168.*`, `10.*`, `172.16-31.*`), чтобы не отдавать VPN/Tailscale IP телефону в обычной Wi-Fi сети.
 
-## 12. Git/runtime hygiene
+## 12. Static UI system
+
+Основной UI — `web_ui/gui_html.html` + `web_ui/js/app.js` + `web_ui/css/style.css`.
+
+Текущий UI v2:
+
+- floating topbar с blur, мягкой тенью и без жёсткого нижнего разделителя;
+- sidebar с glass/blur-слоем и collapsible state;
+- `localStorage.sidebar_open` хранит состояние sidebar;
+- `Cmd+B` / `Ctrl+B` переключает sidebar;
+- toast-система отображает уведомления строго под topbar по центру;
+- нижняя composer-зона не содержит системных статусов;
+- `RAG` topbar button показывает состояние активного профиля через dot и glow;
+- soft message cards используют прозрачность, blur, внутренний свет и shadow-контур вместо жёсткого border;
+- единый `AppSelect` строится JS-слоем поверх скрытого native `<select>`.
+
+Theme system:
+
+- dark theme — базовая;
+- light theme включается классом `body.theme-light`;
+- dark theme использует `body.theme-dark`;
+- topbar `ThemeToggle` переключает тему;
+- состояние хранится в `localStorage` через `localgpt_simple_theme`;
+- light theme использует semantic tokens (`--bg`, `--bg-soft`, `--text`, `--text-muted`, `--border`, `--accent-*`) и overrides для topbar/sidebar/messages/composer/modals/tools;
+- light theme визуально строится на `#F6F7FB`, radial-пятнах, glass-слоях, blur и мягких тенях.
+
+UI component rules:
+
+- подробности в `docs/ui-components.md`;
+- видимые native select запрещены;
+- новые кнопки/dropdowns/toasts должны использовать существующие UI-классы и состояния.
+
+## 13. Git/runtime hygiene
 
 В git не должны попадать:
 
@@ -274,7 +314,7 @@ LAN launcher стартует backend на `127.0.0.1:8000` и Caddy на `https
 
 В git оставляется только структура (`.gitkeep`) и документация (`rag_sources/README.md`).
 
-## 13. Test coverage
+## 14. Test coverage
 
 Текущие ключевые проверки:
 
@@ -288,6 +328,8 @@ LAN launcher стартует backend на `127.0.0.1:8000` и Caddy на `https
 - JSON RAG source-of-truth context;
 - ASR summary uses cleaned text, not raw transcript;
 - speaker overrides affect regenerated summary;
+- global response formatting guardrail is included in chat prompt;
+- `sanitize_reply()` removes common LaTeX currency formatting and normalizes thousands;
 - DB additive migrations.
 
 Запуск:

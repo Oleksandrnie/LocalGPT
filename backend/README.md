@@ -6,7 +6,7 @@
 
 - `backend/apps/chat/`
   - `routes.py` — chat API
-  - `service.py` — LLM/chat logic
+  - `service.py` — LLM/chat logic, prompt assembly, response sanitizing and calculation/currency formatting guardrails
   - `tasks.py` — background generation tasks
   - debug endpoints for assembled prompt inspection
 
@@ -69,3 +69,14 @@
 - SQLite и runtime-артефакты не коммитятся.
 - RAG-файлы профилей не коммитятся; в git остаётся только `rag_sources/README.md` и `.gitkeep`.
 - OCR v1 ограничен изображениями, PDF OCR не входит в текущую итерацию.
+- Chat prompt всегда получает общий guardrail: не использовать LaTeX/MathML/markdown-формулы для расчётов и не писать запятые как разделитель тысяч в ценах.
+- `sanitize_reply()` нормализует типичный LaTeX currency output локальных моделей перед сохранением ответа.
+
+## UI contracts
+
+- Static UI живёт в `web_ui/`; backend отдаёт его как runtime asset.
+- `ThemeToggle` в topbar переключает `body.theme-dark` / `body.theme-light` и сохраняет состояние в `localStorage`.
+- Sidebar state хранится в `localStorage.sidebar_open` и переключается через UI trigger или `Cmd+B` / `Ctrl+B`.
+- RAG state button в topbar должен отражать `rag_enabled` активного профиля, а не быть декоративным индикатором.
+- Все системные уведомления должны идти через toast под topbar, не через нижнюю input area.
+- Видимые select-контролы должны использовать кастомный `AppSelect`; native `<select>` допустим только как скрытый backing-state.
