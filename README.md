@@ -289,6 +289,7 @@ UI component guide:
 models/
 ├── ollama/
 ├── whisper/
+├── whisper_cpp/
 ├── tts/
 │   └── piper/
 ├── hf_cache/
@@ -303,6 +304,7 @@ models/
 MODELS_DIR=models
 OLLAMA_MODELS_DIR=models/ollama
 WHISPER_MODELS_DIR=models/whisper
+WHISPER_CPP_MODELS_DIR=models/whisper_cpp
 TTS_MODELS_DIR=models/tts
 PIPER_MODELS_DIR=models/tts/piper
 HF_CACHE_DIR=models/hf_cache
@@ -333,6 +335,43 @@ LAN_HTTPS_PORT=8443
 Загрузка Ollama-моделей идёт через `/models/pull`.
 UI показывает stderr/stdout tail от `ollama pull` и человекочитаемое сообщение.
 Список моделей больше не запускает auto-pull: если chat-моделей нет, composer остаётся доступен для ввода, но отправка отключена; ASR/TTS/OCR остаются доступны.
+
+## ASR и разгрузка CPU на Mac
+
+По умолчанию проект ожидает `whisper.cpp`, чтобы разгружать CPU на Apple Silicon:
+
+```env
+WHISPER_BACKEND=whisper_cpp
+WHISPER_MODEL_SIZE=large-v3-turbo
+WHISPER_CPP_BINARY=models/whisper_cpp/bin/whisper-cli
+WHISPER_CPP_MODELS_DIR=models/whisper_cpp
+WHISPER_CPP_MODEL_PATH=models/whisper_cpp/ggml-{model}.bin
+```
+
+Для этого нужен отдельный `whisper-cli`, собранный с Metal/CoreML, и GGML-модель в `models/whisper_cpp`.
+
+Для macOS есть проектный setup-скрипт:
+
+```bash
+tools/setup_whisper_cpp_macos.sh large-v3-turbo
+```
+
+Он клонирует `whisper.cpp` в `models/whisper_cpp/source`, собирает `whisper-cli` с Metal/CoreML, создаёт `models/whisper_cpp/bin/whisper-cli` и скачивает `models/whisper_cpp/ggml-large-v3-turbo.bin` вместе с CoreML encoder, если он доступен.
+При `WHISPER_BACKEND=whisper_cpp` штатная подготовка ASR-модели (`/whisper/models/prepare`) также скачивает GGML/CoreML файлы в `models/whisper_cpp`, а не faster-whisper snapshot.
+
+Если нужно временно вернуться к старому CPU-based пути:
+
+```env
+WHISPER_BACKEND=faster_whisper
+WHISPER_DEVICE=cpu
+WHISPER_COMPUTE_TYPE=int8
+```
+
+Поведение:
+
+- `whisper_cpp` требует `whisper.cpp` и возвращает понятную ошибку, если binary или модель отсутствуют;
+- `auto` использует `whisper.cpp`, только если найден `whisper-cli` и файл модели для выбранного имени (`ggml-large-v3-turbo.bin`, `ggml-medium.bin` и т.п.), иначе переходит на `faster-whisper`;
+- `faster_whisper` оставлен как совместимый fallback, но на Mac обычно грузит CPU.
 
 Для `mistral:7b` важно:
 

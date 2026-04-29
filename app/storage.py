@@ -56,6 +56,7 @@ def update_models_dir(new_dir: str, *, move_existing: bool = False) -> dict:
             "MODELS_DIR": _to_portable_env_path(paths.base),
             "OLLAMA_MODELS_DIR": _to_portable_env_path(paths.ollama),
             "WHISPER_MODELS_DIR": _to_portable_env_path(paths.whisper),
+            "WHISPER_CPP_MODELS_DIR": _to_portable_env_path(paths.whisper_cpp),
             "HF_CACHE_DIR": _to_portable_env_path(paths.hf_cache),
             "CTRANSLATE2_CACHE_DIR": _to_portable_env_path(paths.ctranslate2_cache),
             "TTS_MODELS_DIR": _to_portable_env_path(paths.tts),

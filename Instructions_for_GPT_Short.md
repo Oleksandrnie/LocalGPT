@@ -13,7 +13,7 @@ Unified-проект сфокусирован на:
 - `FastAPI`
 - `WebUI`
 - `Ollama`
-- `faster-whisper`
+- `whisper.cpp` by default, `faster-whisper` fallback
 - `Piper`
 - `Tesseract`
 
@@ -21,6 +21,7 @@ Storage:
 
 - `models/ollama`
 - `models/whisper`
+- `models/whisper_cpp`
 - `models/tts/piper`
 - `models/hf_cache`
 - `models/ctranslate2_cache`

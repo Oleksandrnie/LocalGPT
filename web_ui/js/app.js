@@ -15,6 +15,7 @@ const STORAGE_KEYS = {
   sidebarOpen: "sidebar_open",
   chatLibraryOpen: "localgpt_simple_chat_library_open",
   asrLibraryOpen: "localgpt_simple_asr_library_open",
+  asrPipelineSettingsOpen: "localgpt_simple_asr_pipeline_settings_open",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
 };
 
@@ -26,6 +27,29 @@ const ASR_PIPELINE_STAGES = [
   { key: "speaker_resolver", label: "Роли" },
   { key: "structurer", label: "Структура" },
   { key: "summary", label: "Саммари" },
+];
+const ASR_PIPELINE_DEFAULTS = {
+  cleaner: { enabled: true, model: "", temperature: 0.2, max_tokens: 1200 },
+  segmenter: { enabled: true, model: "", temperature: 0.1, max_tokens: 1600 },
+  speaker_resolver: { enabled: true, model: "", temperature: 0.1, max_tokens: 1800 },
+  structurer: { enabled: true, model: "", temperature: 0.3, max_tokens: 2000 },
+  summary: { enabled: true, model: "", temperature: 0.3, max_tokens: 2000 },
+};
+const MODEL_SETTINGS_OVERRIDE_KEYS = [
+  "temperature",
+  "max_tokens",
+  "num_ctx",
+  "mem_turns",
+  "pipeline_enabled",
+  "summary_memory_enabled",
+  "rag_enabled",
+  "default_pipeline_preset",
+  "max_transcript_chars",
+  "max_context_chars",
+  "summary_memory_limit",
+  "rag_top_k",
+  "rag_max_context_chars",
+  "pipeline",
 ];
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
@@ -94,6 +118,7 @@ const els = {
   asrToolCloseButton: document.getElementById("asrToolCloseButton"),
   asrToolModelSelect: document.getElementById("asrToolModelSelect"),
   asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
+  asrToolPipelineSettingsButton: document.getElementById("asrToolPipelineSettingsButton"),
   asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
   asrToolFileInput: document.getElementById("asrToolFileInput"),
   asrToolFileCard: document.getElementById("asrToolFileCard"),
@@ -213,6 +238,14 @@ const els = {
   modelSettingsStatus: document.getElementById("modelSettingsStatus"),
   whisperModelSelect: document.getElementById("whisperModelSelect"),
   promptPresetSelect: document.getElementById("promptPresetSelect"),
+  asrPipelineSettingsPanel: document.getElementById("asrPipelineSettingsPanel"),
+  asrPipelineSettingsSummary: document.getElementById("asrPipelineSettingsSummary"),
+  asrPipelineSettingsToggleButton: document.getElementById("asrPipelineSettingsToggleButton"),
+  asrPipelineSettingsBody: document.getElementById("asrPipelineSettingsBody"),
+  asrPipelineSettingsGrid: document.getElementById("asrPipelineSettingsGrid"),
+  saveAsrPipelineSettingsButton: document.getElementById("saveAsrPipelineSettingsButton"),
+  resetAsrPipelineSettingsButton: document.getElementById("resetAsrPipelineSettingsButton"),
+  asrPipelineSettingsStatus: document.getElementById("asrPipelineSettingsStatus"),
   refreshAsrModelsButton: document.getElementById("refreshAsrModelsButton"),
   asrSettingsStatus: document.getElementById("asrSettingsStatus"),
   asrLibraryToggle: document.getElementById("asrLibraryToggle"),
@@ -293,6 +326,7 @@ const state = {
     asr: readStored(STORAGE_KEYS.asrLibraryOpen, "") === "1",
     tts: readStored(STORAGE_KEYS.ttsLibraryOpen, "") === "1",
   },
+  asrPipelineSettingsExpanded: readStored(STORAGE_KEYS.asrPipelineSettingsOpen, "") === "1",
   voiceModelMenuPosition: null,
   confirmResolver: null,
   confirmReturnFocus: null,
@@ -2442,6 +2476,179 @@ function renderModelSettings() {
   if (els.resetModelSettingsButton) {
     els.resetModelSettingsButton.disabled = disabled;
   }
+  renderAsrPipelineSettings();
+}
+
+function asrPipelineSourceObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeAsrPipelineStage(stageKey, value = {}) {
+  const defaults = ASR_PIPELINE_DEFAULTS[stageKey] || {};
+  const source = asrPipelineSourceObject(value);
+  const temperature = Number(source.temperature ?? defaults.temperature ?? 0.2);
+  const maxTokens = Number.parseInt(source.max_tokens ?? defaults.max_tokens ?? 1200, 10);
+  return {
+    enabled: source.enabled === undefined ? defaults.enabled !== false : Boolean(source.enabled),
+    model: String(source.model || "").trim(),
+    temperature: Number.isFinite(temperature) ? temperature : Number(defaults.temperature || 0.2),
+    max_tokens: Number.isFinite(maxTokens) && maxTokens > 0
+      ? maxTokens
+      : Number.parseInt(defaults.max_tokens || 1200, 10),
+  };
+}
+
+function getAsrPipelineStageSettings(stageKey) {
+  const defaults = asrPipelineSourceObject(state.modelSettingsState?.defaults?.pipeline);
+  const effective = asrPipelineSourceObject(state.modelSettingsState?.effective?.pipeline);
+  const overrides = asrPipelineSourceObject(state.modelSettingsState?.overrides?.pipeline);
+  return normalizeAsrPipelineStage(stageKey, {
+    ...(ASR_PIPELINE_DEFAULTS[stageKey] || {}),
+    ...asrPipelineSourceObject(defaults[stageKey]),
+    ...asrPipelineSourceObject(effective[stageKey]),
+    ...asrPipelineSourceObject(overrides[stageKey]),
+  });
+}
+
+function pipelineModelOptionsHtml(selectedValue = "") {
+  const selected = String(selectedValue || "").trim();
+  const selectedLlm = String(state.selectedLlmModel || "").trim();
+  const names = [];
+  if (selected && !names.includes(selected)) names.push(selected);
+  state.installedModels.forEach((item) => {
+    const name = String(item?.name || "").trim();
+    if (name && !names.includes(name)) names.push(name);
+  });
+  const fallbackLabel = selectedLlm ? `Текущая LLM (${selectedLlm})` : "Текущая LLM";
+  return [
+    `<option value=""${selected ? "" : " selected"}>${escapeHtml(fallbackLabel)}</option>`,
+    ...names.map((name) => (
+      `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}>${escapeHtml(name)}</option>`
+    )),
+  ].join("");
+}
+
+function clearEnhancedSelectsIn(container) {
+  if (!container) return;
+  state.appSelects.forEach((entry, select) => {
+    if (container.contains(select) || container.contains(entry.wrapper)) {
+      entry.observer?.disconnect();
+      state.appSelects.delete(select);
+    }
+  });
+}
+
+function renderAsrPipelineSettings() {
+  const profile = getActiveProfile();
+  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
+  const disabled = !profile || !modelName;
+  const expanded = Boolean(state.asrPipelineSettingsExpanded);
+
+  if (els.asrPipelineSettingsPanel) {
+    els.asrPipelineSettingsPanel.classList.toggle("pipeline-settings-panel--collapsed", !expanded);
+  }
+  if (els.asrPipelineSettingsBody) {
+    els.asrPipelineSettingsBody.hidden = !expanded;
+  }
+  if (els.asrPipelineSettingsToggleButton) {
+    els.asrPipelineSettingsToggleButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+    els.asrPipelineSettingsToggleButton.title = expanded ? "Свернуть настройки анализа" : "Развернуть настройки анализа";
+    els.asrPipelineSettingsToggleButton.setAttribute(
+      "aria-label",
+      expanded ? "Свернуть настройки анализа" : "Развернуть настройки анализа",
+    );
+  }
+  if (els.asrPipelineSettingsSummary) {
+    els.asrPipelineSettingsSummary.textContent = profile && modelName
+      ? `${profile.name} • ${modelName}`
+      : "Профиль и LLM-модель не выбраны";
+  }
+  if (els.saveAsrPipelineSettingsButton) {
+    els.saveAsrPipelineSettingsButton.disabled = disabled;
+  }
+  if (els.resetAsrPipelineSettingsButton) {
+    els.resetAsrPipelineSettingsButton.disabled = disabled;
+  }
+  if (!els.asrPipelineSettingsGrid) return;
+
+  clearEnhancedSelectsIn(els.asrPipelineSettingsGrid);
+  els.asrPipelineSettingsGrid.innerHTML = ASR_PIPELINE_STAGES
+    .map((stage) => {
+      const settings = getAsrPipelineStageSettings(stage.key);
+      return `
+        <article class="pipeline-stage-row">
+          <div class="pipeline-stage-row__title">
+            <strong>${escapeHtml(stage.label)}</strong>
+            <span>${escapeHtml(stage.key)}</span>
+          </div>
+          <label class="field">
+            <span class="field__label">Модель</span>
+            <select class="field__control" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="model"${disabled ? " disabled" : ""}>
+              ${pipelineModelOptionsHtml(settings.model)}
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__label">Temp</span>
+            <input class="field__control" type="number" min="0" max="2" step="0.05" value="${escapeHtml(String(settings.temperature))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="temperature"${disabled ? " disabled" : ""} />
+          </label>
+          <label class="field">
+            <span class="field__label">Max tokens</span>
+            <input class="field__control" type="number" min="1" step="1" value="${escapeHtml(String(settings.max_tokens))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="max_tokens"${disabled ? " disabled" : ""} />
+          </label>
+        </article>
+      `;
+    })
+    .join("");
+
+  els.asrPipelineSettingsGrid
+    .querySelectorAll("select.field__control")
+    .forEach((select) => enhanceAppSelect(select));
+  queueSyncAppSelects();
+}
+
+function setAsrPipelineSettingsExpanded(isExpanded, { render = true } = {}) {
+  state.asrPipelineSettingsExpanded = Boolean(isExpanded);
+  writeStored(STORAGE_KEYS.asrPipelineSettingsOpen, state.asrPipelineSettingsExpanded ? "1" : "");
+  if (render) {
+    renderAsrPipelineSettings();
+  }
+}
+
+function getAsrPipelineControl(stageKey, field) {
+  const controls = els.asrPipelineSettingsGrid?.querySelectorAll("[data-asr-pipeline-stage][data-asr-pipeline-field]") || [];
+  return Array.from(controls).find((control) => (
+    control.dataset.asrPipelineStage === stageKey && control.dataset.asrPipelineField === field
+  )) || null;
+}
+
+function collectAsrPipelineSettingsFromControls() {
+  return ASR_PIPELINE_STAGES.reduce((acc, stage) => {
+    const current = getAsrPipelineStageSettings(stage.key);
+    const modelControl = getAsrPipelineControl(stage.key, "model");
+    const temperatureControl = getAsrPipelineControl(stage.key, "temperature");
+    const maxTokensControl = getAsrPipelineControl(stage.key, "max_tokens");
+    const temperature = parseOptionalNumber(temperatureControl?.value, "float");
+    const maxTokens = parseOptionalNumber(maxTokensControl?.value, "int");
+    acc[stage.key] = {
+      enabled: current.enabled !== false,
+      model: String(modelControl?.value ?? current.model ?? "").trim(),
+      temperature: temperature ?? current.temperature,
+      max_tokens: maxTokens ?? current.max_tokens,
+    };
+    return acc;
+  }, {});
+}
+
+function buildModelSettingsPayload(overrides = {}) {
+  const existing = state.modelSettingsState?.overrides || {};
+  const payload = {
+    profile_id: state.activeProfileId,
+    model_name: state.selectedLlmModel || els.llmModelSelect?.value || "",
+  };
+  MODEL_SETTINGS_OVERRIDE_KEYS.forEach((key) => {
+    payload[key] = Object.prototype.hasOwnProperty.call(existing, key) ? existing[key] : null;
+  });
+  return { ...payload, ...overrides };
 }
 
 function renderWhisperControls() {
@@ -3505,6 +3712,9 @@ function renderAsrTool() {
   if (els.asrToolChooseFileButton) {
     els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
     els.asrToolChooseFileButton.textContent = state.asrToolIsTranscribing ? "Транскрибация…" : "Выбрать файл";
+  }
+  if (els.asrToolPipelineSettingsButton) {
+    els.asrToolPipelineSettingsButton.disabled = !state.activeProfileId;
   }
   if (els.asrToolRefreshHistoryButton) {
     els.asrToolRefreshHistoryButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
@@ -4761,6 +4971,14 @@ function openSettings() {
   void loadTtsLibrary({ silent: true });
 }
 
+function openAsrPipelineSettings() {
+  setAsrPipelineSettingsExpanded(true, { render: false });
+  openSettings();
+  window.setTimeout(() => {
+    els.asrPipelineSettingsPanel?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, 80);
+}
+
 function closeSettings() {
   if (!els.settingsBackdrop) return;
   els.settingsBackdrop.hidden = true;
@@ -5258,14 +5476,12 @@ async function saveModelSettingsFlow() {
     }
     const data = await request("/model_settings", {
       method: "POST",
-      body: {
-        profile_id: state.activeProfileId,
-        model_name: modelName,
+      body: buildModelSettingsPayload({
         temperature: parseOptionalNumber(els.temperatureInput?.value, "float"),
         max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         mem_turns: memTurnsValue,
-      },
+      }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
@@ -5276,6 +5492,50 @@ async function saveModelSettingsFlow() {
     );
   } catch (error) {
     setInlineStatus(els.modelSettingsStatus, `Не удалось сохранить настройки: ${error.message || error}`, "error");
+  }
+}
+
+async function saveAsrPipelineSettingsFlow() {
+  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
+  if (!state.activeProfileId || !modelName) {
+    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля или LLM-модели.", "warning");
+    return;
+  }
+
+  try {
+    const data = await request("/model_settings", {
+      method: "POST",
+      body: buildModelSettingsPayload({
+        pipeline: collectAsrPipelineSettingsFromControls(),
+      }),
+    });
+    state.modelSettingsState = data || state.modelSettingsState;
+    renderModelSettings();
+    setInlineStatus(els.asrPipelineSettingsStatus, "Настройки анализа сохранены.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сохранить анализ: ${error.message || error}`, "error");
+  }
+}
+
+async function resetAsrPipelineSettingsFlow() {
+  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
+  if (!state.activeProfileId || !modelName) {
+    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля или LLM-модели.", "warning");
+    return;
+  }
+
+  try {
+    const data = await request("/model_settings", {
+      method: "POST",
+      body: buildModelSettingsPayload({
+        pipeline: null,
+      }),
+    });
+    state.modelSettingsState = data || state.modelSettingsState;
+    renderModelSettings();
+    setInlineStatus(els.asrPipelineSettingsStatus, "Настройки стадий сброшены.", "success");
+  } catch (error) {
+    setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сбросить стадии: ${error.message || error}`, "error");
   }
 }
 
@@ -6251,6 +6511,11 @@ function bindEvents() {
   els.deleteProfileButton?.addEventListener("click", async () => deleteCurrentProfileFlow());
   els.saveModelSettingsButton?.addEventListener("click", async () => saveModelSettingsFlow());
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
+  els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
+  els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
+  els.asrPipelineSettingsToggleButton?.addEventListener("click", () => {
+    setAsrPipelineSettingsExpanded(!state.asrPipelineSettingsExpanded);
+  });
 
   els.llmModelSelect?.addEventListener("change", async () => {
     await applySelectedLlmModel(els.llmModelSelect.value || "");
@@ -6365,6 +6630,7 @@ function bindEvents() {
   els.asrToolChooseFileButton?.addEventListener("click", () => {
     els.asrToolFileInput?.click();
   });
+  els.asrToolPipelineSettingsButton?.addEventListener("click", () => openAsrPipelineSettings());
   els.asrToolFileInput?.addEventListener("change", async () => {
     const file = els.asrToolFileInput.files?.[0];
     if (file) {

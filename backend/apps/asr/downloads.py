@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ import httpx
 
 from app import config
 from backend.apps.asr.whisper import clear_model_cache, is_local_model_ready, local_model_dir, repository_for_model
+from backend.apps.asr.whisper_cpp import is_whisper_cpp_model_ready, whisper_cpp_model_path
 
 _TASKS: dict[str, dict[str, Any]] = {}
 _ACTIVE_BY_MODEL: dict[str, str] = {}
@@ -25,6 +27,7 @@ _PROGRESS_INTERVAL_SECONDS = 0.2
 _DEFAULT_HF_ENDPOINT = "https://huggingface.co"
 _DEFAULT_HF_FALLBACK_ENDPOINT = "https://hf-mirror.com"
 _MODEL_META_FILENAME = ".localgpt_model_meta.json"
+_DEFAULT_WHISPER_CPP_REPO = "ggerganov/whisper.cpp"
 
 
 class PrepareModelError(Exception):
@@ -136,6 +139,61 @@ def _update_task(task_id: str, **fields: Any) -> None:
 
 def _model_meta_path(model_name: str) -> Path:
     return local_model_dir(model_name) / _MODEL_META_FILENAME
+
+
+def _use_whisper_cpp_models() -> bool:
+    return config.SETTINGS.whisper_backend in {"auto", "whisper_cpp"}
+
+
+def _whisper_cpp_repo_id() -> str:
+    return (os.getenv("WHISPER_CPP_HF_REPO") or _DEFAULT_WHISPER_CPP_REPO).strip() or _DEFAULT_WHISPER_CPP_REPO
+
+
+def _whisper_cpp_meta_path(model_name: str) -> Path:
+    model_path = whisper_cpp_model_path(model_name)
+    return model_path.with_name(f"{model_path.name}.localgpt.json")
+
+
+def _read_whisper_cpp_meta(model_name: str) -> dict[str, Any]:
+    path = _whisper_cpp_meta_path(model_name)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_whisper_cpp_meta(
+    model_name: str,
+    *,
+    revision: str | None,
+    endpoint: str | None,
+    etag: str | None = None,
+    size: int | None = None,
+) -> None:
+    model_path = whisper_cpp_model_path(model_name)
+    payload = {
+        "model": model_name,
+        "repo_id": _whisper_cpp_repo_id(),
+        "filename": model_path.name,
+        "revision": revision or None,
+        "endpoint": endpoint or None,
+        "etag": etag or None,
+        "size": size if size is not None else None,
+        "updated_at": _utc_now(),
+    }
+    try:
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        _whisper_cpp_meta_path(model_name).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        return
+
+
+def _read_whisper_cpp_revision(model_name: str) -> str | None:
+    raw = _read_whisper_cpp_meta(model_name).get("revision")
+    if not raw:
+        return None
+    value = str(raw).strip()
+    return value or None
 
 
 def _read_model_meta(model_name: str) -> dict[str, Any]:
@@ -446,6 +504,183 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
         return downloaded_bytes, max(total_bytes, downloaded_bytes), final_speed, revision
 
 
+def _fetch_whisper_cpp_remote_meta(
+    client: httpx.Client,
+    endpoint: str,
+    model: str,
+) -> tuple[str | None, str | None, int]:
+    repo_id = _whisper_cpp_repo_id()
+    filename = whisper_cpp_model_path(model).name
+    revision: str | None = None
+    try:
+        payload = _fetch_model_payload(client, endpoint, repo_id)
+        raw_revision = payload.get("sha")
+        revision = str(raw_revision).strip() if raw_revision else None
+    except Exception:
+        revision = None
+
+    encoded_name = quote(filename, safe="/")
+    response = client.head(_join_url(endpoint, f"/{repo_id}/resolve/main/{encoded_name}"))
+    response.raise_for_status()
+    etag = (response.headers.get("ETag") or "").strip().strip('"') or None
+    size = int(response.headers.get("Content-Length") or 0)
+    return revision, etag, size
+
+
+def _download_whisper_cpp_from_endpoint(
+    task_id: str,
+    model: str,
+    endpoint: str,
+) -> tuple[int, int, float, str | None, str | None]:
+    repo_id = _whisper_cpp_repo_id()
+    target = whisper_cpp_model_path(model)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    filename = target.name
+    temp_path = target.with_suffix(target.suffix + ".part")
+
+    trust_env = _env_flag("HF_TRUST_ENV", default=False)
+    with httpx.Client(
+        follow_redirects=True,
+        timeout=httpx.Timeout(90.0, connect=30.0),
+        trust_env=trust_env,
+        headers=_http_headers(),
+    ) as client:
+        revision, etag, total_bytes = _fetch_whisper_cpp_remote_meta(client, endpoint, model)
+        encoded_name = quote(filename, safe="/")
+        url = _join_url(endpoint, f"/{repo_id}/resolve/main/{encoded_name}")
+
+        _update_task(
+            task_id,
+            repo_id=repo_id,
+            total_bytes=total_bytes,
+            downloaded_bytes=0,
+            percent=0.0,
+            speed_bps=0.0,
+            message=f"Загрузка GGML: {filename}",
+        )
+
+        downloaded_bytes = 0
+        start_ts = _now()
+        last_progress_ts = 0.0
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+            with temp_path.open("wb") as out:
+                for chunk in response.iter_bytes(chunk_size=_CHUNK_SIZE):
+                    if not chunk:
+                        continue
+                    out.write(chunk)
+                    downloaded_bytes += len(chunk)
+
+                    now_ts = _now()
+                    if now_ts - last_progress_ts >= _PROGRESS_INTERVAL_SECONDS:
+                        elapsed = max(now_ts - start_ts, 0.001)
+                        percent = 0.0
+                        if total_bytes > 0:
+                            percent = min(100.0, round(downloaded_bytes / total_bytes * 100.0, 2))
+                        _update_task(
+                            task_id,
+                            percent=percent,
+                            speed_bps=downloaded_bytes / elapsed,
+                            downloaded_bytes=downloaded_bytes,
+                            total_bytes=total_bytes,
+                        )
+                        last_progress_ts = now_ts
+
+        temp_path.replace(target)
+        final_elapsed = max(_now() - start_ts, 0.001)
+        total_downloaded = downloaded_bytes
+        total_expected = max(total_bytes, downloaded_bytes)
+
+        if config.SETTINGS.whisper_cpp_download_coreml:
+            coreml_filename = f"ggml-{model}-encoder.mlmodelc.zip"
+            coreml_target = target.parent / coreml_filename
+            coreml_dir = target.parent / f"ggml-{model}-encoder.mlmodelc"
+            if not coreml_dir.exists():
+                try:
+                    coreml_downloaded, coreml_total = _download_whisper_cpp_extra_file(
+                        task_id,
+                        client,
+                        endpoint,
+                        repo_id,
+                        coreml_filename,
+                        coreml_target,
+                        "Загрузка CoreML encoder",
+                    )
+                    total_downloaded += coreml_downloaded
+                    total_expected += coreml_total
+                    _update_task(task_id, message="Распаковка CoreML encoder")
+                    with zipfile.ZipFile(coreml_target, "r") as archive:
+                        archive.extractall(target.parent)
+                except Exception as exc:
+                    status = _http_status_from_exception(exc)
+                    if status != 404:
+                        raise
+                    _update_task(
+                        task_id,
+                        message="CoreML encoder не найден для этой модели; GGML-модель готова",
+                        error_code=None,
+                    )
+
+        final_elapsed = max(_now() - start_ts, 0.001)
+        return total_downloaded, total_expected, total_downloaded / final_elapsed, revision, etag
+
+
+def _download_whisper_cpp_extra_file(
+    task_id: str,
+    client: httpx.Client,
+    endpoint: str,
+    repo_id: str,
+    filename: str,
+    target: Path,
+    label: str,
+) -> tuple[int, int]:
+    encoded_name = quote(filename, safe="/")
+    url = _join_url(endpoint, f"/{repo_id}/resolve/main/{encoded_name}")
+    temp_path = target.with_suffix(target.suffix + ".part")
+
+    head = client.head(url)
+    head.raise_for_status()
+    total_bytes = int(head.headers.get("Content-Length") or 0)
+
+    _update_task(
+        task_id,
+        message=f"{label}: {filename}",
+        total_bytes=total_bytes,
+        downloaded_bytes=0,
+        percent=0.0,
+        speed_bps=0.0,
+    )
+
+    downloaded_bytes = 0
+    start_ts = _now()
+    last_progress_ts = 0.0
+    with client.stream("GET", url) as response:
+        response.raise_for_status()
+        with temp_path.open("wb") as out:
+            for chunk in response.iter_bytes(chunk_size=_CHUNK_SIZE):
+                if not chunk:
+                    continue
+                out.write(chunk)
+                downloaded_bytes += len(chunk)
+                now_ts = _now()
+                if now_ts - last_progress_ts >= _PROGRESS_INTERVAL_SECONDS:
+                    elapsed = max(now_ts - start_ts, 0.001)
+                    percent = 0.0
+                    if total_bytes > 0:
+                        percent = min(100.0, round(downloaded_bytes / total_bytes * 100.0, 2))
+                    _update_task(
+                        task_id,
+                        percent=percent,
+                        speed_bps=downloaded_bytes / elapsed,
+                        downloaded_bytes=downloaded_bytes,
+                        total_bytes=total_bytes,
+                    )
+                    last_progress_ts = now_ts
+
+    temp_path.replace(target)
+    return downloaded_bytes, max(total_bytes, downloaded_bytes)
+
+
 def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, int, float, str | None]:
     from huggingface_hub import snapshot_download
 
@@ -507,6 +742,87 @@ def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, 
     return downloaded, downloaded, downloaded / elapsed, remote_revision
 
 
+def _run_prepare_whisper_cpp_task(task_id: str) -> None:
+    with _LOCK:
+        task = _TASKS.get(task_id)
+        if not task:
+            return
+        model = task["model"]
+        force = bool(task.get("force", False))
+
+    try:
+        repo_id = _whisper_cpp_repo_id()
+        target = whisper_cpp_model_path(model)
+
+        if force:
+            _update_task(task_id, message="Очистка локальной GGML-модели перед обновлением")
+            for path in (target, target.with_suffix(target.suffix + ".part"), _whisper_cpp_meta_path(model)):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+        _update_task(task_id, state="running", repo_id=repo_id, message="Подготовка загрузки GGML-модели")
+        endpoints = _huggingface_endpoints()
+        for idx, endpoint in enumerate(endpoints):
+            _update_task(task_id, message=f"Подключение к {_endpoint_host(endpoint)}")
+            try:
+                downloaded_bytes, total_bytes, final_speed, remote_revision, etag = _download_whisper_cpp_from_endpoint(
+                    task_id, model, endpoint
+                )
+            except Exception as exc:
+                error_code, error_message = _format_download_error(endpoint, exc)
+                has_next_endpoint = idx < len(endpoints) - 1
+                if has_next_endpoint:
+                    _update_task(
+                        task_id,
+                        message=f"{error_message} Пробуем резервный endpoint...",
+                        error_code=error_code,
+                    )
+                    continue
+                raise PrepareModelError(error_message, code=error_code) from exc
+
+            if not is_whisper_cpp_model_ready(model):
+                raise PrepareModelError("GGML-модель загружена не полностью", code="download_incomplete_model")
+
+            _write_whisper_cpp_meta(
+                model,
+                revision=remote_revision,
+                endpoint=endpoint,
+                etag=etag,
+                size=total_bytes,
+            )
+
+            _update_task(
+                task_id,
+                state="completed",
+                message="GGML-модель готова",
+                error_code=None,
+                revision=remote_revision,
+                percent=100.0,
+                speed_bps=final_speed,
+                downloaded_bytes=downloaded_bytes,
+                total_bytes=total_bytes,
+                finished_at=_now(),
+            )
+            return
+
+    except Exception as exc:
+        error_code = getattr(exc, "code", "model_prepare_failed")
+        _update_task(
+            task_id,
+            state="error",
+            message=str(exc),
+            error_code=error_code,
+            finished_at=_now(),
+        )
+    finally:
+        with _LOCK:
+            task = _TASKS.get(task_id)
+            if task and _ACTIVE_BY_MODEL.get(task["model"]) == task_id:
+                _ACTIVE_BY_MODEL.pop(task["model"], None)
+
+
 def _run_prepare_task(task_id: str) -> None:
     with _LOCK:
         task = _TASKS.get(task_id)
@@ -514,6 +830,10 @@ def _run_prepare_task(task_id: str) -> None:
             return
         model = task["model"]
         force = bool(task.get("force", False))
+
+    if _use_whisper_cpp_models():
+        _run_prepare_whisper_cpp_task(task_id)
+        return
 
     try:
         repo_id = repository_for_model(model)
@@ -623,15 +943,18 @@ def start_prepare_task(model_name: str, *, force: bool = False) -> dict[str, Any
     if model not in config.ALLOWED_WHISPER_MODELS:
         raise ValueError("invalid_model")
 
-    if is_local_model_ready(model) and not force:
+    repo_id = _whisper_cpp_repo_id() if _use_whisper_cpp_models() else repository_for_model(model)
+    local_ready = is_whisper_cpp_model_ready(model) if _use_whisper_cpp_models() else is_local_model_ready(model)
+    local_revision = _read_whisper_cpp_revision(model) if _use_whisper_cpp_models() else _read_local_revision(model)
+
+    if local_ready and not force:
         task_id = uuid.uuid4().hex
-        revision = _read_local_revision(model)
         task = {
             "task_id": task_id,
             "model": model,
-            "repo_id": repository_for_model(model),
+            "repo_id": repo_id,
             "force": False,
-            "revision": revision,
+            "revision": local_revision,
             "state": "completed",
             "message": "Модель уже доступна локально",
             "error_code": None,
@@ -657,7 +980,7 @@ def start_prepare_task(model_name: str, *, force: bool = False) -> dict[str, Any
         task = {
             "task_id": task_id,
             "model": model,
-            "repo_id": repository_for_model(model),
+            "repo_id": repo_id,
             "force": force,
             "revision": None,
             "state": "pending",
@@ -706,6 +1029,27 @@ def delete_local_model(model_name: str) -> dict[str, Any]:
 
     clear_model_cache(model)
 
+    if _use_whisper_cpp_models():
+        targets = [
+            whisper_cpp_model_path(model),
+            whisper_cpp_model_path(model).with_suffix(whisper_cpp_model_path(model).suffix + ".part"),
+            _whisper_cpp_meta_path(model),
+        ]
+        removed_any = False
+        for target in targets:
+            try:
+                if target.exists():
+                    target.unlink()
+                    removed_any = True
+            except OSError:
+                pass
+        return {
+            "ok": True,
+            "model": model,
+            "deleted": removed_any,
+            "message": "Локальная GGML-модель удалена." if removed_any else "Локальная GGML-модель уже отсутствует.",
+        }
+
     targets = [local_model_dir(model), _hf_repo_cache_root(model), *_legacy_model_dirs(model)]
     removed_any = False
     seen: set[str] = set()
@@ -747,6 +1091,19 @@ def list_local_models() -> list[dict[str, Any]]:
     for model in config.ALLOWED_WHISPER_MODELS:
         active_task_id = active_by_model.get(model)
         active_task = tasks.get(active_task_id) if active_task_id else None
+        if _use_whisper_cpp_models():
+            items.append(
+                {
+                    "name": model,
+                    "repo_id": _whisper_cpp_repo_id(),
+                    "installed": is_whisper_cpp_model_ready(model),
+                    "local_revision": _read_whisper_cpp_revision(model),
+                    "path": str(whisper_cpp_model_path(model)),
+                    "backend": config.SETTINGS.whisper_backend,
+                    "active_task": _sanitize_task(active_task) if active_task else None,
+                }
+            )
+            continue
         items.append(
             {
                 "name": model,
@@ -754,6 +1111,7 @@ def list_local_models() -> list[dict[str, Any]]:
                 "installed": is_local_model_ready(model),
                 "local_revision": _read_local_revision(model),
                 "path": str(local_model_dir(model)),
+                "backend": config.SETTINGS.whisper_backend,
                 "active_task": _sanitize_task(active_task) if active_task else None,
             }
         )
@@ -765,6 +1123,85 @@ def check_model_update(model_name: str) -> dict[str, Any]:
     model = (model_name or "").strip()
     if model not in config.ALLOWED_WHISPER_MODELS:
         raise ValueError("invalid_model")
+
+    if _use_whisper_cpp_models():
+        local_ready = is_whisper_cpp_model_ready(model)
+        local_meta = _read_whisper_cpp_meta(model)
+        local_revision = str(local_meta.get("revision") or "").strip() or None
+        local_etag = str(local_meta.get("etag") or "").strip() or None
+        local_size = 0
+        try:
+            local_size = whisper_cpp_model_path(model).stat().st_size if local_ready else 0
+        except OSError:
+            local_size = 0
+
+        repo_id = _whisper_cpp_repo_id()
+        checked_endpoint: str | None = None
+        remote_revision: str | None = None
+        remote_etag: str | None = None
+        remote_size = 0
+        error_code: str | None = None
+        error_message: str | None = None
+
+        trust_env = _env_flag("HF_TRUST_ENV", default=False)
+        endpoints = _huggingface_endpoints()
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            trust_env=trust_env,
+            headers=_http_headers(),
+        ) as client:
+            for endpoint in endpoints:
+                checked_endpoint = endpoint
+                try:
+                    remote_revision, remote_etag, remote_size = _fetch_whisper_cpp_remote_meta(client, endpoint, model)
+                    error_code = None
+                    error_message = None
+                    break
+                except Exception as exc:
+                    error_code, error_message = _format_download_error(endpoint, exc)
+                    continue
+
+        update_available = False
+        status = "up_to_date"
+        message = "Локальная GGML-модель уже актуальна."
+
+        if not local_ready:
+            status = "local_missing"
+            message = "GGML-модель ещё не загружена локально."
+        elif error_code:
+            status = "check_failed"
+            message = error_message or "Не удалось проверить обновление GGML-модели."
+        elif remote_etag and local_etag and remote_etag != local_etag:
+            status = "update_available"
+            update_available = True
+            message = "Для GGML-модели доступно обновление."
+        elif remote_size and local_size and remote_size != local_size:
+            status = "update_available"
+            update_available = True
+            message = "Размер локальной GGML-модели отличается. Рекомендуется обновление."
+        elif remote_revision and local_revision and remote_revision != local_revision:
+            status = "update_available"
+            update_available = True
+            message = "Для GGML-модели доступно обновление."
+        elif not local_etag and not local_revision:
+            status = "unknown_local_revision"
+            update_available = True
+            message = "Локальная ревизия GGML-модели неизвестна. Рекомендуется обновление."
+
+        return {
+            "model": model,
+            "repo_id": repo_id,
+            "local_ready": local_ready,
+            "local_revision": local_revision,
+            "remote_revision": remote_revision,
+            "update_available": update_available,
+            "status": status,
+            "checked_endpoint": checked_endpoint,
+            "error_code": error_code,
+            "message": message,
+            "checked_at": _now(),
+        }
 
     local_ready = is_local_model_ready(model)
     local_revision = _read_local_revision(model)

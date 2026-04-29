@@ -7,7 +7,7 @@
 
 - Backend: `FastAPI` (`backend.server:app`) с mini-app layout.
 - LLM gateway: OpenAI-compatible клиент к локальному Ollama (`LOCAL_BASE_URL`, обычно `http://localhost:11434/v1`).
-- ASR: `faster-whisper`.
+- ASR: `whisper.cpp` by default for Metal/CoreML setups; `faster-whisper` remains an explicit CPU fallback.
 - TTS: `Piper`.
 - OCR: `Tesseract`, v1 только изображения.
 - Storage: `SQLite` (`app/db/localgpt.db`) + файловое хранилище runtime-артефактов.
@@ -34,6 +34,18 @@
 - `backend/apps/rag/` — local source ingestion, chunks, local hash embeddings, retrieval context.
 
 Shared/core слой пока остаётся в `app/`: `config`, `db`, `schemas`, `routes/profiles`, `routes/models`, `routes/meta`, `services/models`.
+
+### ASR backend selection
+
+`WHISPER_BACKEND` controls runtime transcription:
+
+- `whisper_cpp` — default ASR path; require `whisper.cpp` and fail clearly if its binary/model is missing;
+- `auto` — use `whisper.cpp` only when `whisper-cli` and a matching GGML model file are present, otherwise fall back to `faster-whisper`;
+- `faster_whisper` — Python fallback: `faster-whisper` -> CTranslate2 -> configured `WHISPER_DEVICE` / `WHISPER_COMPUTE_TYPE`.
+
+`whisper.cpp` model files are separate from faster-whisper snapshots and live under `models/whisper_cpp` by default. `WHISPER_CPP_MODEL_PATH` can be a fixed path or a template with `{model}`, for example `models/whisper_cpp/ggml-{model}.bin`.
+
+`tools/setup_whisper_cpp_macos.sh <model>` bootstraps the local `whisper.cpp` tree under `models/whisper_cpp/source`, builds a Metal/CoreML CLI, links it to `models/whisper_cpp/bin/whisper-cli`, and downloads `ggml-<model>.bin` plus the CoreML encoder zip when available. When `WHISPER_BACKEND` is `auto` or `whisper_cpp`, `/whisper/models/prepare` downloads GGML/CoreML files from `ggerganov/whisper.cpp` instead of faster-whisper snapshots.
 
 ## 3. Chat request flow
 

@@ -91,6 +91,23 @@ def _error_payload_from_exception(exc: Exception, selected_model: str) -> dict[s
                 "model": missing_model,
                 "message": f'Whisper model "{missing_model}" is not available locally.',
             }
+        if code.startswith("WHISPER_CPP_BINARY_NOT_FOUND::"):
+            binary = code.split("::", 1)[1] if "::" in code else "whisper-cli"
+            return {
+                "code": "whisper_cpp_binary_missing",
+                "binary": binary,
+                "message": f'whisper.cpp binary "{binary}" is not available.',
+            }
+        if code.startswith("WHISPER_CPP_AUDIO_CONVERT_FAILED::"):
+            return {
+                "code": "whisper_cpp_audio_convert_failed",
+                "message": "Не удалось подготовить аудио для whisper.cpp.",
+            }
+        if code.startswith(("WHISPER_CPP_FAILED::", "WHISPER_CPP_EMPTY_OUTPUT::", "WHISPER_CPP_INVALID_OUTPUT")):
+            return {
+                "code": "whisper_cpp_failed",
+                "message": "whisper.cpp не вернул корректную транскрипцию.",
+            }
         if code == "empty_transcription":
             return {"code": "empty_transcription", "message": "Whisper вернул пустую транскрипцию."}
     return {"code": "transcription_failed", "message": str(exc) or "transcription_failed"}

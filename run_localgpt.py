@@ -74,10 +74,11 @@ def resolve_env_path(raw: str | Path | None, fallback: Path) -> Path:
 MODELS_DIR = resolve_env_path(ENV_VARS.get("MODELS_DIR"), MODELS_BASE)
 OLLAMA_MODELS_DIR = resolve_env_path(ENV_VARS.get("OLLAMA_MODELS_DIR"), MODELS_DIR / "ollama")
 WHISPER_DIR = resolve_env_path(ENV_VARS.get("WHISPER_MODELS_DIR"), MODELS_DIR / "whisper")
+WHISPER_CPP_DIR = resolve_env_path(ENV_VARS.get("WHISPER_CPP_MODELS_DIR"), MODELS_DIR / "whisper_cpp")
 HF_CACHE_DIR = resolve_env_path(ENV_VARS.get("HF_CACHE_DIR"), MODELS_DIR / "hf_cache")
 CT2_CACHE_DIR = resolve_env_path(ENV_VARS.get("CTRANSLATE2_CACHE_DIR"), MODELS_DIR / "ctranslate2_cache")
 
-for path in (MODELS_DIR, OLLAMA_MODELS_DIR, WHISPER_DIR, HF_CACHE_DIR, CT2_CACHE_DIR):
+for path in (MODELS_DIR, OLLAMA_MODELS_DIR, WHISPER_DIR, WHISPER_CPP_DIR, HF_CACHE_DIR, CT2_CACHE_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 os.environ.update(
@@ -86,6 +87,7 @@ os.environ.update(
         "OLLAMA_MODELS": str(OLLAMA_MODELS_DIR),
         "OLLAMA_MODELS_DIR": str(OLLAMA_MODELS_DIR),
         "WHISPER_MODELS_DIR": str(WHISPER_DIR),
+        "WHISPER_CPP_MODELS_DIR": str(WHISPER_CPP_DIR),
         "HF_HOME": str(HF_CACHE_DIR),
         "HUGGINGFACE_HUB_CACHE": str(HF_CACHE_DIR),
         "HF_CACHE_DIR": str(HF_CACHE_DIR),
@@ -362,6 +364,7 @@ def main() -> None:
     print(f"[i] Models dir: {MODELS_DIR}")
     print(f"[i] Ollama models dir: {OLLAMA_MODELS_DIR}")
     print(f"[i] Whisper models dir: {WHISPER_DIR}")
+    print(f"[i] whisper.cpp models dir: {WHISPER_CPP_DIR}")
     os.chdir(ROOT)
 
     py = ensure_venv()

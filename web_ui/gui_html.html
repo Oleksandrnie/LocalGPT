@@ -221,6 +221,8 @@
                     <div class="button-row">
                         <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
                             файл</button>
+                        <button class="button button--ghost" id="asrToolPipelineSettingsButton"
+                            type="button">Настройки анализа</button>
                         <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
                             список</button>
                     </div>
@@ -628,6 +630,34 @@
                             <option value="en">en</option>
                         </select>
                     </label>
+
+                    <section class="pipeline-settings-panel" id="asrPipelineSettingsPanel">
+                        <div class="settings-group__header settings-group__header--inner">
+                            <div>
+                                <p class="eyebrow">Pipeline</p>
+                                <h4>Анализ после транскрибации</h4>
+                            </div>
+                            <button class="pipeline-settings-toggle" id="asrPipelineSettingsToggleButton"
+                                type="button" aria-expanded="false" aria-controls="asrPipelineSettingsBody"
+                                title="Развернуть настройки анализа">
+                                <span class="pipeline-settings-toggle__icon" aria-hidden="true">⌄</span>
+                            </button>
+                        </div>
+                        <div class="pipeline-settings-body" id="asrPipelineSettingsBody" hidden>
+                            <div class="info-card">
+                                <span class="info-card__label">LLM для pipeline</span>
+                                <strong id="asrPipelineSettingsSummary">Профиль и модель не выбраны</strong>
+                            </div>
+                            <div class="pipeline-stage-settings" id="asrPipelineSettingsGrid"></div>
+                            <div class="button-row">
+                                <button class="button button--primary" id="saveAsrPipelineSettingsButton"
+                                    type="button">Сохранить анализ</button>
+                                <button class="button button--ghost" id="resetAsrPipelineSettingsButton"
+                                    type="button">Сбросить стадии</button>
+                            </div>
+                            <p class="inline-status" id="asrPipelineSettingsStatus"></p>
+                        </div>
+                    </section>
 
                     <div class="button-row">
                         <button class="button button--ghost" id="refreshAsrModelsButton" type="button">Обновить

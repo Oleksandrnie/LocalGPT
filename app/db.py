@@ -142,6 +142,40 @@ def _migrate_asr_studio_default(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_whisper_cpp_dictation_default(conn: sqlite3.Connection) -> None:
+    if config.SETTINGS.whisper_backend != "whisper_cpp":
+        return
+
+    migration_key = "migration_whisper_cpp_dictation_large_v3_turbo"
+    existing = conn.execute("SELECT value FROM app_settings WHERE key = ?", (migration_key,)).fetchone()
+    if existing:
+        return
+
+    desired_model = config.SETTINGS.whisper_default_model
+    legacy_defaults = {"", "medium"}
+    rows = conn.execute("SELECT id, preferences_json FROM profiles").fetchall()
+    now = _utcnow()
+    for row in rows:
+        raw_preferences = _from_json(row["preferences_json"], {})
+        raw_preferences = raw_preferences if isinstance(raw_preferences, dict) else {}
+        raw_chat = raw_preferences.get("chat") if isinstance(raw_preferences.get("chat"), dict) else {}
+        current_dictation_model = str(raw_chat.get("dictation_model") or "").strip()
+        if current_dictation_model not in legacy_defaults:
+            continue
+
+        preferences = _normalize_profile_preferences(raw_preferences)
+        preferences.setdefault("chat", {})["dictation_model"] = desired_model
+        conn.execute(
+            "UPDATE profiles SET preferences_json = ?, updated_at = ? WHERE id = ?",
+            (_to_json(preferences), now, row["id"]),
+        )
+
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        (migration_key, "1", now),
+    )
+
+
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     cursor = conn.execute(f"PRAGMA table_info({table});")
     columns = {row[1] for row in cursor.fetchall()}
@@ -357,6 +391,7 @@ def init_db() -> None:
             (default_preferences,),
         )
         _migrate_asr_studio_default(conn)
+        _migrate_whisper_cpp_dictation_default(conn)
         conn.commit()
     ensure_default_profile()
 

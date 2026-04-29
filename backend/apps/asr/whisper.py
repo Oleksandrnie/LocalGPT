@@ -368,7 +368,83 @@ def _load_model(model_name: str, *, compute_type: str | None = None, device: str
 
 
 def ensure_model_available(model_name: str) -> None:
+    if config.SETTINGS.whisper_backend in {"auto", "whisper_cpp"}:
+        from backend.apps.asr.whisper_cpp import (
+            is_whisper_cpp_model_ready,
+            is_whisper_cpp_runtime_ready,
+            whisper_cpp_model_path,
+        )
+
+        model = _normalize_model(model_name)
+        if config.SETTINGS.whisper_backend == "auto" and not is_whisper_cpp_runtime_ready(model):
+            return _load_model(model_name)
+        if not is_whisper_cpp_model_ready(model):
+            raise RuntimeError(f"WHISPER_CPP_MODEL_NOT_FOUND::{whisper_cpp_model_path(model)}")
+        return
+
     _load_model(model_name)
+
+
+def _transcribe_with_whisper_cpp_backend(
+    *,
+    path: Path,
+    model: str,
+    prompt: str | None,
+    fallback_language: str | None,
+    preferred_language: str | None,
+    beam_size: int,
+    role_keywords: dict[str, list[str]],
+) -> dict[str, Any]:
+    from backend.apps.asr.whisper_cpp import transcribe_with_whisper_cpp
+
+    language = _normalize_language(preferred_language)
+    try:
+        transcription = transcribe_with_whisper_cpp(
+            audio_path=path,
+            model_name=model,
+            prompt=prompt,
+            language=language,
+            beam_size=beam_size,
+        )
+    except RuntimeError as exc:
+        if str(exc).startswith("WHISPER_CPP_MODEL_NOT_FOUND::"):
+            raise RuntimeError(f"WHISPER_MODEL_NOT_FOUND::{model}") from exc
+        raise
+
+    text = str(transcription.get("text") or "").strip()
+    segments_data = list(transcription.get("segments") or [])
+
+    if not text and fallback_language and fallback_language != language:
+        transcription = transcribe_with_whisper_cpp(
+            audio_path=path,
+            model_name=model,
+            prompt=prompt if FALLBACK_USE_PROMPT else None,
+            language=fallback_language,
+            beam_size=beam_size,
+        )
+        text = str(transcription.get("text") or "").strip()
+        segments_data = list(transcription.get("segments") or [])
+
+    result: dict[str, Any] = {
+        "text": text,
+        "segments": _annotate_speakers(segments_data, role_keywords),
+        "role_keywords": role_keywords,
+    }
+    detected_language = transcription.get("language")
+    if detected_language:
+        result["language"] = detected_language
+    return result
+
+
+def _should_use_whisper_cpp(model: str) -> bool:
+    if config.SETTINGS.whisper_backend == "whisper_cpp":
+        return True
+    if config.SETTINGS.whisper_backend != "auto":
+        return False
+
+    from backend.apps.asr.whisper_cpp import is_whisper_cpp_runtime_ready
+
+    return is_whisper_cpp_runtime_ready(model)
 
 
 def transcribe_with_fallback(
@@ -391,6 +467,18 @@ def transcribe_with_fallback(
         config.SETTINGS.whisper_fallback_language or DEFAULT_FALLBACK_LANGUAGE
     )
     fallback_prompt = full_prompt if FALLBACK_USE_PROMPT else None
+    role_keywords = _load_role_keywords(path)
+
+    if _should_use_whisper_cpp(model):
+        return _transcribe_with_whisper_cpp_backend(
+            path=path,
+            model=model,
+            prompt=full_prompt,
+            fallback_language=fallback_language,
+            preferred_language=preferred_language,
+            beam_size=resolved_beam_size,
+            role_keywords=role_keywords,
+        )
 
     try:
         whisper_model = _load_model(model, compute_type=compute_type, device=device)
@@ -398,8 +486,6 @@ def transcribe_with_fallback(
         raise
     except Exception as exc:
         raise RuntimeError(f"WHISPER_MODEL_NOT_FOUND::{model}") from exc
-
-    role_keywords = _load_role_keywords(path)
 
     def run_once(language: str | None, use_vad: bool, prompt: str | None) -> tuple[str, list[dict[str, Any]], Any]:
         segments, info = whisper_model.transcribe(

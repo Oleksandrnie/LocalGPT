@@ -184,6 +184,26 @@ def transcribe(
                     "message": f'Whisper model "{missing_model}" is not available locally.',
                 },
             ) from exc
+        if msg.startswith("WHISPER_CPP_BINARY_NOT_FOUND::"):
+            binary = msg.split("::", 1)[1] if "::" in msg else "whisper-cli"
+            raise HTTPException(
+                status_code=424,
+                detail={
+                    "code": "whisper_cpp_binary_missing",
+                    "binary": binary,
+                    "message": f'whisper.cpp binary "{binary}" is not available.',
+                },
+            ) from exc
+        if msg.startswith("WHISPER_CPP_AUDIO_CONVERT_FAILED::"):
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "whisper_cpp_audio_convert_failed", "message": "Не удалось подготовить аудио для whisper.cpp."},
+            ) from exc
+        if msg.startswith(("WHISPER_CPP_FAILED::", "WHISPER_CPP_EMPTY_OUTPUT::", "WHISPER_CPP_INVALID_OUTPUT")):
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "whisper_cpp_failed", "message": "whisper.cpp не вернул корректную транскрипцию."},
+            ) from exc
         if msg == "empty_transcription":
             raise HTTPException(
                 status_code=502,
