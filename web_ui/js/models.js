@@ -29,14 +29,10 @@ function hasActiveDownload(model) {
 function renderModelSelect(preselect) {
   if (!elements.llmModelSelect) return;
   const installed = state.modelState.installed || [];
-  const recommended = state.modelState.recommended || [];
   const options = installed.map((item) => `<option value="${item.name}">${item.name}</option>`);
-  const missingRecommended = recommended.filter((rec) => !installed.some((item) => item.name === rec.name));
-  const recommendedOptions = missingRecommended.map(
-    (item) => `<option value="${item.name}" data-recommended="1">${item.name} (рекомендовано)</option>`,
-  );
-  elements.llmModelSelect.innerHTML = [...options, ...recommendedOptions].join("");
-  if (preselect) {
+  elements.llmModelSelect.innerHTML = options.join("") || '<option value="">Нет доступных моделей</option>';
+  elements.llmModelSelect.disabled = !installed.length;
+  if (preselect && installed.some((item) => item.name === preselect)) {
     elements.llmModelSelect.value = preselect;
   }
 }
@@ -127,6 +123,8 @@ export async function startModelDownload(model) {
     updateStatus(elements.modelStatus, `Загрузка ${model} уже выполняется`, "info");
     return;
   }
+  const confirmed = window.confirm(`Загрузить модель ${model}?`);
+  if (!confirmed) return;
   try {
     await pullModel({ model });
     await fetchModelList();
@@ -151,9 +149,12 @@ export async function deleteSelectedModel() {
 }
 
 export async function ensureModelAvailability(modelName) {
-  if (!modelName) return true;
+  if (!modelName) {
+    updateStatus(elements.healthStatus, "Нет доступных моделей. Загрузите модель и повторите отправку.", "warning");
+    return false;
+  }
   if (isModelInstalled(modelName)) return true;
-  await startModelDownload(modelName);
+  updateStatus(elements.healthStatus, "Модель не загружена. Загрузите модель и повторите отправку.", "warning");
   return false;
 }
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import signal
 import subprocess
@@ -19,7 +18,6 @@ LOGGER = logging.getLogger(__name__)
 MODEL_PULLS: dict[str, dict[str, Any]] = {}
 MODEL_PULL_PROCS: dict[str, subprocess.Popen] = {}
 MODEL_PULL_LOCK = threading.Lock()
-DEFAULT_LLAMA_MODEL = os.getenv("DEFAULT_LOCAL_MODEL", config.MODEL_RECOMMENDATIONS[0]["name"])
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 PULL_LOG_TAIL_LIMIT = 80
 

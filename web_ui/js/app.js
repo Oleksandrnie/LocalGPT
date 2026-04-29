@@ -235,6 +235,9 @@ const els = {
   lanUrlValue: document.getElementById("lanUrlValue"),
   copyLanUrlFromSettingsButton: document.getElementById("copyLanUrlFromSettingsButton"),
   shutdownButton: document.getElementById("shutdownButton"),
+  cleanupDatabaseButton: document.getElementById("cleanupDatabaseButton"),
+  resetDatabaseButton: document.getElementById("resetDatabaseButton"),
+  databaseStatus: document.getElementById("databaseStatus"),
   downloadList: document.getElementById("downloadList"),
 };
 
@@ -318,6 +321,7 @@ const state = {
   asrToolHistorySearch: "",
   ragStatus: null,
   ragBusy: false,
+  databaseMaintenanceBusy: false,
   asrToolIsOpen: false,
   asrToolIsMinimized: false,
   asrToolBounds: null,
@@ -729,6 +733,14 @@ function collectModelOperations() {
   });
 }
 
+function hasActiveDownload(modelName) {
+  const target = String(modelName || "").trim();
+  if (!target) return false;
+  return (state.downloads || []).some(
+    (item) => item.model === target && ["pending", "running", "paused"].includes(item.state),
+  );
+}
+
 function isMobileLayout() {
   return window.matchMedia("(max-width: 980px)").matches;
 }
@@ -944,22 +956,18 @@ function initAppSelects() {
 
 function getChatModelItems() {
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const recommendedByName = new Map(state.recommendedModels.map((item) => [item.name, item]));
-  const names = [
-    ...state.installedModels.map((item) => item.name),
-    ...state.recommendedModels.map((item) => item.name).filter((name) => !installedByName.has(name)),
-  ];
+  const names = state.installedModels.map((item) => item.name);
   return names.map((name) => ({
     name,
     installed: installedByName.get(name) || null,
-    recommended: recommendedByName.get(name) || null,
+    recommended: null,
     task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
   }));
 }
 
 function describeChatModelItem(item) {
   if (!item) {
-    return "Локальная модель чата";
+    return "Загрузите модель в настройках";
   }
   if (item.task) {
     return item.task.message || `Загрузка • ${item.task.state || "running"}`;
@@ -996,15 +1004,15 @@ function toggleQuickModelMenu(forceState) {
 function renderQuickModelPicker() {
   if (!els.quickModelButton || !els.quickModelValue || !els.quickModelMeta || !els.quickModelMenu) return;
   const items = getChatModelItems();
-  const selectedName = state.selectedLlmModel || items[0]?.name || "";
+  const selectedName = state.selectedLlmModel || "";
   const selectedItem = items.find((item) => item.name === selectedName) || items[0] || null;
 
   els.quickModelButton.disabled = !items.length;
   if (!items.length) {
     closeQuickModelMenu();
   }
-  els.quickModelValue.textContent = selectedItem?.name || "Модель не выбрана";
-  els.quickModelMeta.textContent = describeChatModelItem(selectedItem);
+  els.quickModelValue.textContent = selectedItem?.name || "Нет доступных моделей";
+  els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
 
   els.quickModelMenu.innerHTML = [
     '<div class="quick-model-picker__header">Модель чата</div>',
@@ -1576,23 +1584,43 @@ function updateSendButtonState() {
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
   const hasInstalledChatModel = state.installedModels.length > 0;
-  const selectedInstalled = state.installedModels.some((item) => item.name === (state.selectedLlmModel || state.defaultModel));
+  const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
+  const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
   if (els.promptInput) {
-    els.promptInput.disabled = !hasInstalledChatModel;
+    els.promptInput.disabled = false;
     els.promptInput.placeholder = hasInstalledChatModel
       ? "Напишите сообщение…"
-      : "Нет загруженных моделей. Откройте настройки и скачайте модель.";
+      : "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения.";
   }
-  els.sendButton.disabled = state.isSending ? false : (!hasText || !hasInstalledChatModel || !selectedInstalled);
+  els.sendButton.disabled = state.isSending ? false : (!hasText || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
 }
 
 function renderChatModelNotice() {
   if (!els.chatModelNotice) return;
-  const missing = !state.installedModels.length;
+  const selectedModel = String(state.selectedLlmModel || "").trim();
+  const hasInstalledChatModel = state.installedModels.length > 0;
+  const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
+  const missing = !hasInstalledChatModel || (Boolean(selectedModel) && !selectedInstalled);
   els.chatModelNotice.hidden = !missing;
+  if (missing) {
+    const title = els.chatModelNotice.querySelector("strong");
+    const text = els.chatModelNotice.querySelector("span");
+    if (!hasInstalledChatModel) {
+      if (title) title.textContent = "Нет доступных моделей.";
+      if (text) text.textContent = "Загрузите модель в настройках, чтобы отправлять сообщения в чат.";
+    } else {
+      if (title) title.textContent = "Модель не загружена.";
+      if (text) text.textContent = "Выберите локальную модель или загрузите выбранную модель.";
+    }
+  }
   if (missing && !state.isSending) {
-    setFooter("Нет загруженных моделей. Перейдите в настройки и скачайте модель.", "warning");
+    setFooter(
+      hasInstalledChatModel
+        ? "Модель не загружена. Загрузите модель и повторите отправку."
+        : "Нет доступных моделей. Загрузите модель и повторите отправку.",
+      "warning",
+    );
   }
   updateSendButtonState();
 }
@@ -2236,35 +2264,42 @@ function renderMessages() {
 function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
-  const chatModelItems = getChatModelItems();
-  const installedNames = new Set(chatModelItems.filter((item) => item.installed).map((item) => item.name));
-  const mergedOptions = chatModelItems.map((item) => item.name);
+  const installedNames = new Set(state.installedModels.map((item) => item.name));
+  const installedOptions = state.installedModels.map((item) => item.name).filter(Boolean);
+  const selectedModel = String(state.selectedLlmModel || "").trim();
+  const selectedInstalled = selectedModel && installedNames.has(selectedModel);
 
-  const optionsMarkup = mergedOptions
+  const optionNames = selectedModel && !selectedInstalled
+    ? [selectedModel, ...installedOptions]
+    : installedOptions;
+  const optionsMarkup = optionNames
     .map((name) => {
-      const recommended = state.recommendedModels.some((item) => item.name === name) && !installedNames.has(name);
-      return `<option value="${escapeHtml(name)}">${escapeHtml(name)}${recommended ? " (рекомендовано)" : ""}</option>`;
+      const missing = name === selectedModel && !selectedInstalled;
+      return `<option value="${escapeHtml(name)}"${missing ? " disabled" : ""}>${escapeHtml(name)}${missing ? " (не загружена)" : ""}</option>`;
     })
-    .join("");
+    .join("") || '<option value="">Нет доступных моделей</option>';
 
   [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
     select.innerHTML = optionsMarkup;
-    select.disabled = !mergedOptions.length;
+    select.disabled = !installedOptions.length;
   });
 
-  const preferredModel = state.selectedLlmModel || readStored(STORAGE_KEYS.llmModel, state.defaultModel);
-  if (preferredModel && mergedOptions.includes(preferredModel)) {
+  const preferredModel = state.selectedLlmModel || readStored(STORAGE_KEYS.llmModel, "");
+  if (preferredModel && optionNames.includes(preferredModel)) {
     els.llmModelSelect.value = preferredModel;
     if (els.quickModelSelect) {
       els.quickModelSelect.value = preferredModel;
     }
-  } else if (mergedOptions.length) {
-    els.llmModelSelect.value = mergedOptions[0];
+  } else if (installedOptions.length) {
+    els.llmModelSelect.value = installedOptions[0];
     if (els.quickModelSelect) {
-      els.quickModelSelect.value = mergedOptions[0];
+      els.quickModelSelect.value = installedOptions[0];
     }
-    state.selectedLlmModel = mergedOptions[0];
-    writeStored(STORAGE_KEYS.llmModel, mergedOptions[0]);
+    state.selectedLlmModel = installedOptions[0];
+    writeStored(STORAGE_KEYS.llmModel, installedOptions[0]);
+  } else {
+    state.selectedLlmModel = "";
+    writeStored(STORAGE_KEYS.llmModel, "");
   }
 
   renderQuickModelPicker();
@@ -4019,6 +4054,9 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   }
   const transcript = await ensureAsrToolTranscriptSaved();
   if (!transcript?.id) return;
+  const modelName = String(state.selectedLlmModel || "").trim();
+  const modelAvailable = await ensureModelInstalled(modelName);
+  if (!modelAvailable) return;
 
   state.asrToolPipelineBusy = true;
   state.asrToolPipelineAction = action;
@@ -4028,7 +4066,7 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   try {
     const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
       method: "POST",
-      body: { action, preset, model_name: state.selectedLlmModel || state.defaultModel },
+      body: { action, preset, model_name: modelName },
     });
     state.asrToolPipelineRun = run;
     if (action === "clean" && run?.cleaned_transcript && els.asrToolOutput) {
@@ -4657,6 +4695,18 @@ function renderLanUrl() {
   }
 }
 
+function renderDatabaseMaintenance() {
+  const busy = Boolean(state.databaseMaintenanceBusy);
+  if (els.cleanupDatabaseButton) {
+    els.cleanupDatabaseButton.disabled = busy;
+    els.cleanupDatabaseButton.textContent = busy ? "Очистка…" : "Очистить мусор";
+  }
+  if (els.resetDatabaseButton) {
+    els.resetDatabaseButton.disabled = busy;
+    els.resetDatabaseButton.textContent = busy ? "Очистка…" : "Полная очистка";
+  }
+}
+
 function renderSettings() {
   renderProfileOptions();
   renderProfileManagement();
@@ -4668,6 +4718,7 @@ function renderSettings() {
   renderTtsControls();
   renderDownloads();
   renderLanUrl();
+  renderDatabaseMaintenance();
 
   if (els.modelsDirInput && !els.modelsDirInput.value && state.modelsDir) {
     els.modelsDirInput.value = state.modelsDir;
@@ -4677,7 +4728,7 @@ function renderSettings() {
 function applyCurrentSessionMeta() {
   const session = state.sessions.find((item) => item.id === state.currentSessionId);
   const title = session?.title || "Новый чат";
-  state.selectedLlmModel = session?.model_name || state.selectedLlmModel || state.defaultModel;
+  state.selectedLlmModel = session?.model_name || state.selectedLlmModel || "";
   writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
   if (els.chatTitle) {
     els.chatTitle.textContent = title;
@@ -4934,9 +4985,18 @@ async function loadModels({ silent = false } = {}) {
     state.recommendedModels = Array.isArray(data?.recommended) ? data.recommended : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     state.chatModelsError = data?.error || null;
-    const savedModel = readStored(STORAGE_KEYS.llmModel, state.defaultModel);
+    const savedModel = readStored(STORAGE_KEYS.llmModel, "");
+    const installedNames = new Set(state.installedModels.map((item) => item.name));
+    if (state.selectedLlmModel && !installedNames.has(state.selectedLlmModel) && !hasActiveDownload(state.selectedLlmModel)) {
+      state.selectedLlmModel = "";
+    }
     if (!state.selectedLlmModel) {
-      state.selectedLlmModel = savedModel || state.installedModels[0]?.name || state.recommendedModels[0]?.name || state.defaultModel;
+      state.selectedLlmModel = savedModel && installedNames.has(savedModel)
+        ? savedModel
+        : state.installedModels[0]?.name || "";
+    }
+    if (!state.selectedLlmModel) {
+      writeStored(STORAGE_KEYS.llmModel, "");
     }
     renderModelControls();
     renderDownloads();
@@ -5328,7 +5388,7 @@ async function createSessionForCurrentContext() {
   const payload = {
     profile_id: state.activeProfileId,
     title: "Новый чат",
-    model_name: state.selectedLlmModel || state.defaultModel,
+    model_name: String(state.selectedLlmModel || "").trim(),
   };
 
   const session = await request("/sessions", { method: "POST", body: payload });
@@ -5337,12 +5397,15 @@ async function createSessionForCurrentContext() {
 }
 
 async function ensureModelInstalled(modelName) {
-  if (!modelName) return true;
-  if (state.installedModels.some((item) => item.name === modelName)) {
+  const target = String(modelName || "").trim();
+  if (!target) {
+    setFooter("Нет доступных моделей. Загрузите модель и повторите отправку.", "warning");
+    return false;
+  }
+  if (state.installedModels.some((item) => item.name === target)) {
     return true;
   }
-  setFooter("Нет загруженных моделей. Перейдите в настройки и скачайте модель.", "warning");
-  openSettings();
+  setFooter("Модель не загружена. Загрузите модель и повторите отправку.", "warning");
   return false;
 }
 
@@ -5358,7 +5421,7 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     return;
   }
 
-  const selectedModel = state.selectedLlmModel || state.defaultModel;
+  const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
   const modelAvailable = await ensureModelInstalled(selectedModel);
   if (!modelAvailable) {
     return;
@@ -5494,6 +5557,18 @@ async function startModelDownload(modelName) {
     setFooter("Укажите модель Ollama для загрузки.", "warning");
     return;
   }
+  if (hasActiveDownload(target)) {
+    setFooter(`Загрузка ${target} уже выполняется.`, "warning");
+    return;
+  }
+
+  const confirmed = await openConfirmDialog({
+    eyebrow: "Загрузка модели",
+    title: "Загрузить модель?",
+    message: `Будет запущена загрузка Ollama-модели: ${target}`,
+    confirmLabel: "Загрузить",
+  });
+  if (!confirmed) return;
 
   try {
     await request("/models/pull", { method: "POST", body: { model: target } });
@@ -5813,6 +5888,116 @@ async function shutdownRuntime() {
   }
 }
 
+function formatDatabaseDeleted(result, emptyMessage = "Удалять нечего.") {
+  const labels = {
+    profiles: "профилей",
+    chat_sessions: "чатов",
+    chat_messages: "сообщений",
+    transcripts: "транскриптов",
+    transcript_pipeline_runs: "pipeline-запусков",
+    session_summaries: "summary",
+    source_documents: "документов индекса",
+    document_chunks: "chunks",
+    document_embeddings: "embeddings",
+    model_settings: "настроек моделей",
+  };
+  const deleted = result?.deleted && typeof result.deleted === "object" ? result.deleted : {};
+  const parts = Object.entries(deleted)
+    .map(([key, value]) => [labels[key] || key, Number(value) || 0])
+    .filter(([, value]) => value > 0)
+    .map(([label, value]) => `${label}: ${value}`);
+  return parts.length ? `Удалено: ${parts.join(" • ")}.` : emptyMessage;
+}
+
+function clearClientDatabaseState() {
+  writeStored(STORAGE_KEYS.activeProfileId, "");
+  writeStored(STORAGE_KEYS.activeSessionId, "");
+  state.activeProfileId = null;
+  state.currentSessionId = null;
+  state.sessions = [];
+  state.messages = [];
+  state.latestTranscript = null;
+  state.asrToolHistory = [];
+  state.asrToolSelectedTranscriptId = null;
+  state.asrToolSelectedTranscript = null;
+  state.asrToolPipelineRun = null;
+  state.ragStatus = null;
+  renderSessionList();
+  renderMessages();
+  renderContextSummary();
+  renderAsrTool();
+  renderRagPanel();
+}
+
+async function cleanupDatabaseGarbage() {
+  const approved = await openConfirmDialog({
+    eyebrow: "База данных",
+    title: "Очистить мусор БД?",
+    message: "Будут удалены осиротевшие записи после удалённых чатов. ASR Studio записи и ручные RAG-файлы сохраняются.",
+    confirmLabel: "Очистить",
+    returnFocus: els.cleanupDatabaseButton,
+  });
+  if (!approved) return;
+
+  state.databaseMaintenanceBusy = true;
+  renderDatabaseMaintenance();
+  setInlineStatus(els.databaseStatus, "Очистка БД…", "warning");
+
+  try {
+    const result = await request("/database/cleanup", { method: "POST", body: { vacuum: true } });
+    setInlineStatus(els.databaseStatus, formatDatabaseDeleted(result, "Мусор не найден."), "success");
+    setFooter("Очистка БД завершена.", "success");
+    await Promise.all([
+      loadSessions({ preferredSessionId: state.currentSessionId }),
+      loadAsrToolHistory({ silent: true }),
+      loadRagStatus({ silent: true }),
+    ]);
+  } catch (error) {
+    setInlineStatus(els.databaseStatus, `Ошибка очистки БД: ${error.message || error}`, "error");
+    setFooter(`Не удалось очистить БД: ${error.message || error}`, "error");
+  } finally {
+    state.databaseMaintenanceBusy = false;
+    renderDatabaseMaintenance();
+  }
+}
+
+async function resetDatabaseFully() {
+  const approved = await openConfirmDialog({
+    eyebrow: "База данных",
+    title: "Полностью очистить БД?",
+    message: "Будут удалены все профили, чаты, сообщения, транскрипты, RAG-индекс и профильные RAG-папки. Загруженные модели не удаляются.",
+    confirmLabel: "Полная очистка",
+    returnFocus: els.resetDatabaseButton,
+  });
+  if (!approved) return;
+
+  state.databaseMaintenanceBusy = true;
+  renderDatabaseMaintenance();
+  setInlineStatus(els.databaseStatus, "Полная очистка БД…", "warning");
+
+  try {
+    const result = await request("/database/reset", {
+      method: "POST",
+      body: { confirm: "RESET_DATABASE", vacuum: true },
+    });
+    clearClientDatabaseState();
+    await loadProfiles();
+    await Promise.all([
+      loadModels({ silent: true }),
+      loadRagStatus({ silent: true }),
+      loadAsrToolHistory({ silent: true }),
+    ]);
+    setInlineStatus(els.databaseStatus, `${formatDatabaseDeleted(result)} Создан новый профиль Default.`, "success");
+    setFooter("БД полностью очищена. Локальные модели не удалялись.", "success");
+  } catch (error) {
+    setInlineStatus(els.databaseStatus, `Ошибка полной очистки: ${error.message || error}`, "error");
+    setFooter(`Не удалось полностью очистить БД: ${error.message || error}`, "error");
+  } finally {
+    state.databaseMaintenanceBusy = false;
+    renderDatabaseMaintenance();
+  }
+}
+
 function bindEvents() {
   els.toggleSidebarButton?.addEventListener("click", () => openSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());
@@ -6059,6 +6244,8 @@ function bindEvents() {
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
   els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
   els.shutdownButton?.addEventListener("click", async () => shutdownRuntime());
+  els.cleanupDatabaseButton?.addEventListener("click", async () => cleanupDatabaseGarbage());
+  els.resetDatabaseButton?.addEventListener("click", async () => resetDatabaseFully());
   els.createProfileButton?.addEventListener("click", async () => createProfileFlow());
   els.saveProfileSystemPromptButton?.addEventListener("click", async () => saveProfileSystemPromptFlow());
   els.deleteProfileButton?.addEventListener("click", async () => deleteCurrentProfileFlow());

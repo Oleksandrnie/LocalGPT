@@ -16,6 +16,15 @@
 
 `compare-branch/` не участвует в runtime и остаётся только reference-only.
 
+### LLM lifecycle
+
+- Bootstrap создаёт `venv`, ставит `app/requirements.txt`, готовит директории и проверяет Ollama, но не выбирает chat-модель автоматически.
+- `LOCAL_MODEL` может быть пустым; пустое значение означает `Модель не загружена`.
+- Startup не запускает `ollama pull`, не скачивает `qwen2.5:3b` и не пишет fallback в `.env`.
+- `/models` только читает локальный список и текущие download task statuses.
+- `/models/pull` запускается только после явного действия пользователя и подтверждения в UI.
+- Если локальных chat-моделей нет, UI оставляет input активным, но отключает отправку и показывает toast; backend-запрос к LLM не создаётся.
+
 ## 2. Mini-app layout
 
 - `backend/apps/chat/` — chat API, prompt assembly, background generation, debug endpoints.
@@ -30,14 +39,15 @@ Shared/core слой пока остаётся в `app/`: `config`, `db`, `schem
 
 1. UI отправляет `POST /chat/tasks`.
 2. Backend валидирует profile/session/model.
-3. Если chat-модель не установлена, возвращается readable `chat_model_missing`; auto-pull не запускается.
-4. Считается `effective_settings = defaults + profile/model overrides`.
-5. Подгружается summary memory.
-6. Подгружается только short raw history по `mem_turns`.
-7. Если включён RAG, выполняется retrieval по активному профилю.
-8. Собирается `messages[]`.
-9. Запрос отправляется в Ollama OpenAI-compatible endpoint.
-10. Ответ очищается через `sanitize_reply()`, сохраняется в SQLite и возвращается UI.
+3. Если модель не выбрана, возвращается readable `chat_model_not_selected` до создания session.
+4. Если выбранная chat-модель не установлена, возвращается readable `chat_model_missing`; auto-pull не запускается.
+5. Считается `effective_settings = defaults + profile/model overrides`.
+6. Подгружается summary memory.
+7. Подгружается только short raw history по `mem_turns`.
+8. Если включён RAG, выполняется retrieval по активному профилю.
+9. Собирается `messages[]`.
+10. Запрос отправляется в Ollama OpenAI-compatible endpoint.
+11. Ответ очищается через `sanitize_reply()`, сохраняется в SQLite и возвращается UI.
 
 ## 4. Prompt assembly order
 
@@ -187,6 +197,15 @@ profile RAG files
 `source_type` для текущего MVP: `manual_file`.
 Планируемые типы: `manual_file`, `asr_transcript`, `ocr_text`, `chat_summary`, `profile_memory`.
 
+## 7.1. Database maintenance
+
+UI-кнопки обслуживания БД находятся в settings-секции `Whisper модели`.
+
+- `POST /database/cleanup` удаляет осиротевшие данные после удаления чатов: transcripts без session, chat summaries без session и non-`manual_file` source documents без session; после удаления запускает `VACUUM`, если `vacuum=true`.
+- Мягкая очистка сохраняет `ASR Studio` transcripts (`labels.origin=asr_tool`) и ручные RAG-документы (`source_type=manual_file`).
+- `POST /database/reset` требует `confirm=RESET_DATABASE`, отменяет активные runtime tasks, удаляет профильные RAG-папки, очищает profile-owned SQLite tables через cascade и пересоздаёт профиль `Default`.
+- Очистка БД не удаляет локальные LLM/ASR/TTS model artifacts из `/models`.
+
 ## 8. Settings
 
 Настройки объединяются из:
@@ -319,6 +338,7 @@ UI component rules:
 Текущие ключевые проверки:
 
 - empty Ollama model list не запускает auto-pull;
+- chat task без выбранной модели возвращает `chat_model_not_selected` и не создаёт session;
 - readable `chat_model_missing`;
 - ASR Studio default model `large-v3-turbo`;
 - profile create/update with optional system prompt;

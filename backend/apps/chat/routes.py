@@ -28,6 +28,28 @@ router = APIRouter()
 chat_service = ChatService()
 
 
+def _chat_model_missing_detail(model_name: str | None = None) -> dict[str, object]:
+    target = (model_name or "").strip()
+    if target:
+        return {
+            "code": "chat_model_missing",
+            "model": target,
+            "message": "Модель не загружена. Загрузите модель и повторите отправку.",
+        }
+    return {
+        "code": "chat_model_not_selected",
+        "model": "",
+        "message": "Нет доступных моделей. Загрузите модель и повторите отправку.",
+    }
+
+
+def _require_chat_model_selected(model_name: str | None) -> str:
+    target = (model_name or "").strip()
+    if target:
+        return target
+    raise HTTPException(status_code=424, detail=_chat_model_missing_detail())
+
+
 def _debug_allowed(admin_token: str | None = None) -> bool:
     if config.SETTINGS.env in {"local", "dev", "development"}:
         return True
@@ -35,8 +57,9 @@ def _debug_allowed(admin_token: str | None = None) -> bool:
 
 
 def _ensure_chat_model_available(model_name: str) -> None:
+    target = _require_chat_model_selected(model_name)
     try:
-        installed = model_service.is_model_installed(model_name)
+        installed = model_service.is_model_installed(target)
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
         raise HTTPException(
@@ -48,14 +71,7 @@ def _ensure_chat_model_available(model_name: str) -> None:
         ) from exc
     if installed:
         return
-    raise HTTPException(
-        status_code=424,
-        detail={
-            "code": "chat_model_missing",
-            "model": model_name,
-            "message": "Нет загруженных моделей. Перейдите в настройки и скачайте модель.",
-        },
-    )
+    raise HTTPException(status_code=424, detail=_chat_model_missing_detail(target))
 
 
 def _get_profile_or_404(profile_id: int) -> dict:
@@ -79,6 +95,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
             raise HTTPException(status_code=404, detail="session_not_found")
         profile_id = session["profile_id"]
         desired_model = normalize_model_name(req.model or req.model_name, fallback=session.get("model_name"))
+        desired_model = _require_chat_model_selected(desired_model)
         if desired_model != session.get("model_name"):
             session = db.update_session(session_id, model_name=desired_model) or session
         desired_role = normalize_role(req.role or session.get("role"))
@@ -92,12 +109,13 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         _get_profile_or_404(profile_id)
         role_key = normalize_role(req.role)
         model_name = normalize_model_name(req.model or req.model_name, fallback=config.SETTINGS.model)
+        model_name = _require_chat_model_selected(model_name)
         title = session_title_hint(req.title, req.query)
         session = db.create_session(profile_id, title=title, model_name=model_name, role=role_key)
         session_id = session["id"]
 
     model_name = session["model_name"] if session else normalize_model_name(req.model or req.model_name)
-    target_model = normalize_model_name(model_name, fallback=config.SETTINGS.model)
+    target_model = _require_chat_model_selected(normalize_model_name(model_name, fallback=config.SETTINGS.model))
     profile = _get_profile_or_404(int(profile_id))
     profile_preferences = profile.get("preferences") or {}
     profile_system_prompt = str(((profile_preferences.get("chat") or {}).get("system_prompt") or "")).strip()

@@ -650,6 +650,22 @@
                             <div class="model-library" id="asrModelLibrary"></div>
                         </div>
                     </div>
+
+                    <div class="maintenance-panel">
+                        <div class="maintenance-panel__copy">
+                            <span class="maintenance-panel__label">База данных</span>
+                            <strong>Очистка данных</strong>
+                            <p>Удаляет осиротевшие записи после удалённых чатов. Полная очистка сбрасывает профили, чаты,
+                                транскрипты и RAG-индекс.</p>
+                        </div>
+                        <div class="button-row maintenance-panel__actions">
+                            <button class="button button--ghost" id="cleanupDatabaseButton" type="button">Очистить
+                                мусор</button>
+                            <button class="button button--danger" id="resetDatabaseButton" type="button">Полная
+                                очистка</button>
+                        </div>
+                        <p class="inline-status" id="databaseStatus"></p>
+                    </div>
                 </section>
 
                 <section class="settings-group">

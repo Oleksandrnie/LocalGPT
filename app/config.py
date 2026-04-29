@@ -165,31 +165,31 @@ MODEL_RECOMMENDATIONS = [
 DEFAULT_PIPELINE = {
     "cleaner": {
         "enabled": True,
-        "model": "qwen2.5:3b",
+        "model": "",
         "temperature": 0.2,
         "max_tokens": 1200,
     },
     "segmenter": {
         "enabled": True,
-        "model": "qwen2.5:3b",
+        "model": "",
         "temperature": 0.1,
         "max_tokens": 1600,
     },
     "speaker_resolver": {
         "enabled": True,
-        "model": "qwen2.5:3b",
+        "model": "",
         "temperature": 0.1,
         "max_tokens": 1800,
     },
     "structurer": {
         "enabled": True,
-        "model": "mistral:7b",
+        "model": "",
         "temperature": 0.3,
         "max_tokens": 2000,
     },
     "summary": {
         "enabled": True,
-        "model": "mistral:7b",
+        "model": "",
         "temperature": 0.3,
         "max_tokens": 2000,
     },
@@ -256,7 +256,7 @@ def _load_settings() -> Settings:
         env=os.getenv("ENV", "local"),
         base_url=os.getenv("LOCAL_BASE_URL", "http://localhost:11434/v1"),
         api_key=os.getenv("LOCAL_API_KEY", "LOCAL-KEY"),
-        model=os.getenv("LOCAL_MODEL", "qwen2.5:3b"),
+        model=(os.getenv("LOCAL_MODEL") or "").strip(),
         temperature=_parse_float("TEMP", 0.25),
         max_tokens=_parse_int("MAX_TOKENS", 512),
         num_ctx=_parse_int("NUM_CTX", 32768),
@@ -368,7 +368,7 @@ def log_startup(logger: logging.Logger) -> None:
     )
     logger.info(
         "Active model: %s • ctx=%s • max_tokens=%s • temp=%s • mem_turns=%s • tts_provider=%s",
-        SETTINGS.model,
+        SETTINGS.model or "not loaded",
         SETTINGS.num_ctx,
         SETTINGS.max_tokens,
         SETTINGS.temperature,

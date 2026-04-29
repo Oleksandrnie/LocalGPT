@@ -430,6 +430,17 @@ select {
     background: rgba(255, 255, 255, 0.02);
 }
 
+.button--danger {
+    border-color: rgba(215, 103, 103, 0.38);
+    background: rgba(215, 103, 103, 0.1);
+    color: #ffd6d6;
+}
+
+.button--danger:hover {
+    border-color: rgba(215, 103, 103, 0.58);
+    background: rgba(215, 103, 103, 0.16);
+}
+
 .topbar__actions .button--ghost {
     border-color: rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.02);
@@ -2264,6 +2275,44 @@ select {
     border-radius: 10px;
 }
 
+.maintenance-panel {
+    display: grid;
+    gap: 12px;
+    margin-top: 4px;
+    padding: 14px;
+    border: 1px solid rgba(215, 103, 103, 0.22);
+    border-radius: 10px;
+    background:
+        linear-gradient(135deg, rgba(215, 103, 103, 0.08), rgba(255, 255, 255, 0.015)),
+        rgba(22, 30, 40, 0.58);
+}
+
+.maintenance-panel__copy {
+    display: grid;
+    gap: 5px;
+}
+
+.maintenance-panel__copy strong {
+    font-size: 15px;
+}
+
+.maintenance-panel__copy p {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: 1.45;
+    font-size: 13px;
+}
+
+.maintenance-panel__label {
+    color: #f0b4b4;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.maintenance-panel__actions .button {
+    flex: 1 1 150px;
+}
+
 #settingsBackdrop .library-toggle {
     min-height: 56px;
     padding: 11px 12px;
@@ -3350,6 +3399,17 @@ body.theme-light .send-button:hover:not(:disabled) {
     box-shadow: 0 18px 42px rgba(124, 92, 255, 0.34);
 }
 
+body.theme-light .button--danger {
+    border-color: rgba(217, 79, 99, 0.24);
+    background: rgba(217, 79, 99, 0.08);
+    color: #be123c;
+}
+
+body.theme-light .button--danger:hover {
+    border-color: rgba(217, 79, 99, 0.36);
+    background: rgba(217, 79, 99, 0.12);
+}
+
 body.theme-light .topbar__actions .button--ghost,
 body.theme-light .rag-status-button {
     background: rgba(255, 255, 255, 0.52);
@@ -3587,6 +3647,7 @@ body.theme-light .model-card,
 body.theme-light .download-card,
 body.theme-light .info-card,
 body.theme-light #settingsBackdrop .info-card,
+body.theme-light .maintenance-panel,
 body.theme-light .library-toggle,
 body.theme-light .rag-file-list__item,
 body.theme-light .tool-history__item,
@@ -3599,6 +3660,17 @@ body.theme-light .tool-dock__item {
 body.theme-light #settingsBackdrop .settings-group__header::before {
     background: linear-gradient(145deg, #7C5CFF, #9F7CFF);
     box-shadow: 0 12px 24px rgba(124, 92, 255, 0.22);
+}
+
+body.theme-light .maintenance-panel {
+    border-color: rgba(217, 79, 99, 0.12);
+    background:
+        linear-gradient(135deg, rgba(217, 79, 99, 0.055), rgba(255, 255, 255, 0.48)),
+        rgba(255, 255, 255, 0.58);
+}
+
+body.theme-light .maintenance-panel__label {
+    color: #be123c;
 }
 
 body.theme-light .library-toggle:hover,

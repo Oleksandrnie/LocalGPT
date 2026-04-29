@@ -9,13 +9,15 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi import Request
 
-from .. import chat_tasks, config
+from .. import chat_tasks, config, db
 from ..roles import DEFAULT_ROLE, list_roles
+from ..schemas import DatabaseCleanupRequest, DatabaseResetRequest
 from .. import transcribe_tasks
 from ..services import tts_service
+from backend.apps.rag import service as rag_service
 
 router = APIRouter()
 _USER_ID = os.getuid() if hasattr(os, "getuid") else 0
@@ -230,3 +232,30 @@ def shutdown_runtime():
     worker = threading.Thread(target=_shutdown_worker, daemon=True)
     worker.start()
     return {"status": "accepted", "message": "Shutdown started"}
+
+
+@router.post("/database/cleanup")
+def cleanup_database(req: DatabaseCleanupRequest):
+    return db.cleanup_database_garbage(vacuum=req.vacuum)
+
+
+@router.post("/database/reset")
+def reset_database(req: DatabaseResetRequest):
+    if req.confirm != "RESET_DATABASE":
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "database_reset_confirmation_required", "message": "Подтвердите полную очистку БД."},
+        )
+
+    chat_tasks.cancel_all_tasks()
+    transcribe_tasks.cancel_all_tasks()
+    tts_service.cancel_all_tasks()
+
+    for profile in db.list_profiles(include_inactive=True):
+        profile_id = profile.get("id")
+        if profile_id is not None:
+            rag_service.delete_profile_source_dir(int(profile_id))
+
+    result = db.reset_database(vacuum=req.vacuum)
+    rag_service.ensure_profile_source_dir(int(result["default_profile_id"]))
+    return result

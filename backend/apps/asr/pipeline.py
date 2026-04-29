@@ -124,8 +124,8 @@ def _stage_enabled(stage: str, action: str, preset: str, pipeline: dict[str, Any
 
 def _stage_settings(settings: dict[str, Any], stage: str) -> dict[str, Any]:
     stage_cfg = ((settings.get("pipeline") or {}).get(stage) or {}).copy()
-    model = stage_cfg.get("model") or config.SETTINGS.model
     fallback_model = settings.get("_fallback_model")
+    model = stage_cfg.get("model") or fallback_model or config.SETTINGS.model
     if fallback_model and fallback_model != model:
         try:
             if not model_service.is_model_installed(model) and model_service.is_model_installed(fallback_model):

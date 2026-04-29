@@ -56,6 +56,9 @@
   - `PATCH /profiles/{profile_id}/preferences` updates runtime preferences such as ASR/TTS/chat settings
 - `app/routes/storage.py`
 - `app/routes/criteria.py`
+- `app/routes/meta.py`
+  - `POST /database/cleanup` removes orphaned chat-derived SQLite rows and can run `VACUUM`
+  - `POST /database/reset` fully clears profile-owned DB data, deletes profile RAG folders and recreates `Default`
 
 Это transitional layout:
 - runtime уже может стартовать через `backend.server:app`;
@@ -66,7 +69,11 @@
 
 - Runtime не зависит от `compare-branch/`.
 - Все модели и кэши должны лежать внутри `/models`.
+- Bootstrap backend/launcher не выбирает fallback LLM и не запускает `ollama pull`; приложение должно стартовать без chat-модели.
+- `LOCAL_MODEL` может быть пустым. Chat API в этом случае возвращает `chat_model_not_selected` до создания session.
+- Если модель выбрана, но не установлена локально, Chat API возвращает `chat_model_missing`; загрузка возможна только через явный `/models/pull`.
 - SQLite и runtime-артефакты не коммитятся.
+- DB maintenance не удаляет локальные model artifacts: cleanup/reset работают только с SQLite и профильными RAG-папками.
 - RAG-файлы профилей не коммитятся; в git остаётся только `rag_sources/README.md` и `.gitkeep`.
 - OCR v1 ограничен изображениями, PDF OCR не входит в текущую итерацию.
 - Chat prompt всегда получает общий guardrail: не использовать LaTeX/MathML/markdown-формулы для расчётов и не писать запятые как разделитель тысяч в ценах.
@@ -79,4 +86,6 @@
 - Sidebar state хранится в `localStorage.sidebar_open` и переключается через UI trigger или `Cmd+B` / `Ctrl+B`.
 - RAG state button в topbar должен отражать `rag_enabled` активного профиля, а не быть декоративным индикатором.
 - Все системные уведомления должны идти через toast под topbar, не через нижнюю input area.
+- Если нет локальной chat-модели, composer input остаётся активным, но send disabled; попытка отправки показывает toast и не создаёт backend LLM request.
+- Запуск загрузки LLM-модели требует явного подтверждения пользователя.
 - Видимые select-контролы должны использовать кастомный `AppSelect`; native `<select>` допустим только как скрытый backing-state.

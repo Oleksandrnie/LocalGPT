@@ -80,6 +80,136 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 424)
         self.assertEqual(ctx.exception.detail["code"], "chat_model_missing")
 
+    def test_chat_task_without_model_is_rejected_before_session_created(self):
+        req = ChatRequest(query="hello", profile_id=self.profile_id)
+
+        with self.assertRaises(HTTPException) as ctx:
+            start_chat_task(req)
+
+        self.assertEqual(ctx.exception.status_code, 424)
+        self.assertEqual(ctx.exception.detail["code"], "chat_model_not_selected")
+        self.assertEqual(db.list_sessions(self.profile_id), [])
+
+    def test_database_cleanup_removes_orphans_but_keeps_asr_history_and_manual_rag(self):
+        session = db.create_session(self.profile_id, "Cleanup test", "qwen2.5:3b")
+        chat_transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            session_id=session["id"],
+            name="Chat transcript",
+            content="chat audio context",
+        )
+        db.create_pipeline_run(
+            transcript_id=int(chat_transcript["id"]),
+            profile_id=self.profile_id,
+            session_id=session["id"],
+            preset="balanced",
+            action="full",
+            raw_transcript="chat audio context",
+            cleaned_transcript="chat audio context",
+            segments=[],
+            speaker_mapping=[],
+            speaker_overrides={},
+            structured_json=None,
+            summary=None,
+            stage_timings={},
+            warnings=[],
+            used_settings={},
+        )
+        orphan_doc = db.create_source_document(
+            profile_id=self.profile_id,
+            session_id=session["id"],
+            source_type="asr_transcript",
+            source_id="chat-audio",
+            title="Chat audio",
+            content="context",
+            metadata={},
+        )
+        orphan_chunk = db.create_document_chunk(
+            document_id=int(orphan_doc["id"]),
+            profile_id=self.profile_id,
+            session_id=session["id"],
+            chunk_index=0,
+            content="context",
+            metadata={},
+        )
+        db.create_document_embedding(
+            chunk_id=orphan_chunk,
+            profile_id=self.profile_id,
+            embedding_model="local-hash-v1",
+            embedding=[0.1, 0.2],
+            metadata={},
+        )
+        db.create_session_summary(
+            profile_id=self.profile_id,
+            session_id=None,
+            source_type="chat",
+            source_id="old-chat",
+            summary="orphan summary",
+            structured_json=None,
+        )
+        asr_transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="ASR Studio transcript",
+            content="standalone ASR history",
+            labels={"origin": "asr_tool"},
+        )
+        db.create_session_summary(
+            profile_id=self.profile_id,
+            session_id=None,
+            source_type="asr",
+            source_id=str(asr_transcript["id"]),
+            summary="ASR summary",
+            structured_json=None,
+        )
+        manual_doc = db.create_source_document(
+            profile_id=self.profile_id,
+            session_id=None,
+            source_type="manual_file",
+            source_id="manual.md",
+            title="manual.md",
+            content=None,
+            metadata={},
+        )
+
+        db.delete_session(session["id"])
+        result = db.cleanup_database_garbage(vacuum=False)
+
+        self.assertGreaterEqual(result["deleted"]["transcripts"], 1)
+        self.assertGreaterEqual(result["deleted"]["transcript_pipeline_runs"], 1)
+        self.assertGreaterEqual(result["deleted"]["session_summaries"], 1)
+        self.assertGreaterEqual(result["deleted"]["source_documents"], 1)
+        self.assertGreaterEqual(result["deleted"]["document_chunks"], 1)
+        self.assertGreaterEqual(result["deleted"]["document_embeddings"], 1)
+        self.assertIsNone(db.get_transcript(chat_transcript["id"]))
+        self.assertIsNotNone(db.get_transcript(asr_transcript["id"]))
+        documents = db.list_source_documents(self.profile_id)
+        self.assertTrue(any(item["id"] == manual_doc["id"] for item in documents))
+        self.assertFalse(any(item["id"] == orphan_doc["id"] for item in documents))
+
+    def test_database_reset_recreates_default_profile(self):
+        db.create_profile("Work", None, None)
+        session = db.create_session(self.profile_id, "Reset test", "qwen2.5:3b")
+        db.add_message(session["id"], "user", "hello")
+        db.create_transcript(profile_id=self.profile_id, session_id=session["id"], name="Transcript", content="text")
+        db.create_source_document(
+            profile_id=self.profile_id,
+            session_id=None,
+            source_type="manual_file",
+            source_id="manual.md",
+            title="manual.md",
+            content=None,
+            metadata={},
+        )
+
+        result = db.reset_database(vacuum=False)
+        profiles = db.list_profiles()
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0]["name"], "Default")
+        self.assertEqual(result["default_profile_id"], profiles[0]["id"])
+        self.assertEqual(db.list_sessions(profiles[0]["id"]), [])
+        self.assertEqual(db.rag_stats()["documents"], 0)
+
     def test_prompt_uses_summary_memory_before_short_history(self):
         session = db.create_session(self.profile_id, "Memory test", "qwen2.5:3b")
         for idx in range(4):

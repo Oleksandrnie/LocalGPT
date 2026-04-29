@@ -149,6 +149,15 @@ class StorageUpdateRequest(BaseModel):
     move_existing: bool = False
 
 
+class DatabaseCleanupRequest(BaseModel):
+    vacuum: bool = True
+
+
+class DatabaseResetRequest(BaseModel):
+    confirm: str
+    vacuum: bool = True
+
+
 class TranscriptPipelineRequest(BaseModel):
     preset: str | None = None
     action: str | None = None

@@ -1408,3 +1408,126 @@ def rag_stats(profile_id: int | None = None) -> dict[str, Any]:
         "chunks": int(chunk_count or 0),
         "embeddings": int(embedding_count or 0),
     }
+
+
+_MAINTENANCE_TABLES = (
+    "transcripts",
+    "transcript_pipeline_runs",
+    "session_summaries",
+    "source_documents",
+    "document_chunks",
+    "document_embeddings",
+)
+
+_RESET_TABLES = (
+    "profiles",
+    "chat_sessions",
+    "chat_messages",
+    "transcripts",
+    "transcript_pipeline_runs",
+    "session_summaries",
+    "source_documents",
+    "document_chunks",
+    "document_embeddings",
+    "model_settings",
+)
+
+
+def _table_counts(conn: sqlite3.Connection, tables: Iterable[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in tables:
+        row = conn.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()
+        counts[table] = int(row["count"] if row else 0)
+    return counts
+
+
+def _vacuum_database() -> None:
+    with closing(_connect()) as conn:
+        conn.execute("VACUUM")
+
+
+def cleanup_database_garbage(*, vacuum: bool = True) -> dict[str, Any]:
+    with closing(_connect()) as conn:
+        before = _table_counts(conn, _MAINTENANCE_TABLES)
+
+        transcript_rows = conn.execute(
+            """
+            SELECT id, labels_json
+            FROM transcripts
+            WHERE session_id IS NULL
+            """
+        ).fetchall()
+        transcript_ids: list[int] = []
+        for row in transcript_rows:
+            labels = _from_json(row["labels_json"], {}) or {}
+            origin = str(labels.get("origin") or "").strip()
+            if origin in {"", "asr_context"}:
+                transcript_ids.append(int(row["id"]))
+
+        if transcript_ids:
+            placeholders = ", ".join("?" for _ in transcript_ids)
+            conn.execute(f"DELETE FROM transcripts WHERE id IN ({placeholders})", transcript_ids)
+
+        conn.execute(
+            """
+            DELETE FROM session_summaries
+            WHERE session_id IS NULL
+              AND (
+                source_type = 'chat'
+                OR (
+                  source_type = 'asr'
+                  AND (
+                    source_id IS NULL
+                    OR NOT EXISTS (
+                      SELECT 1
+                      FROM transcripts
+                      WHERE transcripts.id = CAST(session_summaries.source_id AS INTEGER)
+                    )
+                  )
+                )
+              )
+            """
+        )
+        conn.execute(
+            """
+            DELETE FROM source_documents
+            WHERE session_id IS NULL
+              AND source_type != 'manual_file'
+            """
+        )
+
+        conn.commit()
+        after = _table_counts(conn, _MAINTENANCE_TABLES)
+
+    if vacuum:
+        _vacuum_database()
+
+    return {
+        "status": "ok",
+        "vacuum": bool(vacuum),
+        "deleted": {table: max(0, before[table] - after[table]) for table in _MAINTENANCE_TABLES},
+        "remaining": after,
+    }
+
+
+def reset_database(*, vacuum: bool = True) -> dict[str, Any]:
+    with closing(_connect()) as conn:
+        before = _table_counts(conn, _RESET_TABLES)
+        conn.execute("DELETE FROM profiles")
+        conn.commit()
+
+    default_profile_id = ensure_default_profile()
+
+    if vacuum:
+        _vacuum_database()
+
+    with closing(_connect()) as conn:
+        after = _table_counts(conn, _RESET_TABLES)
+
+    return {
+        "status": "ok",
+        "vacuum": bool(vacuum),
+        "default_profile_id": default_profile_id,
+        "deleted": {table: max(0, before[table] - after[table]) for table in _RESET_TABLES},
+        "remaining": after,
+    }
