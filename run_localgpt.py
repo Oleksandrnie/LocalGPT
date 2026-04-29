@@ -1,35 +1,28 @@
 #!/usr/bin/env python3
-"""
-Cross-platform launcher for LocalGPT (macOS / Linux / Windows).
+"""Cross-platform launcher for LocalGPT (macOS / Linux / Windows)."""
 
-- Ensures venv exists and installs dependencies
-- Ensures Ollama is running
-- Reads `.env`, verifies LOCAL_MODEL via `ollama show` and prepares it if missing
-- Starts FastAPI backend via uvicorn
-- Opens web UI in browser
-"""
-
+import argparse
 import hashlib
 import os
 import sys
 import time
 import socket
 import subprocess
+import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable
 
 
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / "venv"
 REQUIREMENTS = ROOT / "app" / "requirements.txt"
 DEPS_MARKER = VENV_DIR / ".deps_installed"
-UI_URL = "http://127.0.0.1:8000/"
 OLLAMA_HEALTH_URL = "http://127.0.0.1:11434/v1/models"
 OLLAMA_LOG_FILE = ROOT / "ollama.log"
 ENV_FILE = ROOT / ".env"
-DEFAULT_MODEL = "qwen2.5:7b-instruct"
+MODELS_BASE = ROOT / "models"
 
 
 def run(cmd, **kwargs):
@@ -66,61 +59,43 @@ def read_env(path: Path) -> Dict[str, str]:
     return env
 
 
-def update_env_variable(path: Path, key: str, value: str) -> None:
-    """Update or append the given key in the .env file."""
-
-    lines: Iterable[str]
-    if path.exists():
-        lines = path.read_text(encoding="utf-8").splitlines()
-    else:
-        lines = []
-
-    updated = False
-    new_lines = []
-    for raw_line in lines:
-        if raw_line.lstrip().startswith("#") or "=" not in raw_line:
-            new_lines.append(raw_line)
-            continue
-        current_key, _ = raw_line.split("=", 1)
-        if current_key.strip() == key:
-            new_lines.append(f"{key}={value}")
-            updated = True
-        else:
-            new_lines.append(raw_line)
-
-    if not updated:
-        new_lines.append(f"{key}={value}")
-
-    path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+ENV_VARS = read_env(ENV_FILE)
 
 
-def modelfile_for(model_name: str) -> Optional[Path]:
-    """Return Modelfile path for the given model if it exists."""
+def resolve_env_path(raw: str | Path | None, fallback: Path) -> Path:
+    if not raw:
+        return fallback.expanduser().resolve()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    return path.resolve()
 
-    sanitized = model_name.replace(":", "-")
-    candidate = ROOT / "ollama_models" / sanitized / "Modelfile"
-    if candidate.exists():
-        return candidate
-    return None
 
+MODELS_DIR = resolve_env_path(ENV_VARS.get("MODELS_DIR"), MODELS_BASE)
+OLLAMA_MODELS_DIR = resolve_env_path(ENV_VARS.get("OLLAMA_MODELS_DIR"), MODELS_DIR / "ollama")
+WHISPER_DIR = resolve_env_path(ENV_VARS.get("WHISPER_MODELS_DIR"), MODELS_DIR / "whisper")
+WHISPER_CPP_DIR = resolve_env_path(ENV_VARS.get("WHISPER_CPP_MODELS_DIR"), MODELS_DIR / "whisper_cpp")
+HF_CACHE_DIR = resolve_env_path(ENV_VARS.get("HF_CACHE_DIR"), MODELS_DIR / "hf_cache")
+CT2_CACHE_DIR = resolve_env_path(ENV_VARS.get("CTRANSLATE2_CACHE_DIR"), MODELS_DIR / "ctranslate2_cache")
 
-def ollama_show(model_name: str) -> bool:
-    """Return True if `ollama show <model_name>` succeeds."""
+for path in (MODELS_DIR, OLLAMA_MODELS_DIR, WHISPER_DIR, WHISPER_CPP_DIR, HF_CACHE_DIR, CT2_CACHE_DIR):
+    path.mkdir(parents=True, exist_ok=True)
 
-    try:
-        subprocess.run(
-            ["ollama", "show", model_name],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        append_ollama_log(f"'ollama show {model_name}' succeeded.")
-        return True
-    except subprocess.CalledProcessError as exc:
-        append_ollama_log(
-            f"'ollama show {model_name}' failed with code {exc.returncode}: {exc.stderr.strip() if exc.stderr else 'no stderr'}"
-        )
-        return False
+os.environ.update(
+    {
+        "MODELS_DIR": str(MODELS_DIR),
+        "OLLAMA_MODELS": str(OLLAMA_MODELS_DIR),
+        "OLLAMA_MODELS_DIR": str(OLLAMA_MODELS_DIR),
+        "WHISPER_MODELS_DIR": str(WHISPER_DIR),
+        "WHISPER_CPP_MODELS_DIR": str(WHISPER_CPP_DIR),
+        "HF_HOME": str(HF_CACHE_DIR),
+        "HUGGINGFACE_HUB_CACHE": str(HF_CACHE_DIR),
+        "HF_CACHE_DIR": str(HF_CACHE_DIR),
+        "CTRANSLATE2_CACHE_DIR": str(CT2_CACHE_DIR),
+        "CT2_TRANSLATORS_CACHE": str(CT2_CACHE_DIR),
+    }
+)
+OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(OLLAMA_MODELS_DIR)}
 
 
 def ollama_list() -> Iterable[str]:
@@ -132,16 +107,20 @@ def ollama_list() -> Iterable[str]:
             capture_output=True,
             text=True,
             check=True,
+            env=OLLAMA_ENV,
         )
     except Exception as exc:
         append_ollama_log(f"'ollama list' failed: {exc}")
         return []
 
     models = []
-    for line in result.stdout.splitlines():
+    for idx, line in enumerate(result.stdout.splitlines()):
         parts = line.strip().split()
-        if parts:
-            models.append(parts[0])
+        if not parts:
+            continue
+        if idx == 0 and parts[0].lower() in {"name", "model"}:
+            continue  # skip header line
+        models.append(parts[0])
 
     with open(OLLAMA_LOG_FILE, "a", encoding="utf-8") as log_file:
         if result.stdout:
@@ -154,24 +133,6 @@ def ollama_list() -> Iterable[str]:
                 log_file.write("\n")
 
     return models
-
-
-def create_from_modelfile(model_name: str, modelfile: Path) -> bool:
-    """Run `ollama create` for the provided Modelfile."""
-
-    print(f"[*] Creating model {model_name} from {modelfile} ...")
-    append_ollama_log(
-        f"Creating model {model_name} from {modelfile}", leading_newline=True
-    )
-    try:
-        run(["ollama", "create", model_name, "-f", str(modelfile)])
-        return True
-    except subprocess.CalledProcessError as exc:
-        print(f"[!] Failed to create model {model_name}: {exc}")
-        append_ollama_log(
-            f"'ollama create {model_name}' failed with code {exc.returncode}"
-        )
-        return False
 
 
 def check_port(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -274,6 +235,7 @@ def ensure_ollama_running() -> None:
         stdout=serve_log,
         stderr=subprocess.STDOUT,
         cwd=str(ROOT),
+        env=OLLAMA_ENV,
     )
     serve_log.close()
 
@@ -292,146 +254,133 @@ def ensure_ollama_running() -> None:
     sys.exit(1)
 
 
-def ensure_model() -> str:
-    """Ensure the model specified in .env is available in Ollama."""
+def report_chat_models() -> None:
+    """Report local Ollama models without pulling, creating, or selecting one."""
 
     env_values = read_env(ENV_FILE)
     configured_model = env_values.get("LOCAL_MODEL", "").strip()
 
-    if not configured_model:
-        print(
-            f"[i] LOCAL_MODEL is not set in {ENV_FILE.name}. Using default {DEFAULT_MODEL}."
-        )
-        configured_model = DEFAULT_MODEL
-
-    print(f"[*] Ensuring model '{configured_model}' is available ...")
+    print("[*] Checking local Ollama models ...")
     append_ollama_log(
-        f"Ensuring model '{configured_model}' is available.", leading_newline=True
+        "Checking local Ollama models only; startup will not pull or select a fallback model.",
+        leading_newline=True,
     )
-
-    if ollama_show(configured_model):
-        print(f"[i] Model '{configured_model}' is ready.")
-        return configured_model
-
-    modelfile = modelfile_for(configured_model)
-    if modelfile and create_from_modelfile(configured_model, modelfile):
-        if ollama_show(configured_model):
-            print(
-                f"[i] Model '{configured_model}' was created from Modelfile and is ready."
-            )
-            return configured_model
-        print(
-            f"[!] Model '{configured_model}' was created from Modelfile but still not accessible."
-        )
-
-    print(
-        f"[!] Model '{configured_model}' is not available and cannot be prepared automatically."
-    )
-
     available_models = list(ollama_list())
+
     if available_models:
         print("[i] Available models:", ", ".join(available_models))
+    else:
+        print("[i] No available Ollama models found. The app will start without an LLM model.")
 
-    fallback_model: Optional[str] = None
+    if configured_model:
+        if configured_model in available_models:
+            print(f"[i] Configured LOCAL_MODEL is available: {configured_model}")
+        else:
+            print(
+                f"[i] Configured LOCAL_MODEL '{configured_model}' is not available. "
+                "Open the UI settings to download it or choose another local model."
+            )
+        return
 
-    if configured_model != DEFAULT_MODEL:
-        print(f"[*] Trying to prepare default model '{DEFAULT_MODEL}' ...")
-        if DEFAULT_MODEL not in available_models:
-            append_ollama_log(f"Pulling fallback model '{DEFAULT_MODEL}' ...")
-            try:
-                run(["ollama", "pull", DEFAULT_MODEL])
-            except subprocess.CalledProcessError as exc:
-                print(f"[!] Failed to pull fallback model '{DEFAULT_MODEL}': {exc}")
-                append_ollama_log(
-                    f"Pulling fallback model '{DEFAULT_MODEL}' failed with code {exc.returncode}"
-                )
-            else:
-                available_models.append(DEFAULT_MODEL)
-
-        if ollama_show(DEFAULT_MODEL):
-            fallback_model = DEFAULT_MODEL
-
-    if fallback_model is None:
-        for candidate in available_models:
-            if candidate == configured_model:
-                continue
-            if ollama_show(candidate):
-                fallback_model = candidate
-                break
-
-    if fallback_model:
-        update_env_variable(ENV_FILE, "LOCAL_MODEL", fallback_model)
-        print(
-            f"[i] Updated {ENV_FILE.name}: LOCAL_MODEL={fallback_model}. "
-            "Restart LocalGPT if it is already running."
-        )
-        append_ollama_log(
-            f"LOCAL_MODEL switched to '{fallback_model}' due to missing '{configured_model}'."
-        )
-        return fallback_model
-
-    print(
-        "[!] No usable Ollama models found. Install or pull a model manually and rerun this script."
-    )
-    append_ollama_log(
-        "Failed to locate a usable model after checking .env and available models."
-    )
-    sys.exit(1)
+    print("[i] LOCAL_MODEL is not set. Choose or download a model in the UI when you need chat generation.")
 
 
-def open_browser() -> None:
-    """Try to open the UI URL in a browser."""
-    print(f"[*] Opening UI in browser: {UI_URL}")
-    try:
-        webbrowser.open(UI_URL)
-    except Exception as e:
-        print(f"[!] Could not open browser automatically: {e}")
-        print(f"[i] Please open {UI_URL} manually.")
+def build_ui_url(host: str, port: int) -> str:
+    return f"http://{host}:{port}/ui/gui_html.html"
 
 
-def start_backend(python: str) -> None:
-    """Start uvicorn backend if port 8000 is free."""
-    if check_port("127.0.0.1", 8000):
-        print("[!] Port 8000 is already in use. Not starting backend.")
+def open_browser_delayed(ui_url: str, delay_seconds: float = 1.0) -> None:
+    """Try to open the UI URL in a browser after a short delay."""
+
+    def _open() -> None:
+        time.sleep(delay_seconds)
+        print(f"[*] Opening UI in browser: {ui_url}")
+        try:
+            webbrowser.open(ui_url)
+        except Exception as exc:
+            print(f"[!] Could not open browser automatically: {exc}")
+            print(f"[i] Please open {ui_url} manually.")
+
+    thread = threading.Thread(target=_open, daemon=True)
+    thread.start()
+
+
+def build_backend_cmd(python: str, host: str, port: int, reload_enabled: bool) -> list[str]:
+    cmd = [
+        python,
+        "-m",
+        "uvicorn",
+        "backend.server:app",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--log-level",
+        "info",
+    ]
+    if reload_enabled:
+        cmd.append("--reload")
+    return cmd
+
+
+def start_backend(python: str, *, host: str, port: int, reload_enabled: bool, exec_mode: bool = False) -> None:
+    """Start uvicorn backend."""
+    if check_port(host, port):
+        print(f"[!] Port {port} on {host} is already in use. Not starting backend.")
         print("[i] If this is an old uvicorn, stop it and rerun this script.")
         return
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
-    print("[*] Starting FastAPI backend (uvicorn app.server:app) ...")
+    cmd = build_backend_cmd(python, host, port, reload_enabled)
 
-    # Foreground process: when user stops script (Ctrl+C), backend also stops
-    run(
-        [
-            python,
-            "-m",
-            "uvicorn",
-            "app.server:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "8000",
-            "--log-level",
-            "info",
-            "--reload",
-        ],
-        cwd=str(ROOT),
-        env=env,
+    print("[*] Starting FastAPI backend (uvicorn backend.server:app) ...")
+    if exec_mode:
+        printable = " ".join(cmd)
+        print(f">> {printable}")
+        os.chdir(ROOT)
+        os.execvpe(cmd[0], cmd, env)
+
+    run(cmd, cwd=str(ROOT), env=env)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Launch LocalGPT")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--no-browser", action="store_true", help="Do not open the UI in a browser")
+    parser.add_argument("--no-reload", action="store_true", help="Run uvicorn without --reload")
+    parser.add_argument(
+        "--exec-backend",
+        action="store_true",
+        help="Replace the current process with uvicorn after bootstrap",
     )
+    return parser.parse_args()
 
 
 def main() -> None:
+    args = parse_args()
     print(f"[*] Project root: {ROOT}")
+    print(f"[i] Models dir: {MODELS_DIR}")
+    print(f"[i] Ollama models dir: {OLLAMA_MODELS_DIR}")
+    print(f"[i] Whisper models dir: {WHISPER_DIR}")
+    print(f"[i] whisper.cpp models dir: {WHISPER_CPP_DIR}")
     os.chdir(ROOT)
 
     py = ensure_venv()
     install_requirements(py)
     verify_python_multipart(py)
     ensure_ollama_running()
-    active_model = ensure_model()
-    print(f"[i] Active LOCAL_MODEL: {active_model}")
-    open_browser()
-    start_backend(py)
+    report_chat_models()
+    if not args.no_browser:
+        open_browser_delayed(build_ui_url(args.host, args.port))
+    start_backend(
+        py,
+        host=args.host,
+        port=args.port,
+        reload_enabled=not args.no_reload,
+        exec_mode=args.exec_backend,
+    )
 
 
 if __name__ == "__main__":

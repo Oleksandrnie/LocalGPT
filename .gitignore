@@ -36,6 +36,12 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Environment files with local secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
@@ -115,10 +121,16 @@ venv.bak/
 
 # macOS files
 .DS_Store
+.installed
 
 # LocalGPT specific
+models/**
+!models/.gitkeep
+!models/**/.gitkeep
 hf_cache/**
-!hf_cache/**/.gitkeep
+!hf_cache/.gitkeep
+ctranslate2_cache/**
+!ctranslate2_cache/.gitkeep
 .cache/**
 !.cache/**/.gitkeep
 __pycache__/
@@ -126,11 +138,38 @@ __pycache__/
 *.log
 *.tmp
 *.env.backup
-# Ollama models: keep only structure (.gitkeep) and Modelfile; ignore everything else
+# Ollama legacy folders: keep structure, ignore heavy blobs
+ollama/
 ollama_models/**
-!ollama_models/qwen2.5-7b-long/
 !ollama_models/**/.gitkeep
 !ollama_models/**/Modelfile
+app/db/*.db
+app/db/*.sqlite
+app/db/*.sqlite3
+app/db/*.db-journal
+app/db/*.db-shm
+app/db/*.db-wal
+app/db/*.sqlite-journal
+app/db/*.sqlite-shm
+app/db/*.sqlite-wal
+app/db/*.sqlite3-journal
+app/db/*.sqlite3-shm
+app/db/*.sqlite3-wal
+app/db/localgpt.db
+!app/db/.gitkeep
+app/data/transcripts/*.json
+!app/data/transcripts/.gitkeep
+app/data/chat_tasks/*.json
+!app/data/chat_tasks/.gitkeep
+app/data/transcribe_tasks/*.json
+!app/data/transcribe_tasks/.gitkeep
+app/data/tts/history/*.json
+!app/data/tts/history/.gitkeep
+tmp_logs/**
+!tmp_logs/.gitkeep
+rag_sources/**
+!rag_sources/.gitkeep
+!rag_sources/README.md
 *.wav
 *.mp3
 *.m4a
@@ -142,10 +181,6 @@ ollama_models/**
 *.webm
 *.mkv
 *.mov
-
-# Hugging Face cache (полностью исключаем)
-hf_cache/**
-!hf_cache/**/.gitkeep
 
 # Allow committing project structure and instructions
 !INSTRUCTIONS_FOR_GPT.md
@@ -160,7 +195,10 @@ hf_cache/**
 # Keep project structure with .gitkeep files
 !app/.gitkeep
 !web_ui/.gitkeep
-!hf_cache/**/.gitkeep
+!models/.gitkeep
+!models/**/.gitkeep
+!hf_cache/.gitkeep
+!ctranslate2_cache/.gitkeep
 !.cache/**/.gitkeep
 !ollama_models/**/.gitkeep
 !venv/.gitkeep

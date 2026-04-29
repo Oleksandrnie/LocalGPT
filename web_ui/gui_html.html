@@ -1,183 +1,872 @@
-<!-- # Copyright (c) 2025 Oleksandr Niemchenko. All Rights Reserved. -->
 <!doctype html>
 <html lang="ru">
 <head>
     <meta charset="utf-8" />
-    <title>LocalGPT — Web UI</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LocalGPT</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
-    <header class="app-header">
-        <h1>LocalGPT — Web UI</h1>
-        <span class="status" id="healthStatus">проверка сервера…</span>
-        <div class="header-actions">
-            <button class="secondary" id="btnHistory">История</button>
-        </div>
-    </header>
+    <div class="app-shell">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar__header">
+                <div>
+                    <p class="eyebrow">LocalGPT</p>
+                    <h1>Диалоги</h1>
+                </div>
+                <button class="button button--primary" id="newChatButton" type="button">Новый чат</button>
+            </div>
 
-    <main class="split">
-        <lgpt-card title="Запрос" data-card="request">
-            <textarea id="prompt" placeholder="Введите промпт…"></textarea>
-            <div class="muted" id="promptStats">Символы: 0 • Токены≈ 0</div>
-            <div class="field-group mt-sm">
-                <label class="muted" for="llmModelSelect">Модель LLM (Ollama)</label>
-                <div class="model-select-row">
-                    <select id="llmModelSelect" class="input-control"></select>
-                    <button class="secondary" id="btnRefreshModels" type="button">Обновить</button>
-                    <button class="warn" id="btnDeleteModel" type="button">Удалить</button>
-                </div>
-                <div class="status" id="modelStatus">Загружаю список моделей…</div>
-                <div id="modelSuggestions" class="model-suggestions muted"></div>
+            <label class="field" id="profileField">
+                <span class="field__label">Профиль</span>
+                <select id="profileSelect" class="field__control"></select>
+            </label>
+
+            <div class="session-list" id="sessionList"></div>
+            <div class="session-context-menu" id="sessionContextMenu" hidden role="menu"
+                aria-label="Действия с чатом">
+                <button class="session-context-menu__item" id="renameSessionMenuItem" type="button" role="menuitem">
+                    Переименовать чат
+                </button>
             </div>
-            <div class="buttons mt-sm">
-                <button id="btnSend">Отправить</button>
-                <button class="warn" id="btnStop" type="button" hidden>Остановить</button>
-                <button class="secondary" id="btnClearPrompt">Очистить запрос</button>
-            </div>
-            <details class="collapse mt-sm" id="downloadsPanel" open>
-                <summary>Загрузки моделей Ollama</summary>
-                <div class="collapse__content">
-                    <div id="downloadList" class="download-list muted">Активных загрузок нет.</div>
-                </div>
-            </details>
-            <p class="muted">Подсказка: Enter — отправить, Shift+Enter — новая строка.</p>
-            <details class="collapse mt-sm" id="advancedControls">
-                <summary>Транскрибация и дополнительные настройки</summary>
-                <div class="collapse__content">
-                    <div class="row row--gutter">
-                        <div class="field-group">
-                            <label class="muted" for="modelSelect">Модель Whisper</label>
-                            <select id="modelSelect" class="input-control">
-                                <option value="small">small — быстрее, но немного хуже по качеству</option>
-                                <option value="medium" selected>medium — выше качество, но медленнее</option>
-                            </select>
-                        </div>
-                        <div class="field-group">
-                            <label class="muted" for="promptPresetSelect">Промпт для распознавания</label>
-                            <select id="promptPresetSelect" class="input-control">
-                                <option value="none">Без промпта</option>
-                                <option value="ru">Универсальный (русский)</option>
-                                <option value="en">Универсальный (английский)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="row mt-sm">
-                        <input type="file" id="fileInput" accept="audio/*,video/*" />
-                        <button class="secondary" id="btnTranscribe" type="button">Транскрибировать файл</button>
-                    </div>
-                    <div class="status" id="transcribeStatus"></div>
-                    <section class="transcript-manager">
-                        <h4>Работа с транскриптами</h4>
-                        <div class="field-group">
-                            <label class="muted" for="manualTranscriptInput">Вставьте готовый текст транскрипта</label>
-                            <textarea id="manualTranscriptInput" class="input-control"
-                                placeholder="Вставьте или отредактируйте текст транскрипта…"></textarea>
-                            <div class="buttons mt-xs">
-                                <button class="secondary" id="btnUseManualTranscript" type="button">Использовать
-                                    текст</button>
-                                <button class="secondary" id="btnSaveManualTranscript" type="button">Сохранить и
-                                    использовать</button>
+            <div class="tool-dock" id="toolDock" hidden></div>
+        </aside>
+
+        <button class="sidebar-toggle-pill" id="sidebarCollapseButton" type="button" aria-expanded="true"
+            aria-label="Свернуть sidebar">
+            <span aria-hidden="true">‹</span>
+        </button>
+
+        <div class="app-backdrop" id="sidebarBackdrop" hidden></div>
+
+        <main class="chat-shell" id="chatShell">
+            <header class="topbar">
+                <div class="topbar__main">
+                    <button class="icon-button" id="toggleSidebarButton" type="button"
+                        aria-label="Открыть список диалогов">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </button>
+
+                    <div class="topbar__titles">
+                        <div class="topbar__row">
+                            <h2 id="chatTitle">Новый чат</h2>
+                            <span class="status-pill" id="healthStatus">Проверка…</span>
+                            <div class="quick-model-switch quick-model-switch--inline">
+                                <span class="quick-model-switch__label">Модель</span>
+                                <select id="quickModelSelect" class="field__control quick-model-switch__control"
+                                    aria-label="Быстро выбрать модель чата"></select>
                             </div>
                         </div>
-                        <div class="status" id="transcriptStatus"></div>
-                        <div id="transcriptList" class="transcript-list muted">Сохранённых транскриптов пока нет.</div>
-                    </section>
-                    <p class="muted">Загрузите аудио/видео для локальной транскрибации или используйте таблицу
-                        критериев.</p>
-                    <div class="row mt-sm">
-                        <input type="file" id="criteriaFile" accept=".csv,.xlsx,.xls" />
-                        <button class="secondary" id="btnLoadCriteriaFile" type="button">Загрузить таблицу</button>
-                    </div>
-                    <div class="row mt-sm">
-                        <input id="googleSheetInput" type="text" class="input-control"
-                            placeholder="ID или ссылка на Google Sheets" />
-                        <button class="secondary" id="btnLoadCriteriaSheet" type="button">Загрузить из Google
-                            Sheets</button>
-                    </div>
-                    <hr class="collapse-divider" />
-                    <div class="field-group">
-                        <label class="muted" for="hrPrefix">Префикс HR-подсказки</label>
-                        <input id="hrPrefix" type="text" class="input-control" placeholder="Например: Нейро-HR" />
-                        <p class="muted">Заголовок, который добавляется к запросу после транскрибации. Хранится только в
-                            вашем браузере.</p>
-                    </div>
-                    <div class="field-group">
-                        <label class="muted" for="quickCriterionInput">Быстро добавить критерий</label>
-                        <div class="quick-criteria">
-                            <input id="quickCriterionInput" type="text" class="input-control"
-                                placeholder="Например: Необходим опыт продаж от 3 лет" />
-                            <button class="secondary" id="btnQuickAddCriterion" type="button">Добавить</button>
+                        <div class="topbar__meta">
+                            <p class="subtle" id="contextStatus" hidden></p>
+                            <button class="context-clear-button" id="clearContextButton" type="button" hidden>Удалить
+                                context</button>
                         </div>
-                        <p class="muted">Критерий сразу появится в списке ниже и сохранится в рамках сессии.</p>
                     </div>
                 </div>
-            </details>
-            <h3 class="mt-lg">Критерии оценки</h3>
-            <p class="muted">Добавьте критерии вручную или загрузите их из файла/таблицы. Критерии сохраняются в рамках
-                текущей сессии.</p>
-            <div class="buttons mt-sm">
-                <button class="secondary" id="btnClearCriteria" type="button">Очистить критерии</button>
-            </div>
-            <div class="status" id="criteriaStatus"></div>
-            <ol id="criteriaList" class="criteria-list"></ol>
-            <div class="status mt-sm" id="budgetStats">Входные токены: 0 • Резерв на ответ: — • Лимит контекста: —</div>
-            <p class="muted">Эндпоинт: <code>http://127.0.0.1:8000/chat</code></p>
-        </lgpt-card>
 
-        <lgpt-card title="Результаты" data-card="results">
-            <div class="tabs" role="tablist" aria-label="Результаты анализа">
-                <button class="tab is-active" type="button" id="tab-answer" data-tab-target="answer" role="tab"
-                    aria-selected="true" aria-controls="panel-answer">Ответ</button>
-                <button class="tab" type="button" id="tab-timeline" data-tab-target="timeline" role="tab"
-                    aria-selected="false" aria-controls="panel-timeline">Таймлайн</button>
+                <div class="topbar__actions">
+                    <button class="button button--ghost" id="copyLanUrlButton" type="button">LAN URL</button>
+                    <button class="button button--ghost rag-status-button" id="openRagButton" type="button"
+                        aria-pressed="false" aria-label="Открыть RAG, выключен">
+                        <span>RAG</span>
+                        <span class="rag-status-button__dot" aria-hidden="true"></span>
+                    </button>
+                    <button class="button button--ghost theme-toggle-button" id="themeToggleButton" type="button"
+                        aria-pressed="false" aria-label="Включить светлую тему" title="Переключить тему">
+                        <svg class="theme-toggle-button__icon theme-toggle-button__icon--sun" viewBox="0 0 24 24"
+                            aria-hidden="true">
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <path
+                                d="M12 2.75v2.1M12 19.15v2.1M4.85 4.85l1.48 1.48M17.67 17.67l1.48 1.48M2.75 12h2.1M19.15 12h2.1M4.85 19.15l1.48-1.48M17.67 6.33l1.48-1.48">
+                            </path>
+                        </svg>
+                        <svg class="theme-toggle-button__icon theme-toggle-button__icon--moon" viewBox="0 0 24 24"
+                            aria-hidden="true">
+                            <path d="M20.25 14.5A7.8 7.8 0 0 1 9.5 3.75 8.25 8.25 0 1 0 20.25 14.5Z"></path>
+                        </svg>
+                    </button>
+                    <button class="button button--ghost" id="openSettingsButton" type="button">Настройки</button>
+                </div>
+            </header>
+
+            <section class="message-scroll" id="messageScroll">
+                <div class="chat-model-notice" id="chatModelNotice" hidden>
+                    <div>
+                        <strong>Нет загруженных моделей.</strong>
+                        <span>Перейдите в настройки и скачайте модель.</span>
+                    </div>
+                    <button class="button button--primary" id="chatModelNoticeSettingsButton" type="button">Открыть
+                        настройки</button>
+                </div>
+
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-state__card">
+                        <p class="eyebrow">Локальный чат</p>
+                        <h3>Только диалог и ответы</h3>
+                        <p>Выберите существующий чат или начните новый. Фото, аудио и видео можно прикрепить через меню
+                            <code>+</code> возле поля ввода.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="message-list" id="messageList"></div>
+                <button class="scroll-jump" id="scrollTopButton" type="button" hidden
+                    aria-label="К началу чата">↑</button>
+            </section>
+
+            <form class="composer" id="composerForm">
+                <div class="composer__tools">
+                    <div class="composer-menu">
+                        <button class="composer-menu__trigger" id="composerMenuButton" type="button"
+                            aria-haspopup="menu" aria-expanded="false" aria-label="Открыть меню действий">
+                            <span aria-hidden="true">+</span>
+                        </button>
+                        <div class="composer-menu__dropdown" id="composerMenu" hidden>
+                            <button class="composer-menu__item" id="fileMenuItem" type="button">Фото (OCR)</button>
+                            <button class="composer-menu__item" id="transcribeMenuItem"
+                                type="button">Транскрибировать</button>
+                            <button class="composer-menu__item" id="speakMenuItem" type="button">Озвучить</button>
+                        </div>
+                    </div>
+                    <input id="transcribeInput" type="file" accept="audio/*,video/*" hidden />
+                    <input id="ocrImageInput" type="file" accept="image/*" hidden />
+                </div>
+
+                <div class="composer__input-wrap">
+                    <textarea id="promptInput" rows="1" placeholder="Напишите сообщение…"></textarea>
+                    <button class="input-mic-button" id="voiceRecordButton" type="button" aria-label="Записать голос"
+                        title="Записать голос">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                                d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V7a3.75 3.75 0 0 0-7.5 0v4.5A3.75 3.75 0 0 0 12 15.25Zm6.25-3.75a.75.75 0 0 0-1.5 0 4.75 4.75 0 1 1-9.5 0 .75.75 0 0 0-1.5 0 6.26 6.26 0 0 0 5.5 6.21V20H9.5a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-1.75v-2.29a6.26 6.26 0 0 0 5.5-6.21Z">
+                            </path>
+                        </svg>
+                    </button>
+                    <div class="voice-model-menu" id="voiceModelMenu" hidden role="menu"
+                        aria-label="Выбор модели транскрибации"></div>
+                </div>
+
+                <button class="send-button" id="sendButton" type="submit" disabled>Отправить</button>
+            </form>
+
+            <div class="footer-status" id="footerStatus" aria-hidden="true"></div>
+
+            <div class="drop-zone-overlay" id="chatDropOverlay" hidden aria-hidden="true">
+                <div class="drop-zone-overlay__card">
+                    <p class="drop-zone-overlay__eyebrow">Drag & Drop</p>
+                    <h3 class="drop-zone-overlay__title" id="chatDropOverlayTitle">Отпустите файл сюда</h3>
+                    <p class="drop-zone-overlay__meta" id="chatDropOverlayMeta">Файл будет обработан в зависимости от
+                        его типа.</p>
+                </div>
             </div>
-            <div class="tab-panels">
-                <section class="tab-panel is-active" id="panel-answer" data-panel="answer" role="tabpanel"
-                    aria-labelledby="tab-answer">
-                    <textarea id="answer" placeholder="Здесь появится ответ…" readonly></textarea>
-                    <div class="buttons mt-sm">
-                        <button class="secondary" id="btnCopy">Скопировать ответ</button>
-                        <button class="secondary" id="btnClearAnswer">Очистить ответ</button>
+        </main>
+    </div>
+
+    <section class="tool-window" id="asrToolWindow" hidden>
+        <header class="tool-window__header" data-tool-drag="asr">
+            <div>
+                <p class="eyebrow">ASR</p>
+                <h3>ASR Studio</h3>
+            </div>
+            <div class="tool-window__actions">
+                <button class="tool-window__icon" id="asrToolMinimizeButton" type="button" title="Свернуть">_</button>
+                <button class="tool-window__icon" id="asrToolFullscreenButton" type="button"
+                    title="На весь экран">□</button>
+                <button class="tool-window__icon tool-window__icon--danger" id="asrToolCloseButton" type="button"
+                    title="Закрыть">✕</button>
+            </div>
+        </header>
+        <div class="tool-window__body tool-window__body--asr">
+            <div class="asr-workflow" id="asrToolWorkflow" aria-label="Статус ASR Studio">
+                <div class="asr-workflow__step" data-asr-workflow-step="upload">
+                    <span class="asr-workflow__index">1</span>
+                    <span>
+                        <strong>Загрузка</strong>
+                        <small>Выберите файл</small>
+                    </span>
+                </div>
+                <div class="asr-workflow__step" data-asr-workflow-step="transcribe">
+                    <span class="asr-workflow__index">2</span>
+                    <span>
+                        <strong>Транскрибация</strong>
+                        <small>Ожидает файл</small>
+                    </span>
+                </div>
+                <div class="asr-workflow__step" data-asr-workflow-step="analysis">
+                    <span class="asr-workflow__index">3</span>
+                    <span>
+                        <strong>Анализ</strong>
+                        <small>Выберите действие</small>
+                    </span>
+                </div>
+                <div class="asr-workflow__step" data-asr-workflow-step="export">
+                    <span class="asr-workflow__index">4</span>
+                    <span>
+                        <strong>Экспорт</strong>
+                        <small>Сохраните результат</small>
+                    </span>
+                </div>
+            </div>
+
+            <div class="tool-panel asr-studio-main">
+                <div class="tool-toolbar asr-studio-toolbar">
+                    <label class="field">
+                        <span class="field__label">ASR модель</span>
+                        <select id="asrToolModelSelect" class="field__control"></select>
+                    </label>
+                    <div class="button-row">
+                        <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
+                            файл</button>
+                        <button class="button button--ghost" id="asrToolPipelineSettingsButton"
+                            type="button">Настройки анализа</button>
+                        <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
+                            список</button>
+                    </div>
+                    <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
+                </div>
+
+                <div class="asr-file-card" id="asrToolFileCard" role="button" tabindex="0">
+                    <span class="asr-file-card__play" aria-hidden="true">▶</span>
+                    <span class="asr-file-card__body">
+                        <strong id="asrToolFileTitle">Файл не выбран</strong>
+                        <small id="asrToolFileMeta">Загрузите аудио или видео для транскрибации</small>
+                    </span>
+                    <span class="asr-file-card__actions">
+                        <button class="asr-file-card__action" id="asrToolRetranscribeButton"
+                            type="button">Пересоздать</button>
+                    </span>
+                </div>
+
+                <div class="asr-tabs" role="tablist" aria-label="Разделы ASR Studio">
+                    <button class="asr-tab asr-tab--active" type="button" data-asr-tab="text">Текст</button>
+                    <button class="asr-tab" type="button" data-asr-tab="summary">Саммари</button>
+                    <button class="asr-tab" type="button" data-asr-tab="tasks">Задачи</button>
+                    <button class="asr-tab" type="button" data-asr-tab="roles">Роли</button>
+                </div>
+
+                <div class="asr-content-grid">
+                    <div class="asr-tab-stack">
+                        <section class="asr-tab-panel asr-tab-panel--active" data-asr-tab-panel="text">
+                            <div class="asr-tab-toolbar">
+                                <label class="asr-search">
+                                    <span aria-hidden="true">⌕</span>
+                                    <input id="asrToolSearchInput" type="search" placeholder="Поиск в тексте" />
+                                </label>
+                                <button class="button button--ghost" id="asrToolDownloadButton" type="button">Скачать
+                                    .txt</button>
+                                <button class="button button--ghost" id="asrToolCopyButton"
+                                    type="button">Копировать</button>
+                            </div>
+                            <textarea id="asrToolOutput" class="tool-textarea asr-transcript-textarea"
+                                placeholder="Результат транскрибации появится здесь..."></textarea>
+                        </section>
+
+                        <section class="asr-tab-panel" data-asr-tab-panel="summary">
+                            <div class="pipeline-output" id="asrToolPipelinePanel" hidden>
+                                <div class="pipeline-output__header">
+                                    <strong>Результат обработки</strong>
+                                    <span id="asrToolPipelineMeta"></span>
+                                </div>
+                                <div class="pipeline-steps" id="asrToolPipelineSteps" aria-label="Статусы обработки">
+                                </div>
+                                <pre id="asrToolPipelineOutput"></pre>
+                            </div>
+                        </section>
+
+                        <section class="asr-tab-panel" data-asr-tab-panel="tasks">
+                            <pre class="asr-tasks-output" id="asrToolTasksOutput">Задачи появятся после анализа транскрипта.</pre>
+                        </section>
+
+                        <section class="asr-tab-panel" data-asr-tab-panel="roles">
+                            <section class="speaker-editor-panel" id="asrToolSpeakerPanel" hidden>
+                                <div class="speaker-editor-panel__head">
+                                    <strong>Роли участников</strong>
+                                    <span>Можно вручную указать, кто говорит в каждом сегменте</span>
+                                </div>
+                                <div class="speaker-editor__columns" aria-hidden="true">
+                                    <span>Сегмент</span>
+                                    <span>Говорящий</span>
+                                    <span>Текст</span>
+                                </div>
+                                <div class="speaker-editor" id="asrToolSpeakerEditor"></div>
+                                <div class="button-row">
+                                    <button class="button button--ghost" id="asrToolSaveSpeakersButton"
+                                        type="button">Сохранить роли</button>
+                                    <button class="button button--ghost" id="asrToolRegenerateSummaryButton"
+                                        type="button">Пересобрать саммари</button>
+                                </div>
+                            </section>
+                        </section>
+                    </div>
+
+                    <aside class="asr-next-panel">
+                        <h4>Что дальше?</h4>
+                        <p class="subtle">Выберите действие для анализа транскрипции</p>
+                        <button class="asr-next-action" id="asrToolSummaryButton" type="button" data-asr-open-tab="summary">
+                            <span class="asr-next-action__icon">☷</span>
+                            <span><strong>Саммари</strong><small>Получить краткое резюме разговора</small></span>
+                        </button>
+                        <button class="asr-next-action" id="asrToolTasksButton" type="button" data-asr-open-tab="tasks">
+                            <span class="asr-next-action__icon asr-next-action__icon--success">✓</span>
+                            <span><strong>Разобрать по задачам</strong><small>Выделить задачи и договорённости</small></span>
+                        </button>
+                        <button class="asr-next-action" id="asrToolRolesButton" type="button" data-asr-open-tab="roles">
+                            <span class="asr-next-action__icon asr-next-action__icon--blue">♙</span>
+                            <span><strong>Определить роли</strong><small>Кто говорил и о чём</small></span>
+                        </button>
+                        <button class="asr-next-action" id="asrToolFullAnalysisButton" type="button"
+                            data-asr-open-tab="summary">
+                            <span class="asr-next-action__icon">✧</span>
+                            <span><strong>Полный анализ</strong><small>Саммари + задачи + роли</small></span>
+                        </button>
+                    </aside>
+                </div>
+
+                <div class="asr-bottom-bar">
+                    <p class="inline-status" id="asrToolStatus">Выберите аудио или видео для транскрибации.</p>
+                    <p class="subtle" id="asrToolMeta">История ASR Studio хранится отдельно от быстрой диктовки.</p>
+                    <div class="button-row">
+                        <button class="button button--ghost" id="asrToolCleanButton" type="button">Очистить</button>
+                        <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить
+                            правки</button>
+                        <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как
+                            контекст</button>
+                        <button class="button button--ghost" id="asrToolSendButton" type="button">Отправить в
+                            чат</button>
+                        <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить
+                            редактор</button>
+                        <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить
+                            запись</button>
+                        <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить
+                            историю</button>
+                        <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в
+                            промпт</button>
+                        <button class="button button--primary" id="asrToolOpenAnalysisButton" type="button">Открыть
+                            анализ</button>
+                    </div>
+                </div>
+            </div>
+
+            <aside class="tool-sidebar asr-history-sidebar">
+                <div class="tool-sidebar__head">
+                    <h4>База транскрибаций</h4>
+                    <label class="asr-search">
+                        <span aria-hidden="true">⌕</span>
+                        <input id="asrToolHistorySearchInput" type="search" placeholder="Поиск" />
+                    </label>
+                </div>
+                <div class="tool-history" id="asrToolHistoryList"></div>
+            </aside>
+        </div>
+        <div class="drop-zone-overlay drop-zone-overlay--tool" id="asrToolDropOverlay" hidden aria-hidden="true">
+            <div class="drop-zone-overlay__card drop-zone-overlay__card--compact">
+                <p class="drop-zone-overlay__eyebrow">ASR Studio</p>
+                <h3 class="drop-zone-overlay__title" id="asrToolDropOverlayTitle">Отпустите файл сюда</h3>
+                <p class="drop-zone-overlay__meta" id="asrToolDropOverlayMeta">Здесь можно запустить транскрибацию аудио
+                    или видео.</p>
+            </div>
+        </div>
+        <div class="tool-window__resize" data-tool-resize="asr"></div>
+    </section>
+
+    <section class="tool-window" id="ttsToolWindow" hidden>
+        <header class="tool-window__header" data-tool-drag="tts">
+            <div>
+                <p class="eyebrow">TTS</p>
+                <h3>Voice Studio</h3>
+            </div>
+            <div class="tool-window__actions">
+                <button class="tool-window__icon" id="ttsToolMinimizeButton" type="button" title="Свернуть">_</button>
+                <button class="tool-window__icon" id="ttsToolFullscreenButton" type="button"
+                    title="На весь экран">□</button>
+                <button class="tool-window__icon tool-window__icon--danger" id="ttsToolCloseButton" type="button"
+                    title="Закрыть">✕</button>
+            </div>
+        </header>
+        <div class="tool-window__body">
+            <div class="tool-panel">
+                <div class="tool-toolbar">
+                    <label class="field">
+                        <span class="field__label">TTS движок</span>
+                        <select id="ttsToolProviderSelect" class="field__control">
+                            <option value="piper">Piper (local)</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="field__label">Голос</span>
+                        <select id="ttsToolVoiceSelect" class="field__control"></select>
+                    </label>
+                    <label class="field">
+                        <span class="field__label">Скорость</span>
+                        <select id="ttsToolSpeedSelect" class="field__control"></select>
+                    </label>
+                </div>
+
+                <p class="inline-status" id="ttsToolStatus">Введите текст или выберите запись из истории.</p>
+                <p class="subtle" id="ttsToolMeta">Текущий голос синхронизирован с глобальными настройками TTS.</p>
+
+                <textarea id="ttsToolText" class="tool-textarea"
+                    placeholder="Текст для локальной озвучки..."></textarea>
+
+                <div class="button-row">
+                    <button class="button button--primary" id="ttsToolGenerateButton" type="button">Озвучить</button>
+                    <button class="button button--ghost" id="ttsToolUseAssistantButton" type="button">Последний
+                        ответ</button>
+                    <button class="button button--ghost" id="ttsToolRefreshButton" type="button">Обновить
+                        голоса</button>
+                    <button class="button button--ghost" id="ttsToolDownloadButton" type="button">Скачать</button>
+                    <button class="button button--ghost" id="ttsToolDeleteButton" type="button">Удалить запись</button>
+                    <button class="button button--ghost" id="ttsToolClearButton" type="button">Очистить историю</button>
+                </div>
+
+                <audio id="ttsToolPlayer" class="tool-player" controls preload="none"></audio>
+            </div>
+
+            <aside class="tool-sidebar">
+                <div class="tool-sidebar__head">
+                    <h4>История озвучки</h4>
+                </div>
+                <div class="tool-history" id="ttsToolHistoryList"></div>
+            </aside>
+        </div>
+        <div class="tool-window__resize" data-tool-resize="tts"></div>
+    </section>
+
+    <div class="modal-backdrop" id="ocrBackdrop" hidden>
+        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true"
+            aria-labelledby="ocrTitle">
+            <header class="settings-panel__header">
+                <div>
+                    <p class="eyebrow">OCR</p>
+                    <h3 id="ocrTitle">Фото в текст</h3>
+                </div>
+                <button class="button button--ghost" id="closeOcrButton" type="button">Закрыть</button>
+            </header>
+
+            <div class="settings-panel__content">
+                <p class="inline-status" id="ocrStatus">Выберите фото или изображение через меню <code>+</code> и
+                    дождитесь OCR.</p>
+                <p class="subtle" id="ocrMeta">OCR по изображению: текст можно поправить и затем вставить в чат или
+                    сразу отправить.</p>
+                <textarea id="ocrTextOutput" class="tool-textarea"
+                    placeholder="Здесь появится текст из изображения..."></textarea>
+                <div class="button-row">
+                    <button class="button button--primary" id="ocrInsertPromptButton" type="button">Вставить в
+                        промпт</button>
+                    <button class="button button--ghost" id="ocrSendButton" type="button">Отправить в чат</button>
+                    <button class="button button--ghost" id="ocrClearButton" type="button">Очистить</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-backdrop" id="settingsBackdrop" hidden>
+        <section class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+            <header class="settings-panel__header">
+                <div>
+                    <p class="eyebrow">Параметры</p>
+                    <h3 id="settingsTitle">Настройки</h3>
+                </div>
+                <button class="button button--ghost" id="closeSettingsButton" type="button">Закрыть</button>
+            </header>
+
+            <div class="settings-panel__content">
+                <section class="settings-group">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Профили</p>
+                            <h4>Управление профилями</h4>
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <span class="info-card__label">Активный профиль</span>
+                        <strong id="activeProfileSummary">Не выбран</strong>
+                    </div>
+
+                    <label class="field">
+                        <span class="field__label">Профиль</span>
+                        <select id="profileManagementSelect" class="field__control"></select>
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button--primary" id="createProfileButton" type="button">Создать
+                            профиль</button>
+                        <button class="button button--ghost" id="saveProfileSystemPromptButton" type="button">Сохранить
+                            профиль</button>
+                        <button class="button button--ghost" id="deleteProfileButton" type="button">Удалить
+                            текущий</button>
+                    </div>
+
+                    <label class="field" id="profileNameField" hidden>
+                        <span class="field__label">Название нового профиля</span>
+                        <input id="profileNameInput" class="field__control" type="text"
+                            placeholder="Например: Основной" />
+                    </label>
+
+                    <label class="field">
+                        <span class="field__label">Описание профиля</span>
+                        <input id="profileDescriptionInput" class="field__control" type="text"
+                            placeholder="Необязательно" />
+                    </label>
+
+                    <label class="field">
+                        <span class="field__label">Системный промпт профиля</span>
+                        <textarea id="profileSystemPromptInput" class="field__control field__control--textarea" rows="5"
+                            placeholder="Необязательно. Например: отвечай как {придуйма роль/должность/что-то еще}, и/или опирайся на RAG и не выдумывай факты."></textarea>
+                    </label>
+
+                    <p class="inline-status" id="profileStatus"></p>
+                </section>
+
+                <section class="settings-group">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Чат</p>
+                            <h4>Модели и параметры LLM</h4>
+                        </div>
+                    </div>
+
+                    <label class="field">
+                        <span class="field__label">LLM модель</span>
+                        <select id="llmModelSelect" class="field__control"></select>
+                    </label>
+
+                    <label class="field">
+                        <span class="field__label">Скачать или обновить модель Ollama</span>
+                        <div class="inline-field">
+                            <input id="downloadModelInput" class="field__control" type="text"
+                                placeholder="Например: qwen2.5:7b-instruct" />
+                            <button class="button button--primary" id="downloadModelButton"
+                                type="button">Запустить</button>
+                        </div>
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button--ghost" id="refreshModelsButton" type="button">Обновить
+                            список</button>
+                        <button class="button button--ghost" id="deleteModelButton" type="button">Удалить
+                            текущую</button>
+                    </div>
+
+                    <div class="chip-list" id="recommendedModels"></div>
+                    <div class="library-block">
+                        <button class="library-toggle" id="chatLibraryToggle" type="button" aria-expanded="false"
+                            aria-controls="chatLibraryPanel">
+                            <span class="library-toggle__copy">
+                                <span class="library-toggle__title">Библиотека загрузки LLM</span>
+                                <span class="library-toggle__meta" id="chatLibraryMeta">Свернуто</span>
+                            </span>
+                            <span class="library-toggle__icon" aria-hidden="true">⌄</span>
+                        </button>
+                        <div class="library-panel" id="chatLibraryPanel" hidden>
+                            <div class="model-library" id="chatModelLibrary"></div>
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <span class="info-card__label">Применяется к</span>
+                        <strong id="modelSettingsSummary">Профиль и модель не выбраны</strong>
+                    </div>
+
+                    <div class="settings-grid">
+                        <label class="field">
+                            <span class="field__label">Temperature</span>
+                            <input id="temperatureInput" class="field__control" type="number" min="0" max="2"
+                                step="0.01" placeholder="0.25" />
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Память диалога</span>
+                            <input id="memTurnsInput" class="field__control" type="number" min="1" step="1"
+                                placeholder="6" />
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Макс. токенов ответа</span>
+                            <input id="maxTokensInput" class="field__control" type="number" min="1" step="1"
+                                placeholder="512" />
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Макс. токенов контекста</span>
+                            <input id="numCtxInput" class="field__control" type="number" min="1" step="1"
+                                placeholder="32768" />
+                        </label>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="button button--primary" id="saveModelSettingsButton"
+                            type="button">Сохранить</button>
+                        <button class="button button--ghost" id="resetModelSettingsButton" type="button">Сбросить к
+                            умолчанию</button>
+                    </div>
+
+                    <p class="inline-status" id="modelSettingsStatus"></p>
+                </section>
+
+                <section class="settings-group">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">ASR</p>
+                            <h4>Whisper модели</h4>
+                        </div>
+                    </div>
+
+                    <label class="field">
+                        <span class="field__label">ASR модель (Whisper)</span>
+                        <select id="whisperModelSelect" class="field__control"></select>
+                    </label>
+
+                    <label class="field">
+                        <span class="field__label">Промпт для Whisper</span>
+                        <select id="promptPresetSelect" class="field__control">
+                            <option value="none">none</option>
+                            <option value="ru">ru</option>
+                            <option value="en">en</option>
+                        </select>
+                    </label>
+
+                    <section class="pipeline-settings-panel" id="asrPipelineSettingsPanel">
+                        <div class="settings-group__header settings-group__header--inner">
+                            <div>
+                                <p class="eyebrow">Pipeline</p>
+                                <h4>Анализ после транскрибации</h4>
+                            </div>
+                            <button class="pipeline-settings-toggle" id="asrPipelineSettingsToggleButton"
+                                type="button" aria-expanded="false" aria-controls="asrPipelineSettingsBody"
+                                title="Развернуть настройки анализа">
+                                <span class="pipeline-settings-toggle__icon" aria-hidden="true">⌄</span>
+                            </button>
+                        </div>
+                        <div class="pipeline-settings-body" id="asrPipelineSettingsBody" hidden>
+                            <div class="info-card">
+                                <span class="info-card__label">LLM для pipeline</span>
+                                <strong id="asrPipelineSettingsSummary">Профиль и модель не выбраны</strong>
+                            </div>
+                            <div class="pipeline-stage-settings" id="asrPipelineSettingsGrid"></div>
+                            <div class="button-row">
+                                <button class="button button--primary" id="saveAsrPipelineSettingsButton"
+                                    type="button">Сохранить анализ</button>
+                                <button class="button button--ghost" id="resetAsrPipelineSettingsButton"
+                                    type="button">Сбросить стадии</button>
+                            </div>
+                            <p class="inline-status" id="asrPipelineSettingsStatus"></p>
+                        </div>
+                    </section>
+
+                    <div class="button-row">
+                        <button class="button button--ghost" id="refreshAsrModelsButton" type="button">Обновить
+                            модели</button>
+                    </div>
+
+                    <p class="inline-status" id="asrSettingsStatus">Кнопка <code>Транскрибировать</code> в меню
+                        <code>+</code> использует эти ASR-настройки.
+                    </p>
+                    <div class="library-block">
+                        <button class="library-toggle" id="asrLibraryToggle" type="button" aria-expanded="false"
+                            aria-controls="asrLibraryPanel">
+                            <span class="library-toggle__copy">
+                                <span class="library-toggle__title">Библиотека Whisper-моделей</span>
+                                <span class="library-toggle__meta" id="asrLibraryMeta">Свернуто</span>
+                            </span>
+                            <span class="library-toggle__icon" aria-hidden="true">⌄</span>
+                        </button>
+                        <div class="library-panel" id="asrLibraryPanel" hidden>
+                            <div class="model-library" id="asrModelLibrary"></div>
+                        </div>
+                    </div>
+
+                    <div class="maintenance-panel">
+                        <div class="maintenance-panel__copy">
+                            <span class="maintenance-panel__label">База данных</span>
+                            <strong>Очистка данных</strong>
+                            <p>Удаляет осиротевшие записи после удалённых чатов. Полная очистка сбрасывает профили, чаты,
+                                транскрипты и RAG-индекс.</p>
+                        </div>
+                        <div class="button-row maintenance-panel__actions">
+                            <button class="button button--ghost" id="cleanupDatabaseButton" type="button">Очистить
+                                мусор</button>
+                            <button class="button button--danger" id="resetDatabaseButton" type="button">Полная
+                                очистка</button>
+                        </div>
+                        <p class="inline-status" id="databaseStatus"></p>
                     </div>
                 </section>
-                <section class="tab-panel" id="panel-timeline" data-panel="timeline" role="tabpanel"
-                    aria-labelledby="tab-timeline" hidden>
-                    <!-- <div class="timeline-toolbar"> -->
-                    <!-- <div class="timeline-names">
-                            <label class="timeline-name-field">Имя HR
-                                <input id="timelineHrName" data-role="hr" type="text" class="input-control" placeholder="Например: Юлия, third_party" />
-                            </label>
-                            <label class="timeline-name-field">Имя кандидата
-                                <input id="timelineCandidateName" data-role="candidate" type="text" class="input-control" placeholder="Например: Юрий" />
-                            </label>
-                        </div> -->
-                    <!-- <div class="timeline-actions">
-                            <button class="secondary" id="btnEditTimeline" type="button">Редактировать таймлайн</button>
-                            <button class="secondary" id="btnSaveTimeline" type="button" hidden>Сохранить
-                                изменения</button>
-                            <button class="secondary" id="btnCancelTimeline" type="button" hidden>Отмена</button>
-                        </div> -->
-                    <!-- </div> -->
-                    <div id="timelineLegend" class="muted timeline-legend"></div>
-                    <div id="timelineNotice" class="status timeline-notice"></div>
-                    <div id="timelineContainer" class="timeline-grid"></div>
+
+                <section class="settings-group">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">TTS</p>
+                            <h4>Озвучка</h4>
+                        </div>
+                    </div>
+
+                    <label class="field">
+                        <span class="field__label">TTS движок</span>
+                        <select id="ttsProviderSelect" class="field__control">
+                            <option value="piper">Piper (local)</option>
+                        </select>
+                    </label>
+
+                    <label class="field">
+                        <span class="field__label">Голос</span>
+                        <select id="ttsVoiceSelect" class="field__control"></select>
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button--ghost" id="refreshTtsVoicesButton" type="button">Обновить
+                            голоса</button>
+                        <button class="button button--ghost" id="refreshTtsLibraryButton" type="button">Обновить
+                            библиотеку</button>
+                    </div>
+
+                    <p class="inline-status" id="ttsSettingsStatus">Кнопка <code>Озвучить</code> в меню <code>+</code>
+                        использует выбранный локальный голос.</p>
+                    <label class="field">
+                        <span class="field__label">Поиск по каталогу голосов</span>
+                        <input id="ttsVoiceSearchInput" class="field__control" type="text"
+                            placeholder="Имя, язык, страна, quality..." />
+                    </label>
+                    <div class="library-block">
+                        <button class="library-toggle" id="ttsLibraryToggle" type="button" aria-expanded="false"
+                            aria-controls="ttsLibraryPanel">
+                            <span class="library-toggle__copy">
+                                <span class="library-toggle__title">Каталог голосов Piper</span>
+                                <span class="library-toggle__meta" id="ttsLibraryMeta">Свернуто</span>
+                            </span>
+                            <span class="library-toggle__icon" aria-hidden="true">⌄</span>
+                        </button>
+                        <div class="library-panel" id="ttsLibraryPanel" hidden>
+                            <div class="model-library" id="ttsVoiceLibrary"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="settings-group">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Хранилище</p>
+                            <h4>Пути моделей</h4>
+                        </div>
+                    </div>
+
+                    <label class="field">
+                        <span class="field__label">Базовая папка моделей</span>
+                        <input id="modelsDirInput" class="field__control" type="text" placeholder="models" />
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button--ghost" id="applyModelsDirButton" type="button">Сохранить
+                            путь</button>
+                        <button class="button button--ghost" id="moveModelsDirButton" type="button">Перенести
+                            данные</button>
+                    </div>
+                </section>
+
+                <section class="settings-group">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">LAN</p>
+                            <h4>Доступ с телефона</h4>
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <span class="info-card__label">URL через Caddy</span>
+                        <code id="lanUrlValue">Недоступно</code>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="button button--ghost" id="copyLanUrlFromSettingsButton" type="button">Скопировать
+                            URL</button>
+                        <button class="button button--ghost" id="shutdownButton" type="button">Остановить
+                            приложение</button>
+                    </div>
+                </section>
+
+                <section class="settings-group">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Загрузки</p>
+                            <h4>Активные операции с моделями</h4>
+                        </div>
+                    </div>
+
+                    <div class="download-list" id="downloadList">
+                        <p class="subtle">Активных загрузок нет.</p>
+                    </div>
                 </section>
             </div>
-        </lgpt-card>
-    </main>
-
-    <div class="overlay" id="overlay" role="dialog" aria-modal="true">
-        <div class="modal modal--history">
-            <h3>История (localStorage)</h3>
-            <div id="historyList"></div>
-            <div class="buttons mt-sm">
-                <button id="btnCloseModal">Закрыть</button>
-                <button class="warn" id="btnClearStorage">Очистить localStorage</button>
-            </div>
-            <p class="muted">Хранится только локально в браузере этого устройства.</p>
-        </div>
+        </section>
     </div>
+
+    <div class="modal-backdrop" id="ragBackdrop" hidden>
+        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true"
+            aria-labelledby="ragTitle">
+            <header class="settings-panel__header">
+                <div>
+                    <p class="eyebrow">RAG</p>
+                    <h3 id="ragTitle">Локальные документы</h3>
+                </div>
+                <button class="button button--ghost" id="closeRagButton" type="button">Закрыть</button>
+            </header>
+
+            <div class="settings-panel__content">
+                <section class="settings-group">
+                    <div class="info-card">
+                        <span class="info-card__label">Папка источников</span>
+                        <code id="ragSourceDirValue">rag_sources</code>
+                    </div>
+
+                    <label class="field field--checkbox">
+                        <input id="ragEnabledToggle" type="checkbox" />
+                        <span>Подмешивать RAG-контекст в чат для активного профиля</span>
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button--primary" id="ragAddFilesButton" type="button">Добавить
+                            файлы</button>
+                        <button class="button button--primary" id="ragIngestButton" type="button">Индексировать</button>
+                        <button class="button button--ghost" id="ragRefreshButton" type="button">Обновить
+                            список</button>
+                    </div>
+                    <input id="ragFileInput" type="file"
+                        accept=".txt,.md,.json,text/plain,text/markdown,application/json" multiple hidden />
+
+                    <p class="inline-status" id="ragStatusText">RAG индексируется вручную после добавления файлов.</p>
+                    <div class="rag-file-list" id="ragFileList"></div>
+                </section>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-backdrop" id="confirmBackdrop" hidden>
+        <section class="settings-panel settings-panel--confirm" role="dialog" aria-modal="true"
+            aria-labelledby="confirmTitle">
+            <header class="settings-panel__header">
+                <div>
+                    <p class="eyebrow" id="confirmEyebrow">Подтверждение</p>
+                    <h3 id="confirmTitle">Продолжить действие?</h3>
+                </div>
+                <button class="button button--ghost" id="confirmCancelButton" type="button">Отмена</button>
+            </header>
+
+            <div class="settings-panel__content settings-panel__content--confirm">
+                <p class="confirm-message" id="confirmMessage">Подтвердите действие.</p>
+                <div class="button-row button-row--end">
+                    <button class="button button--ghost" id="confirmDismissButton" type="button">Отмена</button>
+                    <button class="button button--primary" id="confirmApproveButton" type="button">Продолжить</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="false"></div>
 
     <script type="module" src="js/app.js"></script>
 </body>

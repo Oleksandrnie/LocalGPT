@@ -1,260 +1,476 @@
-# 🧠 LocalGPT — локальный HR‑ и ASR‑бот
+# LocalGPT
 
-LocalGPT — полностью локальный HR‑бот и помощник для транскрибации, работающий **без интернета** и **без внешних API**. 
-Поддерживает чат, анализ текста, транскрибацию аудио/видео и работу с локальными LLM через Ollama.
+Локальный unified-проект для `chat + ASR + TTS + OCR + LAN + RAG` без внешних облачных API.
+Основной runtime работает на `FastAPI + Ollama + faster-whisper + Piper + Tesseract + SQLite`.
 
----
+## Что уже есть
 
-## ⚙️ Структура проекта
-```
-LocalGPT/
-├── app/                # FastAPI backend
-├── web_ui/             # Лёгкий веб‑интерфейс
-├── ollama_models/      # Локальные модели (LLM + Whisper)
-├── venv/               # Виртуальное окружение Python
-├── run_localgpt.py     # Универсальный запуск (macOS / Linux / Windows)
-└── .env                # Конфигурация
-```
+- `backend/apps/*` mini-app layout для chat/asr/tts/ocr (transitional migration от legacy `app/...`);
+- локальный чат с историей, профилями и model settings;
+- запуск приложения без загруженной LLM-модели:
+  чат показывает состояние отсутствующей модели, а загрузка Ollama-модели выполняется только по явному действию пользователя;
+- создание профиля сразу с названием, описанием и необязательным system prompt в настройках;
+- очистка SQLite из настроек: мягкая очистка мусора после удалённых чатов и полная очистка БД без удаления локальных моделей;
+- profile-scoped RAG:
+  отдельная папка документов на каждый профиль, ручная индексация, JSON как source of truth, Markdown как пояснение;
+- profile-level system prompt, который подмешивается в prompt только для активного профиля;
+- summary memory для длинных диалогов:
+  старое raw history не обязано целиком попадать в prompt, `mem_turns` остаётся short-term window;
+- `ASR Studio` для отдельной транскрибации файлов:
+  история, редактирование, pipeline-обработка, роли, summary, tasks, сохранение context;
+- быстрый voice-to-input сценарий через микрофон внутри поля ввода;
+- `Voice Studio` для локальной озвучки:
+  история, выбор голоса, скорость, скачивание, очистка истории;
+- `OCR v1` через `+ -> Файл`:
+  загрузка изображения, локальное распознавание текста, правка и отправка в чат;
+- OCR-пайплайн улучшен для мультиязычных UI-скриншотов (авто-очистка/нормализация извлечённого текста);
+- drag-and-drop файлов в chat/ASR и более устойчивое поведение адаптивного UI;
+- обновлённый static Web UI:
+  collapsible sidebar, toast-уведомления под topbar, единый `AppSelect`, мягкие карточки сообщений, RAG status button, переключатель dark/light theme;
+- запуск по локальной сети с телефона через Caddy;
+- единое хранение моделей и кэшей только внутри `/models`.
 
-В каталоге `ollama_models/qwen2.5-7b-long/Modelfile` хранится Modelfile — параметры локальной LLM (`NUM_CTX`, `MAX_TOKENS`, `TEMP` и др.).
+## Последние изменения (по свежим коммитам)
 
----
+- **2026-04-28** — старт проекта больше не выбирает fallback LLM и не запускает `ollama pull`; чат блокирует отправку без локальной модели и показывает toast.
+- **2026-04-28** — в настройках добавлена очистка БД: удаление осиротевших данных и полный сброс профилей/чатов/RAG-индекса.
+- **2026-04-27** — добавлена светлая тема UI с `ThemeToggle`, сохранением в `localStorage`, light tokens и glass-слоями для topbar/sidebar/cards/modals/tools.
+- **2026-04-27** — добавлен общий guardrail форматирования расчётов: без LaTeX/MathML/markdown-формул и без запятых как разделителя тысяч в ценах.
+- **2026-04-27** — доработан UI v2: floating topbar, collapsible sidebar, toast system, unified `AppSelect`, RAG ON/OFF dot, мягкие message cards и compact composer.
+- **2026-04-26** — добавлен ASR pipeline, summary memory, debug endpoints, profile-scoped RAG и UX отсутствующих моделей.
+- **2026-04-26** — RAG переведён на отдельные папки профилей, добавлена загрузка файлов из UI и авто-JSON для `.md`.
+- **2026-04-26** — настройки профилей разделены на режим редактирования существующего профиля и создание нового профиля.
+- **2026-04-22** — улучшен OCR для мультиязычных UI-скриншотов, обновлён drag-and-drop сценарий для чата/ASR.
+- **2026-04-22** — переход к `backend/apps/*`, обновление роутов и адаптивного UI.
+- **2026-04-20** — упрощён UX `Voice Studio`.
+- **2026-04-20** — стабилизация OCR-извлечения для скриншотов, нормализация ссылок/путей и служебных мета-данных.
 
-## 📝 Кастомизация системного промпта
+## Техническая документация
 
-Базовый HR-промпт лежит в `app/prompts/system_hr.md`. Измените этот файл, чтобы адаптировать тон, формат и правила ответов под ваши процессы.
+Для инженерного обсуждения архитектуры и планирования развития добавлен отдельный технический документ:
 
-> ⚠️ Файл читается в кодировке UTF-8. Если промпт окажется повреждённым или его нельзя декодировать, backend залогирует предупреждение и автоматически использует встроенный резервный промпт, чтобы API продолжило отвечать. После правок перезапустите сервис, чтобы загрузить обновлённый текст.
+- [`TECHNICAL_README.md`](TECHNICAL_README.md) — память (`mem_turns`), сборка контекста, токены на вход/выход, текущие ограничения и roadmap-пункты.
 
-### Формат отчёта HR-агента
+## Архитектурный принцип
 
-Актуальная версия промпта (`app/prompts/system_hr.md`) заставляет модель всегда формировать отчёт из двух основных блоков:
+`compare-branch/` сейчас остаётся внутри проекта как `read-only reference`.
+Runtime не должен зависеть от кода внутри `compare-branch`: это только база для переноса и сверки решений.
 
-1. **Аналитическое резюме** — 1–2 абзаца с краткой выжимкой по сильным сторонам, рискам и соответствию портрету роли.
-2. **Оценка по критериям** — буллеты, по одному на каждый критерий. Формат строки: `• Критерий — соответствует/не соответствует/недостаточно данных — краткое обоснование с отсылкой к фактам или таймкодам`.
+Целевая схема проекта:
 
-Если в разговоре обнаружены риски, добавляется третий блок «Риски и дальнейшие шаги» (не более трёх пунктов). Когда данных не хватает, модель обязана явно написать, что именно отсутствует, и предложить следующий шаг.
+- `chat` — диалоги, профили, сообщения, Ollama-модели;
+- `asr` — диктовка в input и `ASR Studio`;
+- `tts` — `Voice Studio`, Piper-голоса и аудиоистория;
+- `ocr` — извлечение текста из изображений;
+- `rag` — локальные документы, chunks/embeddings, профильная изоляция;
+- `models` — единый корень для всех model-artifacts и кэшей;
+- `runtime/LAN` — launcher, Caddy, LAN URL, shutdown-flow.
 
-### Источники данных для анализа
+## Быстрый запуск
 
-Системный промпт описывает единый приоритет данных, с которыми работает агент:
+Требования:
 
-1. Транскрипт, переданный в текущем запросе.
-2. Критерии, переданные в текущем запросе.
-3. Транскрипт и/или критерии, закреплённые в дополнительном контексте UI.
+- Python 3.10+
+- Ollama
+- ffmpeg
+- Tesseract OCR
 
-Если и в запросе, и в контексте присутствует один и тот же источник, используется версия из запроса. Даже если пользователь написал «проанализируй» или оставил поле запроса пустым, отчёт всё равно будет подготовлен на основе найденных данных.
+Основной запуск из корня:
 
-### Работа с критериями в UI и API
-
-- В блоке «Критерии оценки» веб-интерфейса можно загрузить CSV/XLSX-файл или указать ID (или ссылку) Google Sheets. Backend парсит первый непустой столбец и сохраняет список критериев за текущей сессией.
-- Кнопка «Из контекста» позволяет быстро извлечь критерии из закреплённого текста (например, если портрет роли уже хранится в отдельном блоке UI).
-- Отобранные критерии отображаются списком и автоматически отправляются вместе с запросом `/chat`.
-
-Новый endpoint `POST /criteria/parse` принимает `multipart/form-data` и умеет обрабатывать:
-
-```text
-file (CSV/XLSX) + session_id
-google_sheet_id (ID или ссылка) + optional google_gid
-raw_text (произвольный текстовый блок с буллетами или нумерацией)
-```
-
-`/chat` теперь принимает дополнительные поля `transcript` и `criteria` (список строк). Backend запоминает загруженные критерии и последний транскрипт по `session_id`, поэтому повторные запросы можно отправлять даже с пустым текстом — анализ всё равно выполнится.
-
----
-
-## 🚀 Запуск
-
-### macOS / Linux
-```
-git clone <URL> LocalGPT
-cd LocalGPT
+```bash
 python3 run_localgpt.py
 ```
 
-### Windows
-```
-powershell
-git clone <URL> LocalGPT
-cd LocalGPT
-py run_localgpt.py
-```
+Wrapper-скрипты:
 
-Скрипт `run_localgpt.py` ведёт пошаговый лог в stdout. Он показывает, какой шаг выполняется:
-- путь до проекта и используемый venv;
-- создание виртуального окружения (если его нет);
-- установку зависимостей из `app/requirements.txt`;
-- проверку запуска Ollama и старт `ollama serve` при необходимости;
-- проверку наличия модели `qwen2.5:7b-instruct` (`ollama pull` при первом запуске);
-- чтение `.env`, проверку модели `LOCAL_MODEL` через `ollama show` и автоматический фолбэк (создание по Modelfile или переключение на доступную модель);
-- открытие UI по адресу `http://127.0.0.1:8000/`;
-- запуск FastAPI через `uvicorn app.server:app`.
-
-По этим сообщениям можно быстро понять, где запуск остановился.
-
----
-
-## 🔧 Ручной запуск (альтернатива)
-```
-python -m venv venv
-source venv/bin/activate     # Windows: venv\Scripts\activate
-pip install -r app/requirements.txt
-ollama serve &               # Windows: ollama serve
-ollama pull qwen2.5:7b-instruct
-export PYTHONPATH="$(pwd)"  # Windows: set PYTHONPATH=%cd%
-uvicorn app.server:app --host 127.0.0.1 --port 8000
+```bash
+./start_localgpt.sh
+./start_localgpt_lan.sh
 ```
 
----
+macOS double-click:
 
-## 🧾 Примеры `.env`
+```text
+start_localgpt.command
+start_localgpt_lan.command
+```
 
-**Стандартная (короткий контекст) конфигурация:**
+Windows:
+
+```text
+start_localgpt.bat
+```
+
+Legacy alias для LAN-запуска сохранён:
+
+```text
+LTrnsrb.command
+```
+
+Он остаётся только для backward compatibility и теперь просто вызывает `start_localgpt_lan.sh`.
+
+## Что делает launcher
+
+`run_localgpt.py`:
+
+- создаёт `venv`, если его нет;
+- ставит зависимости из `app/requirements.txt`, если они изменились;
+- проверяет и при необходимости запускает Ollama;
+- выводит список локальных Ollama-моделей без выбора fallback и без загрузки модели;
+- поднимает backend;
+- открывает локальный UI.
+
+Launcher не делает `ollama pull`, не подставляет `qwen2.5:3b` и не блокирует запуск, если chat-моделей нет. Зависимости, директории и лёгкие health-check операции при первом запуске остаются частью bootstrap.
+
+Локальный UI:
+
+```text
+http://127.0.0.1:8000/ui/gui_html.html
+```
+
+## Запуск с телефона по LAN
+
+Основной LAN entrypoint:
+
+```bash
+./start_localgpt_lan.sh
+```
+
+или на macOS:
+
+```text
+start_localgpt_lan.command
+```
+
+Что делает LAN launcher:
+
+- запускает backend в фоне;
+- определяет LAN IP;
+- поднимает Caddy на HTTPS;
+- открывает unified UI по LAN URL;
+- пишет runtime-логи во временную директорию пользователя.
+
+Что нужно отдельно:
+
+- `brew install caddy`
+- Mac и телефон в одной Wi-Fi сети
+- если нужен Safari/iPhone, нужно доверить локальный сертификат Caddy
+
+Полезные LAN файлы:
+
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/tools/LTrnsrb.sh`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/start_localgpt_lan.sh`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/start_localgpt_lan.command`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/Caddyfile.lan`
+
+## UI сценарии
+
+### Профили
+
+- в настройках есть selector профиля с существующими профилями и пунктом `Создать новый профиль`;
+- при выборе существующего профиля он становится активным, а в настройках редактируются его описание и system prompt;
+- при выборе `Создать новый профиль` поля создания очищаются;
+- название нового профиля обязательно, описание и system prompt необязательны;
+- после создания новый профиль автоматически становится активным, появляется в левом сайдбаре и остаётся выбранным в настройках.
+
+### Чат
+
+- диалоги слева;
+- сообщения по центру;
+- настройки и модели в отдельной панели;
+- меню `+` рядом с полем ввода;
+- микрофон внутри поля ввода;
+- LAN URL в topbar;
+- правый клик по чату в sidebar открывает контекстное меню для переименования.
+
+### UI / темы
+
+- topbar сделан как floating glass-панель без жёсткого разделителя;
+- sidebar можно свернуть/развернуть центральной pill-кнопкой;
+- состояние sidebar сохраняется в `localStorage.sidebar_open`;
+- горячая клавиша `Cmd+B` на macOS и `Ctrl+B` на Windows/Linux открывает или закрывает sidebar;
+- системные статусы показываются toast-уведомлениями под topbar по центру;
+- нижняя зона оставлена только под ввод сообщения;
+- `RAG` в topbar показывает состояние активного профиля через dot:
+  серый OFF, фиолетовый ON;
+- `ThemeToggle` в topbar переключает dark/light theme;
+- тема сохраняется в `localStorage` через ключ `localgpt_simple_theme`;
+- светлая тема использует мягкий фон `#F6F7FB`, radial-пятна, glass-слои, blur и тени;
+- кастомный `AppSelect` используется как единый видимый select-компонент.
+
+UI component guide:
+
+- [`docs/ui-components.md`](docs/ui-components.md)
+
+### `+` меню
+
+- `Файл` — OCR v1 для изображений;
+- `Транскрибировать` — открывает `ASR Studio`;
+- `Озвучить` — открывает `Voice Studio`.
+
+### `ASR Studio`
+
+- отдельная транскрибация аудио/видео;
+- история транскриптов;
+- редактирование текста;
+- действия `Очистить`, `Сделать summary`, `Разобрать по задачам`;
+- speaker role editor с ручными overrides;
+- пересборка summary с учётом исправленных ролей;
+- summary/tasks сохраняются в записи транскрибации и используются для названия записи в истории;
+- сохранение processed context в текущий чат;
+- удаление записи;
+- очистка всей истории;
+- вставка processed context в prompt;
+- отправка processed context прямо в чат.
+
+Быстрый voice-to-input при этом остаётся отдельным UX и не смешивается с `ASR Studio`.
+
+### Данные и очистка БД
+
+- удаление профиля полностью удаляет его чаты, сообщения, транскрипты, model settings и RAG-индекс; профильная RAG-папка тоже удаляется;
+- удаление отдельного чата удаляет сам chat session и сообщения, а связанные транскрипты/индексные артефакты могут стать осиротевшими `session_id=NULL`;
+- кнопка `Очистить мусор` в секции `Whisper модели` удаляет такие осиротевшие chat-данные и запускает `VACUUM`;
+- `ASR Studio` история и ручные RAG-файлы `manual_file` мягкой очисткой не удаляются;
+- кнопка `Полная очистка` удаляет профили, чаты, сообщения, транскрипты, RAG-индекс и профильные RAG-папки, затем создаёт новый профиль `Default`;
+- загруженные LLM/ASR/TTS модели при очистке БД не удаляются.
+
+### `Voice Studio`
+
+- выбор Piper-голоса;
+- выбор скорости;
+- генерация локального WAV;
+- история генераций;
+- скачивание записи;
+- удаление записи;
+- очистка всей истории.
+
+### OCR v1
+
+- принимает изображения;
+- локально извлекает текст через Tesseract;
+- открывает OCR-редактор;
+- позволяет поправить текст;
+- позволяет вставить его в prompt или сразу отправить в чат.
+
+### RAG
+
+- кнопка `RAG` в topbar открывает компактную панель документов;
+- каждый профиль имеет свою папку `rag_sources/profile_<id>_<name>`;
+- новый профиль стартует с пустой RAG-папкой;
+- при удалении профиля его RAG-папка удаляется;
+- файлы добавляются через `Добавить файлы`;
+- после добавления или правки файлов нужно нажать `Индексировать`;
+- `Обновить список` перечитывает файлы и статистику без индексации;
+- файлы можно удалить из списка кнопкой `×` рядом с названием;
+- если галочка RAG включена, backend пытается подмешивать RAG-контекст в каждый chat prompt активного профиля;
+- переиндексация нужна только после добавления/изменения файлов, не перед каждым сообщением;
+- поддерживаются `.md`, `.json`, `.txt`;
+- если рядом с `.md` нет `.json`, LocalGPT создаёт базовый structured JSON;
+- ручной `.json` не перезаписывается и считается source of truth;
+- авто-JSON с `generated_by: localgpt_auto_structurer` может быть пересобран кнопкой `Индексировать`.
+
+Подробная инструкция по подготовке RAG-документов:
+
+- [`rag_sources/README.md`](rag_sources/README.md)
+
+Практическое правило:
+
+- `.md` — объяснение для человека и модели;
+- `.json` — точные факты, таблицы, тарифы, SLA, ограничения;
+- при конфликте JSON считается правым.
+
+## Пути моделей
+
+Все модели и кэши должны жить только внутри `/models`.
+
+Базовая структура:
+
+```text
+models/
+├── ollama/
+├── whisper/
+├── whisper_cpp/
+├── tts/
+│   └── piper/
+├── hf_cache/
+└── ctranslate2_cache/
+```
+
+`.env` и `.env.example` поддерживают переносимые относительные пути.
+
+Пример:
+
 ```env
-LOCAL_MODEL=qwen2.5:7b-instruct
-LOCAL_BASE_URL=http://127.0.0.1:11434/v1
+MODELS_DIR=models
+OLLAMA_MODELS_DIR=models/ollama
+WHISPER_MODELS_DIR=models/whisper
+WHISPER_CPP_MODELS_DIR=models/whisper_cpp
+TTS_MODELS_DIR=models/tts
+PIPER_MODELS_DIR=models/tts/piper
+HF_CACHE_DIR=models/hf_cache
+CTRANSLATE2_CACHE_DIR=models/ctranslate2_cache
+
+LOCAL_BASE_URL=http://localhost:11434/v1
 LOCAL_API_KEY=LOCAL-KEY
-TEMP=0.25
-MAX_TOKENS=512
-NUM_CTX=32768
-MEM_TURNS=6
-WHISPER_MODEL_SIZE=medium
-WHISPER_COMPUTE_TYPE=int8
-WHISPER_DEVICE=cpu
-ADMIN_TOKEN=local-admin-123
+LOCAL_MODEL=
+
+LAN_ACCESS_URL=
+LAN_HTTPS_PORT=8443
 ```
 
-**Long-контекст (`qwen2.5-7b-long`):**
+## LLM-модели и загрузка
+
+Приложение запускается без LLM-модели. Если локальных Ollama chat-моделей нет, UI показывает состояние `Нет доступных моделей` / `Модель не загружена`.
+
+Поведение без модели:
+
+- поле ввода остаётся активным;
+- кнопка отправки недоступна, пока нет выбранной установленной модели;
+- сообщение не добавляется в историю;
+- backend-запрос к LLM не выполняется;
+- при попытке отправки показывается toast: `Нет доступных моделей. Загрузите модель и повторите отправку.`
+
+Загрузка Ollama-модели выполняется только по явному действию пользователя: ввод имени модели, выбор рекомендованной модели или кнопка `Загрузить` в библиотеке LLM. Перед запуском `/models/pull` UI просит подтверждение.
+
+Загрузка Ollama-моделей идёт через `/models/pull`.
+UI показывает stderr/stdout tail от `ollama pull` и человекочитаемое сообщение.
+Список моделей больше не запускает auto-pull: если chat-моделей нет, composer остаётся доступен для ввода, но отправка отключена; ASR/TTS/OCR остаются доступны.
+
+## ASR и разгрузка CPU на Mac
+
+По умолчанию проект ожидает `whisper.cpp`, чтобы разгружать CPU на Apple Silicon:
+
 ```env
-LOCAL_MODEL=qwen2.5-7b-long
-LOCAL_BASE_URL=http://127.0.0.1:11434/v1
-LOCAL_API_KEY=LOCAL-KEY
-TEMP=0.2
-MAX_TOKENS=2048
-NUM_CTX=65536
-MEM_TURNS=8
-WHISPER_MODEL_SIZE=medium
-WHISPER_COMPUTE_TYPE=int8
+WHISPER_BACKEND=whisper_cpp
+WHISPER_MODEL_SIZE=large-v3-turbo
+WHISPER_CPP_BINARY=models/whisper_cpp/bin/whisper-cli
+WHISPER_CPP_MODELS_DIR=models/whisper_cpp
+WHISPER_CPP_MODEL_PATH=models/whisper_cpp/ggml-{model}.bin
+```
+
+Для этого нужен отдельный `whisper-cli`, собранный с Metal/CoreML, и GGML-модель в `models/whisper_cpp`.
+
+Для macOS есть проектный setup-скрипт:
+
+```bash
+tools/setup_whisper_cpp_macos.sh large-v3-turbo
+```
+
+Он клонирует `whisper.cpp` в `models/whisper_cpp/source`, собирает `whisper-cli` с Metal/CoreML, создаёт `models/whisper_cpp/bin/whisper-cli` и скачивает `models/whisper_cpp/ggml-large-v3-turbo.bin` вместе с CoreML encoder, если он доступен.
+При `WHISPER_BACKEND=whisper_cpp` штатная подготовка ASR-модели (`/whisper/models/prepare`) также скачивает GGML/CoreML файлы в `models/whisper_cpp`, а не faster-whisper snapshot.
+
+Если нужно временно вернуться к старому CPU-based пути:
+
+```env
+WHISPER_BACKEND=faster_whisper
 WHISPER_DEVICE=cpu
-ADMIN_TOKEN=local-admin-123
+WHISPER_COMPUTE_TYPE=int8
 ```
 
-Если Ollama или OpenAI-совместимый API работает на другой машине, укажите её адрес и ключ в `LOCAL_BASE_URL` и `LOCAL_API_KEY`.
+Поведение:
 
----
+- `whisper_cpp` требует `whisper.cpp` и возвращает понятную ошибку, если binary или модель отсутствуют;
+- `auto` использует `whisper.cpp`, только если найден `whisper-cli` и файл модели для выбранного имени (`ggml-large-v3-turbo.bin`, `ggml-medium.bin` и т.п.), иначе переходит на `faster-whisper`;
+- `faster_whisper` оставлен как совместимый fallback, но на Mac обычно грузит CPU.
 
-## 🗣 Транскрибация (Whisper)
+Для `mistral:7b` важно:
 
-В UI теперь доступны:
-- выбор Whisper‑модели (`small` — быстрее, `medium` — качественнее),
-- выбор пресета промпта: `none`, `ru`, `en`.
-- настройка префикса HR-подсказки, который подставляется перед расшифровкой интервью.
+- тег валиден;
+- модель может не быть установлена локально;
+- исторический сбой мог быть вызван сетевой ошибкой или проблемой доступа к Ollama;
+- такие ошибки теперь должны surfaced как человекочитаемое сообщение, а не только `ollama pull вернул код 1`.
 
-Префикс хранится в браузере через `localStorage`. По умолчанию используется значение «Нейро-HR»: оно помогает заземлить модель в
-контексте HR-анализа и быстрее перейти к экспертному тону. Рекомендуем указывать короткий маркер роли или сценария (например,
-«Tech HR аналитика» или «HR due diligence»), чтобы подсказка сразу подсвечивала нужный формат разбора.
+## Форматирование ответов
 
-Backend использует `transcribe_with_fallback` и делает два прохода:
-1. **Первый проход:** автоопределение языка (language=`auto`) + VAD + промпт (preset + `whisper_prompt.txt`).
-2. **Фолбэк:** VAD отключён, язык берётся из запроса (`language` в `/transcribe`) либо из `WHISPER_FALLBACK_LANGUAGE`, промпт сохраняется, если не отключён переменной `WHISPER_FALLBACK_USE_PROMPT`.
+Chat runtime добавляет общий system guardrail для оформления расчётов и цен:
 
-Поле `language` принимает `auto` (значение по умолчанию) или BCP‑47 код (`ru`, `en`, `pt-br` и т.д.). Некорректные значения отклоняются с ошибкой 422.
+- не использовать LaTeX, MathML, markdown-формулы и синтаксис вида `\[...\]`, `\( ... \)`, `\text{...}`;
+- не использовать запятую как разделитель тысяч:
+  неправильно `35,690 ₽`, правильно `35 690 ₽`;
+- суммы выводить обычным человекочитаемым текстом.
 
-Файл `whisper_prompt.txt`, лежащий рядом с аудиофайлом, автоматически подмешивается в промпт.
+Дополнительно `sanitize_reply()` чистит типичный LaTeX-мусор из ответа модели и нормализует записи вроде `23,730 \, \text{₽}` в `23 730 ₽`.
 
-### Таймкодированные сегменты и роли
+## Структура проекта
 
-Endpoint `/transcribe` теперь возвращает помимо итогового текста список сегментов с таймкодами и ролью говорящего. Ответ содержит поля `segments` (сырые сегменты Whisper), `timeline` (объединённые подряд реплики одного говорящего), `detected_language` и `role_keywords`:
-
-```json
-{
-  "text": "Здравствуйте! Меня зовут Анна...",
-  "language": "auto",
-  "detected_language": "ru",
-  "segments": [
-    {"start": 0.0, "end": 4.2, "text": "Добрый день, расскажите о себе", "speaker": "hr"},
-    {"start": 4.3, "end": 9.6, "text": "Меня зовут Анна, я работала...", "speaker": "candidate"}
-  ],
-  "timeline": [
-    {"start": 0.0, "end": 4.2, "speaker": "hr", "text": "Добрый день, расскажите о себе"},
-    {"start": 4.3, "end": 9.6, "speaker": "candidate", "text": "Меня зовут Анна, я работала..."}
-  ],
-  "role_keywords": {
-    "hr": ["компания", "ваканси", "условия", "задач"],
-    "candidate": ["меня зовут", "работал", "опыт", "готов"]
-  }
-}
+```text
+LocalGPT/
+├── app/
+│   ├── routes/
+│   ├── routers/
+│   ├── services/
+│   ├── providers/
+│   ├── prompts/
+│   ├── data/
+│   └── db/
+├── web_ui/
+├── models/
+├── rag_sources/
+├── compare-branch/          # reference-only, не runtime
+│   ├── chat/
+│   ├── asr/
+│   ├── tts/
+│   └── ocr/
+├── run_localgpt.py
+├── start_localgpt.sh
+├── start_localgpt.command
+├── start_localgpt_lan.sh
+├── start_localgpt_lan.command
+├── LTrnsrb.command          # legacy alias
+├── tools/LTrnsrb.sh         # LAN launcher implementation
+├── .env
+└── .env.example
 ```
 
-В веб‑интерфейсе таймлайн отображается сразу после распознавания. Для цвета/подписей ролей используется словарь из ответа.
+## Ключевые файлы
 
-**Кастомизация словаря ролей.** Бэкенд автоматически подгружает ключевые слова для HR/кандидата в следующем порядке:
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/server.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/chat/routes.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/chat/service.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/asr/pipeline.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/rag/service.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/rag/routes.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcribe.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcripts.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/ocr.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routers/tts.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/meta.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/services/ocr.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/services/models.py`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/gui_html.html`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/js/app.js`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/css/style.css`
+- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/docs/ui-components.md`
 
-1. JSON‑строка из переменной окружения `WHISPER_ROLE_KEYWORDS` (формат `{"hr": ["..."], "candidate": ["..."]}`),
-2. JSON‑файл по пути из `WHISPER_ROLE_KEYWORDS_PATH`,
-3. файл `role_keywords.json`, лежащий рядом с аудиофайлом или в каталоге `app/`.
+## Диагностика
 
-Если ни один источник не найден, используется встроенный пресет. Настройки позволяют адаптировать словарь под другие языки или роли.
+Health:
 
-**Ограничения.** Алгоритм отнесения сегмента к HR/кандидату rule‑based: он считает вхождения ключевых слов и при равенстве чередует роли. Реальной диаризации по голосу нет, поэтому при коротких репликах без ключевых слов возможны ошибки (например, моносложные ответы «Да», «Нет»). Для других языков обязательно расширяйте словарь — иначе большинство сегментов попадёт в роль по умолчанию. Также таймкоды соответствуют границам сегментов Whisper и могут немного смещаться относительно «чистого» звука.
-
-Whisper‑модели хранятся внутри проекта по пути:
+```bash
+curl -s http://127.0.0.1:8000/health
 ```
-LocalGPT/ollama_models/whisper/
-```
-При первом использовании выбранной модели она будет загружена (если доступен интернет) и сохранена в этот каталог.  
-Путь можно переопределить переменной в `.env`:
-```
-WHISPER_MODELS_DIR=ollama_models/whisper
-```
 
-Для настройки фолбэка доступны дополнительные переменные окружения:
-```
-WHISPER_FALLBACK_LANGUAGE=ru            # язык второго прогона, если клиент не прислал свой
-WHISPER_FALLBACK_USE_PROMPT=true        # использовать тот же initial_prompt во втором проходе
+Prompt debug:
+
+```bash
+curl -s http://127.0.0.1:8000/chat/debug/prompt
 ```
 
----
+Pipeline debug:
 
-## 📥 Как загружаются модели
+```bash
+curl -s 'http://127.0.0.1:8000/chat/debug/pipeline?run_id=<id>'
+```
 
-**LLM (Qwen 2.5):**
-- При запуске `run_localgpt.py` читается `LOCAL_MODEL` из `.env`, выполняется `ollama show <model>` и, при необходимости, запускается автоматическая подготовка (создание по Modelfile либо переключение `.env` на существующую модель).
-- Если модель из `.env` недоступна, лаунчер пытается подтянуть fallback `qwen2.5:7b-instruct` (`ollama pull`) или выбрать любую другую установленную модель.
-- Кастомный вариант `qwen2.5-7b-long` собирается по Modelfile `ollama_models/qwen2.5-7b-long/Modelfile` командой:
-  ```bash
-  ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile
-  ```
+Полезные файлы:
 
-**Whisper (ASR):**
-- При первом запуске транскрибации с выбранной моделью (`small` или `medium`) `faster-whisper` скачивает веса из Hugging Face (если есть интернет) и сохраняет их в каталог `LocalGPT/ollama_models/whisper/` (или в путь из `WHISPER_MODELS_DIR`).
-- При отсутствии интернета модели Whisper можно заранее скачать на другой машине и скопировать в этот каталог вручную — после этого транскрибация будет работать офлайн.
+- `ollama.log`
+- `tmp_logs/chat.log`
+- `tmp_logs/pipeline.log`
+- runtime-логи launcher в `${TMPDIR}/LocalGPT-<uid>/`
 
----
+## Текущее ограничение
 
-### 🔍 Диагностика long-модели
-
-1. Посмотрите, установлена ли модель, командой `ollama list`. В списке должна появиться строка `qwen2.5-7b-long` с ожидаемым размером.
-2. Проверьте, что Ollama может её загрузить: `ollama show qwen2.5-7b-long`. Успешный вывод означает, что модель доступна для инференса.
-3. Убедитесь в размере контекста: `ollama show qwen2.5-7b-long --config | grep context`. Для long-сборки ожидается `"context_length": 65536`.
-4. Если модель отсутствует, соберите её заново по Modelfile: `ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile`.
-
----
-
-## 📦 Подготовка к офлайн-режиму
-
-1. **LLM (Ollama):**
-   - На машине с интернетом выполните `ollama pull qwen2.5:7b-instruct` (и при необходимости `ollama create qwen2.5-7b-long -f ollama_models/qwen2.5-7b-long/Modelfile`).
-   - Скопируйте каталог `~/.ollama/models` на офлайн-машину (в тот же путь) или в `LocalGPT/ollama_models/` внутри проекта.
-   - Убедитесь, что на офлайн-машине запущен `ollama serve`, а `LOCAL_MODEL` в `.env` указывает на нужную локальную модель.
-2. **Whisper:**
-   - Скачайте архивы весов (`small`, `medium` и т.д.) из репозиториев `Systran/faster-whisper-*` на Hugging Face.
-   - Распакуйте их в `LocalGPT/ollama_models/whisper/<model-name>` или в директорию, указанную `WHISPER_MODELS_DIR`.
-3. **Конфигурация и зависимости:**
-   - В `.env` выставьте локальные `LOCAL_BASE_URL` и `LOCAL_API_KEY` (по умолчанию `http://127.0.0.1:11434/v1` и `LOCAL-KEY`).
-   - При полном отсутствии интернета заранее соберите виртуальное окружение (запустите `run_localgpt.py` на машине с доступом в сеть или сохраните wheel-файлы зависимостей).
-
----
-
-## 📌 Примечание
-Все модели, кэш и конфигурации хранятся **внутри проекта**.
+`compare-branch/` пока не удаляется.
+Сейчас внутри него лежат reference-папки `chat / asr / tts / ocr`.
+Удаление reference-папок выносится в отдельную cleanup-задачу после полной parity-проверки unified проекта.

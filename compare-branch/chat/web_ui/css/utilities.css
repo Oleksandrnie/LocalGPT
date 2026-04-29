@@ -1,0 +1,47 @@
+.muted {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.status {
+    font-size: 0.85rem;
+    color: var(--color-info);
+}
+
+.status--success {
+    color: var(--color-success);
+}
+
+.status--error {
+    color: var(--color-error);
+}
+
+.status--warning {
+    color: #fbbf24;
+}
+
+.mt-xs {
+    margin-top: var(--space-xs);
+}
+
+.mt-sm {
+    margin-top: var(--space-sm);
+}
+
+.mt-md {
+    margin-top: var(--space-md);
+}
+
+.mt-lg {
+    margin-top: var(--space-lg);
+}
+
+.mt-xl {
+    margin-top: var(--space-xl);
+}
+
+code {
+    background: rgba(59, 130, 246, 0.15);
+    padding: 0 var(--space-xs);
+    border-radius: var(--radius-sm);
+}
