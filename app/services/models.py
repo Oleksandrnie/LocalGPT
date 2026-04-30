@@ -397,10 +397,22 @@ def list_models() -> dict[str, Any]:
         error = exc.detail
         LOGGER.warning("Оllama list failed: %s", exc.detail)
     downloads = _pull_statuses()
+    installed_names = {item.get("name") for item in installed if item.get("name")}
+    catalog = [
+        {
+            **item,
+            "name": item.get("id"),
+            "label": item.get("title"),
+            "installed": item.get("id") in installed_names,
+            "selected": False,
+        }
+        for item in config.MODEL_CATALOG
+    ]
     return {
         "installed": installed,
         "models": [item.get("name") for item in installed if item.get("name")],
-        "recommended": config.MODEL_RECOMMENDATIONS,
+        "catalog": catalog,
+        "recommended": catalog,
         "downloads": downloads,
         "error": error,
     }

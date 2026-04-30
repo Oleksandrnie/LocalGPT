@@ -177,13 +177,95 @@ class Settings:
     whisper_cpp_download_coreml: bool
 
 
-MODEL_RECOMMENDATIONS = [
-    {"name": "qwen2.5:3b", "label": "Лёгкая (≈3B)"},
-    {"name": "qwen2.5:7b-instruct", "label": "Инструкционная 7B"},
-    {"name": "qwen2.5-7b-long", "label": "Длинный контекст 7B"},
-    {"name": "llama3:8b", "label": "LLaMA 3 8B"},
-    {"name": "mistral:7b", "label": "Mistral 7B"},
+MODEL_CATALOG = [
+    {
+        "id": "qwen2.5:3b-instruct",
+        "title": "Qwen 2.5 3B Instruct",
+        "category": "fast_rag",
+        "weight": "light",
+        "recommended": True,
+        "experimental": False,
+        "description": (
+            "Быстрый слой: RAG, короткие ответы, быстрые уточнения, pipeline cleaner/segmenter. "
+            "Использовать, когда важна скорость, а не глубокий анализ."
+        ),
+    },
+    {
+        "id": "qwen2.5:7b-instruct",
+        "title": "Qwen 2.5 7B Instruct",
+        "category": "default_chat",
+        "weight": "medium",
+        "recommended": True,
+        "experimental": False,
+        "description": (
+            "Основная рабочая модель: обычный чат, RAG с нормальным качеством, рабочие формулировки, "
+            "summary среднего размера."
+        ),
+    },
+    {
+        "id": "qwen3:8b",
+        "title": "Qwen 3 8B",
+        "category": "thinking",
+        "weight": "medium",
+        "recommended": True,
+        "experimental": False,
+        "description": (
+            "Thinking/reasoning-модель: сложные вопросы, анализ, проверка логики, ситуации где нужно "
+            "подумать, а не быстро ответить."
+        ),
+    },
+    {
+        "id": "mistral-nemo:12b",
+        "title": "Mistral Nemo 12B",
+        "category": "pipeline_heavy",
+        "weight": "heavy",
+        "recommended": True,
+        "experimental": False,
+        "description": (
+            "Тяжёлая модель для pipeline: summary, structuring, выделение decisions/tasks/risks/open "
+            "questions. На M1 Pro 16GB может работать медленнее."
+        ),
+    },
+    {
+        "id": "qwen2.5-coder:7b",
+        "title": "Qwen 2.5 Coder 7B",
+        "category": "code",
+        "weight": "medium",
+        "recommended": True,
+        "experimental": False,
+        "description": (
+            "Основная модель для кода: Python, FastAPI, JavaScript, Docker, отладка, рефакторинг и "
+            "анализ ошибок."
+        ),
+    },
+    {
+        "id": "deepseek-coder:6.7b",
+        "title": "DeepSeek Coder 6.7B",
+        "category": "code_alt",
+        "weight": "medium",
+        "recommended": True,
+        "experimental": False,
+        "description": (
+            "Альтернативная кодовая модель для сравнения с Qwen Coder. Полезна для проверки решений, "
+            "генерации патчей и разбора ошибок."
+        ),
+    },
+    {
+        "id": "qwen3:4b",
+        "title": "Qwen 3 4B",
+        "category": "experimental",
+        "weight": "light_medium",
+        "recommended": False,
+        "experimental": True,
+        "description": (
+            "Экспериментальная модель: компромисс между qwen2.5 3B и qwen3 8B. Проверить как быстрый "
+            "reasoning/RAG fallback."
+        ),
+    },
 ]
+
+# Backward-compatible response key for older UI modules; the content is the new catalog.
+MODEL_RECOMMENDATIONS = MODEL_CATALOG
 
 DEFAULT_PIPELINE = {
     "cleaner": {

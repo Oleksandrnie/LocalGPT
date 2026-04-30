@@ -16,6 +16,14 @@ import { getSavedLlmModel, setSavedLlmModel } from "./storage.js";
 let onModelChanged = null;
 let downloadsTimer = null;
 
+function modelId(model) {
+  return String(model?.id || model?.name || "").trim();
+}
+
+function modelTitle(model) {
+  return String(model?.title || model?.label || modelId(model)).trim();
+}
+
 function isModelInstalled(name) {
   return state.modelState.installed.some((item) => item.name === name);
 }
@@ -29,10 +37,23 @@ function hasActiveDownload(model) {
 function renderModelSelect(preselect) {
   if (!elements.llmModelSelect) return;
   const installed = state.modelState.installed || [];
-  const options = installed.map((item) => `<option value="${item.name}">${item.name}</option>`);
+  const installedNames = new Set(installed.map((item) => item.name));
+  const catalog = state.modelState.recommended || [];
+  const source = catalog.length
+    ? catalog
+    : installed.map((item) => ({ id: item.name, title: item.name }));
+  const options = [
+    '<option value="" hidden>Модель не выбрана</option>',
+    ...source.map((item) => {
+      const id = modelId(item);
+      const title = modelTitle(item);
+      const missing = !installedNames.has(id);
+      return `<option value="${id}">${title}${missing ? " (не загружена)" : ""}</option>`;
+    }),
+  ];
   elements.llmModelSelect.innerHTML = options.join("") || '<option value="">Нет доступных моделей</option>';
-  elements.llmModelSelect.disabled = !installed.length;
-  if (preselect && installed.some((item) => item.name === preselect)) {
+  elements.llmModelSelect.disabled = !source.length;
+  if (preselect && source.some((item) => modelId(item) === preselect)) {
     elements.llmModelSelect.value = preselect;
   }
 }
@@ -42,9 +63,10 @@ function renderModelSuggestions() {
   const installedNames = new Set(state.modelState.installed.map((m) => m.name));
   const chips = state.modelState.recommended
     .map((model) => {
-      const installed = installedNames.has(model.name);
-      return `<button class="model-chip${installed ? " is-installed" : ""}" data-model="${model.name}" data-installed="${installed ? "1" : "0"}">${
-        model.label || model.name
+      const id = modelId(model);
+      const installed = installedNames.has(id);
+      return `<button class="model-chip${installed ? " is-installed" : ""}" data-model="${id}" data-installed="${installed ? "1" : "0"}" title="${model.description || ""}">${
+        modelTitle(model)
       }</button>`;
     })
     .join("");
@@ -105,7 +127,9 @@ export async function fetchModelList() {
   try {
     const data = await listModels();
     state.modelState.installed = Array.isArray(data?.installed) ? data.installed : [];
-    state.modelState.recommended = Array.isArray(data?.recommended) ? data.recommended : state.modelState.recommended;
+    state.modelState.recommended = Array.isArray(data?.catalog)
+      ? data.catalog
+      : (Array.isArray(data?.recommended) ? data.recommended : state.modelState.recommended);
     state.modelState.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     renderModelSelect(state.currentSessionModel || getSavedLlmModel());
     renderModelSuggestions();

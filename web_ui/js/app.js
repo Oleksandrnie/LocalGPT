@@ -415,6 +415,161 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function getModelId(item) {
+  return String(item?.id || item?.name || "").trim();
+}
+
+function getModelTitle(item) {
+  const id = getModelId(item);
+  return String(item?.title || item?.label || id).trim();
+}
+
+function getModelDescription(item) {
+  return String(item?.description || "").trim();
+}
+
+function getCatalogModels() {
+  return (Array.isArray(state.recommendedModels) ? state.recommendedModels : [])
+    .filter((item) => getModelId(item));
+}
+
+function getCatalogModelById(modelId) {
+  const target = String(modelId || "").trim();
+  return getCatalogModels().find((item) => getModelId(item) === target) || null;
+}
+
+function getModelTooltip(item, { short = false } = {}) {
+  const id = getModelId(item);
+  const title = getModelTitle(item);
+  const description = getModelDescription(item);
+  if (short) {
+    return description || `${item?.category || "model"} • ${item?.weight || "unknown"}`;
+  }
+  return [
+    title,
+    `ID: ${id}`,
+    `Категория: ${item?.category || "-"}`,
+    `Вес: ${item?.weight || "-"}`,
+    `Рекомендована: ${item?.recommended ? "да" : "нет"}`,
+    `Экспериментальная: ${item?.experimental ? "да" : "нет"}`,
+    description,
+  ].filter(Boolean).join("\n");
+}
+
+function getModelBadges(item) {
+  const category = String(item?.category || "");
+  const weight = String(item?.weight || "");
+  const badges = [];
+  if (item?.recommended) {
+    badges.push({ label: "recommended", tone: "recommended" });
+  }
+  if (item?.experimental) {
+    badges.push({ label: "experimental", tone: "experimental" });
+  }
+  if (weight === "heavy") {
+    badges.push({ label: "heavy", tone: "heavy" });
+  }
+  if (category.includes("code")) {
+    badges.push({ label: "code", tone: "code" });
+  }
+  return badges;
+}
+
+function renderModelBadges(item) {
+  return getModelBadges(item)
+    .map((badge) => `<span class="status-badge status-badge--${escapeHtml(badge.tone)}">${escapeHtml(badge.label)}</span>`)
+    .join("");
+}
+
+function renderModelInfoIcon(item, className = "model-info-button") {
+  const tooltip = getModelTooltip(item);
+  return `<span class="${escapeHtml(className)}" role="img" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</span>`;
+}
+
+function renderModelInfoButton(item) {
+  const tooltip = getModelTooltip(item);
+  return `<button class="model-info-button" type="button" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</button>`;
+}
+
+let tooltipTimer = null;
+let activeTooltipTarget = null;
+
+function getTooltipNode() {
+  let node = document.getElementById("appTooltip");
+  if (!node) {
+    node = document.createElement("div");
+    node.id = "appTooltip";
+    node.className = "app-tooltip";
+    node.hidden = true;
+    document.body.appendChild(node);
+  }
+  return node;
+}
+
+function clearTooltipTimer() {
+  if (tooltipTimer) {
+    window.clearTimeout(tooltipTimer);
+    tooltipTimer = null;
+  }
+}
+
+function positionTooltip(node, target) {
+  const rect = target.getBoundingClientRect();
+  const gap = 10;
+  const margin = 10;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const maxWidth = Math.min(340, Math.max(180, viewportWidth - margin * 2));
+  node.style.maxWidth = `${maxWidth}px`;
+
+  const tooltipRect = node.getBoundingClientRect();
+  let left = rect.right + gap;
+  let top = rect.top + rect.height / 2 - tooltipRect.height / 2;
+
+  if (left + tooltipRect.width > viewportWidth - margin) {
+    left = rect.left - tooltipRect.width - gap;
+  }
+  if (left < margin) {
+    left = Math.min(viewportWidth - tooltipRect.width - margin, Math.max(margin, rect.left));
+  }
+
+  top = Math.max(margin, Math.min(top, viewportHeight - tooltipRect.height - margin));
+  node.style.left = `${Math.round(left)}px`;
+  node.style.top = `${Math.round(top)}px`;
+}
+
+function showTooltip(target) {
+  const text = target?.dataset?.tooltip || "";
+  if (!text) return;
+  const node = getTooltipNode();
+  node.textContent = text;
+  node.hidden = false;
+  node.classList.remove("app-tooltip--visible");
+  positionTooltip(node, target);
+  window.requestAnimationFrame(() => {
+    node.classList.add("app-tooltip--visible");
+  });
+}
+
+function scheduleTooltip(target) {
+  clearTooltipTimer();
+  activeTooltipTarget = target;
+  tooltipTimer = window.setTimeout(() => {
+    if (activeTooltipTarget === target) {
+      showTooltip(target);
+    }
+  }, 250);
+}
+
+function hideTooltip() {
+  clearTooltipTimer();
+  activeTooltipTarget = null;
+  const node = document.getElementById("appTooltip");
+  if (!node) return;
+  node.classList.remove("app-tooltip--visible");
+  node.hidden = true;
+}
+
 function formatInlineRichText(value) {
   return escapeHtml(value)
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
@@ -693,11 +848,10 @@ function getFilteredTtsVoiceCatalog() {
 }
 
 function renderLibraryPanels() {
-  const chatInstalled = state.installedModels.length;
-  const chatTotal = new Set([
-    ...state.recommendedModels.map((item) => item.name),
-    ...state.installedModels.map((item) => item.name),
-  ]).size;
+  const installedChatNames = new Set(state.installedModels.map((item) => item.name));
+  const chatCatalog = getCatalogModels();
+  const chatInstalled = chatCatalog.filter((item) => installedChatNames.has(getModelId(item))).length;
+  const chatTotal = chatCatalog.length;
   const asrInstalled = state.asrModels.filter((item) => item.installed).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
@@ -885,6 +1039,7 @@ function closeAppSelect(select = null) {
     entry.button.setAttribute("aria-expanded", "false");
     entry.menu.hidden = true;
   });
+  hideTooltip();
 }
 
 function syncAppSelect(select) {
@@ -896,9 +1051,15 @@ function syncAppSelect(select) {
   entry.button.setAttribute("aria-disabled", disabled ? "true" : "false");
   entry.value.textContent = appSelectLabel(select);
   entry.menu.innerHTML = Array.from(select.options || [])
+    .filter((option) => !option.hidden)
     .map((option) => {
       const active = String(option.value) === selectedValue ? " app-select__option--active" : "";
-      return `<button class="app-select__option${active}" type="button" role="option" aria-selected="${active ? "true" : "false"}" data-app-select-value="${escapeHtml(option.value)}">${escapeHtml(option.textContent || option.value)}</button>`;
+      const help = option.dataset.help || "";
+      const title = option.dataset.label || option.textContent || option.value;
+      const helpMarkup = help
+        ? `<span class="app-select__help" role="img" aria-label="${escapeHtml(help)}" data-tooltip="${escapeHtml(help)}" data-app-select-help>?</span>`
+        : "";
+      return `<button class="app-select__option${active}" type="button" role="option" aria-selected="${active ? "true" : "false"}" data-app-select-value="${escapeHtml(option.value)}"><span class="app-select__option-label">${escapeHtml(title)}</span>${helpMarkup}</button>`;
     })
     .join("");
 }
@@ -972,6 +1133,9 @@ function enhanceAppSelect(select) {
 
   menu.addEventListener("click", (event) => {
     event.stopPropagation();
+    if (event.target instanceof Element && event.target.closest("[data-app-select-help]")) {
+      return;
+    }
     const optionButton = event.target instanceof Element
       ? event.target.closest("[data-app-select-value]")
       : null;
@@ -990,13 +1154,21 @@ function initAppSelects() {
 
 function getChatModelItems() {
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const names = state.installedModels.map((item) => item.name);
-  return names.map((name) => ({
-    name,
-    installed: installedByName.get(name) || null,
-    recommended: null,
-    task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
-  }));
+  const catalog = getCatalogModels();
+  const source = catalog.length
+    ? catalog
+    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  return source.map((model) => {
+    const name = getModelId(model);
+    return {
+      ...model,
+      name,
+      title: getModelTitle(model),
+      installed: installedByName.get(name) || null,
+      recommended: model,
+      task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
+    };
+  });
 }
 
 function describeChatModelItem(item) {
@@ -1014,7 +1186,7 @@ function describeChatModelItem(item) {
     return parts.join(" • ");
   }
   if (item.recommended) {
-    return `${item.recommended.label || "Рекомендована"} • не загружена`;
+    return `${item.recommended.category || "catalog"} • ${item.recommended.weight || "weight"} • не загружена`;
   }
   return "Не загружена";
 }
@@ -1060,7 +1232,10 @@ function renderQuickModelPicker() {
           aria-checked="${active ? "true" : "false"}"
           data-quick-model="${escapeHtml(item.name)}"
         >
-          <span class="quick-model-picker__item-name">${escapeHtml(item.name)}</span>
+          <span class="quick-model-picker__item-row">
+            <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
+            ${getModelDescription(item) ? renderModelInfoIcon(item, "quick-model-picker__help") : ""}
+          </span>
           <span class="quick-model-picker__item-meta">${escapeHtml(describeChatModelItem(item))}</span>
         </button>
       `;
@@ -1622,9 +1797,9 @@ function updateSendButtonState() {
   const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
   if (els.promptInput) {
     els.promptInput.disabled = false;
-    els.promptInput.placeholder = hasInstalledChatModel
-      ? "Напишите сообщение…"
-      : "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения.";
+    els.promptInput.placeholder = !hasInstalledChatModel
+      ? "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения."
+      : (!selectedModel ? "Выберите модель, чтобы отправлять сообщения." : "Напишите сообщение…");
   }
   els.sendButton.disabled = state.isSending ? false : (!hasText || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
@@ -1635,7 +1810,7 @@ function renderChatModelNotice() {
   const selectedModel = String(state.selectedLlmModel || "").trim();
   const hasInstalledChatModel = state.installedModels.length > 0;
   const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
-  const missing = !hasInstalledChatModel || (Boolean(selectedModel) && !selectedInstalled);
+  const missing = !hasInstalledChatModel || !selectedModel || (Boolean(selectedModel) && !selectedInstalled);
   els.chatModelNotice.hidden = !missing;
   if (missing) {
     const title = els.chatModelNotice.querySelector("strong");
@@ -1643,6 +1818,9 @@ function renderChatModelNotice() {
     if (!hasInstalledChatModel) {
       if (title) title.textContent = "Нет доступных моделей.";
       if (text) text.textContent = "Загрузите модель в настройках, чтобы отправлять сообщения в чат.";
+    } else if (!selectedModel) {
+      if (title) title.textContent = "Модель не выбрана.";
+      if (text) text.textContent = "Выберите установленную модель в селекте или добавьте модель из каталога.";
     } else {
       if (title) title.textContent = "Модель не загружена.";
       if (text) text.textContent = "Выберите локальную модель или загрузите выбранную модель.";
@@ -2298,57 +2476,72 @@ function renderMessages() {
 function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
-  const installedNames = new Set(state.installedModels.map((item) => item.name));
-  const installedOptions = state.installedModels.map((item) => item.name).filter(Boolean);
-  const selectedModel = String(state.selectedLlmModel || "").trim();
-  const selectedInstalled = selectedModel && installedNames.has(selectedModel);
+  const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
+  const installedNames = new Set(installedByName.keys());
+  const catalogItems = getCatalogModels().length
+    ? getCatalogModels()
+    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
+  const installedCatalogIds = catalogIds.filter((name) => installedNames.has(name));
 
-  const optionNames = selectedModel && !selectedInstalled
-    ? [selectedModel, ...installedOptions]
-    : installedOptions;
-  const optionsMarkup = optionNames
-    .map((name) => {
-      const missing = name === selectedModel && !selectedInstalled;
-      return `<option value="${escapeHtml(name)}"${missing ? " disabled" : ""}>${escapeHtml(name)}${missing ? " (не загружена)" : ""}</option>`;
-    })
-    .join("") || '<option value="">Нет доступных моделей</option>';
+  const optionsMarkup = catalogItems.length
+    ? [
+      '<option value="" hidden>Модель не выбрана</option>',
+      ...catalogItems.map((item) => {
+        const id = getModelId(item);
+        const title = getModelTitle(item);
+        const help = getModelTooltip(item, { short: true });
+        return `<option value="${escapeHtml(id)}" data-label="${escapeHtml(title)}" data-help="${escapeHtml(help)}" data-model-category="${escapeHtml(item.category || "")}" data-model-weight="${escapeHtml(item.weight || "")}">${escapeHtml(title)}</option>`;
+      }),
+    ].join("")
+    : '<option value="">Нет доступных моделей</option>';
 
   [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
     select.innerHTML = optionsMarkup;
-    select.disabled = !installedOptions.length;
+    select.disabled = !catalogItems.length;
   });
 
   const preferredModel = state.selectedLlmModel || readStored(STORAGE_KEYS.llmModel, "");
-  if (preferredModel && optionNames.includes(preferredModel)) {
+  if (preferredModel && catalogIds.includes(preferredModel)) {
     els.llmModelSelect.value = preferredModel;
     if (els.quickModelSelect) {
       els.quickModelSelect.value = preferredModel;
     }
-  } else if (installedOptions.length) {
-    els.llmModelSelect.value = installedOptions[0];
+  } else if (!preferredModel && installedCatalogIds.length) {
+    els.llmModelSelect.value = installedCatalogIds[0];
     if (els.quickModelSelect) {
-      els.quickModelSelect.value = installedOptions[0];
+      els.quickModelSelect.value = installedCatalogIds[0];
     }
-    state.selectedLlmModel = installedOptions[0];
-    writeStored(STORAGE_KEYS.llmModel, installedOptions[0]);
+    state.selectedLlmModel = installedCatalogIds[0];
+    writeStored(STORAGE_KEYS.llmModel, installedCatalogIds[0]);
   } else {
     state.selectedLlmModel = "";
     writeStored(STORAGE_KEYS.llmModel, "");
+    els.llmModelSelect.value = "";
+    if (els.quickModelSelect) {
+      els.quickModelSelect.value = "";
+    }
   }
 
   renderQuickModelPicker();
 
-  els.recommendedModels.innerHTML = state.recommendedModels
+  els.recommendedModels.innerHTML = catalogItems
     .map((item) => {
-      const installed = installedNames.has(item.name);
-      const active = item.name === state.selectedLlmModel;
-      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(item.name)}">${escapeHtml(item.label || item.name)}</button>`;
+      const id = getModelId(item);
+      const installed = installedNames.has(id);
+      const active = id === state.selectedLlmModel;
+      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(id)}">
+        <span class="chip-button__label">${escapeHtml(getModelTitle(item))}</span>
+        <span class="chip-button__meta">${escapeHtml([item.category, item.weight].filter(Boolean).join(" • "))}</span>
+        ${renderModelInfoIcon(item, "chip-button__help")}
+      </button>`;
     })
     .join("");
 
   renderLibraryPanels();
   renderChatModelLibrary();
   renderChatModelNotice();
+  updateSendButtonState();
   queueSyncAppSelects();
 }
 
@@ -2367,7 +2560,7 @@ async function applySelectedLlmModel(nextModel) {
     }
   });
 
-  renderQuickModelPicker();
+  renderModelControls();
   renderContextSummary();
   renderModelSettings();
   if (state.currentSessionId && state.selectedLlmModel) {
@@ -2384,50 +2577,48 @@ function renderChatModelLibrary() {
   }
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const recommendedByName = new Map(state.recommendedModels.map((item) => [item.name, item]));
-  const allNames = [
-    ...new Set([
-      ...state.recommendedModels.map((item) => item.name),
-      ...state.installedModels.map((item) => item.name),
-    ]),
-  ];
+  const catalogItems = getCatalogModels();
 
-  if (!allNames.length) {
-    els.chatModelLibrary.innerHTML = '<p class="subtle">Список Ollama-моделей пока пуст.</p>';
+  if (!catalogItems.length) {
+    els.chatModelLibrary.innerHTML = '<p class="subtle">Каталог Ollama-моделей пока пуст.</p>';
     return;
   }
 
-  els.chatModelLibrary.innerHTML = allNames
-    .map((name) => {
+  els.chatModelLibrary.innerHTML = catalogItems
+    .map((item) => {
+      const name = getModelId(item);
       const installed = installedByName.get(name);
-      const recommended = recommendedByName.get(name);
       const active = state.selectedLlmModel === name;
       const task = state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state));
-      const badge = task
+      const statusBadge = task
         ? `<span class="status-badge status-badge--warning">${escapeHtml(task.state || "running")}</span>`
         : installed
           ? '<span class="status-badge status-badge--success">Установлена</span>'
           : '<span class="status-badge">Не загружена</span>';
       const meta = [
-        recommended?.label || null,
+        `ID: ${name}`,
+        item.category ? `Категория: ${item.category}` : null,
+        item.weight ? `Вес: ${item.weight}` : null,
         installed?.size_gb ? `${installed.size_gb} GB` : null,
         installed?.modified_at ? formatDateTime(installed.modified_at) : null,
       ].filter(Boolean).join(" • ");
-      const note = task?.message || (recommended ? "Можно загрузить или обновить прямо из настроек." : "");
+      const note = task?.message || getModelDescription(item);
       return `
         <article class="model-card${installed ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
           <div class="model-card__head">
             <div>
-              <h5 class="model-card__title">${escapeHtml(name)}</h5>
-              <p class="model-card__meta">${escapeHtml(meta || "Локальная Ollama-модель")}</p>
+              <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
+              <p class="model-card__meta">${escapeHtml(meta || name)}</p>
             </div>
-            <div class="model-card__badges">${badge}${active ? '<span class="status-badge status-badge--active">Активна</span>' : ""}</div>
+            <div class="model-card__badges">${statusBadge}${active ? '<span class="status-badge status-badge--active">Активна</span>' : ""}${renderModelBadges(item)}</div>
           </div>
-          <p class="model-card__note">${escapeHtml(note || (installed ? "Модель готова к использованию в чате." : "Сначала загрузите модель локально."))}</p>
+          <p class="model-card__note">${escapeHtml(note || (installed ? "Модель готова к использованию в чате." : "Сначала добавьте модель локально."))}</p>
           <div class="button-row">
-            <button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>
-            <button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${installed ? "Обновить" : "Загрузить"}</button>
+            ${installed ? `<button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
+            ${installed ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">Добавить</button>`}
+            <button class="button button--ghost" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>
             ${installed ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
+            ${renderModelInfoButton(item)}
           </div>
         </article>
       `;
@@ -5200,21 +5391,28 @@ async function loadModels({ silent = false } = {}) {
   try {
     const data = await request("/models");
     state.installedModels = Array.isArray(data?.installed) ? data.installed : [];
-    state.recommendedModels = Array.isArray(data?.recommended) ? data.recommended : [];
+    state.recommendedModels = Array.isArray(data?.catalog)
+      ? data.catalog
+      : (Array.isArray(data?.recommended) ? data.recommended : []);
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     state.chatModelsError = data?.error || null;
     const savedModel = readStored(STORAGE_KEYS.llmModel, "");
-    const installedNames = new Set(state.installedModels.map((item) => item.name));
-    if (state.selectedLlmModel && !installedNames.has(state.selectedLlmModel) && !hasActiveDownload(state.selectedLlmModel)) {
+    const catalogIds = new Set(getCatalogModels().map((item) => getModelId(item)));
+    const installedCatalogModel = getCatalogModels().find((item) => (
+      state.installedModels.some((installed) => installed.name === getModelId(item))
+    ));
+    if (state.selectedLlmModel && !catalogIds.has(state.selectedLlmModel)) {
       state.selectedLlmModel = "";
     }
     if (!state.selectedLlmModel) {
-      state.selectedLlmModel = savedModel && installedNames.has(savedModel)
+      state.selectedLlmModel = savedModel && catalogIds.has(savedModel)
         ? savedModel
-        : state.installedModels[0]?.name || "";
+        : getModelId(installedCatalogModel) || "";
     }
     if (!state.selectedLlmModel) {
       writeStored(STORAGE_KEYS.llmModel, "");
+    } else {
+      writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
     }
     renderModelControls();
     renderDownloads();
@@ -5659,7 +5857,7 @@ async function createSessionForCurrentContext() {
 async function ensureModelInstalled(modelName) {
   const target = String(modelName || "").trim();
   if (!target) {
-    setFooter("Нет доступных моделей. Загрузите модель и повторите отправку.", "warning");
+    setFooter("Модель не выбрана. Выберите модель и повторите отправку.", "warning");
     return false;
   }
   if (state.installedModels.some((item) => item.name === target)) {
@@ -5811,7 +6009,7 @@ async function handleTranscription(file) {
   }
 }
 
-async function startModelDownload(modelName) {
+async function startModelDownload(modelName, { mode = "download" } = {}) {
   const target = (modelName || "").trim();
   if (!target) {
     setFooter("Укажите модель Ollama для загрузки.", "warning");
@@ -5822,11 +6020,12 @@ async function startModelDownload(modelName) {
     return;
   }
 
+  const isUpdate = mode === "update";
   const confirmed = await openConfirmDialog({
-    eyebrow: "Загрузка модели",
-    title: "Загрузить модель?",
-    message: `Будет запущена загрузка Ollama-модели: ${target}`,
-    confirmLabel: "Загрузить",
+    eyebrow: isUpdate ? "Обновление модели" : "Загрузка модели",
+    title: isUpdate ? "Обновить модель?" : "Загрузить модель?",
+    message: `Будет запущен ollama pull для модели: ${target}`,
+    confirmLabel: isUpdate ? "Обновить" : "Загрузить",
   });
   if (!confirmed) return;
 
@@ -5836,9 +6035,9 @@ async function startModelDownload(modelName) {
     writeStored(STORAGE_KEYS.llmModel, target);
     await loadModels();
     renderSettings();
-    setFooter(`Загрузка модели ${target} запущена.`, "success");
+    setFooter(`${isUpdate ? "Обновление" : "Загрузка"} модели ${target} запущено.`, "success");
   } catch (error) {
-    setFooter(`Не удалось запустить загрузку модели: ${error.message || error}`, "error");
+    setFooter(`Не удалось запустить ${isUpdate ? "обновление" : "загрузку"} модели: ${error.message || error}`, "error");
   }
 }
 
@@ -6528,6 +6727,9 @@ function bindEvents() {
   });
 
   els.quickModelMenu?.addEventListener("click", async (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
+      return;
+    }
     const button = event.target.closest("[data-quick-model]");
     if (!button) return;
     const modelName = button.dataset.quickModel || "";
@@ -6867,6 +7069,9 @@ function bindEvents() {
   });
 
   els.recommendedModels?.addEventListener("click", async (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
+      return;
+    }
     const button = event.target.closest("[data-recommended-model]");
     if (!button) return;
     const modelName = button.dataset.recommendedModel || "";
@@ -6890,6 +7095,10 @@ function bindEvents() {
     }
     if (action === "download") {
       await startModelDownload(modelName);
+      return;
+    }
+    if (action === "update") {
+      await startModelDownload(modelName, { mode: "update" });
       return;
     }
     if (action === "delete") {
@@ -6966,6 +7175,34 @@ function bindEvents() {
     await saveModelsDir(true);
   });
 
+  document.addEventListener("pointerover", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (!target || target === activeTooltipTarget) return;
+    scheduleTooltip(target);
+  });
+
+  document.addEventListener("pointerout", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (!target) return;
+    if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) return;
+    hideTooltip();
+  });
+
+  document.addEventListener("focusin", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (!target) return;
+    scheduleTooltip(target);
+  });
+
+  document.addEventListener("focusout", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (target) {
+      hideTooltip();
+    }
+  });
+
+  document.addEventListener("scroll", hideTooltip, true);
+
   window.addEventListener("keydown", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b" && !event.altKey && !isTypingTarget(target)) {
@@ -6974,6 +7211,7 @@ function bindEvents() {
       return;
     }
     if (event.key === "Escape") {
+      hideTooltip();
       const appSelectOpen = Array.from(state.appSelects.values()).some((entry) => entry.wrapper.classList.contains("app-select--open"));
       if (appSelectOpen) {
         closeAppSelect();
