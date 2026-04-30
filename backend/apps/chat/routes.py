@@ -7,7 +7,6 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 
 from app import config, db
-from app.roles import normalize_role
 from app.schemas import ChatDebugPromptRequest, ChatRequest, ResetRequest
 from app.services import criteria as criteria_service
 from app.services import models as model_service
@@ -15,7 +14,6 @@ from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.service import (
     ChatService,
     build_messages,
-    evaluate_math_expression,
     estimate_messages_chars,
     maybe_compress_session_history,
     normalize_model_name,
@@ -29,6 +27,7 @@ from backend.apps.rag import service as rag_service
 router = APIRouter()
 chat_service = ChatService()
 
+CHAT_ROLE = "chat"
 MISTRAL_NEMO_MODEL_ID = "mistral-nemo:12b"
 CODE_REQUEST_RE = re.compile(
     r"(?i)(\bhtml\b|\bcss\b|\bjavascript\b|\bjs\b|\btypescript\b|\bts\b|\breact\b|\bvue\b|\bsvelte\b|"
@@ -180,6 +179,25 @@ def _apply_router_settings(prepared: dict, decision: model_router.RouterDecision
 
 def _apply_auto_router(prepared: dict) -> dict:
     selected_model = str(prepared.get("target_model") or "").strip()
+    if prepared.get("calc_result") is not None:
+        if model_router.is_auto_model(selected_model):
+            decision = model_router.RouterDecision(
+                intent="calculation",
+                target_model=model_router.LOCAL_CALCULATOR_TARGET,
+                confidence=1.0,
+                reason="Запрос содержит явный арифметический расчёт.",
+                backend_override=True,
+                backend_override_reason="deterministic_calculation",
+            )
+            _apply_router_settings(prepared, decision)
+            prepared["target_model"] = model_router.LOCAL_CALCULATOR_TARGET
+        else:
+            prepared["effective_settings"] = {
+                **(prepared.get("effective_settings") or {}),
+                "model_selection_mode": "manual",
+            }
+        return prepared
+
     if not model_router.is_auto_model(selected_model):
         prepared["effective_settings"] = {
             **(prepared.get("effective_settings") or {}),
@@ -201,6 +219,7 @@ def _apply_auto_router(prepared: dict) -> dict:
             "session_id": prepared.get("session_id"),
             "role": prepared.get("role_key"),
             "rag_enabled": bool((prepared.get("effective_settings") or {}).get("rag_enabled_effective")),
+            "recent_user_queries": prepared.get("recent_user_queries") or [],
             "has_transcript_context": bool(prepared.get("transcript_text")),
             "criteria_count": len(prepared.get("active_criteria") or []),
         },
@@ -246,7 +265,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     profile_id = req.profile_id
     user_query = (req.query or "").strip() or "проанализируй"
     transcript_text = (req.transcript or "").strip()
-    role_key = normalize_role(req.role)
+    role_key = CHAT_ROLE
     session = None
 
     if session_id:
@@ -258,20 +277,16 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         desired_model = _require_chat_model_selected(desired_model)
         if desired_model != session.get("model_name"):
             session = db.update_session(session_id, model_name=desired_model) or session
-        desired_role = normalize_role(req.role or session.get("role"))
-        if desired_role != session.get("role"):
-            session = db.update_session(session_id, role=desired_role) or session
-        role_key = desired_role
+        role_key = CHAT_ROLE
         model_name = session["model_name"]
     else:
         if profile_id is None:
             raise HTTPException(status_code=400, detail="profile_id_required")
         _get_profile_or_404(profile_id)
-        role_key = normalize_role(req.role)
         model_name = normalize_model_name(req.model or req.model_name, fallback=config.SETTINGS.model)
         model_name = _require_chat_model_selected(model_name)
         title = session_title_hint(req.title, req.query)
-        session = db.create_session(profile_id, title=title, model_name=model_name, role=role_key)
+        session = db.create_session(profile_id, title=title, model_name=model_name, role=CHAT_ROLE)
         session_id = session["id"]
 
     model_name = session["model_name"] if session else normalize_model_name(req.model or req.model_name)
@@ -292,14 +307,14 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     rag_chunks = []
     rag_context = ""
     rag_enabled = bool(effective_settings.get("rag_enabled", False))
+    history_user_queries = [
+        str(item.get("content") or "")
+        for item in history
+        if item.get("role") == "user" and str(item.get("content") or "").strip()
+    ][-3:]
     if rag_enabled:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
-        history_user_queries = [
-            str(item.get("content") or "")
-            for item in history
-            if item.get("role") == "user" and str(item.get("content") or "").strip()
-        ][-3:]
         rag_query = "\n".join([*history_user_queries, user_query]).strip()
         rag_chunks = rag_service.search(int(profile_id), rag_query or user_query, top_k=rag_top_k)
         rag_context = rag_service.build_context(rag_chunks, max_chars=rag_max_chars)
@@ -325,7 +340,14 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     else:
         transcript_warnings = []
 
-    calc_result = evaluate_math_expression(user_query) if role_key == "calc" else None
+    calc = local_calculator.try_calculate_text(user_query)
+    calc_result = f"{calc['result']}\n\n{calc['details']}".strip() if calc else None
+    if calc:
+        effective_settings = {
+            **effective_settings,
+            "calculator_result": calc,
+            "calculator_backend_override": True,
+        }
     messages = build_messages(
         role=role_key,
         user_query=user_query,
@@ -372,6 +394,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "profile_system_prompt": profile_system_prompt,
         "rag_chunks": rag_chunks,
         "rag_context": rag_context,
+        "recent_user_queries": history_user_queries,
         "prompt_warnings": transcript_warnings,
         "calc_result": calc_result,
     }
@@ -384,7 +407,7 @@ def chat(req: ChatRequest):
     profile_id = req.profile_id
     user_query = (req.query or "").strip() or "проанализируй"
     transcript_text = (req.transcript or "").strip()
-    role_key = normalize_role(req.role)
+    role_key = CHAT_ROLE
     target_model: str | None = None
     active_criteria: list[str] = []
 

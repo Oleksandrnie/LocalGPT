@@ -194,6 +194,32 @@ class ModelRouterTestCase(unittest.TestCase):
         self.assertEqual(corrected.intent, "quick_rag")
         self.assertEqual(corrected.target_model, "qwen2.5:3b-instruct")
 
+    def test_rag_pricing_followup_uses_recent_history_for_quick_rag(self):
+        raw = json.dumps(
+            {
+                "intent": "default_chat",
+                "target_model": "qwen2.5:7b-instruct",
+                "confidence": 0.81,
+                "reason": "Короткое уточнение.",
+            },
+            ensure_ascii=False,
+        )
+        decision = model_router.validate_router_decision(raw)
+
+        corrected = model_router.correct_router_decision(
+            "это точно самый минимальный? проверь хорошо",
+            decision,
+            {
+                "rag_enabled": True,
+                "recent_user_queries": [
+                    "Выведи минимальный тариф технической поддержки и самый маленький тариф SEO.",
+                ],
+            },
+        )
+
+        self.assertEqual(corrected.intent, "quick_rag")
+        self.assertEqual(corrected.target_model, "qwen2.5:3b-instruct")
+
     def test_rag_tariff_message_request_stays_default_chat(self):
         raw = json.dumps(
             {
@@ -258,6 +284,12 @@ class ModelRouterTestCase(unittest.TestCase):
 
         self.assertEqual(result["result"], "3000 ₽")
         self.assertIn("2.5 ч", result["details"])
+
+    def test_local_calculator_sums_plain_numbers_from_text(self):
+        result = local_calculator.calculate({"operation": "basic_arithmetic"}, "Сумма (7339.50 7339.50)")
+
+        self.assertEqual(result["result"], "14679.00")
+        self.assertIn("7339.50 + 7339.50 = 14679.00", result["details"])
 
     def test_model_list_exposes_router_as_utility_not_recommended(self):
         installed = [{"name": "qwen3:0.6b"}, {"name": "qwen2.5:7b-instruct"}]
@@ -328,6 +360,30 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
         self.assertEqual(task["used_settings"]["model_selection_mode"], "auto")
         self.assertEqual(task["used_settings"]["router_intent"], "calculation")
 
+    def test_auto_router_explicit_sum_bypasses_router_model(self):
+        req = ChatRequest(query="Сумма (7339.50 7339.50)", profile_id=self.profile_id, model_name=model_router.AUTO_MODEL_ID)
+
+        with patch.object(model_router, "route_model") as route_model:
+            task = start_chat_task(req)
+
+        route_model.assert_not_called()
+        self.assertEqual(task["state"], "completed")
+        self.assertEqual(task["model_name"], model_router.LOCAL_CALCULATOR_TARGET)
+        self.assertIn("14679.00", task["result"]["reply"])
+        self.assertEqual(task["used_settings"]["router_backend_override_reason"], "deterministic_calculation")
+
+    def test_manual_explicit_sum_uses_local_calculator_without_switching_model(self):
+        req = ChatRequest(query="посчитай сумму 7339.50 7339.50", profile_id=self.profile_id, model_name="qwen2.5:7b-instruct")
+
+        with patch.object(model_service, "is_model_installed") as installed:
+            task = start_chat_task(req)
+
+        installed.assert_not_called()
+        self.assertEqual(task["state"], "completed")
+        self.assertEqual(task["model_name"], "qwen2.5:7b-instruct")
+        self.assertIn("14679.00", task["result"]["reply"])
+        self.assertTrue(task["used_settings"]["calculator_backend_override"])
+
     def test_auto_router_target_model_must_be_installed(self):
         req = ChatRequest(query="Исправь этот Python код", profile_id=self.profile_id, model_name=model_router.AUTO_MODEL_ID)
         decision = model_router.RouterDecision(
@@ -366,6 +422,23 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
 
         self.assertEqual(settings["effective"]["ollama_keep_alive"], "45s")
         self.assertEqual(settings["overrides"]["ollama_keep_alive"], "45s")
+
+    def test_mem_turns_is_profile_setting_not_model_override(self):
+        profile = db.update_profile_preferences(self.profile_id, {"settings": {"mem_turns": 10}})
+        self.assertEqual(profile["preferences"]["settings"]["mem_turns"], 10)
+        db.upsert_model_settings(
+            self.profile_id,
+            "qwen2.5:7b-instruct",
+            temperature=0.25,
+            max_tokens=1024,
+            num_ctx=4096,
+            mem_turns=3,
+        )
+
+        settings = db.effective_settings(self.profile_id, "qwen2.5:7b-instruct", config.DEFAULT_SETTINGS)
+
+        self.assertEqual(settings["effective"]["mem_turns"], 10)
+        self.assertEqual(settings["overrides"]["mem_turns"], 10)
 
     def test_manual_chat_preparation_applies_model_keep_alive_default(self):
         req = ChatRequest(query="hello", profile_id=self.profile_id, model_name="mistral-nemo:12b")

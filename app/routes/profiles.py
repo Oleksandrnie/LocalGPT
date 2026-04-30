@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import config, db
-from ..roles import normalize_role
 from ..schemas import (
     ModelSettingsRequest,
     ModelSettingsReset,
@@ -19,6 +18,7 @@ from ..services.chat import normalize_model_name, session_title_hint
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
+CHAT_ROLE = "chat"
 
 
 def _get_profile_or_404(profile_id: int) -> dict:
@@ -82,6 +82,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
     if not isinstance(value, dict):
         return {}
     allowed = {
+        "mem_turns",
         "pipeline_enabled",
         "summary_memory_enabled",
         "rag_enabled",
@@ -102,7 +103,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         )
     if preset is not None:
         cleaned["default_pipeline_preset"] = str(preset).strip().lower()
-    for key in ("max_transcript_chars", "max_context_chars", "summary_memory_limit", "rag_top_k", "rag_max_context_chars"):
+    for key in ("mem_turns", "max_transcript_chars", "max_context_chars", "summary_memory_limit", "rag_top_k", "rag_max_context_chars"):
         if key in cleaned and cleaned[key] is not None:
             try:
                 cleaned[key] = max(1, int(cleaned[key]))
@@ -224,9 +225,8 @@ def create_chat_session(req: SessionCreate):
     _get_profile_or_404(req.profile_id)
     title = session_title_hint(req.title, None)
     model_name = normalize_model_name(req.model_name, fallback=config.SETTINGS.model)
-    role = normalize_role(req.role)
     try:
-        session = db.create_session(req.profile_id, title=title, model_name=model_name, role=role)
+        session = db.create_session(req.profile_id, title=title, model_name=model_name, role=CHAT_ROLE)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Укажите название сессии"}) from exc
     return session
@@ -247,8 +247,7 @@ def update_chat_session(session_id: str, req: SessionUpdate):
     if not session:
         raise HTTPException(status_code=404, detail="session_not_found")
     new_model = normalize_model_name(req.model_name) if req.model_name else None
-    new_role = normalize_role(req.role) if req.role else None
-    updated = db.update_session(session_id, title=req.title, model_name=new_model, role=new_role)
+    updated = db.update_session(session_id, title=req.title, model_name=new_model, role=None)
     if not updated:
         raise HTTPException(status_code=404, detail="session_not_found")
     return updated
@@ -303,7 +302,7 @@ def save_model_settings(req: ModelSettingsRequest):
         temperature=req.temperature,
         max_tokens=req.max_tokens,
         num_ctx=req.num_ctx,
-        mem_turns=req.mem_turns,
+        mem_turns=None,
         ollama_keep_alive=(req.ollama_keep_alive.strip() if isinstance(req.ollama_keep_alive, str) and req.ollama_keep_alive.strip() else None),
         pipeline_enabled=req.pipeline_enabled,
         summary_memory_enabled=req.summary_memory_enabled,

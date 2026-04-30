@@ -271,6 +271,7 @@ def structured_payload_for_markdown(path: Path) -> dict[str, Any]:
         payload["pricing"] = {
             "support_tariffs": _pricing_facts(text),
             "interpretation_rules": [
+                "The minimum/cheapest/smallest-by-hours technical support tariff is the lowest numeric price/hours item in support_tariffs.",
                 "Базовый is a tariff line with only 3, 5, and 7 hour variants.",
                 "The maximum variant inside Базовый is 7 hours / 23730 RUB.",
                 "Оптимальный is a tariff line with only 8, 11, and 15 hour variants.",
@@ -537,7 +538,8 @@ def search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any
 def build_context(chunks: list[dict[str, Any]], *, max_chars: int = 6000) -> str:
     parts: list[str] = [
         "RAG rules: JSON chunks are source of truth. If JSON conflicts with Markdown, use JSON. "
-        "Markdown chunks are explanatory context. Do not invent facts not present in retrieved chunks."
+        "Markdown chunks are explanatory context. Do not invent facts not present in retrieved chunks. "
+        "For pricing questions, use explicit structured values and distinguish a minimum tariff from a maximum variant inside a tariff line."
     ]
     total = len(parts[0]) + 2
     for item in chunks:

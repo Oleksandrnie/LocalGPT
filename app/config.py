@@ -445,6 +445,7 @@ def _move_tree(source: Path, target: Path) -> None:
 MODEL_PATHS = build_model_paths()
 apply_model_env(MODEL_PATHS)
 SETTINGS = _load_settings()
+DEFAULT_RUNTIME_SETTINGS["mem_turns"] = SETTINGS.mem_turns
 DEFAULT_SETTINGS = {
     "temperature": SETTINGS.temperature,
     "max_tokens": SETTINGS.max_tokens,

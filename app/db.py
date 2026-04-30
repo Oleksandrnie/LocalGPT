@@ -552,7 +552,7 @@ def get_session(session_id: str) -> dict[str, Any] | None:
 
 
 def create_session(
-    profile_id: int, title: str, model_name: str, session_id: str | None = None, role: str = "free"
+    profile_id: int, title: str, model_name: str, session_id: str | None = None, role: str = "chat"
 ) -> dict[str, Any]:
     if not title.strip():
         raise ValueError("session_title_required")
@@ -1007,7 +1007,6 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
         "temperature",
         "max_tokens",
         "num_ctx",
-        "mem_turns",
         "ollama_keep_alive",
         "pipeline_enabled",
         "summary_memory_enabled",
@@ -1033,12 +1032,15 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     effective["num_ctx_requested"] = effective.get("num_ctx")
     effective["num_ctx_applied"] = False
     effective["num_ctx_apply_method"] = "openai_compatible_not_supported"
-    settings_keys = tuple([*keys, "pipeline"])
+    settings_keys = tuple([*keys, "mem_turns", "pipeline"])
+    returned_overrides = {key: overrides.get(key) for key in settings_keys}
+    if "mem_turns" in profile_settings:
+        returned_overrides["mem_turns"] = profile_settings.get("mem_turns")
     return {
         "profile_id": profile_id,
         "model_name": model_name,
         "effective": effective,
-        "overrides": {key: overrides.get(key) for key in settings_keys},
+        "overrides": returned_overrides,
         "defaults": {key: defaults.get(key) for key in settings_keys},
     }
 

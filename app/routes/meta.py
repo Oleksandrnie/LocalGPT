@@ -13,7 +13,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi import Request
 
 from .. import chat_tasks, config, db
-from ..roles import DEFAULT_ROLE, list_roles
 from ..schemas import DatabaseCleanupRequest, DatabaseResetRequest
 from .. import transcribe_tasks
 from ..services import tts_service
@@ -220,11 +219,6 @@ def health(request: Request):
 @router.get("/version")
 def version():
     return {"env": config.SETTINGS.env, "model": config.SETTINGS.model, "base_url": config.SETTINGS.base_url}
-
-
-@router.get("/roles")
-def roles():
-    return {"roles": list_roles(), "default": DEFAULT_ROLE}
 
 
 @router.post("/runtime/shutdown")

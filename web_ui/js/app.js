@@ -80,7 +80,6 @@ const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
   "max_tokens",
   "num_ctx",
-  "mem_turns",
   "ollama_keep_alive",
   "pipeline_enabled",
   "summary_memory_enabled",
@@ -2740,7 +2739,7 @@ function renderModelSettings() {
   if (els.memTurnsInput) {
     els.memTurnsInput.disabled = disabled;
     els.memTurnsInput.value = values.mem_turns === "" ? "" : String(values.mem_turns);
-    els.memTurnsInput.title = "Большие значения памяти увеличивают prompt. Для длинных диалогов лучше summary memory.";
+    els.memTurnsInput.title = "Общая память диалога для активного профиля. Применяется ко всем chat-моделям, включая Auto.";
   }
   if (els.ollamaKeepAliveInput) {
     const keepAlive = parseKeepAliveValue(values.ollama_keep_alive, defaultKeepAliveForModel(modelName));
@@ -5846,15 +5845,20 @@ async function saveModelSettingsFlow() {
         temperature: parseOptionalNumber(els.temperatureInput?.value, "float"),
         max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
-        mem_turns: memTurnsValue,
         ollama_keep_alive: collectKeepAliveValue(),
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
-    renderModelSettings();
+    if (memTurnsValue !== null) {
+      const updatedProfile = await saveActiveProfilePreferences({ settings: { mem_turns: memTurnsValue } });
+      if (!updatedProfile) {
+        throw new Error("не удалось сохранить память диалога профиля");
+      }
+    }
+    await refreshModelSettings({ silent: true });
     setInlineStatus(
       els.modelSettingsStatus,
-      memTurnsWarning ? `Настройки модели сохранены. ${memTurnsWarning}` : "Настройки модели сохранены.",
+      memTurnsWarning ? `Настройки сохранены. ${memTurnsWarning}` : "Настройки сохранены.",
       memTurnsWarning ? "warning" : "success",
     );
   } catch (error) {
@@ -5914,6 +5918,7 @@ async function resetModelSettingsFlow() {
   }
 
   try {
+    const defaultMemTurns = parseOptionalNumber(state.modelSettingsState?.defaults?.mem_turns, "int") || 6;
     const data = await request("/model_settings/reset_to_defaults", {
       method: "POST",
       body: {
@@ -5922,8 +5927,9 @@ async function resetModelSettingsFlow() {
       },
     });
     state.modelSettingsState = data || state.modelSettingsState;
+    await saveActiveProfilePreferences({ settings: { mem_turns: defaultMemTurns } });
     await refreshModelSettings({ silent: true });
-    setInlineStatus(els.modelSettingsStatus, "Настройки модели сброшены.", "success");
+    setInlineStatus(els.modelSettingsStatus, "Настройки модели и память диалога сброшены.", "success");
   } catch (error) {
     setInlineStatus(els.modelSettingsStatus, `Не удалось сбросить настройки: ${error.message || error}`, "error");
   }

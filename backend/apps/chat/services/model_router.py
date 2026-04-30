@@ -35,6 +35,10 @@ QUICK_RAG_ACTION_RE = re.compile(
     r"(?i)(вытащ|достан|найд|покаж|перечисл|список|какие\s+есть|есть\s+ли|"
     r"в\s+одн[уо]?\s+строч|одной\s+строк|коротко|просто\s+данн|extract|list|find|show)"
 )
+QUICK_RAG_VERIFY_RE = re.compile(
+    r"(?i)(точно|проверь|проверить|перепроверь|верно|правильно|самый\s+минимальн|"
+    r"самый\s+деш[её]в|самый\s+маленьк|минимальн)"
+)
 QUICK_RAG_FACT_RE = re.compile(
     r"(?i)(тариф|цен[аыу]|стоимост|депозит|пакет|план|услови|минимальн|максимальн|"
     r"номер|дат[ауы]|срок|контакт|email|почт|телефон|адрес|реквизит|факт)"
@@ -179,11 +183,20 @@ def looks_like_simple_rag_lookup(user_message: str, context: dict[str, Any] | No
         return False
     if QUICK_RAG_COMPLEX_RE.search(text):
         return False
+    recent_text = "\n".join(
+        str(item or "")
+        for item in ((context or {}).get("recent_user_queries") or [])[-3:]
+        if str(item or "").strip()
+    )
+    combined_text = "\n".join([recent_text, text]).strip()
     has_source = bool(QUICK_RAG_SOURCE_RE.search(text))
     has_action = bool(QUICK_RAG_ACTION_RE.search(text))
-    has_fact = bool(QUICK_RAG_FACT_RE.search(text))
+    has_verify = bool(QUICK_RAG_VERIFY_RE.search(text))
+    has_fact = bool(QUICK_RAG_FACT_RE.search(text) or QUICK_RAG_FACT_RE.search(combined_text))
     rag_enabled = bool((context or {}).get("rag_enabled"))
-    return (has_source and (has_action or has_fact)) or (rag_enabled and has_action and has_fact)
+    return (has_source and (has_action or has_verify or has_fact)) or (
+        rag_enabled and (has_action or has_verify) and has_fact
+    )
 
 
 def correct_router_decision(

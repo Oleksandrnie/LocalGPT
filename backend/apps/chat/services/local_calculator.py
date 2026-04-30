@@ -7,6 +7,18 @@ from typing import Any
 
 ALLOWED_BIN_OPS = (ast.Add, ast.Sub, ast.Mult, ast.Div)
 ALLOWED_UNARY_OPS = (ast.UAdd, ast.USub)
+CALCULATION_HINT_RE = re.compile(
+    r"(?i)(посчитай|рассчитай|сумм|сложи|сложить|прибав|плюс|итого|сколько\s+будет|"
+    r"умнож|процент|минус|вычти|раздели|[+\-*/×])"
+)
+SUM_HINT_RE = re.compile(r"(?i)(сумм|сложи|сложить|прибав|плюс|итого)")
+NUMBER_TOKEN_RE = re.compile(r"(?<![\w])[-+]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,]\d+)?(?![\w])")
+ARITHMETIC_OPERATOR_RE = re.compile(r"[+\-*/×]")
+TIME_VALUE_RE = re.compile(
+    r"(?P<value>[-+]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,]\d+)?)\s*"
+    r"(?P<unit>час(?:а|ов)?|ч\.?|hour|hours|hrs?|мин(?:ута|уты|ут)?|minutes?|mins?)\b",
+    re.IGNORECASE,
+)
 
 
 def _number(value: Any) -> float | None:
@@ -27,6 +39,48 @@ def _format_number(value: float) -> str:
     if abs(rounded - round(rounded)) < 1e-9:
         return str(int(round(rounded)))
     return f"{rounded:.6f}".rstrip("0").rstrip(".")
+
+
+def _normalize_number_text(value: str) -> str:
+    return re.sub(r"[ \u00a0]+", "", value.strip()).replace(",", ".")
+
+
+def _decimal_places(value: str) -> int:
+    normalized = _normalize_number_text(value)
+    if "." not in normalized:
+        return 0
+    return min(6, len(normalized.rsplit(".", 1)[1]))
+
+
+def _format_number_with_decimals(value: float, decimals: int) -> str:
+    if decimals <= 0:
+        return _format_number(value)
+    return f"{round(value, decimals):.{decimals}f}"
+
+
+def _plain_number_tokens(user_message: str) -> list[str]:
+    return [match.group(0) for match in NUMBER_TOKEN_RE.finditer(user_message or "")]
+
+
+def _plain_numbers(user_message: str) -> list[float]:
+    numbers: list[float] = []
+    for token in _plain_number_tokens(user_message):
+        value = _number(_normalize_number_text(token))
+        if value is not None:
+            numbers.append(value)
+    return numbers
+
+
+def _time_items_from_text(user_message: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for match in TIME_VALUE_RE.finditer(user_message or ""):
+        value = _number(_normalize_number_text(match.group("value")))
+        if value is None:
+            continue
+        unit = _unit(match.group("unit"))
+        if unit in {"hours", "minutes"}:
+            items.append({"value": value, "unit": unit})
+    return items
 
 
 def _unit(value: Any) -> str:
@@ -122,12 +176,42 @@ def _safe_eval(expr: str) -> float:
 def _basic_arithmetic_expression(payload: dict[str, Any], user_message: str) -> str | None:
     expression = str(payload.get("expression") or "").strip()
     if not expression:
-        candidates = re.findall(r"[0-9\.\,\+\-\*/\(\)\s]+", user_message or "")
+        candidates = re.findall(r"[0-9\.\,\+\-\*/×\(\)\s]+", user_message or "")
         expression = max(candidates, key=len).strip() if candidates else ""
     expression = expression.replace(",", ".")
+    expression = expression.replace("×", "*")
+    expression = re.sub(r"(?<=\d)[ \u00a0]+(?=\d{3}(?:\D|$))", "", expression)
     if not expression or not re.fullmatch(r"[0-9\.\+\-\*/\(\)\s]+", expression):
         return None
     return expression
+
+
+def looks_like_explicit_calculation(user_message: str) -> bool:
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+    if not CALCULATION_HINT_RE.search(text):
+        return False
+    numbers = _plain_numbers(text)
+    if len(numbers) >= 2:
+        return True
+    expression = _basic_arithmetic_expression({}, text)
+    return bool(expression and ARITHMETIC_OPERATOR_RE.search(expression))
+
+
+def try_calculate_text(user_message: str) -> dict[str, str] | None:
+    if not looks_like_explicit_calculation(user_message):
+        return None
+    time_items = _time_items_from_text(user_message)
+    if len(time_items) >= 2:
+        try:
+            return calculate({"operation": "sum_time_values", "items": time_items}, user_message)
+        except Exception:
+            pass
+    try:
+        return calculate({"operation": "basic_arithmetic"}, user_message)
+    except Exception:
+        return None
 
 
 def calculate(payload: dict[str, Any] | None, user_message: str = "") -> dict[str, str]:
@@ -193,8 +277,22 @@ def calculate(payload: dict[str, Any] | None, user_message: str = "") -> dict[st
                 "details": f"{_format_number(percent)}% от {_format_number(base)} = {_format_number(result)}",
             }
 
+    if operation in {"basic_arithmetic", "arithmetic", ""} and SUM_HINT_RE.search(user_message or ""):
+        tokens = _plain_number_tokens(user_message)
+        numbers = _plain_numbers(user_message)
+        if len(numbers) >= 2:
+            decimals = max((_decimal_places(token) for token in tokens), default=0)
+            result = sum(numbers)
+            rendered_numbers = [_format_number_with_decimals(item, decimals) for item in numbers]
+            rendered_result = _format_number_with_decimals(result, decimals)
+            return {
+                "result": rendered_result,
+                "details": f"{' + '.join(rendered_numbers)} = {rendered_result}",
+            }
+
     expression = _basic_arithmetic_expression(data, user_message)
     if operation in {"basic_arithmetic", "arithmetic", ""} and expression:
+        expression = expression.replace("×", "*")
         result = _safe_eval(expression)
         return {
             "result": _format_number(result),
@@ -202,4 +300,3 @@ def calculate(payload: dict[str, Any] | None, user_message: str = "") -> dict[st
         }
 
     raise ValueError("unsupported_calculation")
-
