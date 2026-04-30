@@ -251,6 +251,7 @@ def init_db() -> None:
                 max_tokens INTEGER NULL,
                 num_ctx INTEGER NULL,
                 mem_turns INTEGER NULL,
+                ollama_keep_alive TEXT NULL,
                 pipeline_enabled INTEGER NULL,
                 summary_memory_enabled INTEGER NULL,
                 rag_enabled INTEGER NULL,
@@ -374,6 +375,7 @@ def init_db() -> None:
         _ensure_column(conn, "chat_sessions", "role", "ALTER TABLE chat_sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'free';")
         _ensure_column(conn, "profiles", "preferences_json", "ALTER TABLE profiles ADD COLUMN preferences_json TEXT NULL;")
         _ensure_column(conn, "model_settings", "pipeline_enabled", "ALTER TABLE model_settings ADD COLUMN pipeline_enabled INTEGER NULL;")
+        _ensure_column(conn, "model_settings", "ollama_keep_alive", "ALTER TABLE model_settings ADD COLUMN ollama_keep_alive TEXT NULL;")
         _ensure_column(conn, "model_settings", "summary_memory_enabled", "ALTER TABLE model_settings ADD COLUMN summary_memory_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "rag_enabled", "ALTER TABLE model_settings ADD COLUMN rag_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "default_pipeline_preset", "ALTER TABLE model_settings ADD COLUMN default_pipeline_preset TEXT NULL;")
@@ -875,7 +877,7 @@ def get_model_settings(profile_id: int, model_name: str) -> dict[str, Any] | Non
     with closing(_connect()) as conn:
         row = conn.execute(
             """
-            SELECT id, profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns,
+            SELECT id, profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns, ollama_keep_alive,
                    pipeline_enabled, summary_memory_enabled, rag_enabled,
                    default_pipeline_preset, max_transcript_chars, max_context_chars,
                    summary_memory_limit, rag_top_k, rag_max_context_chars, pipeline_json,
@@ -899,6 +901,7 @@ def upsert_model_settings(
     max_tokens: int | None = None,
     num_ctx: int | None = None,
     mem_turns: int | None = None,
+    ollama_keep_alive: str | None = None,
     pipeline_enabled: bool | None = None,
     summary_memory_enabled: bool | None = None,
     rag_enabled: bool | None = None,
@@ -921,7 +924,7 @@ def upsert_model_settings(
             conn.execute(
                 """
                 UPDATE model_settings
-                SET temperature = ?, max_tokens = ?, num_ctx = ?, mem_turns = ?,
+                SET temperature = ?, max_tokens = ?, num_ctx = ?, mem_turns = ?, ollama_keep_alive = ?,
                     pipeline_enabled = ?, summary_memory_enabled = ?, rag_enabled = ?,
                     default_pipeline_preset = ?, max_transcript_chars = ?, max_context_chars = ?,
                     summary_memory_limit = ?, rag_top_k = ?, rag_max_context_chars = ?,
@@ -933,6 +936,7 @@ def upsert_model_settings(
                     max_tokens,
                     num_ctx,
                     mem_turns,
+                    ollama_keep_alive,
                     pipeline_enabled_db,
                     summary_memory_enabled_db,
                     rag_enabled_db,
@@ -952,13 +956,13 @@ def upsert_model_settings(
             conn.execute(
                 """
                 INSERT INTO model_settings (
-                    profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns,
+                    profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns, ollama_keep_alive,
                     pipeline_enabled, summary_memory_enabled, rag_enabled,
                     default_pipeline_preset, max_transcript_chars, max_context_chars,
                     summary_memory_limit, rag_top_k, rag_max_context_chars,
                     pipeline_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_id,
@@ -967,6 +971,7 @@ def upsert_model_settings(
                     max_tokens,
                     num_ctx,
                     mem_turns,
+                    ollama_keep_alive,
                     pipeline_enabled_db,
                     summary_memory_enabled_db,
                     rag_enabled_db,
@@ -1003,6 +1008,7 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
         "max_tokens",
         "num_ctx",
         "mem_turns",
+        "ollama_keep_alive",
         "pipeline_enabled",
         "summary_memory_enabled",
         "rag_enabled",

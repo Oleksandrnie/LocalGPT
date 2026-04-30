@@ -69,6 +69,14 @@ def _parse_args(name: str) -> tuple[str, ...]:
         return ()
 
 
+def _parse_keep_alive(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    return value if value else default
+
+
 def _ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -155,6 +163,9 @@ class Settings:
     max_tokens: int
     num_ctx: int
     mem_turns: int
+    ollama_chat_keep_alive: str
+    ollama_router_keep_alive: str
+    ollama_heavy_keep_alive: str
     admin_token: str
     tts_enabled: bool
     tts_default_provider: str
@@ -286,33 +297,33 @@ MODEL_RECOMMENDATIONS = MODEL_CATALOG
 DEFAULT_PIPELINE = {
     "cleaner": {
         "enabled": True,
-        "model": "",
+        "model": "qwen2.5:3b-instruct",
         "temperature": 0.2,
-        "max_tokens": 1200,
+        "max_tokens": 6000,
     },
     "segmenter": {
         "enabled": True,
-        "model": "",
+        "model": "qwen2.5:3b-instruct",
         "temperature": 0.1,
-        "max_tokens": 1600,
+        "max_tokens": 6000,
     },
     "speaker_resolver": {
         "enabled": True,
-        "model": "",
+        "model": "qwen2.5:7b-instruct",
         "temperature": 0.1,
-        "max_tokens": 1800,
+        "max_tokens": 4000,
     },
     "structurer": {
         "enabled": True,
-        "model": "",
+        "model": "qwen3:8b",
         "temperature": 0.3,
-        "max_tokens": 2000,
+        "max_tokens": 3500,
     },
     "summary": {
         "enabled": True,
-        "model": "",
+        "model": "mistral-nemo:12b",
         "temperature": 0.3,
-        "max_tokens": 2000,
+        "max_tokens": 3000,
     },
 }
 
@@ -389,6 +400,9 @@ def _load_settings() -> Settings:
         max_tokens=_parse_int("MAX_TOKENS", 512),
         num_ctx=_parse_int("NUM_CTX", 32768),
         mem_turns=_parse_int("MEM_TURNS", 6),
+        ollama_chat_keep_alive=_parse_keep_alive("OLLAMA_CHAT_KEEP_ALIVE", "1m"),
+        ollama_router_keep_alive=_parse_keep_alive("OLLAMA_ROUTER_KEEP_ALIVE", "0s"),
+        ollama_heavy_keep_alive=_parse_keep_alive("OLLAMA_HEAVY_KEEP_ALIVE", "30s"),
         admin_token=os.getenv("ADMIN_TOKEN", ""),
         tts_enabled=_parse_bool("TTS_ENABLED", True),
         tts_default_provider=(os.getenv("TTS_DEFAULT_PROVIDER", "piper") or "piper").strip().lower(),

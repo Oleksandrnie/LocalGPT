@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime
 
@@ -22,11 +23,24 @@ from backend.apps.chat.service import (
     prompt_blocks,
     session_title_hint,
 )
-from backend.apps.chat.services import local_calculator, model_router
+from backend.apps.chat.services import local_calculator, model_router, ollama_runtime
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
 chat_service = ChatService()
+
+MISTRAL_NEMO_MODEL_ID = "mistral-nemo:12b"
+CODE_REQUEST_RE = re.compile(
+    r"(?i)(\bhtml\b|\bcss\b|\bjavascript\b|\bjs\b|\btypescript\b|\bts\b|\breact\b|\bvue\b|\bsvelte\b|"
+    r"\bpython\b|\bfastapi\b|\bdocker\b|\bsql\b|код|скрипт|компонент|верстк|рефактор|отлад)",
+)
+MISTRAL_CODE_REQUEST_HINT = (
+    "Суть запроса: пользователь просит обычный безопасный программный код. "
+    "Повторяющиеся фразы в исходном тексте могут быть шумом распознавания; игнорируй повторы и извлеки требования. "
+    "Это входит в задачу ассистента: не отказывайся из-за формулировки про компетенцию. "
+    "Профильные и RAG-ограничения про факты, тарифы и источники не запрещают написание шаблонного кода. "
+    "Если пользователь просит вернуть только код, соблюдай это."
+)
 
 
 def _catalog_title(model_id: str) -> str:
@@ -52,6 +66,29 @@ def _chat_model_missing_detail(model_name: str | None = None) -> dict[str, objec
         "model": "",
         "message": "Нет доступных моделей. Загрузите модель и повторите отправку.",
     }
+
+
+def _is_mistral_nemo_model(model_name: str | None) -> bool:
+    return str(model_name or "").strip().lower() == MISTRAL_NEMO_MODEL_ID
+
+
+def _looks_like_code_request(user_query: str) -> bool:
+    return bool(CODE_REQUEST_RE.search(str(user_query or "")))
+
+
+def _apply_mistral_code_request_hint(target_model: str, user_query: str, messages: list[dict[str, str]]) -> bool:
+    if not _is_mistral_nemo_model(target_model) or not _looks_like_code_request(user_query):
+        return False
+    if not messages or messages[-1].get("role") != "user":
+        return False
+    current = str(messages[-1].get("content") or "")
+    if current.startswith(MISTRAL_CODE_REQUEST_HINT):
+        return False
+    messages[-1] = {
+        **messages[-1],
+        "content": f"{MISTRAL_CODE_REQUEST_HINT}\n\nИсходный запрос пользователя:\n{current}",
+    }
+    return True
 
 
 def _router_model_missing_detail() -> dict[str, object]:
@@ -148,6 +185,10 @@ def _apply_auto_router(prepared: dict) -> dict:
             **(prepared.get("effective_settings") or {}),
             "model_selection_mode": "manual",
         }
+        prepared["effective_settings"] = ollama_runtime.apply_keep_alive_setting(
+            selected_model,
+            prepared["effective_settings"],
+        )
         return prepared
 
     if not _is_model_installed_or_503(model_router.ROUTER_MODEL_ID):
@@ -186,6 +227,10 @@ def _apply_auto_router(prepared: dict) -> dict:
         raise HTTPException(status_code=424, detail=_auto_target_missing_detail(decision.target_model))
 
     prepared["target_model"] = decision.target_model
+    prepared["effective_settings"] = ollama_runtime.apply_keep_alive_setting(
+        decision.target_model,
+        prepared.get("effective_settings") or {},
+    )
     return prepared
 
 
@@ -293,6 +338,11 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         summary_memory=summary_memory,
         rag_context=rag_context,
     )
+    if _apply_mistral_code_request_hint(target_model, user_query, messages):
+        effective_settings = {
+            **effective_settings,
+            "mistral_code_request_hint": True,
+        }
     blocks = prompt_blocks(
         context=req.context,
         profile_system_prompt=profile_system_prompt,

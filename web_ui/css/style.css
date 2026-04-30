@@ -459,6 +459,18 @@ button.model-info-button:hover:not([disabled]) {
     gap: 12px;
 }
 
+.keep-alive-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(104px, 0.36fr);
+    gap: 10px;
+    min-width: 0;
+}
+
+.keep-alive-control .app-select,
+.keep-alive-control .app-select__button {
+    min-width: 0;
+}
+
 .button {
     display: inline-flex;
     align-items: center;
@@ -2299,6 +2311,10 @@ button.model-info-button:hover:not([disabled]) {
     grid-column: span 2;
 }
 
+#settingsBackdrop .settings-group--asr {
+    grid-column: 1 / -1;
+}
+
 .settings-group__header {
     display: flex;
     align-items: flex-start;
@@ -2433,9 +2449,10 @@ button.model-info-button:hover:not([disabled]) {
 
 .pipeline-stage-row {
     display: grid;
-    grid-template-columns: minmax(120px, 0.85fr) minmax(170px, 1.35fr) minmax(88px, 0.65fr) minmax(112px, 0.75fr);
-    gap: 10px;
-    align-items: end;
+    grid-template-columns: minmax(120px, 180px) minmax(260px, 1fr) minmax(104px, 128px) minmax(132px, 156px);
+    column-gap: 18px;
+    row-gap: 8px;
+    align-items: start;
     min-width: 0;
     padding: 10px;
     border: 1px solid rgba(148, 163, 184, 0.14);
@@ -2467,8 +2484,40 @@ button.model-info-button:hover:not([disabled]) {
     min-width: 0;
 }
 
+.pipeline-stage-row .app-select,
+.pipeline-stage-row .app-select__button,
+.pipeline-stage-row .field__control {
+    min-width: 0;
+}
+
 .pipeline-stage-row .field__label {
     font-size: 11px;
+}
+
+.pipeline-stage-row__recommendation {
+    grid-column: 2 / -1;
+    margin: -2px 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.pipeline-stage-row__recommendation strong {
+    color: var(--text);
+    font-weight: 700;
+}
+
+.pipeline-stage-row__recommendation span {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.pipeline-stage-row__recommendation em {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-soft);
+    font-style: normal;
 }
 
 #settingsBackdrop .pipeline-stage-row .field__control {
@@ -4506,12 +4555,20 @@ body.theme-light .tool-window__resize::before {
         grid-column: span 1;
     }
 
+    #settingsBackdrop .settings-group--asr {
+        grid-column: 1 / -1;
+    }
+
     .pipeline-stage-row {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         align-items: start;
     }
 
     .pipeline-stage-row__title {
+        grid-column: 1 / -1;
+    }
+
+    .pipeline-stage-row__recommendation {
         grid-column: 1 / -1;
     }
 }
@@ -4542,6 +4599,10 @@ body.theme-light .tool-window__resize::before {
     }
 
     .pipeline-stage-row__title {
+        grid-column: auto;
+    }
+
+    .pipeline-stage-row__recommendation {
         grid-column: auto;
     }
 }

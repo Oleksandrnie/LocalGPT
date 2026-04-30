@@ -9,10 +9,10 @@ from datetime import datetime
 from typing import Any, Iterable
 
 from fastapi import HTTPException
-from openai import OpenAI
 
 from app import config, db
 from app.roles import normalize_role, system_prompt_for
+from backend.apps.chat.services import ollama_runtime
 
 LOGGER = logging.getLogger(__name__)
 
@@ -401,7 +401,7 @@ def maybe_compress_session_history(
 
 class ChatService:
     def __init__(self) -> None:
-        self.client = OpenAI(base_url=config.SETTINGS.base_url, api_key=config.SETTINGS.api_key)
+        pass
 
     def log_chat_event(self, payload: dict[str, object]) -> None:
         try:
@@ -416,16 +416,17 @@ class ChatService:
         request_settings["num_ctx_requested"] = request_settings.get("num_ctx")
         request_settings["num_ctx_applied"] = False
         request_settings["num_ctx_apply_method"] = "openai_compatible_not_supported"
+        keep_alive = ollama_runtime.resolve_keep_alive(model, request_settings)
         try:
-            resp = self.client.chat.completions.create(
-                model=model,
+            text = ollama_runtime.chat_completion(
+                model,
                 messages=messages,
                 temperature=request_settings.get("temperature", config.SETTINGS.temperature),
                 max_tokens=request_settings.get("max_tokens", config.SETTINGS.max_tokens),
+                keep_alive=keep_alive,
             )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
-        text = resp.choices[0].message.content or ""
         return sanitize_reply(text)
 
 

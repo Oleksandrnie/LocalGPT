@@ -597,6 +597,19 @@
                             <input id="numCtxInput" class="field__control" type="number" min="1" step="1"
                                 placeholder="32768" />
                         </label>
+
+                        <label class="field">
+                            <span class="field__label">Удержание в памяти</span>
+                            <span class="keep-alive-control">
+                                <input id="ollamaKeepAliveInput" class="field__control" type="number" min="0"
+                                    step="1" placeholder="1" />
+                                <select id="ollamaKeepAliveUnitSelect" class="field__control">
+                                    <option value="s">сек</option>
+                                    <option value="m">мин</option>
+                                    <option value="h">час</option>
+                                </select>
+                            </span>
+                        </label>
                     </div>
 
                     <div class="button-row">
@@ -609,7 +622,7 @@
                     <p class="inline-status" id="modelSettingsStatus"></p>
                 </section>
 
-                <section class="settings-group">
+                <section class="settings-group settings-group--asr">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">ASR</p>

@@ -46,6 +46,20 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(profile["preferences"]["asr"]["studio_model"], "large-v3-turbo")
         self.assertEqual(profile["preferences"]["chat"]["dictation_model"], config.SETTINGS.whisper_default_model)
 
+    def test_default_pipeline_uses_current_catalog_and_token_budget(self):
+        expected = {
+            "cleaner": ("qwen2.5:3b-instruct", 6000),
+            "segmenter": ("qwen2.5:3b-instruct", 6000),
+            "speaker_resolver": ("qwen2.5:7b-instruct", 4000),
+            "structurer": ("qwen3:8b", 3500),
+            "summary": ("mistral-nemo:12b", 3000),
+        }
+
+        for stage, (model, max_tokens) in expected.items():
+            with self.subTest(stage=stage):
+                self.assertEqual(config.DEFAULT_PIPELINE[stage]["model"], model)
+                self.assertEqual(config.DEFAULT_PIPELINE[stage]["max_tokens"], max_tokens)
+
     def test_profile_create_and_update_accept_system_prompt(self):
         profile = profile_routes.create_profile(
             ProfileCreate(name="  Work  ", description="  Client work  ", system_prompt="  Use profile context.  ")

@@ -304,6 +304,7 @@ def save_model_settings(req: ModelSettingsRequest):
         max_tokens=req.max_tokens,
         num_ctx=req.num_ctx,
         mem_turns=req.mem_turns,
+        ollama_keep_alive=(req.ollama_keep_alive.strip() if isinstance(req.ollama_keep_alive, str) and req.ollama_keep_alive.strip() else None),
         pipeline_enabled=req.pipeline_enabled,
         summary_memory_enabled=req.summary_memory_enabled,
         rag_enabled=req.rag_enabled,

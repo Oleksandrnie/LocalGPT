@@ -31,18 +31,57 @@ const ASR_PIPELINE_STAGES = [
   { key: "structurer", label: "Структура" },
   { key: "summary", label: "Саммари" },
 ];
+const ASR_PIPELINE_MODEL_CATALOG = [
+  { id: "qwen2.5:3b-instruct", title: "Qwen 2.5 3B Instruct", note: "быстрый слой для очистки и сегментов" },
+  { id: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B Instruct", note: "сбалансированное качество для ролей и medium-summary" },
+  { id: "qwen3:8b", title: "Qwen 3 8B", note: "reasoning для структуры, решений, задач и рисков" },
+  { id: "mistral-nemo:12b", title: "Mistral Nemo 12B", note: "heavy summary и structuring длинных транскриптов" },
+  { id: "qwen3:4b", title: "Qwen 3 4B", note: "experimental fallback для быстрых проверок" },
+  { id: "qwen2.5-coder:7b", title: "Qwen 2.5 Coder 7B", note: "только для технических транскриптов с кодом" },
+  { id: "deepseek-coder:6.7b", title: "DeepSeek Coder 6.7B", note: "code-alt для технических транскриптов" },
+];
+const ASR_PIPELINE_MODEL_IDS = ASR_PIPELINE_MODEL_CATALOG.map((item) => item.id);
+const ASR_PIPELINE_LEGACY_MODEL_IDS = new Set(["qwen2.5:3b", "mistral:7b", "mistral"]);
+const ASR_PIPELINE_RECOMMENDATIONS = {
+  cleaner: {
+    primary: "qwen2.5:3b-instruct",
+    alternatives: ["qwen2.5:7b-instruct"],
+    text: "быстро чистит шум, повторы и мусор ASR без тяжёлого reasoning.",
+  },
+  segmenter: {
+    primary: "qwen2.5:3b-instruct",
+    alternatives: ["qwen2.5:7b-instruct"],
+    text: "лучший быстрый вариант для разбиения transcript на смысловые сегменты.",
+  },
+  speaker_resolver: {
+    primary: "qwen2.5:7b-instruct",
+    alternatives: ["qwen2.5:3b-instruct"],
+    text: "стабильнее сопоставляет роли и говорящих; 3B оставь для скорости.",
+  },
+  structurer: {
+    primary: "qwen3:8b",
+    alternatives: ["mistral-nemo:12b", "qwen2.5:7b-instruct"],
+    text: "лучше подходит для решений, задач, рисков и open questions.",
+  },
+  summary: {
+    primary: "mistral-nemo:12b",
+    alternatives: ["qwen3:8b", "qwen2.5:7b-instruct"],
+    text: "heavy-модель для длинного summary; если медленно, используй Qwen 3 8B или Qwen 2.5 7B.",
+  },
+};
 const ASR_PIPELINE_DEFAULTS = {
-  cleaner: { enabled: true, model: "", temperature: 0.2, max_tokens: 1200 },
-  segmenter: { enabled: true, model: "", temperature: 0.1, max_tokens: 1600 },
-  speaker_resolver: { enabled: true, model: "", temperature: 0.1, max_tokens: 1800 },
-  structurer: { enabled: true, model: "", temperature: 0.3, max_tokens: 2000 },
-  summary: { enabled: true, model: "", temperature: 0.3, max_tokens: 2000 },
+  cleaner: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.2, max_tokens: 6000 },
+  segmenter: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.1, max_tokens: 6000 },
+  speaker_resolver: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.1, max_tokens: 4000 },
+  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.3, max_tokens: 3500 },
+  summary: { enabled: true, model: "mistral-nemo:12b", temperature: 0.3, max_tokens: 3000 },
 };
 const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
   "max_tokens",
   "num_ctx",
   "mem_turns",
+  "ollama_keep_alive",
   "pipeline_enabled",
   "summary_memory_enabled",
   "rag_enabled",
@@ -236,6 +275,8 @@ const els = {
   maxTokensInput: document.getElementById("maxTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
   memTurnsInput: document.getElementById("memTurnsInput"),
+  ollamaKeepAliveInput: document.getElementById("ollamaKeepAliveInput"),
+  ollamaKeepAliveUnitSelect: document.getElementById("ollamaKeepAliveUnitSelect"),
   saveModelSettingsButton: document.getElementById("saveModelSettingsButton"),
   resetModelSettingsButton: document.getElementById("resetModelSettingsButton"),
   modelSettingsStatus: document.getElementById("modelSettingsStatus"),
@@ -2681,6 +2722,7 @@ function renderModelSettings() {
     max_tokens: overrides.max_tokens ?? effective.max_tokens ?? "",
     num_ctx: overrides.num_ctx ?? effective.num_ctx ?? "",
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
+    ollama_keep_alive: overrides.ollama_keep_alive ?? effective.ollama_keep_alive ?? defaultKeepAliveForModel(modelName),
   };
 
   if (els.temperatureInput) {
@@ -2700,6 +2742,18 @@ function renderModelSettings() {
     els.memTurnsInput.value = values.mem_turns === "" ? "" : String(values.mem_turns);
     els.memTurnsInput.title = "Большие значения памяти увеличивают prompt. Для длинных диалогов лучше summary memory.";
   }
+  if (els.ollamaKeepAliveInput) {
+    const keepAlive = parseKeepAliveValue(values.ollama_keep_alive, defaultKeepAliveForModel(modelName));
+    els.ollamaKeepAliveInput.disabled = disabled;
+    els.ollamaKeepAliveInput.value = keepAlive.amount;
+    els.ollamaKeepAliveInput.title = "Сколько Ollama держит модель в RAM/GPU после ответа. 0 секунд — выгружать сразу.";
+  }
+  if (els.ollamaKeepAliveUnitSelect) {
+    const keepAlive = parseKeepAliveValue(values.ollama_keep_alive, defaultKeepAliveForModel(modelName));
+    els.ollamaKeepAliveUnitSelect.disabled = disabled;
+    els.ollamaKeepAliveUnitSelect.value = keepAlive.unit;
+    queueSyncAppSelects();
+  }
   if (els.saveModelSettingsButton) {
     els.saveModelSettingsButton.disabled = disabled;
   }
@@ -2707,6 +2761,39 @@ function renderModelSettings() {
     els.resetModelSettingsButton.disabled = disabled;
   }
   renderAsrPipelineSettings();
+}
+
+function defaultKeepAliveForModel(modelName = "") {
+  const target = String(modelName || "").trim();
+  if (target === "mistral-nemo:12b") return "30s";
+  return "1m";
+}
+
+function parseKeepAliveValue(value, fallback = "1m") {
+  const raw = String(value || fallback || "1m").trim().replace(",", ".");
+  const match = raw.match(/^(\d+(?:\.\d+)?)\s*([smh])?$/i);
+  if (!match) {
+    return parseKeepAliveValue(fallback && fallback !== raw ? fallback : "1m", "1m");
+  }
+  const amount = Math.max(0, Number(match[1]));
+  const unit = String(match[2] || "m").toLowerCase();
+  return {
+    amount: Number.isInteger(amount) ? String(amount) : String(amount).replace(/\.0+$/, ""),
+    unit: ["s", "m", "h"].includes(unit) ? unit : "m",
+  };
+}
+
+function collectKeepAliveValue() {
+  const rawAmount = String(els.ollamaKeepAliveInput?.value || "").trim().replace(",", ".");
+  if (!rawAmount) return null;
+  const amount = Math.max(0, Number(rawAmount));
+  if (!Number.isFinite(amount)) return null;
+  const unit = ["s", "m", "h"].includes(els.ollamaKeepAliveUnitSelect?.value)
+    ? els.ollamaKeepAliveUnitSelect.value
+    : "m";
+  if (amount === 0) return "0s";
+  const normalizedAmount = Number.isInteger(amount) ? String(amount) : String(amount).replace(/\.0+$/, "");
+  return `${normalizedAmount}${unit}`;
 }
 
 function asrPipelineSourceObject(value) {
@@ -2740,22 +2827,61 @@ function getAsrPipelineStageSettings(stageKey) {
   });
 }
 
-function pipelineModelOptionsHtml(selectedValue = "") {
+function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
   const selected = String(selectedValue || "").trim();
   const selectedLlm = String(state.selectedLlmModel || "").trim();
-  const names = [];
-  if (selected && !names.includes(selected)) names.push(selected);
-  state.installedModels.forEach((item) => {
-    const name = String(item?.name || "").trim();
-    if (name && !names.includes(name)) names.push(name);
-  });
+  const installedNames = new Set(state.installedModels.map((item) => String(item?.name || "").trim()).filter(Boolean));
+  const stageRecommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey] || null;
   const fallbackLabel = selectedLlm ? `Текущая LLM (${selectedLlm})` : "Текущая LLM";
-  return [
-    `<option value=""${selected ? "" : " selected"}>${escapeHtml(fallbackLabel)}</option>`,
-    ...names.map((name) => (
-      `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}>${escapeHtml(name)}</option>`
-    )),
-  ].join("");
+  const options = [`<option value=""${selected ? "" : " selected"}>${escapeHtml(fallbackLabel)}</option>`];
+
+  if (selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)) {
+    const legacyLabel = ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected)
+      ? `${selected} (legacy, замените)`
+      : `${selected} (вне каталога)`;
+    options.push(`<option value="${escapeHtml(selected)}" selected>${escapeHtml(legacyLabel)}</option>`);
+  }
+
+  ASR_PIPELINE_MODEL_CATALOG.forEach((item) => {
+    const markers = [];
+    if (item.id === stageRecommendation?.primary) {
+      markers.push("реком.");
+    }
+    if (!installedNames.has(item.id)) {
+      markers.push("не загружена");
+    }
+    if (item.id === "qwen3:4b") {
+      markers.push("experimental");
+    }
+    if (item.category === "code" || item.id.includes("coder")) {
+      markers.push("code");
+    }
+    const label = `${item.id}${markers.length ? ` (${markers.join(", ")})` : ""}`;
+    options.push(
+      `<option value="${escapeHtml(item.id)}"${item.id === selected ? " selected" : ""}>${escapeHtml(label)}</option>`,
+    );
+  });
+
+  return options.join("");
+}
+
+function pipelineStageRecommendationHtml(stageKey, selectedModel = "") {
+  const recommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey];
+  if (!recommendation) return "";
+  const selected = String(selectedModel || "").trim();
+  const altText = recommendation.alternatives
+    .map((modelId) => modelId)
+    .join(" / ");
+  const tokenTarget = ASR_PIPELINE_DEFAULTS[stageKey]?.max_tokens;
+  const legacyWarning = selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)
+    ? ` Сейчас выбрана ${ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected) ? "legacy-модель" : "модель вне pipeline-каталога"} ${selected}; лучше заменить на ${recommendation.primary}.`
+    : "";
+  return `
+    <p class="pipeline-stage-row__recommendation">
+      <strong>Рекомендация:</strong> <span>${escapeHtml(recommendation.primary)}</span> — ${escapeHtml(recommendation.text)}
+      <em>Max tokens: ${escapeHtml(String(tokenTarget || "—"))}. Альтернатива: ${escapeHtml(altText)}.</em>${escapeHtml(legacyWarning)}
+    </p>
+  `;
 }
 
 function clearEnhancedSelectsIn(container) {
@@ -2814,7 +2940,7 @@ function renderAsrPipelineSettings() {
           <label class="field">
             <span class="field__label">Модель</span>
             <select class="field__control" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="model"${disabled ? " disabled" : ""}>
-              ${pipelineModelOptionsHtml(settings.model)}
+              ${pipelineModelOptionsHtml(settings.model, stage.key)}
             </select>
           </label>
           <label class="field">
@@ -2825,6 +2951,7 @@ function renderAsrPipelineSettings() {
             <span class="field__label">Max tokens</span>
             <input class="field__control" type="number" min="1" step="1" value="${escapeHtml(String(settings.max_tokens))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="max_tokens"${disabled ? " disabled" : ""} />
           </label>
+          ${pipelineStageRecommendationHtml(stage.key, settings.model)}
         </article>
       `;
     })
@@ -5720,6 +5847,7 @@ async function saveModelSettingsFlow() {
         max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         mem_turns: memTurnsValue,
+        ollama_keep_alive: collectKeepAliveValue(),
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
@@ -5767,12 +5895,12 @@ async function resetAsrPipelineSettingsFlow() {
     const data = await request("/model_settings", {
       method: "POST",
       body: buildModelSettingsPayload({
-        pipeline: null,
+        pipeline: ASR_PIPELINE_DEFAULTS,
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
-    setInlineStatus(els.asrPipelineSettingsStatus, "Настройки стадий сброшены.", "success");
+    setInlineStatus(els.asrPipelineSettingsStatus, "Настройки стадий сброшены к рекомендациям.", "success");
   } catch (error) {
     setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сбросить стадии: ${error.message || error}`, "error");
   }

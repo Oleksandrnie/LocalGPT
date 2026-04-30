@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from fastapi import HTTPException
-from openai import OpenAI
 
 from app import config
+from backend.apps.chat.services import ollama_runtime
 
 AUTO_MODEL_ID = "__auto_router__"
 AUTO_MODEL_TITLE = "Auto / Smart Router"
@@ -15,6 +16,33 @@ ROUTER_MODEL_ID = "qwen3:0.6b"
 LOCAL_CALCULATOR_TARGET = "__local_calculator__"
 FALLBACK_TARGET_MODEL = "qwen2.5:7b-instruct"
 LOW_CONFIDENCE_THRESHOLD = 0.6
+EXPLICIT_CODE_LANGUAGE_RE = re.compile(
+    r"(?i)(\bhtml\b|\bcss\b|\bjavascript\b|\bjs\b|\btypescript\b|\bts\b|\breact\b|\bvue\b|\bsvelte\b|"
+    r"\bpython\b|\bfastapi\b|\bdocker\b|\bsql\b)"
+)
+EXPLICIT_CODE_ACTION_RE = re.compile(
+    r"(?i)(напиши|сделай|создай|сгенерируй|верни|выведи|исправь|отлад|рефактор|реализуй|"
+    r"сверстай|добавь|объясни|проверь|write|create|generate|return|fix|debug|refactor|implement)"
+)
+EXPLICIT_CODE_OBJECT_RE = re.compile(
+    r"(?i)(код|скрипт|компонент|разметк|верстк|функци[яюи]|класс|endpoint|api|code|script|component|markup)"
+)
+QUICK_RAG_SOURCE_RE = re.compile(
+    r"(?i)(\brag\b|раг\b|из\s+ра[гк]а?\b|из\s+баз[ыае]\b|по\s+баз[еы]\b|из\s+документ|"
+    r"в\s+документ|из\s+контекст|из\s+файл|в\s+файл)"
+)
+QUICK_RAG_ACTION_RE = re.compile(
+    r"(?i)(вытащ|достан|найд|покаж|перечисл|список|какие\s+есть|есть\s+ли|"
+    r"в\s+одн[уо]?\s+строч|одной\s+строк|коротко|просто\s+данн|extract|list|find|show)"
+)
+QUICK_RAG_FACT_RE = re.compile(
+    r"(?i)(тариф|цен[аыу]|стоимост|депозит|пакет|план|услови|минимальн|максимальн|"
+    r"номер|дат[ауы]|срок|контакт|email|почт|телефон|адрес|реквизит|факт)"
+)
+QUICK_RAG_COMPLEX_RE = re.compile(
+    r"(?i)(проанализ|сравн|выбери|лучше|оптимальн|стратег|план|рекоменд|объясни|"
+    r"напиши\s+(?:сообщение|письмо|текст)|перепиш|сформулируй|summary|резюме)"
+)
 
 SUPPORTED_INTENTS = {
     "quick_rag",
@@ -46,6 +74,8 @@ Important:
 - Do not select models for transcription, transcript pipeline, cleaner, segmenter, structurer, or summary stages.
 - If the request is clearly about processing an already provided transcript inside normal chat, classify it as default_chat or thinking depending on complexity.
 - If the request is about code, classify it as code or code_compare.
+- Requests to create HTML, CSS, JavaScript, Python, API, component, markup, or script output are code,
+  even if the content inside the code is marketing text, SEO, tariffs, a list, or another non-programming topic.
 - If the request is about exact arithmetic, classify it as calculation.
 Supported intents:
 - quick_rag: fast retrieval, short factual answer, local RAG lookup
@@ -70,6 +100,8 @@ Rules:
 5. Return confidence from 0 to 1.
 6. Return concise reason in Russian.
 7. Return only JSON.
+8. If RAG is enabled and the user asks to extract, list, or check short factual data, use quick_rag.
+9. If the user asks to write, rewrite, explain, compare, or analyze retrieved facts, use default_chat or thinking.
 JSON schema:
 {
   "intent": "quick_rag | default_chat | thinking | code | code_compare | calculation | unknown",
@@ -89,6 +121,8 @@ class RouterDecision:
     calculation_request: dict[str, Any] | None = None
     fallback: bool = False
     fallback_reason: str | None = None
+    backend_override: bool = False
+    backend_override_reason: str | None = None
     raw_response: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -97,6 +131,8 @@ class RouterDecision:
             payload.pop("calculation_request", None)
         if not payload.get("fallback"):
             payload.pop("fallback_reason", None)
+        if not payload.get("backend_override"):
+            payload.pop("backend_override_reason", None)
         if payload.get("raw_response") is None:
             payload.pop("raw_response", None)
         return payload
@@ -125,6 +161,65 @@ def _coerce_confidence(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(1.0, confidence))
+
+
+def looks_like_explicit_code_request(user_message: str) -> bool:
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+    has_language = bool(EXPLICIT_CODE_LANGUAGE_RE.search(text))
+    has_action = bool(EXPLICIT_CODE_ACTION_RE.search(text))
+    has_object = bool(EXPLICIT_CODE_OBJECT_RE.search(text))
+    return (has_language and (has_action or has_object)) or (has_action and has_object)
+
+
+def looks_like_simple_rag_lookup(user_message: str, context: dict[str, Any] | None = None) -> bool:
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+    if QUICK_RAG_COMPLEX_RE.search(text):
+        return False
+    has_source = bool(QUICK_RAG_SOURCE_RE.search(text))
+    has_action = bool(QUICK_RAG_ACTION_RE.search(text))
+    has_fact = bool(QUICK_RAG_FACT_RE.search(text))
+    rag_enabled = bool((context or {}).get("rag_enabled"))
+    return (has_source and (has_action or has_fact)) or (rag_enabled and has_action and has_fact)
+
+
+def correct_router_decision(
+    user_message: str,
+    decision: RouterDecision,
+    context: dict[str, Any] | None = None,
+) -> RouterDecision:
+    if not looks_like_explicit_code_request(user_message):
+        if decision.intent == "quick_rag":
+            return decision
+        if decision.intent not in {"code", "code_compare", "calculation"} and looks_like_simple_rag_lookup(user_message, context):
+            return RouterDecision(
+                intent="quick_rag",
+                target_model=ROUTER_MODEL_MAP["quick_rag"],
+                confidence=max(decision.confidence, 0.9),
+                reason="Запрос просит быстро извлечь факты из RAG без анализа или переписывания.",
+                calculation_request=None,
+                fallback=False,
+                backend_override=True,
+                backend_override_reason="simple_rag_lookup",
+                raw_response=decision.raw_response,
+            )
+        return decision
+    if decision.intent in {"code", "code_compare"}:
+        return decision
+    return RouterDecision(
+        intent="code",
+        target_model=ROUTER_MODEL_MAP["code"],
+        confidence=max(decision.confidence, 0.95),
+        reason="Запрос явно просит написать или изменить программный код.",
+        calculation_request=None,
+        fallback=False,
+        backend_override=True,
+        backend_override_reason="explicit_code_request",
+        raw_response=decision.raw_response,
+    )
 
 
 def validate_router_decision(raw_json: str) -> RouterDecision:
@@ -164,20 +259,21 @@ def validate_router_decision(raw_json: str) -> RouterDecision:
 
 
 def route_model(user_message: str, context: dict[str, Any] | None = None) -> RouterDecision:
-    client = OpenAI(base_url=config.SETTINGS.base_url, api_key=config.SETTINGS.api_key)
     payload = {
         "user_message": user_message,
         "context": context or {},
     }
+    keep_alive = ollama_runtime.resolve_keep_alive(ROUTER_MODEL_ID, {}, router=True)
     try:
-        response = client.chat.completions.create(
-            model=ROUTER_MODEL_ID,
-            messages=[
+        content = ollama_runtime.chat_completion(
+            ROUTER_MODEL_ID,
+            [
                 {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
             temperature=0,
             max_tokens=700,
+            keep_alive=keep_alive,
         )
     except Exception as exc:  # pragma: no cover - depends on Ollama runtime
         raise HTTPException(
@@ -187,9 +283,12 @@ def route_model(user_message: str, context: dict[str, Any] | None = None) -> Rou
                 "message": f"Router-модель {ROUTER_MODEL_ID} не смогла обработать запрос: {exc}",
             },
         ) from exc
+    finally:
+        if ollama_runtime.is_immediate_keep_alive(keep_alive):
+            ollama_runtime.unload_model(ROUTER_MODEL_ID)
 
-    content = response.choices[0].message.content if response.choices else ""
-    return validate_router_decision(content or "")
+    decision = validate_router_decision(content or "")
+    return correct_router_decision(user_message, decision, context)
 
 
 def router_debug_settings(decision: RouterDecision) -> dict[str, Any]:
@@ -204,5 +303,7 @@ def router_debug_settings(decision: RouterDecision) -> dict[str, Any]:
     if decision.fallback:
         payload["router_fallback"] = True
         payload["router_fallback_reason"] = decision.fallback_reason or "unknown"
+    if decision.backend_override:
+        payload["router_backend_override"] = True
+        payload["router_backend_override_reason"] = decision.backend_override_reason or "unknown"
     return payload
-

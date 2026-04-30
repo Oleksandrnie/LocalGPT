@@ -84,6 +84,7 @@ class ModelSettingsRequest(BaseModel):
     max_tokens: int | None = None
     num_ctx: int | None = None
     mem_turns: int | None = None
+    ollama_keep_alive: str | None = None
     pipeline_enabled: bool | None = None
     summary_memory_enabled: bool | None = None
     rag_enabled: bool | None = None
