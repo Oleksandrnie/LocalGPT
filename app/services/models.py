@@ -408,10 +408,21 @@ def list_models() -> dict[str, Any]:
         }
         for item in config.MODEL_CATALOG
     ]
+    utility = [
+        {
+            **item,
+            "name": item.get("id"),
+            "label": item.get("title"),
+            "installed": item.get("id") in installed_names,
+            "selected": False,
+        }
+        for item in getattr(config, "UTILITY_MODEL_CATALOG", [])
+    ]
     return {
         "installed": installed,
         "models": [item.get("name") for item in installed if item.get("name")],
         "catalog": catalog,
+        "utility": utility,
         "recommended": catalog,
         "downloads": downloads,
         "error": error,

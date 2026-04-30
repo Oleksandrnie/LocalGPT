@@ -1,0 +1,220 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi import HTTPException
+
+from app import config, db
+from app.schemas import ChatRequest
+from app.services import models as model_service
+from backend.apps.chat.routes import start_chat_task
+from backend.apps.chat.services import local_calculator, model_router
+
+
+class ModelRouterTestCase(unittest.TestCase):
+    def test_auto_model_aliases(self):
+        self.assertTrue(model_router.is_auto_model("__auto_router__"))
+        self.assertTrue(model_router.is_auto_model("Auto / Smart Router"))
+        self.assertFalse(model_router.is_auto_model("qwen2.5:7b-instruct"))
+
+    def test_valid_router_decision_uses_intent_target(self):
+        raw = json.dumps(
+            {
+                "intent": "code",
+                "target_model": "qwen2.5-coder:7b",
+                "confidence": 0.86,
+                "reason": "Запрос связан с кодом.",
+            },
+            ensure_ascii=False,
+        )
+
+        decision = model_router.validate_router_decision(raw)
+
+        self.assertFalse(decision.fallback)
+        self.assertEqual(decision.intent, "code")
+        self.assertEqual(decision.target_model, "qwen2.5-coder:7b")
+        self.assertEqual(decision.confidence, 0.86)
+
+    def test_router_decision_corrects_target_by_intent(self):
+        raw = json.dumps(
+            {
+                "intent": "thinking",
+                "target_model": "qwen2.5-coder:7b",
+                "confidence": 0.9,
+                "reason": "Нужен анализ.",
+            },
+            ensure_ascii=False,
+        )
+
+        decision = model_router.validate_router_decision(raw)
+
+        self.assertFalse(decision.fallback)
+        self.assertEqual(decision.intent, "thinking")
+        self.assertEqual(decision.target_model, "qwen3:8b")
+
+    def test_invalid_json_falls_back_to_default_chat(self):
+        decision = model_router.validate_router_decision("```json\n{}\n```")
+
+        self.assertTrue(decision.fallback)
+        self.assertEqual(decision.fallback_reason, "invalid_json")
+        self.assertEqual(decision.intent, "unknown")
+        self.assertEqual(decision.target_model, "qwen2.5:7b-instruct")
+
+    def test_low_confidence_falls_back_to_default_chat(self):
+        raw = json.dumps(
+            {
+                "intent": "code",
+                "target_model": "qwen2.5-coder:7b",
+                "confidence": 0.59,
+                "reason": "Не уверен.",
+            },
+            ensure_ascii=False,
+        )
+
+        decision = model_router.validate_router_decision(raw)
+
+        self.assertTrue(decision.fallback)
+        self.assertEqual(decision.fallback_reason, "low_confidence")
+        self.assertEqual(decision.target_model, "qwen2.5:7b-instruct")
+
+    def test_calculation_decision_preserves_request(self):
+        raw = json.dumps(
+            {
+                "intent": "calculation",
+                "target_model": "__local_calculator__",
+                "confidence": 0.91,
+                "reason": "Нужен точный расчёт.",
+                "calculation_request": {
+                    "operation": "sum_and_convert_to_minutes",
+                    "items": [
+                        {"value": 1.5, "unit": "hours"},
+                        {"value": 35, "unit": "minutes"},
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        decision = model_router.validate_router_decision(raw)
+
+        self.assertFalse(decision.fallback)
+        self.assertEqual(decision.target_model, "__local_calculator__")
+        self.assertEqual(decision.calculation_request["operation"], "sum_and_convert_to_minutes")
+
+    def test_local_calculator_sums_hours_and_minutes(self):
+        result = local_calculator.calculate(
+            {
+                "operation": "sum_and_convert_to_minutes",
+                "items": [
+                    {"value": 1.5, "unit": "hours"},
+                    {"value": 35, "unit": "minutes"},
+                ],
+            }
+        )
+
+        self.assertIn("125 минут", result["result"])
+        self.assertIn("90 минут", result["details"])
+
+    def test_local_calculator_multiplies_hours_by_rate(self):
+        result = local_calculator.calculate({"operation": "multiply_hours_by_rate", "hours": 2.5, "rate": 1200})
+
+        self.assertEqual(result["result"], "3000 ₽")
+        self.assertIn("2.5 ч", result["details"])
+
+    def test_model_list_exposes_router_as_utility_not_recommended(self):
+        installed = [{"name": "qwen3:0.6b"}, {"name": "qwen2.5:7b-instruct"}]
+        with (
+            patch.object(model_service, "_list_local_models", return_value=installed),
+            patch.object(model_service, "_pull_statuses", return_value=[]),
+        ):
+            data = model_service.list_models()
+
+        catalog_ids = [item["id"] for item in data["catalog"]]
+        utility_ids = [item["id"] for item in data["utility"]]
+
+        self.assertEqual(catalog_ids, [item["id"] for item in config.MODEL_CATALOG])
+        self.assertEqual(len(catalog_ids), 7)
+        self.assertEqual(utility_ids, ["qwen3:0.6b"])
+        self.assertNotIn("qwen3:0.6b", catalog_ids)
+        self.assertNotIn("qwen3:0.6b", [item["id"] for item in data["recommended"]])
+        self.assertTrue(data["utility"][0]["installed"])
+
+
+class AutoRouterChatFlowTestCase(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        db.DB_PATH = Path(self.tmpdir.name) / "localgpt-test.db"
+        db.init_db()
+        self.profile_id = db.ensure_default_profile()
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_auto_router_requires_router_model(self):
+        req = ChatRequest(query="Объясни коротко", profile_id=self.profile_id, model_name=model_router.AUTO_MODEL_ID)
+
+        with patch.object(model_service, "is_model_installed", return_value=False):
+            with self.assertRaises(HTTPException) as ctx:
+                start_chat_task(req)
+
+        self.assertEqual(ctx.exception.status_code, 424)
+        self.assertEqual(ctx.exception.detail["code"], "router_model_missing")
+        self.assertEqual(ctx.exception.detail["model"], "qwen3:0.6b")
+
+    def test_auto_router_calculation_uses_local_calculator(self):
+        req = ChatRequest(query="Сколько минут: 1.5 часа плюс 35 минут?", profile_id=self.profile_id, model_name=model_router.AUTO_MODEL_ID)
+        decision = model_router.RouterDecision(
+            intent="calculation",
+            target_model=model_router.LOCAL_CALCULATOR_TARGET,
+            confidence=0.91,
+            reason="Запрос требует точного арифметического расчёта.",
+            calculation_request={
+                "operation": "sum_and_convert_to_minutes",
+                "items": [
+                    {"value": 1.5, "unit": "hours"},
+                    {"value": 35, "unit": "minutes"},
+                ],
+            },
+        )
+
+        with (
+            patch.object(model_service, "is_model_installed", return_value=True),
+            patch.object(model_router, "route_model", return_value=decision),
+        ):
+            task = start_chat_task(req)
+
+        self.assertEqual(task["state"], "completed")
+        self.assertEqual(task["model_name"], model_router.LOCAL_CALCULATOR_TARGET)
+        self.assertIn("125 минут", task["result"]["reply"])
+        self.assertIn("Auto выбрал: Local Calculator", task["router_notice"])
+        self.assertEqual(task["used_settings"]["model_selection_mode"], "auto")
+        self.assertEqual(task["used_settings"]["router_intent"], "calculation")
+
+    def test_auto_router_target_model_must_be_installed(self):
+        req = ChatRequest(query="Исправь этот Python код", profile_id=self.profile_id, model_name=model_router.AUTO_MODEL_ID)
+        decision = model_router.RouterDecision(
+            intent="code",
+            target_model="qwen2.5-coder:7b",
+            confidence=0.86,
+            reason="Запрос связан с кодом.",
+        )
+
+        def installed(model_name):
+            return model_name == model_router.ROUTER_MODEL_ID
+
+        with (
+            patch.object(model_service, "is_model_installed", side_effect=installed),
+            patch.object(model_router, "route_model", return_value=decision),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                start_chat_task(req)
+
+        self.assertEqual(ctx.exception.status_code, 424)
+        self.assertEqual(ctx.exception.detail["code"], "chat_auto_target_model_missing")
+        self.assertEqual(ctx.exception.detail["model"], "qwen2.5-coder:7b")
+
+
+if __name__ == "__main__":
+    unittest.main()

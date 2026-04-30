@@ -1327,6 +1327,7 @@ button.model-info-button:hover:not([disabled]) {
     justify-content: flex-end;
     gap: 8px;
     align-self: center;
+    margin-left: 0.3125rem;
 }
 
 .topbar__actions .button {
@@ -2759,6 +2760,13 @@ button.model-info-button:hover:not([disabled]) {
     background: rgba(96, 165, 250, 0.08);
 }
 
+.status-badge--utility,
+.status-badge--router {
+    border-color: rgba(148, 163, 184, 0.32);
+    color: #dbe4ef;
+    background: rgba(148, 163, 184, 0.08);
+}
+
 .download-list {
     display: flex;
     flex-direction: column;
@@ -4104,6 +4112,13 @@ body.theme-light .status-badge--code {
     border-color: rgba(37, 99, 235, 0.18);
     color: #1d4ed8;
     background: rgba(37, 99, 235, 0.075);
+}
+
+body.theme-light .status-badge--utility,
+body.theme-light .status-badge--router {
+    border-color: rgba(71, 85, 105, 0.18);
+    color: #475569;
+    background: rgba(71, 85, 105, 0.07);
 }
 
 body.theme-light .inline-status--error {

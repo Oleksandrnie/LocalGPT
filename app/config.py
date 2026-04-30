@@ -264,6 +264,22 @@ MODEL_CATALOG = [
     },
 ]
 
+UTILITY_MODEL_CATALOG = [
+    {
+        "id": "qwen3:0.6b",
+        "title": "Qwen 3 0.6B Router",
+        "category": "utility_router",
+        "weight": "ultra_light",
+        "recommended": False,
+        "experimental": False,
+        "utility": True,
+        "description": (
+            "Служебная router-модель для режима Auto / Smart Router. Используется только для классификации "
+            "chat-запроса и выбора target-модели, не как обычная модель ответа."
+        ),
+    },
+]
+
 # Backward-compatible response key for older UI modules; the content is the new catalog.
 MODEL_RECOMMENDATIONS = MODEL_CATALOG
 

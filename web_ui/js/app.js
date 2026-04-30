@@ -1,6 +1,9 @@
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
 const CREATE_PROFILE_VALUE = "__create_profile__";
+const AUTO_MODEL_ID = "__auto_router__";
+const AUTO_MODEL_TITLE = "Auto / Smart Router";
+const AUTO_MODEL_HELP = "Автоматически классифицирует chat-запрос через qwen3:0.6b и выбирает подходящую модель из локального каталога. Для расчётов использует Local Calculator.";
 const STORAGE_KEYS = {
   activeProfileId: "localgpt_simple_profile_id",
   activeSessionId: "localgpt_simple_session_id",
@@ -286,6 +289,7 @@ const state = {
   messages: [],
   installedModels: [],
   recommendedModels: [],
+  utilityModels: [],
   downloads: [],
   chatModelsError: null,
   selectedLlmModel: "",
@@ -433,6 +437,11 @@ function getCatalogModels() {
     .filter((item) => getModelId(item));
 }
 
+function getUtilityModels() {
+  return (Array.isArray(state.utilityModels) ? state.utilityModels : [])
+    .filter((item) => getModelId(item));
+}
+
 function getCatalogModelById(modelId) {
   const target = String(modelId || "").trim();
   return getCatalogModels().find((item) => getModelId(item) === target) || null;
@@ -466,8 +475,14 @@ function getModelBadges(item) {
   if (item?.experimental) {
     badges.push({ label: "experimental", tone: "experimental" });
   }
+  if (item?.utility) {
+    badges.push({ label: "utility", tone: "utility" });
+  }
   if (weight === "heavy") {
     badges.push({ label: "heavy", tone: "heavy" });
+  }
+  if (category.includes("router")) {
+    badges.push({ label: "router", tone: "router" });
   }
   if (category.includes("code")) {
     badges.push({ label: "code", tone: "code" });
@@ -850,8 +865,9 @@ function getFilteredTtsVoiceCatalog() {
 function renderLibraryPanels() {
   const installedChatNames = new Set(state.installedModels.map((item) => item.name));
   const chatCatalog = getCatalogModels();
-  const chatInstalled = chatCatalog.filter((item) => installedChatNames.has(getModelId(item))).length;
-  const chatTotal = chatCatalog.length;
+  const utilityCatalog = getUtilityModels();
+  const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
+  const chatTotal = utilityCatalog.length + chatCatalog.length;
   const asrInstalled = state.asrModels.filter((item) => item.installed).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
@@ -1158,7 +1174,18 @@ function getChatModelItems() {
   const source = catalog.length
     ? catalog
     : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
-  return source.map((model) => {
+  const autoItem = {
+    id: AUTO_MODEL_ID,
+    name: AUTO_MODEL_ID,
+    title: AUTO_MODEL_TITLE,
+    category: "auto_router",
+    weight: "utility",
+    description: AUTO_MODEL_HELP,
+    installed: null,
+    recommended: null,
+    task: null,
+  };
+  return [autoItem, ...source.map((model) => {
     const name = getModelId(model);
     return {
       ...model,
@@ -1168,10 +1195,13 @@ function getChatModelItems() {
       recommended: model,
       task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
     };
-  });
+  })];
 }
 
 function describeChatModelItem(item) {
+  if (item?.name === AUTO_MODEL_ID || getModelId(item) === AUTO_MODEL_ID) {
+    return "router • qwen3:0.6b";
+  }
   if (!item) {
     return "Загрузите модель в настройках";
   }
@@ -1794,7 +1824,9 @@ function updateSendButtonState() {
   const hasText = Boolean((els.promptInput?.value || "").trim());
   const hasInstalledChatModel = state.installedModels.length > 0;
   const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
-  const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
+  const selectedInstalled = Boolean(selectedModel) && (
+    selectedModel === AUTO_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
+  );
   if (els.promptInput) {
     els.promptInput.disabled = false;
     els.promptInput.placeholder = !hasInstalledChatModel
@@ -1809,7 +1841,9 @@ function renderChatModelNotice() {
   if (!els.chatModelNotice) return;
   const selectedModel = String(state.selectedLlmModel || "").trim();
   const hasInstalledChatModel = state.installedModels.length > 0;
-  const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
+  const selectedInstalled = Boolean(selectedModel) && (
+    selectedModel === AUTO_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
+  );
   const missing = !hasInstalledChatModel || !selectedModel || (Boolean(selectedModel) && !selectedInstalled);
   els.chatModelNotice.hidden = !missing;
   if (missing) {
@@ -2481,12 +2515,15 @@ function renderModelControls() {
   const catalogItems = getCatalogModels().length
     ? getCatalogModels()
     : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const utilityItems = getUtilityModels();
   const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
   const installedCatalogIds = catalogIds.filter((name) => installedNames.has(name));
+  const optionIds = new Set([AUTO_MODEL_ID, ...catalogIds]);
 
   const optionsMarkup = catalogItems.length
     ? [
       '<option value="" hidden>Модель не выбрана</option>',
+      `<option value="${AUTO_MODEL_ID}" data-label="${escapeHtml(AUTO_MODEL_TITLE)}" data-help="${escapeHtml(AUTO_MODEL_HELP)}">${escapeHtml(AUTO_MODEL_TITLE)}</option>`,
       ...catalogItems.map((item) => {
         const id = getModelId(item);
         const title = getModelTitle(item);
@@ -2502,7 +2539,7 @@ function renderModelControls() {
   });
 
   const preferredModel = state.selectedLlmModel || readStored(STORAGE_KEYS.llmModel, "");
-  if (preferredModel && catalogIds.includes(preferredModel)) {
+  if (preferredModel && optionIds.has(preferredModel)) {
     els.llmModelSelect.value = preferredModel;
     if (els.quickModelSelect) {
       els.quickModelSelect.value = preferredModel;
@@ -2525,12 +2562,13 @@ function renderModelControls() {
 
   renderQuickModelPicker();
 
-  els.recommendedModels.innerHTML = catalogItems
+  els.recommendedModels.innerHTML = [...utilityItems, ...catalogItems]
     .map((item) => {
       const id = getModelId(item);
       const installed = installedNames.has(id);
       const active = id === state.selectedLlmModel;
-      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(id)}">
+      const utility = Boolean(item.utility);
+      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(id)}" data-utility-model="${utility ? "1" : "0"}">
         <span class="chip-button__label">${escapeHtml(getModelTitle(item))}</span>
         <span class="chip-button__meta">${escapeHtml([item.category, item.weight].filter(Boolean).join(" • "))}</span>
         ${renderModelInfoIcon(item, "chip-button__help")}
@@ -2577,7 +2615,7 @@ function renderChatModelLibrary() {
   }
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const catalogItems = getCatalogModels();
+  const catalogItems = [...getUtilityModels(), ...getCatalogModels()];
 
   if (!catalogItems.length) {
     els.chatModelLibrary.innerHTML = '<p class="subtle">Каталог Ollama-моделей пока пуст.</p>';
@@ -2590,6 +2628,7 @@ function renderChatModelLibrary() {
       const installed = installedByName.get(name);
       const active = state.selectedLlmModel === name;
       const task = state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state));
+      const utility = Boolean(item.utility);
       const statusBadge = task
         ? `<span class="status-badge status-badge--warning">${escapeHtml(task.state || "running")}</span>`
         : installed
@@ -2614,7 +2653,7 @@ function renderChatModelLibrary() {
           </div>
           <p class="model-card__note">${escapeHtml(note || (installed ? "Модель готова к использованию в чате." : "Сначала добавьте модель локально."))}</p>
           <div class="button-row">
-            ${installed ? `<button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
+            ${installed && !utility ? `<button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
             ${installed ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">Добавить</button>`}
             <button class="button button--ghost" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>
             ${installed ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
@@ -5394,10 +5433,12 @@ async function loadModels({ silent = false } = {}) {
     state.recommendedModels = Array.isArray(data?.catalog)
       ? data.catalog
       : (Array.isArray(data?.recommended) ? data.recommended : []);
+    state.utilityModels = Array.isArray(data?.utility) ? data.utility : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     state.chatModelsError = data?.error || null;
     const savedModel = readStored(STORAGE_KEYS.llmModel, "");
     const catalogIds = new Set(getCatalogModels().map((item) => getModelId(item)));
+    catalogIds.add(AUTO_MODEL_ID);
     const installedCatalogModel = getCatalogModels().find((item) => (
       state.installedModels.some((installed) => installed.name === getModelId(item))
     ));
@@ -5860,11 +5901,29 @@ async function ensureModelInstalled(modelName) {
     setFooter("Модель не выбрана. Выберите модель и повторите отправку.", "warning");
     return false;
   }
+  if (target === AUTO_MODEL_ID) {
+    return true;
+  }
   if (state.installedModels.some((item) => item.name === target)) {
     return true;
   }
   setFooter("Модель не загружена. Загрузите модель и повторите отправку.", "warning");
   return false;
+}
+
+function autoRouterNotice(task) {
+  const explicit = String(task?.router_notice || "").trim();
+  if (explicit) return explicit;
+  const settings = task?.used_settings || {};
+  if (settings.model_selection_mode !== "auto") return "";
+  const target = settings.router_target_model === "__local_calculator__"
+    ? "Local Calculator"
+    : getModelTitle(getCatalogModelById(settings.router_target_model) || { id: settings.router_target_model });
+  const reason = settings.router_reason || "тип задачи определён автоматически.";
+  if (settings.router_fallback) {
+    return reason || `Auto использовал fallback: ${target}.`;
+  }
+  return `Auto выбрал: ${target} — ${reason}`;
 }
 
 async function sendPromptText(rawQuery, { clearInput = false } = {}) {
@@ -5913,21 +5972,26 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     state.chatTaskStartController = null;
     state.chatTaskId = task?.id || null;
     const nextSessionId = task?.session_id || state.currentSessionId;
-    state.selectedLlmModel = task?.model_name || selectedModel;
+    state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
     writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
+    const startRouterNotice = autoRouterNotice(task);
 
     if (nextSessionId) {
       await loadSessions({ preferredSessionId: nextSessionId });
     }
 
     if (String(task?.state || "") === "completed") {
-      setFooter("Ответ готов.", "success");
+      setFooter(startRouterNotice || "Ответ готов.", "success");
       return;
     }
 
     appendAssistantThinkingPlaceholder();
+    if (startRouterNotice) {
+      setFooter(startRouterNotice, "success");
+    }
     const completedTask = await waitForChatTask(task?.id || "");
     state.chatTaskId = null;
+    const completedRouterNotice = autoRouterNotice(completedTask) || startRouterNotice;
 
     if (String(completedTask?.state || "") === "cancelled") {
       removeAssistantThinkingPlaceholder();
@@ -5941,7 +6005,7 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     if (nextSessionId) {
       await loadSessions({ preferredSessionId: nextSessionId });
     }
-    setFooter("Ответ готов.", "success");
+    setFooter(completedRouterNotice || "Ответ готов.", "success");
   } catch (error) {
     if (isAbortError(error)) {
       removeAssistantThinkingPlaceholder();
@@ -6031,8 +6095,10 @@ async function startModelDownload(modelName, { mode = "download" } = {}) {
 
   try {
     await request("/models/pull", { method: "POST", body: { model: target } });
-    state.selectedLlmModel = target;
-    writeStored(STORAGE_KEYS.llmModel, target);
+    if (getCatalogModelById(target)) {
+      state.selectedLlmModel = target;
+      writeStored(STORAGE_KEYS.llmModel, target);
+    }
     await loadModels();
     renderSettings();
     setFooter(`${isUpdate ? "Обновление" : "Загрузка"} модели ${target} запущено.`, "success");
@@ -7075,7 +7141,16 @@ function bindEvents() {
     const button = event.target.closest("[data-recommended-model]");
     if (!button) return;
     const modelName = button.dataset.recommendedModel || "";
+    const isUtility = button.dataset.utilityModel === "1";
     const isInstalled = state.installedModels.some((item) => item.name === modelName);
+    if (isUtility) {
+      if (!isInstalled) {
+        await startModelDownload(modelName);
+        return;
+      }
+      setFooter(`${button.querySelector(".chip-button__label")?.textContent || modelName} используется как служебная router-модель. Для чата выберите Auto / Smart Router.`, "info");
+      return;
+    }
     if (isInstalled) {
       await applySelectedLlmModel(modelName);
       return;

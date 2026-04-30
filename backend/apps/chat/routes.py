@@ -22,10 +22,21 @@ from backend.apps.chat.service import (
     prompt_blocks,
     session_title_hint,
 )
+from backend.apps.chat.services import local_calculator, model_router
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
 chat_service = ChatService()
+
+
+def _catalog_title(model_id: str) -> str:
+    target = str(model_id or "").strip()
+    if target == model_router.LOCAL_CALCULATOR_TARGET:
+        return "Local Calculator"
+    for item in [*config.MODEL_CATALOG, *getattr(config, "UTILITY_MODEL_CATALOG", [])]:
+        if item.get("id") == target:
+            return str(item.get("title") or target)
+    return target
 
 
 def _chat_model_missing_detail(model_name: str | None = None) -> dict[str, object]:
@@ -40,6 +51,26 @@ def _chat_model_missing_detail(model_name: str | None = None) -> dict[str, objec
         "code": "chat_model_not_selected",
         "model": "",
         "message": "Нет доступных моделей. Загрузите модель и повторите отправку.",
+    }
+
+
+def _router_model_missing_detail() -> dict[str, object]:
+    return {
+        "code": "router_model_missing",
+        "model": model_router.ROUTER_MODEL_ID,
+        "message": (
+            f"Router-модель {model_router.ROUTER_MODEL_ID} не установлена. "
+            "Установите её в разделе моделей или выберите модель вручную."
+        ),
+    }
+
+
+def _auto_target_missing_detail(model_name: str) -> dict[str, object]:
+    title = _catalog_title(model_name)
+    return {
+        "code": "chat_auto_target_model_missing",
+        "model": model_name,
+        "message": f"Auto выбрал модель {title}, но она не установлена. Установите модель или выберите другую вручную.",
     }
 
 
@@ -72,6 +103,90 @@ def _ensure_chat_model_available(model_name: str) -> None:
     if installed:
         return
     raise HTTPException(status_code=424, detail=_chat_model_missing_detail(target))
+
+
+def _is_model_installed_or_503(model_name: str) -> bool:
+    try:
+        return model_service.is_model_installed(model_name)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "ollama_unavailable",
+                "message": detail.get("message") or "Ollama недоступна. Проверьте, что Ollama запущена.",
+            },
+        ) from exc
+
+
+def _router_notice(decision: model_router.RouterDecision) -> str:
+    if decision.target_model == model_router.LOCAL_CALCULATOR_TARGET:
+        return f"Auto выбрал: Local Calculator — {decision.reason or 'точный арифметический расчёт.'}"
+    title = _catalog_title(decision.target_model)
+    if decision.fallback:
+        if decision.fallback_reason == "invalid_json":
+            return f"Auto не смог корректно разобрать тип задачи. Использована основная модель {title}."
+        if decision.fallback_reason == "low_confidence":
+            return f"Auto не уверен в типе задачи. Использована основная модель {title}."
+        return f"Auto не смог уверенно определить тип задачи. Использована основная модель {title}."
+    return f"Auto выбрал: {title} — {decision.reason}"
+
+
+def _apply_router_settings(prepared: dict, decision: model_router.RouterDecision) -> None:
+    prepared["router_decision"] = decision.as_dict()
+    prepared["router_notice"] = _router_notice(decision)
+    prepared["effective_settings"] = {
+        **(prepared.get("effective_settings") or {}),
+        **model_router.router_debug_settings(decision),
+    }
+
+
+def _apply_auto_router(prepared: dict) -> dict:
+    selected_model = str(prepared.get("target_model") or "").strip()
+    if not model_router.is_auto_model(selected_model):
+        prepared["effective_settings"] = {
+            **(prepared.get("effective_settings") or {}),
+            "model_selection_mode": "manual",
+        }
+        return prepared
+
+    if not _is_model_installed_or_503(model_router.ROUTER_MODEL_ID):
+        raise HTTPException(status_code=424, detail=_router_model_missing_detail())
+
+    decision = model_router.route_model(
+        str(prepared.get("user_query") or ""),
+        {
+            "profile_id": prepared.get("profile_id"),
+            "session_id": prepared.get("session_id"),
+            "role": prepared.get("role_key"),
+            "rag_enabled": bool((prepared.get("effective_settings") or {}).get("rag_enabled_effective")),
+            "has_transcript_context": bool(prepared.get("transcript_text")),
+            "criteria_count": len(prepared.get("active_criteria") or []),
+        },
+    )
+    _apply_router_settings(prepared, decision)
+
+    if decision.target_model == model_router.LOCAL_CALCULATOR_TARGET:
+        try:
+            calc = local_calculator.calculate(decision.calculation_request, str(prepared.get("user_query") or ""))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "local_calculator_failed", "message": f"Не удалось выполнить локальный расчёт: {exc}"},
+            ) from exc
+        prepared["target_model"] = model_router.LOCAL_CALCULATOR_TARGET
+        prepared["calc_result"] = f"{calc['result']}\n\n{calc['details']}".strip()
+        prepared["effective_settings"] = {
+            **prepared["effective_settings"],
+            "calculator_result": calc,
+        }
+        return prepared
+
+    if not _is_model_installed_or_503(decision.target_model):
+        raise HTTPException(status_code=424, detail=_auto_target_missing_detail(decision.target_model))
+
+    prepared["target_model"] = decision.target_model
+    return prepared
 
 
 def _get_profile_or_404(profile_id: int) -> dict:
@@ -241,7 +356,7 @@ def chat(req: ChatRequest):
         chat_service.log_chat_event(payload)
 
     try:
-        prepared = _prepare_chat_request(req)
+        prepared = _apply_auto_router(_prepare_chat_request(req))
         session_id = prepared["session_id"]
         profile_id = prepared["profile_id"]
         user_query = prepared["user_query"]
@@ -253,6 +368,7 @@ def chat(req: ChatRequest):
         calc_result = prepared["calc_result"]
         messages = prepared["messages"]
         prompt_warnings = prepared.get("prompt_warnings") or []
+        router_notice = prepared.get("router_notice")
 
         if calc_result is not None:
             if session_id:
@@ -267,6 +383,7 @@ def chat(req: ChatRequest):
                 "role": role_key,
                 "used_settings": effective_settings,
                 "warnings": prompt_warnings,
+                "router_notice": router_notice,
             }
 
         _ensure_chat_model_available(target_model)
@@ -304,6 +421,7 @@ def chat(req: ChatRequest):
             "role": role_key,
             "used_settings": effective_settings,
             "warnings": prompt_warnings,
+            "router_notice": router_notice,
         }
     except HTTPException as exc:
         _log("error", error=str(exc.detail))
@@ -315,7 +433,7 @@ def chat(req: ChatRequest):
 
 @router.post("/chat/tasks")
 def start_chat_task(req: ChatRequest):
-    prepared = _prepare_chat_request(req)
+    prepared = _apply_auto_router(_prepare_chat_request(req))
     session_id = prepared["session_id"]
     profile_id = prepared["profile_id"]
     user_query = prepared["user_query"]
@@ -325,6 +443,7 @@ def start_chat_task(req: ChatRequest):
     calc_result = prepared["calc_result"]
     messages = prepared["messages"]
     prompt_warnings = prepared.get("prompt_warnings") or []
+    router_notice = prepared.get("router_notice")
 
     if calc_result is not None:
         if session_id:
@@ -337,6 +456,7 @@ def start_chat_task(req: ChatRequest):
             role=role_key,
             used_settings=effective_settings,
             reply=calc_result,
+            router_notice=router_notice,
         )
 
     try:
@@ -348,6 +468,7 @@ def start_chat_task(req: ChatRequest):
             role=role_key,
             messages=messages,
             used_settings=effective_settings,
+            router_notice=router_notice,
         )
         if session_id:
             db.add_message(session_id, "user", user_query)
