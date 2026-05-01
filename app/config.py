@@ -164,8 +164,15 @@ class Settings:
     num_ctx: int
     mem_turns: int
     ollama_chat_keep_alive: str
+    ollama_auto_target_keep_alive: str
+    ollama_manual_keep_alive: str
+    ollama_code_keep_alive: str
     ollama_router_keep_alive: str
     ollama_heavy_keep_alive: str
+    max_resident_target_models: int
+    allow_light_with_heavy: bool
+    single_large_target_model: bool
+    preload_model_on_manual_select: bool
     admin_token: str
     tts_enabled: bool
     tts_default_provider: str
@@ -400,9 +407,22 @@ def _load_settings() -> Settings:
         max_tokens=_parse_int("MAX_TOKENS", 512),
         num_ctx=_parse_int("NUM_CTX", 32768),
         mem_turns=_parse_int("MEM_TURNS", 6),
-        ollama_chat_keep_alive=_parse_keep_alive("OLLAMA_CHAT_KEEP_ALIVE", "1m"),
-        ollama_router_keep_alive=_parse_keep_alive("OLLAMA_ROUTER_KEEP_ALIVE", "0s"),
-        ollama_heavy_keep_alive=_parse_keep_alive("OLLAMA_HEAVY_KEEP_ALIVE", "30s"),
+        ollama_chat_keep_alive=_parse_keep_alive("OLLAMA_CHAT_KEEP_ALIVE", "4m"),
+        ollama_auto_target_keep_alive=_parse_keep_alive(
+            "OLLAMA_AUTO_TARGET_KEEP_ALIVE",
+            _parse_keep_alive("OLLAMA_CHAT_KEEP_ALIVE", "4m"),
+        ),
+        ollama_manual_keep_alive=_parse_keep_alive(
+            "OLLAMA_MANUAL_KEEP_ALIVE",
+            _parse_keep_alive("OLLAMA_CHAT_KEEP_ALIVE", "4m"),
+        ),
+        ollama_code_keep_alive=_parse_keep_alive("OLLAMA_CODE_KEEP_ALIVE", "2m"),
+        ollama_router_keep_alive=_parse_keep_alive("OLLAMA_ROUTER_KEEP_ALIVE", "2m"),
+        ollama_heavy_keep_alive=_parse_keep_alive("OLLAMA_HEAVY_KEEP_ALIVE", "60s"),
+        max_resident_target_models=_parse_int("MAX_RESIDENT_TARGET_MODELS", 2),
+        allow_light_with_heavy=_parse_bool("ALLOW_LIGHT_WITH_HEAVY", False),
+        single_large_target_model=_parse_bool("SINGLE_LARGE_TARGET_MODEL", True),
+        preload_model_on_manual_select=_parse_bool("PRELOAD_MODEL_ON_MANUAL_SELECT", False),
         admin_token=os.getenv("ADMIN_TOKEN", ""),
         tts_enabled=_parse_bool("TTS_ENABLED", True),
         tts_default_provider=(os.getenv("TTS_DEFAULT_PROVIDER", "piper") or "piper").strip().lower(),
@@ -445,7 +465,20 @@ def _move_tree(source: Path, target: Path) -> None:
 MODEL_PATHS = build_model_paths()
 apply_model_env(MODEL_PATHS)
 SETTINGS = _load_settings()
-DEFAULT_RUNTIME_SETTINGS["mem_turns"] = SETTINGS.mem_turns
+DEFAULT_RUNTIME_SETTINGS.update(
+    {
+        "mem_turns": SETTINGS.mem_turns,
+        "max_resident_target_models": max(1, min(5, SETTINGS.max_resident_target_models)),
+        "allow_light_with_heavy": SETTINGS.allow_light_with_heavy,
+        "single_large_target_model": SETTINGS.single_large_target_model,
+        "preload_model_on_manual_select": SETTINGS.preload_model_on_manual_select,
+        "auto_target_keep_alive": SETTINGS.ollama_auto_target_keep_alive,
+        "manual_keep_alive": SETTINGS.ollama_manual_keep_alive,
+        "code_model_keep_alive": SETTINGS.ollama_code_keep_alive,
+        "heavy_model_keep_alive": SETTINGS.ollama_heavy_keep_alive,
+        "router_keep_alive": SETTINGS.ollama_router_keep_alive,
+    }
+)
 DEFAULT_SETTINGS = {
     "temperature": SETTINGS.temperature,
     "max_tokens": SETTINGS.max_tokens,

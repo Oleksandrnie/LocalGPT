@@ -21,7 +21,7 @@ from backend.apps.chat.service import (
     prompt_blocks,
     session_title_hint,
 )
-from backend.apps.chat.services import local_calculator, model_router, ollama_runtime
+from backend.apps.chat.services import local_calculator, model_residency, model_router
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
@@ -156,10 +156,10 @@ def _is_model_installed_or_503(model_name: str) -> bool:
 
 
 def _router_notice(decision: model_router.RouterDecision) -> str:
-    if decision.target_model == model_router.LOCAL_CALCULATOR_TARGET:
-        return f"Auto выбрал: Local Calculator — {decision.reason or 'точный арифметический расчёт.'}"
     title = _catalog_title(decision.target_model)
     if decision.fallback:
+        if decision.fallback_reason == "calculator_manual_only":
+            return f"Auto не запускает Local Calculator автоматически. Использована основная модель {title}."
         if decision.fallback_reason == "invalid_json":
             return f"Auto не смог корректно разобрать тип задачи. Использована основная модель {title}."
         if decision.fallback_reason == "low_confidence":
@@ -179,23 +179,34 @@ def _apply_router_settings(prepared: dict, decision: model_router.RouterDecision
 
 def _apply_auto_router(prepared: dict) -> dict:
     selected_model = str(prepared.get("target_model") or "").strip()
-    if prepared.get("calc_result") is not None:
-        if model_router.is_auto_model(selected_model):
-            decision = model_router.RouterDecision(
-                intent="calculation",
-                target_model=model_router.LOCAL_CALCULATOR_TARGET,
-                confidence=1.0,
-                reason="Запрос содержит явный арифметический расчёт.",
-                backend_override=True,
-                backend_override_reason="deterministic_calculation",
-            )
-            _apply_router_settings(prepared, decision)
-            prepared["target_model"] = model_router.LOCAL_CALCULATOR_TARGET
-        else:
+    if selected_model == model_router.LOCAL_CALCULATOR_TARGET:
+        calc = local_calculator.try_calculate_text(str(prepared.get("user_query") or ""), force=True)
+        if calc:
+            prepared["calc_result"] = f"{calc['result']}\n\n{calc['details']}".strip()
             prepared["effective_settings"] = {
                 **(prepared.get("effective_settings") or {}),
-                "model_selection_mode": "manual",
+                "model_selection_mode": "calculator",
+                "calculator_result": calc,
+                "calculator_backend_override": True,
             }
+        else:
+            prepared["calc_result"] = (
+                "Не удалось распознать расчёт. Выберите обычную модель для текстового вопроса "
+                "или напишите арифметику явно: например, `сумма 10 20`, `10 + 20`, `100 минус 7`."
+            )
+            prepared["effective_settings"] = {
+                **(prepared.get("effective_settings") or {}),
+                "model_selection_mode": "calculator",
+                "calculator_backend_override": False,
+                "calculator_error": "calculation_not_recognized",
+            }
+        return prepared
+
+    if prepared.get("calc_result") is not None:
+        prepared["effective_settings"] = {
+            **(prepared.get("effective_settings") or {}),
+            "model_selection_mode": "manual",
+        }
         return prepared
 
     if not model_router.is_auto_model(selected_model):
@@ -203,15 +214,19 @@ def _apply_auto_router(prepared: dict) -> dict:
             **(prepared.get("effective_settings") or {}),
             "model_selection_mode": "manual",
         }
-        prepared["effective_settings"] = ollama_runtime.apply_keep_alive_setting(
+        prepared["effective_settings"] = model_residency.apply_target_settings(
             selected_model,
             prepared["effective_settings"],
+            mode="manual",
         )
         return prepared
 
     if not _is_model_installed_or_503(model_router.ROUTER_MODEL_ID):
         raise HTTPException(status_code=424, detail=_router_model_missing_detail())
 
+    auto_effective_settings = dict(prepared.get("effective_settings") or {})
+    auto_effective_settings.pop("ollama_keep_alive", None)
+    auto_effective_settings.pop("ollama_keep_alive_effective", None)
     decision = model_router.route_model(
         str(prepared.get("user_query") or ""),
         {
@@ -223,32 +238,38 @@ def _apply_auto_router(prepared: dict) -> dict:
             "has_transcript_context": bool(prepared.get("transcript_text")),
             "criteria_count": len(prepared.get("active_criteria") or []),
         },
+        settings=auto_effective_settings,
     )
-    _apply_router_settings(prepared, decision)
-
     if decision.target_model == model_router.LOCAL_CALCULATOR_TARGET:
-        try:
-            calc = local_calculator.calculate(decision.calculation_request, str(prepared.get("user_query") or ""))
-        except Exception as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "local_calculator_failed", "message": f"Не удалось выполнить локальный расчёт: {exc}"},
-            ) from exc
-        prepared["target_model"] = model_router.LOCAL_CALCULATOR_TARGET
-        prepared["calc_result"] = f"{calc['result']}\n\n{calc['details']}".strip()
-        prepared["effective_settings"] = {
-            **prepared["effective_settings"],
-            "calculator_result": calc,
-        }
-        return prepared
+        decision = model_router.RouterDecision(
+            intent="unknown",
+            target_model=model_router.FALLBACK_TARGET_MODEL,
+            confidence=0.0,
+            reason="Local Calculator доступен только при ручном выборе в селекте.",
+            fallback=True,
+            fallback_reason="calculator_manual_only",
+            raw_response=decision.raw_response,
+            runtime_debug=decision.runtime_debug,
+        )
+    _apply_router_settings(prepared, decision)
 
     if not _is_model_installed_or_503(decision.target_model):
         raise HTTPException(status_code=424, detail=_auto_target_missing_detail(decision.target_model))
 
     prepared["target_model"] = decision.target_model
-    prepared["effective_settings"] = ollama_runtime.apply_keep_alive_setting(
+    target_settings = dict(prepared.get("effective_settings") or {})
+    target_settings.pop("ollama_keep_alive", None)
+    target_settings.pop("ollama_keep_alive_effective", None)
+    target_overrides = (
+        db.effective_settings(int(prepared["profile_id"]), decision.target_model, config.DEFAULT_SETTINGS).get("overrides")
+        or {}
+    )
+    if target_overrides.get("ollama_keep_alive"):
+        target_settings["ollama_keep_alive"] = target_overrides["ollama_keep_alive"]
+    prepared["effective_settings"] = model_residency.apply_target_settings(
         decision.target_model,
-        prepared.get("effective_settings") or {},
+        target_settings,
+        mode="auto",
     )
     return prepared
 
@@ -340,7 +361,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     else:
         transcript_warnings = []
 
-    calc = local_calculator.try_calculate_text(user_query)
+    calc = local_calculator.try_calculate_text(user_query, force=True) if target_model == model_router.LOCAL_CALCULATOR_TARGET else None
     calc_result = f"{calc['result']}\n\n{calc['details']}".strip() if calc else None
     if calc:
         effective_settings = {

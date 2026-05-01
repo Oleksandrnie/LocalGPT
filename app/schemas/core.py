@@ -22,6 +22,11 @@ class ModelPullRequest(BaseModel):
     model: str
 
 
+class ModelPreloadRequest(BaseModel):
+    model: str
+    profile_id: int | None = None
+
+
 class ModelPrepareRequest(BaseModel):
     model: str
     force: bool = False

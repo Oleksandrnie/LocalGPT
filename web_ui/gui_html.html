@@ -474,8 +474,16 @@
                 <button class="button button--ghost" id="closeSettingsButton" type="button">Закрыть</button>
             </header>
 
+            <nav class="settings-tabs" id="settingsTabList" role="tablist" aria-label="Разделы настроек">
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="profile">Профиль</button>
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="models">Модели</button>
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="asr">ASR</button>
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="tts">TTS</button>
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="system">Система</button>
+            </nav>
+
             <div class="settings-panel__content">
-                <section class="settings-group">
+                <section class="settings-group" data-settings-tab-panel="profile">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">Профили</p>
@@ -523,7 +531,7 @@
                     <p class="inline-status" id="profileStatus"></p>
                 </section>
 
-                <section class="settings-group">
+                <section class="settings-group" data-settings-tab-panel="models">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">Чат</p>
@@ -599,7 +607,7 @@
                         </label>
 
                         <label class="field">
-                            <span class="field__label">Удержание в памяти</span>
+                            <span class="field__label">Override удержания модели</span>
                             <span class="keep-alive-control">
                                 <input id="ollamaKeepAliveInput" class="field__control" type="number" min="0"
                                     step="1" placeholder="1" />
@@ -612,6 +620,110 @@
                         </label>
                     </div>
 
+                    <div class="info-card">
+                        <span class="info-card__label">Resident-модели Ollama</span>
+                        <strong>Лимит применяется только к target-моделям LocalGPT. Router qwen3:0.6b живёт отдельно.</strong>
+                    </div>
+
+                    <div class="settings-grid">
+                        <label class="field">
+                            <span class="field__label">Максимум target-моделей в памяти</span>
+                            <select id="maxResidentTargetModelsSelect" class="field__control">
+                                <option value="1">1 — экономно</option>
+                                <option value="2">2 — рекомендовано</option>
+                                <option value="3">3 — расширенно</option>
+                                <option value="4">4 — высокий риск</option>
+                                <option value="5">5 — сервер</option>
+                            </select>
+                        </label>
+
+                        <label class="field field--checkbox">
+                            <input id="allowLightWithHeavyToggle" type="checkbox" />
+                            <span>Разрешить light рядом с heavy</span>
+                        </label>
+
+                        <label class="field field--checkbox">
+                            <input id="singleLargeTargetModelToggle" type="checkbox" checked />
+                            <span>Одна medium/code/heavy модель в памяти</span>
+                        </label>
+
+                        <label class="field field--checkbox">
+                            <input id="preloadManualSelectToggle" type="checkbox" />
+                            <span>Preload модели при ручном выборе</span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Auto target keep_alive</span>
+                            <span class="keep-alive-control">
+                                <input id="autoTargetKeepAliveInput" class="field__control" type="number" min="0"
+                                    step="1" placeholder="4" />
+                                <select id="autoTargetKeepAliveUnitSelect" class="field__control">
+                                    <option value="s">сек</option>
+                                    <option value="m" selected>мин</option>
+                                    <option value="h">час</option>
+                                </select>
+                            </span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Manual keep_alive</span>
+                            <span class="keep-alive-control">
+                                <input id="manualKeepAliveInput" class="field__control" type="number" min="0"
+                                    step="1" placeholder="4" />
+                                <select id="manualKeepAliveUnitSelect" class="field__control">
+                                    <option value="s">сек</option>
+                                    <option value="m" selected>мин</option>
+                                    <option value="h">час</option>
+                                </select>
+                            </span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Code keep_alive</span>
+                            <span class="keep-alive-control">
+                                <input id="codeKeepAliveInput" class="field__control" type="number" min="0"
+                                    step="1" placeholder="2" />
+                                <select id="codeKeepAliveUnitSelect" class="field__control">
+                                    <option value="s">сек</option>
+                                    <option value="m" selected>мин</option>
+                                    <option value="h">час</option>
+                                </select>
+                            </span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Heavy keep_alive</span>
+                            <span class="keep-alive-control">
+                                <input id="heavyKeepAliveInput" class="field__control" type="number" min="0"
+                                    step="1" placeholder="60" />
+                                <select id="heavyKeepAliveUnitSelect" class="field__control">
+                                    <option value="s">сек</option>
+                                    <option value="m">мин</option>
+                                    <option value="h">час</option>
+                                </select>
+                            </span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Router keep_alive</span>
+                            <span class="keep-alive-control">
+                                <input id="routerKeepAliveInput" class="field__control" type="number" min="0"
+                                    step="1" placeholder="2" />
+                                <select id="routerKeepAliveUnitSelect" class="field__control">
+                                    <option value="s">сек</option>
+                                    <option value="m" selected>мин</option>
+                                    <option value="h">час</option>
+                                </select>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="residency-help-row">
+                        <button class="model-info-button residency-help-button" type="button"
+                            aria-label="Инструкция по настройке resident-моделей"
+                            data-tooltip="Рекомендация для MacBook Pro 16GB:&#10;- Максимум target-моделей: 2.&#10;- Одна medium/code/heavy модель: включено, чтобы 7B/8B/coder/heavy не висели вместе.&#10;- Auto/Manual keep_alive: 4–6 минут, если часто продолжаете диалог.&#10;- Code keep_alive: 2 минуты.&#10;- Heavy Mistral Nemo: 60–90 секунд.&#10;- Router qwen3:0.6b: 2 минуты, в лимит target-моделей не входит.&#10;- Preload включайте только если хотите загружать модель сразу при ручном выборе.&#10;- Light рядом с heavy включайте только при достаточном запасе RAM.">?</button>
+                    </div>
+
                     <div class="button-row">
                         <button class="button button--primary" id="saveModelSettingsButton"
                             type="button">Сохранить</button>
@@ -622,7 +734,7 @@
                     <p class="inline-status" id="modelSettingsStatus"></p>
                 </section>
 
-                <section class="settings-group settings-group--asr">
+                <section class="settings-group settings-group--asr" data-settings-tab-panel="asr">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">ASR</p>
@@ -694,24 +806,9 @@
                         </div>
                     </div>
 
-                    <div class="maintenance-panel">
-                        <div class="maintenance-panel__copy">
-                            <span class="maintenance-panel__label">База данных</span>
-                            <strong>Очистка данных</strong>
-                            <p>Удаляет осиротевшие записи после удалённых чатов. Полная очистка сбрасывает профили, чаты,
-                                транскрипты и RAG-индекс.</p>
-                        </div>
-                        <div class="button-row maintenance-panel__actions">
-                            <button class="button button--ghost" id="cleanupDatabaseButton" type="button">Очистить
-                                мусор</button>
-                            <button class="button button--danger" id="resetDatabaseButton" type="button">Полная
-                                очистка</button>
-                        </div>
-                        <p class="inline-status" id="databaseStatus"></p>
-                    </div>
                 </section>
 
-                <section class="settings-group">
+                <section class="settings-group" data-settings-tab-panel="tts">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">TTS</p>
@@ -760,7 +857,7 @@
                     </div>
                 </section>
 
-                <section class="settings-group">
+                <section class="settings-group" data-settings-tab-panel="system">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">Хранилище</p>
@@ -781,7 +878,7 @@
                     </div>
                 </section>
 
-                <section class="settings-group">
+                <section class="settings-group" data-settings-tab-panel="system">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">LAN</p>
@@ -797,12 +894,10 @@
                     <div class="button-row">
                         <button class="button button--ghost" id="copyLanUrlFromSettingsButton" type="button">Скопировать
                             URL</button>
-                        <button class="button button--ghost" id="shutdownButton" type="button">Остановить
-                            приложение</button>
                     </div>
                 </section>
 
-                <section class="settings-group">
+                <section class="settings-group" data-settings-tab-panel="system">
                     <div class="settings-group__header">
                         <div>
                             <p class="eyebrow">Загрузки</p>
@@ -812,6 +907,49 @@
 
                     <div class="download-list" id="downloadList">
                         <p class="subtle">Активных загрузок нет.</p>
+                    </div>
+                </section>
+
+                <section class="settings-group settings-group--maintenance" data-settings-tab-panel="system">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Сервис</p>
+                            <h4>Обслуживание</h4>
+                        </div>
+                    </div>
+
+                    <div class="maintenance-stack">
+                        <div class="maintenance-panel">
+                            <div class="maintenance-panel__copy">
+                                <span class="maintenance-panel__label">База данных</span>
+                                <strong>Очистка данных</strong>
+                                <p>Удаляет осиротевшие записи после удалённых чатов. Полная очистка сбрасывает профили,
+                                    чаты, транскрипты и RAG-индекс.</p>
+                            </div>
+                            <div class="button-row maintenance-panel__actions">
+                                <button class="button button--ghost" id="cleanupDatabaseButton" type="button">Очистить
+                                    мусор</button>
+                                <button class="button button--danger" id="resetDatabaseButton" type="button">Полная
+                                    очистка</button>
+                            </div>
+                            <p class="inline-status" id="databaseStatus"></p>
+                        </div>
+
+                        <div class="maintenance-panel maintenance-panel--runtime">
+                            <div class="maintenance-panel__copy">
+                                <span class="maintenance-panel__label">Приложение</span>
+                                <strong>Backend LocalGPT</strong>
+                                <p>Перезапуск применяет свежий backend-код без поиска процесса в терминале. Остановка
+                                    выключит API; для нового старта понадобится launcher или ручной запуск.</p>
+                            </div>
+                            <div class="button-row maintenance-panel__actions">
+                                <button class="button button--ghost" id="restartBackendButton"
+                                    type="button">Перезапустить backend</button>
+                                <button class="button button--danger" id="shutdownButton" type="button">Остановить
+                                    приложение</button>
+                            </div>
+                            <p class="inline-status" id="appRuntimeStatus"></p>
+                        </div>
                     </div>
                 </section>
             </div>

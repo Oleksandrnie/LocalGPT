@@ -3,7 +3,10 @@ const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
 const CREATE_PROFILE_VALUE = "__create_profile__";
 const AUTO_MODEL_ID = "__auto_router__";
 const AUTO_MODEL_TITLE = "Auto / Smart Router";
-const AUTO_MODEL_HELP = "Автоматически классифицирует chat-запрос через qwen3:0.6b и выбирает подходящую модель из локального каталога. Для расчётов использует Local Calculator.";
+const AUTO_MODEL_HELP = "Автоматически классифицирует chat-запрос через qwen3:0.6b и выбирает подходящую LLM из локального каталога. Local Calculator запускается только при ручном выборе.";
+const LOCAL_CALCULATOR_MODEL_ID = "__local_calculator__";
+const LOCAL_CALCULATOR_TITLE = "Local Calculator";
+const LOCAL_CALCULATOR_HELP = "Детерминированный локальный калькулятор для явной арифметики: суммы, вычитание, проценты, часы/минуты и ставка × часы. Не использует LLM и не отвечает на обычные вопросы.";
 const STORAGE_KEYS = {
   activeProfileId: "localgpt_simple_profile_id",
   activeSessionId: "localgpt_simple_session_id",
@@ -20,6 +23,7 @@ const STORAGE_KEYS = {
   asrLibraryOpen: "localgpt_simple_asr_library_open",
   asrPipelineSettingsOpen: "localgpt_simple_asr_pipeline_settings_open",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
+  settingsTab: "localgpt_simple_settings_tab",
 };
 
 const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
@@ -92,6 +96,17 @@ const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "rag_max_context_chars",
   "pipeline",
 ];
+const RESIDENCY_DEFAULTS = {
+  max_resident_target_models: 2,
+  allow_light_with_heavy: false,
+  single_large_target_model: true,
+  preload_model_on_manual_select: false,
+  auto_target_keep_alive: "4m",
+  manual_keep_alive: "4m",
+  code_model_keep_alive: "2m",
+  heavy_model_keep_alive: "60s",
+  router_keep_alive: "2m",
+};
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
@@ -225,6 +240,7 @@ const els = {
   ocrSendButton: document.getElementById("ocrSendButton"),
   ocrClearButton: document.getElementById("ocrClearButton"),
   settingsBackdrop: document.getElementById("settingsBackdrop"),
+  settingsTabList: document.getElementById("settingsTabList"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
   ragBackdrop: document.getElementById("ragBackdrop"),
   closeRagButton: document.getElementById("closeRagButton"),
@@ -276,6 +292,20 @@ const els = {
   memTurnsInput: document.getElementById("memTurnsInput"),
   ollamaKeepAliveInput: document.getElementById("ollamaKeepAliveInput"),
   ollamaKeepAliveUnitSelect: document.getElementById("ollamaKeepAliveUnitSelect"),
+  maxResidentTargetModelsSelect: document.getElementById("maxResidentTargetModelsSelect"),
+  allowLightWithHeavyToggle: document.getElementById("allowLightWithHeavyToggle"),
+  singleLargeTargetModelToggle: document.getElementById("singleLargeTargetModelToggle"),
+  preloadManualSelectToggle: document.getElementById("preloadManualSelectToggle"),
+  autoTargetKeepAliveInput: document.getElementById("autoTargetKeepAliveInput"),
+  autoTargetKeepAliveUnitSelect: document.getElementById("autoTargetKeepAliveUnitSelect"),
+  manualKeepAliveInput: document.getElementById("manualKeepAliveInput"),
+  manualKeepAliveUnitSelect: document.getElementById("manualKeepAliveUnitSelect"),
+  codeKeepAliveInput: document.getElementById("codeKeepAliveInput"),
+  codeKeepAliveUnitSelect: document.getElementById("codeKeepAliveUnitSelect"),
+  heavyKeepAliveInput: document.getElementById("heavyKeepAliveInput"),
+  heavyKeepAliveUnitSelect: document.getElementById("heavyKeepAliveUnitSelect"),
+  routerKeepAliveInput: document.getElementById("routerKeepAliveInput"),
+  routerKeepAliveUnitSelect: document.getElementById("routerKeepAliveUnitSelect"),
   saveModelSettingsButton: document.getElementById("saveModelSettingsButton"),
   resetModelSettingsButton: document.getElementById("resetModelSettingsButton"),
   modelSettingsStatus: document.getElementById("modelSettingsStatus"),
@@ -310,7 +340,9 @@ const els = {
   moveModelsDirButton: document.getElementById("moveModelsDirButton"),
   lanUrlValue: document.getElementById("lanUrlValue"),
   copyLanUrlFromSettingsButton: document.getElementById("copyLanUrlFromSettingsButton"),
+  restartBackendButton: document.getElementById("restartBackendButton"),
   shutdownButton: document.getElementById("shutdownButton"),
+  appRuntimeStatus: document.getElementById("appRuntimeStatus"),
   cleanupDatabaseButton: document.getElementById("cleanupDatabaseButton"),
   resetDatabaseButton: document.getElementById("resetDatabaseButton"),
   databaseStatus: document.getElementById("databaseStatus"),
@@ -399,7 +431,9 @@ const state = {
   asrToolHistorySearch: "",
   ragStatus: null,
   ragBusy: false,
+  activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
+  appRuntimeBusy: false,
   asrToolIsOpen: false,
   asrToolIsMinimized: false,
   asrToolBounds: null,
@@ -1225,7 +1259,18 @@ function getChatModelItems() {
     recommended: null,
     task: null,
   };
-  return [autoItem, ...source.map((model) => {
+  const calculatorItem = {
+    id: LOCAL_CALCULATOR_MODEL_ID,
+    name: LOCAL_CALCULATOR_MODEL_ID,
+    title: LOCAL_CALCULATOR_TITLE,
+    category: "local_calculator",
+    weight: "utility",
+    description: LOCAL_CALCULATOR_HELP,
+    installed: null,
+    recommended: null,
+    task: null,
+  };
+  return [autoItem, calculatorItem, ...source.map((model) => {
     const name = getModelId(model);
     return {
       ...model,
@@ -1241,6 +1286,9 @@ function getChatModelItems() {
 function describeChatModelItem(item) {
   if (item?.name === AUTO_MODEL_ID || getModelId(item) === AUTO_MODEL_ID) {
     return "router • qwen3:0.6b";
+  }
+  if (item?.name === LOCAL_CALCULATOR_MODEL_ID || getModelId(item) === LOCAL_CALCULATOR_MODEL_ID) {
+    return "локальный расчёт • без LLM";
   }
   if (!item) {
     return "Загрузите модель в настройках";
@@ -1862,10 +1910,11 @@ function autoResizePrompt() {
 function updateSendButtonState() {
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
-  const hasInstalledChatModel = state.installedModels.length > 0;
   const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
+  const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
+  const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
   const selectedInstalled = Boolean(selectedModel) && (
-    selectedModel === AUTO_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
+    selectedModel === AUTO_MODEL_ID || selectedModel === LOCAL_CALCULATOR_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
   );
   if (els.promptInput) {
     els.promptInput.disabled = false;
@@ -1880,9 +1929,10 @@ function updateSendButtonState() {
 function renderChatModelNotice() {
   if (!els.chatModelNotice) return;
   const selectedModel = String(state.selectedLlmModel || "").trim();
-  const hasInstalledChatModel = state.installedModels.length > 0;
+  const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
+  const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
   const selectedInstalled = Boolean(selectedModel) && (
-    selectedModel === AUTO_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
+    selectedModel === AUTO_MODEL_ID || selectedModel === LOCAL_CALCULATOR_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
   );
   const missing = !hasInstalledChatModel || !selectedModel || (Boolean(selectedModel) && !selectedInstalled);
   els.chatModelNotice.hidden = !missing;
@@ -2558,12 +2608,13 @@ function renderModelControls() {
   const utilityItems = getUtilityModels();
   const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
   const installedCatalogIds = catalogIds.filter((name) => installedNames.has(name));
-  const optionIds = new Set([AUTO_MODEL_ID, ...catalogIds]);
+  const optionIds = new Set([AUTO_MODEL_ID, LOCAL_CALCULATOR_MODEL_ID, ...catalogIds]);
 
   const optionsMarkup = catalogItems.length
     ? [
       '<option value="" hidden>Модель не выбрана</option>',
       `<option value="${AUTO_MODEL_ID}" data-label="${escapeHtml(AUTO_MODEL_TITLE)}" data-help="${escapeHtml(AUTO_MODEL_HELP)}">${escapeHtml(AUTO_MODEL_TITLE)}</option>`,
+      `<option value="${LOCAL_CALCULATOR_MODEL_ID}" data-label="${escapeHtml(LOCAL_CALCULATOR_TITLE)}" data-help="${escapeHtml(LOCAL_CALCULATOR_HELP)}">${escapeHtml(LOCAL_CALCULATOR_TITLE)}</option>`,
       ...catalogItems.map((item) => {
         const id = getModelId(item);
         const title = getModelTitle(item);
@@ -2645,6 +2696,28 @@ async function applySelectedLlmModel(nextModel) {
     await updateCurrentSessionMeta({ model_name: state.selectedLlmModel });
   }
   await refreshModelSettings({ silent: true });
+  await maybePreloadManualModel(modelName);
+}
+
+async function maybePreloadManualModel(modelName) {
+  const target = String(modelName || "").trim();
+  if (!target || target === AUTO_MODEL_ID || target === LOCAL_CALCULATOR_MODEL_ID || !state.activeProfileId) return;
+  const settings = (getActiveProfilePreferences()?.settings || {});
+  if (!settings.preload_model_on_manual_select) return;
+  const installed = state.installedModels.some((item) => item.name === target);
+  if (!installed) return;
+  try {
+    await request("/models/preload", {
+      method: "POST",
+      body: {
+        model: target,
+        profile_id: state.activeProfileId,
+      },
+    });
+    setFooter(`Модель ${target} предварительно загружена в Ollama.`, "info");
+  } catch (error) {
+    setFooter(`Не удалось предварительно загрузить ${target}: ${error.message || error}`, "warning");
+  }
 }
 
 function renderChatModelLibrary() {
@@ -2715,6 +2788,7 @@ function renderModelSettings() {
   }
 
   const disabled = !profile || !modelName;
+  const profileDisabled = !profile;
   const { effective = {}, overrides = {} } = state.modelSettingsState || {};
   const values = {
     temperature: overrides.temperature ?? effective.temperature ?? "",
@@ -2722,6 +2796,15 @@ function renderModelSettings() {
     num_ctx: overrides.num_ctx ?? effective.num_ctx ?? "",
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
     ollama_keep_alive: overrides.ollama_keep_alive ?? effective.ollama_keep_alive ?? defaultKeepAliveForModel(modelName),
+    max_resident_target_models: overrides.max_resident_target_models ?? effective.max_resident_target_models ?? RESIDENCY_DEFAULTS.max_resident_target_models,
+    allow_light_with_heavy: overrides.allow_light_with_heavy ?? effective.allow_light_with_heavy ?? RESIDENCY_DEFAULTS.allow_light_with_heavy,
+    single_large_target_model: overrides.single_large_target_model ?? effective.single_large_target_model ?? RESIDENCY_DEFAULTS.single_large_target_model,
+    preload_model_on_manual_select: overrides.preload_model_on_manual_select ?? effective.preload_model_on_manual_select ?? RESIDENCY_DEFAULTS.preload_model_on_manual_select,
+    auto_target_keep_alive: overrides.auto_target_keep_alive ?? effective.auto_target_keep_alive ?? RESIDENCY_DEFAULTS.auto_target_keep_alive,
+    manual_keep_alive: overrides.manual_keep_alive ?? effective.manual_keep_alive ?? RESIDENCY_DEFAULTS.manual_keep_alive,
+    code_model_keep_alive: overrides.code_model_keep_alive ?? effective.code_model_keep_alive ?? RESIDENCY_DEFAULTS.code_model_keep_alive,
+    heavy_model_keep_alive: overrides.heavy_model_keep_alive ?? effective.heavy_model_keep_alive ?? RESIDENCY_DEFAULTS.heavy_model_keep_alive,
+    router_keep_alive: overrides.router_keep_alive ?? effective.router_keep_alive ?? RESIDENCY_DEFAULTS.router_keep_alive,
   };
 
   if (els.temperatureInput) {
@@ -2753,19 +2836,77 @@ function renderModelSettings() {
     els.ollamaKeepAliveUnitSelect.value = keepAlive.unit;
     queueSyncAppSelects();
   }
+  if (els.maxResidentTargetModelsSelect) {
+    els.maxResidentTargetModelsSelect.disabled = profileDisabled;
+    els.maxResidentTargetModelsSelect.value = String(Math.max(1, Math.min(5, Number(values.max_resident_target_models) || RESIDENCY_DEFAULTS.max_resident_target_models)));
+    els.maxResidentTargetModelsSelect.title = "Router qwen3:0.6b в этот лимит не входит.";
+  }
+  if (els.allowLightWithHeavyToggle) {
+    els.allowLightWithHeavyToggle.disabled = profileDisabled;
+    els.allowLightWithHeavyToggle.checked = Boolean(values.allow_light_with_heavy);
+    els.allowLightWithHeavyToggle.title = "Если выключено, при запуске Mistral Nemo остальные target-модели выгружаются.";
+  }
+  if (els.singleLargeTargetModelToggle) {
+    els.singleLargeTargetModelToggle.disabled = profileDisabled;
+    els.singleLargeTargetModelToggle.checked = Boolean(values.single_large_target_model);
+    els.singleLargeTargetModelToggle.title = "Если включено, LocalGPT не держит одновременно две medium/code/heavy target-модели.";
+  }
+  if (els.preloadManualSelectToggle) {
+    els.preloadManualSelectToggle.disabled = profileDisabled;
+    els.preloadManualSelectToggle.checked = Boolean(values.preload_model_on_manual_select);
+    els.preloadManualSelectToggle.title = "Если включено, ручной выбор модели сразу загружает её в Ollama.";
+  }
+  setKeepAliveControl(
+    els.autoTargetKeepAliveInput,
+    els.autoTargetKeepAliveUnitSelect,
+    values.auto_target_keep_alive,
+    RESIDENCY_DEFAULTS.auto_target_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.manualKeepAliveInput,
+    els.manualKeepAliveUnitSelect,
+    values.manual_keep_alive,
+    RESIDENCY_DEFAULTS.manual_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.codeKeepAliveInput,
+    els.codeKeepAliveUnitSelect,
+    values.code_model_keep_alive,
+    RESIDENCY_DEFAULTS.code_model_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.heavyKeepAliveInput,
+    els.heavyKeepAliveUnitSelect,
+    values.heavy_model_keep_alive,
+    RESIDENCY_DEFAULTS.heavy_model_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.routerKeepAliveInput,
+    els.routerKeepAliveUnitSelect,
+    values.router_keep_alive,
+    RESIDENCY_DEFAULTS.router_keep_alive,
+    profileDisabled,
+  );
   if (els.saveModelSettingsButton) {
-    els.saveModelSettingsButton.disabled = disabled;
+    els.saveModelSettingsButton.disabled = profileDisabled || !modelName;
   }
   if (els.resetModelSettingsButton) {
-    els.resetModelSettingsButton.disabled = disabled;
+    els.resetModelSettingsButton.disabled = profileDisabled || !modelName;
   }
+  queueSyncAppSelects();
   renderAsrPipelineSettings();
 }
 
 function defaultKeepAliveForModel(modelName = "") {
   const target = String(modelName || "").trim();
-  if (target === "mistral-nemo:12b") return "30s";
-  return "1m";
+  if (target === "qwen3:0.6b") return RESIDENCY_DEFAULTS.router_keep_alive;
+  if (target === "mistral-nemo:12b") return RESIDENCY_DEFAULTS.heavy_model_keep_alive;
+  if (["qwen2.5-coder:7b", "deepseek-coder:6.7b"].includes(target)) return RESIDENCY_DEFAULTS.code_model_keep_alive;
+  return RESIDENCY_DEFAULTS.manual_keep_alive;
 }
 
 function parseKeepAliveValue(value, fallback = "1m") {
@@ -2783,16 +2924,47 @@ function parseKeepAliveValue(value, fallback = "1m") {
 }
 
 function collectKeepAliveValue() {
-  const rawAmount = String(els.ollamaKeepAliveInput?.value || "").trim().replace(",", ".");
+  return collectKeepAliveFromControl(els.ollamaKeepAliveInput, els.ollamaKeepAliveUnitSelect);
+}
+
+function setKeepAliveControl(input, unitSelect, value, fallback = "1m", disabled = false) {
+  const keepAlive = parseKeepAliveValue(value, fallback);
+  if (input) {
+    input.disabled = disabled;
+    input.value = keepAlive.amount;
+  }
+  if (unitSelect) {
+    unitSelect.disabled = disabled;
+    unitSelect.value = keepAlive.unit;
+  }
+}
+
+function collectKeepAliveFromControl(input, unitSelect) {
+  const rawAmount = String(input?.value || "").trim().replace(",", ".");
   if (!rawAmount) return null;
   const amount = Math.max(0, Number(rawAmount));
   if (!Number.isFinite(amount)) return null;
-  const unit = ["s", "m", "h"].includes(els.ollamaKeepAliveUnitSelect?.value)
-    ? els.ollamaKeepAliveUnitSelect.value
+  const unit = ["s", "m", "h"].includes(unitSelect?.value)
+    ? unitSelect.value
     : "m";
   if (amount === 0) return "0s";
   const normalizedAmount = Number.isInteger(amount) ? String(amount) : String(amount).replace(/\.0+$/, "");
   return `${normalizedAmount}${unit}`;
+}
+
+function collectResidencySettings() {
+  const maxResident = Number.parseInt(els.maxResidentTargetModelsSelect?.value || "", 10);
+  return {
+    max_resident_target_models: Number.isFinite(maxResident) ? Math.max(1, Math.min(5, maxResident)) : RESIDENCY_DEFAULTS.max_resident_target_models,
+    allow_light_with_heavy: Boolean(els.allowLightWithHeavyToggle?.checked),
+    single_large_target_model: Boolean(els.singleLargeTargetModelToggle?.checked),
+    preload_model_on_manual_select: Boolean(els.preloadManualSelectToggle?.checked),
+    auto_target_keep_alive: collectKeepAliveFromControl(els.autoTargetKeepAliveInput, els.autoTargetKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.auto_target_keep_alive,
+    manual_keep_alive: collectKeepAliveFromControl(els.manualKeepAliveInput, els.manualKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.manual_keep_alive,
+    code_model_keep_alive: collectKeepAliveFromControl(els.codeKeepAliveInput, els.codeKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.code_model_keep_alive,
+    heavy_model_keep_alive: collectKeepAliveFromControl(els.heavyKeepAliveInput, els.heavyKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.heavy_model_keep_alive,
+    router_keep_alive: collectKeepAliveFromControl(els.routerKeepAliveInput, els.routerKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.router_keep_alive,
+  };
 }
 
 function asrPipelineSourceObject(value) {
@@ -5273,7 +5445,45 @@ function renderDatabaseMaintenance() {
   }
 }
 
+function renderAppRuntimeMaintenance() {
+  const busy = Boolean(state.appRuntimeBusy);
+  if (els.restartBackendButton) {
+    els.restartBackendButton.disabled = busy;
+    els.restartBackendButton.textContent = busy ? "Перезапуск…" : "Перезапустить backend";
+  }
+  if (els.shutdownButton) {
+    els.shutdownButton.disabled = busy;
+    els.shutdownButton.textContent = busy ? "Остановка…" : "Остановить приложение";
+  }
+}
+
+function setSettingsTab(tabName, { persist = true, render = true } = {}) {
+  const allowed = new Set(["profile", "models", "asr", "tts", "system"]);
+  const next = allowed.has(tabName) ? tabName : "profile";
+  state.activeSettingsTab = next;
+  if (persist) {
+    writeStored(STORAGE_KEYS.settingsTab, next);
+  }
+  if (render) {
+    renderSettingsTabs();
+  }
+}
+
+function renderSettingsTabs() {
+  const active = state.activeSettingsTab || "profile";
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    const selected = button.getAttribute("data-settings-tab") === active;
+    button.classList.toggle("settings-tab--active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+    button.setAttribute("tabindex", selected ? "0" : "-1");
+  });
+  document.querySelectorAll("[data-settings-tab-panel]").forEach((panel) => {
+    panel.hidden = panel.getAttribute("data-settings-tab-panel") !== active;
+  });
+}
+
 function renderSettings() {
+  renderSettingsTabs();
   renderProfileOptions();
   renderProfileManagement();
   renderSessionList();
@@ -5285,6 +5495,7 @@ function renderSettings() {
   renderDownloads();
   renderLanUrl();
   renderDatabaseMaintenance();
+  renderAppRuntimeMaintenance();
 
   if (els.modelsDirInput && !els.modelsDirInput.value && state.modelsDir) {
     els.modelsDirInput.value = state.modelsDir;
@@ -5328,6 +5539,7 @@ function openSettings() {
 }
 
 function openAsrPipelineSettings() {
+  setSettingsTab("asr", { render: false });
   setAsrPipelineSettingsExpanded(true, { render: false });
   openSettings();
   window.setTimeout(() => {
@@ -5531,6 +5743,10 @@ async function copyText(value) {
   await navigator.clipboard.writeText(value);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function loadHealth({ silent = false } = {}) {
   try {
     const data = await request("/health");
@@ -5565,6 +5781,7 @@ async function loadModels({ silent = false } = {}) {
     const savedModel = readStored(STORAGE_KEYS.llmModel, "");
     const catalogIds = new Set(getCatalogModels().map((item) => getModelId(item)));
     catalogIds.add(AUTO_MODEL_ID);
+    catalogIds.add(LOCAL_CALCULATOR_MODEL_ID);
     const installedCatalogModel = getCatalogModels().find((item) => (
       state.installedModels.some((installed) => installed.name === getModelId(item))
     ));
@@ -5829,6 +6046,33 @@ async function saveModelSettingsFlow() {
 
   try {
     const memTurnsValue = parseOptionalNumber(els.memTurnsInput?.value, "int");
+    const residencySettings = collectResidencySettings();
+    const currentResidentLimit = Number(
+      state.modelSettingsState?.overrides?.max_resident_target_models
+      ?? state.modelSettingsState?.effective?.max_resident_target_models
+      ?? RESIDENCY_DEFAULTS.max_resident_target_models,
+    );
+    if (
+      residencySettings.max_resident_target_models >= 4
+      && residencySettings.max_resident_target_models !== currentResidentLimit
+    ) {
+      const approved = await openConfirmDialog({
+        eyebrow: "Ollama memory",
+        title: "Высокий лимит моделей в памяти",
+        message: "Вы выбрали высокий лимит моделей в памяти.\n\nНа Mac с 16 GB RAM это может привести к повышенному расходу памяти, swap, нагреву, замедлению системы и долгой выгрузке моделей из Ollama.\n\nРекомендуемое значение для MBP M1 Pro 16GB: 2 модели.\n\nПродолжить?",
+        confirmLabel: "Подтвердить",
+        cancelLabel: "Отмена",
+        returnFocus: els.maxResidentTargetModelsSelect,
+      });
+      if (!approved) {
+        if (els.maxResidentTargetModelsSelect) {
+          els.maxResidentTargetModelsSelect.value = String(currentResidentLimit || RESIDENCY_DEFAULTS.max_resident_target_models);
+          queueSyncAppSelects();
+        }
+        setInlineStatus(els.modelSettingsStatus, "Высокий лимит не сохранён.", "warning");
+        return;
+      }
+    }
     const memTurnsWarning = memTurnsValue && memTurnsValue > 12
       ? "Большое значение памяти увеличивает размер prompt, замедляет ответы и может ухудшить качество. Для длинных диалогов лучше использовать summary memory."
       : "";
@@ -5849,10 +6093,16 @@ async function saveModelSettingsFlow() {
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
+    const profileSettingsPatch = {
+      ...residencySettings,
+    };
     if (memTurnsValue !== null) {
-      const updatedProfile = await saveActiveProfilePreferences({ settings: { mem_turns: memTurnsValue } });
+      profileSettingsPatch.mem_turns = memTurnsValue;
+    }
+    if (Object.keys(profileSettingsPatch).length) {
+      const updatedProfile = await saveActiveProfilePreferences({ settings: profileSettingsPatch });
       if (!updatedProfile) {
-        throw new Error("не удалось сохранить память диалога профиля");
+        throw new Error("не удалось сохранить настройки профиля");
       }
     }
     await refreshModelSettings({ silent: true });
@@ -5927,9 +6177,14 @@ async function resetModelSettingsFlow() {
       },
     });
     state.modelSettingsState = data || state.modelSettingsState;
-    await saveActiveProfilePreferences({ settings: { mem_turns: defaultMemTurns } });
+    await saveActiveProfilePreferences({
+      settings: {
+        mem_turns: defaultMemTurns,
+        ...RESIDENCY_DEFAULTS,
+      },
+    });
     await refreshModelSettings({ silent: true });
-    setInlineStatus(els.modelSettingsStatus, "Настройки модели и память диалога сброшены.", "success");
+    setInlineStatus(els.modelSettingsStatus, "Настройки модели, память диалога и resident-политика сброшены.", "success");
   } catch (error) {
     setInlineStatus(els.modelSettingsStatus, `Не удалось сбросить настройки: ${error.message || error}`, "error");
   }
@@ -6036,6 +6291,9 @@ async function ensureModelInstalled(modelName) {
     return false;
   }
   if (target === AUTO_MODEL_ID) {
+    return true;
+  }
+  if (target === LOCAL_CALCULATOR_MODEL_ID) {
     return true;
   }
   if (state.installedModels.some((item) => item.name === target)) {
@@ -6531,8 +6789,83 @@ function isExpectedShutdownError(error) {
     || raw.includes("the network connection was lost");
 }
 
+async function waitForBackendRestart() {
+  await sleep(900);
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    try {
+      await request("/health");
+      await loadHealth({ silent: true });
+      return true;
+    } catch {
+      state.serverHealthy = false;
+      setHealthBadge("Перезапуск…", "warning");
+    }
+    await sleep(500);
+  }
+  return false;
+}
+
+async function restartBackendRuntime() {
+  const approved = await openConfirmDialog({
+    eyebrow: "Приложение",
+    title: "Перезапустить backend?",
+    message: "Backend LocalGPT будет перезапущен. Текущие генерации, транскрибации и TTS-задачи будут остановлены. Страница попробует восстановить соединение автоматически.",
+    confirmLabel: "Перезапустить",
+    cancelLabel: "Отмена",
+    returnFocus: els.restartBackendButton,
+  });
+  if (!approved) return;
+
+  state.appRuntimeBusy = true;
+  renderAppRuntimeMaintenance();
+  setInlineStatus(els.appRuntimeStatus, "Перезапуск backend…", "warning");
+  setFooter("Перезапуск backend…", "warning");
+  setHealthBadge("Перезапуск…", "warning");
+
+  try {
+    await request("/runtime/restart", { method: "POST", body: {} });
+  } catch (error) {
+    if (!isExpectedShutdownError(error)) {
+      setInlineStatus(els.appRuntimeStatus, `Не удалось запустить перезапуск: ${error.message || error}`, "error");
+      setFooter(`Не удалось перезапустить backend: ${error.message || error}`, "error");
+      state.appRuntimeBusy = false;
+      renderAppRuntimeMaintenance();
+      return;
+    }
+  }
+
+  const ok = await waitForBackendRestart();
+  state.appRuntimeBusy = false;
+  renderAppRuntimeMaintenance();
+  if (ok) {
+    setInlineStatus(els.appRuntimeStatus, "Backend перезапущен.", "success");
+    setFooter("Backend перезапущен.", "success");
+    await Promise.all([
+      loadModels({ silent: true }),
+      loadWhisperModels({ silent: true }),
+      loadTtsSettings({ silent: true }),
+      loadProfiles(),
+    ]);
+    return;
+  }
+  setInlineStatus(els.appRuntimeStatus, "Backend не ответил после перезапуска. Проверьте launcher или терминал.", "error");
+  setFooter("Backend не ответил после перезапуска.", "error");
+}
+
 async function shutdownRuntime() {
-  if (!window.confirm("Остановить backend и Caddy?")) return;
+  const approved = await openConfirmDialog({
+    eyebrow: "Приложение",
+    title: "Остановить приложение?",
+    message: "Backend и Caddy будут остановлены. После этого текущая страница потеряет связь с API; для нового старта понадобится launcher или ручной запуск.",
+    confirmLabel: "Остановить",
+    cancelLabel: "Отмена",
+    returnFocus: els.shutdownButton,
+  });
+  if (!approved) return;
+
+  state.appRuntimeBusy = true;
+  renderAppRuntimeMaintenance();
+  setInlineStatus(els.appRuntimeStatus, "Остановка приложения…", "warning");
   try {
     await request("/runtime/shutdown", { method: "POST", body: {} });
     setFooter("Остановка запущена. Для нового старта снова откройте launcher.", "warning");
@@ -6544,6 +6877,9 @@ async function shutdownRuntime() {
       return;
     }
     setFooter(`Не удалось остановить приложение: ${error.message || error}`, "error");
+    setInlineStatus(els.appRuntimeStatus, `Не удалось остановить: ${error.message || error}`, "error");
+    state.appRuntimeBusy = false;
+    renderAppRuntimeMaintenance();
   }
 }
 
@@ -6849,6 +7185,11 @@ function bindEvents() {
   els.themeToggleButton?.addEventListener("click", () => toggleTheme());
   els.chatModelNoticeSettingsButton?.addEventListener("click", () => openSettings());
   els.closeSettingsButton?.addEventListener("click", () => closeSettings());
+  els.settingsTabList?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-settings-tab]") : null;
+    if (!button) return;
+    setSettingsTab(button.getAttribute("data-settings-tab") || "profile");
+  });
   els.settingsBackdrop?.addEventListener("click", (event) => {
     if (event.target === els.settingsBackdrop) {
       closeSettings();
@@ -6902,6 +7243,7 @@ function bindEvents() {
   els.copyLanUrlButton?.addEventListener("click", async () => copyLanUrl());
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
   els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
+  els.restartBackendButton?.addEventListener("click", async () => restartBackendRuntime());
   els.shutdownButton?.addEventListener("click", async () => shutdownRuntime());
   els.cleanupDatabaseButton?.addEventListener("click", async () => cleanupDatabaseGarbage());
   els.resetDatabaseButton?.addEventListener("click", async () => resetDatabaseFully());

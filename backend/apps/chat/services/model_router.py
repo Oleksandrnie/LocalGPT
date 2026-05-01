@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app import config
-from backend.apps.chat.services import ollama_runtime
+from backend.apps.chat.services import model_residency, ollama_runtime
 
 AUTO_MODEL_ID = "__auto_router__"
 AUTO_MODEL_TITLE = "Auto / Smart Router"
@@ -59,12 +59,12 @@ SUPPORTED_INTENTS = {
 }
 
 ROUTER_MODEL_MAP = {
-    "quick_rag": "qwen2.5:3b-instruct",
+    "quick_rag": FALLBACK_TARGET_MODEL,
     "default_chat": "qwen2.5:7b-instruct",
     "thinking": "qwen3:8b",
     "code": "qwen2.5-coder:7b",
-    "code_compare": "deepseek-coder:6.7b",
-    "calculation": LOCAL_CALCULATOR_TARGET,
+    "code_compare": "qwen2.5-coder:7b",
+    "calculation": FALLBACK_TARGET_MODEL,
     "unknown": FALLBACK_TARGET_MODEL,
 }
 
@@ -80,7 +80,8 @@ Important:
 - If the request is about code, classify it as code or code_compare.
 - Requests to create HTML, CSS, JavaScript, Python, API, component, markup, or script output are code,
   even if the content inside the code is marketing text, SEO, tariffs, a list, or another non-programming topic.
-- If the request is about exact arithmetic, classify it as calculation.
+- If the request is about exact arithmetic, classify it as calculation, but route it to qwen2.5:7b-instruct.
+  Local Calculator is used only when the user manually selects it in the model selector.
 Supported intents:
 - quick_rag: fast retrieval, short factual answer, local RAG lookup
 - default_chat: normal writing, rewriting, explanation, general chat
@@ -90,16 +91,15 @@ Supported intents:
 - calculation: exact arithmetic, hours/minutes, money, rates, percentages
 - unknown: unclear request
 Available target models:
-- qwen2.5:3b-instruct for quick_rag
-- qwen2.5:7b-instruct for default_chat and unknown
+- qwen2.5:7b-instruct for quick_rag, default_chat, calculation and unknown
 - qwen3:8b for thinking
-- qwen2.5-coder:7b for code
-- deepseek-coder:6.7b for code_compare
-- __local_calculator__ for calculation
+- qwen2.5-coder:7b for code and code_compare
+- qwen2.5:3b-instruct, deepseek-coder:6.7b and mistral-nemo:12b are available for manual/pipeline usage,
+  but Auto Router must not select them.
 Rules:
 1. Do not answer the user's request.
 2. Do not perform calculations yourself.
-3. For calculation, extract numbers and units into calculation_request.
+3. For calculation, do not select __local_calculator__; select qwen2.5:7b-instruct.
 4. If unsure, use unknown with qwen2.5:7b-instruct.
 5. Return confidence from 0 to 1.
 6. Return concise reason in Russian.
@@ -109,7 +109,7 @@ Rules:
 JSON schema:
 {
   "intent": "quick_rag | default_chat | thinking | code | code_compare | calculation | unknown",
-  "target_model": "qwen2.5:3b-instruct | qwen2.5:7b-instruct | qwen3:8b | qwen2.5-coder:7b | deepseek-coder:6.7b | __local_calculator__",
+  "target_model": "qwen2.5:7b-instruct | qwen3:8b | qwen2.5-coder:7b",
   "confidence": 0.0,
   "reason": "string",
   "calculation_request": {}
@@ -128,6 +128,7 @@ class RouterDecision:
     backend_override: bool = False
     backend_override_reason: str | None = None
     raw_response: str | None = None
+    runtime_debug: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -139,6 +140,8 @@ class RouterDecision:
             payload.pop("backend_override_reason", None)
         if payload.get("raw_response") is None:
             payload.pop("raw_response", None)
+        if payload.get("runtime_debug") is None:
+            payload.pop("runtime_debug", None)
         return payload
 
 
@@ -271,12 +274,18 @@ def validate_router_decision(raw_json: str) -> RouterDecision:
     return decision
 
 
-def route_model(user_message: str, context: dict[str, Any] | None = None) -> RouterDecision:
+def route_model(
+    user_message: str,
+    context: dict[str, Any] | None = None,
+    *,
+    settings: dict[str, Any] | None = None,
+) -> RouterDecision:
     payload = {
         "user_message": user_message,
         "context": context or {},
     }
-    keep_alive = ollama_runtime.resolve_keep_alive(ROUTER_MODEL_ID, {}, router=True)
+    router_runtime = model_residency.prepare_router_for_request(settings or {})
+    keep_alive = router_runtime.get("router_keep_alive")
     try:
         content = ollama_runtime.chat_completion(
             ROUTER_MODEL_ID,
@@ -296,12 +305,11 @@ def route_model(user_message: str, context: dict[str, Any] | None = None) -> Rou
                 "message": f"Router-модель {ROUTER_MODEL_ID} не смогла обработать запрос: {exc}",
             },
         ) from exc
-    finally:
-        if ollama_runtime.is_immediate_keep_alive(keep_alive):
-            ollama_runtime.unload_model(ROUTER_MODEL_ID)
 
     decision = validate_router_decision(content or "")
-    return correct_router_decision(user_message, decision, context)
+    decision = correct_router_decision(user_message, decision, context)
+    decision.runtime_debug = router_runtime
+    return decision
 
 
 def router_debug_settings(decision: RouterDecision) -> dict[str, Any]:
@@ -319,4 +327,6 @@ def router_debug_settings(decision: RouterDecision) -> dict[str, Any]:
     if decision.backend_override:
         payload["router_backend_override"] = True
         payload["router_backend_override_reason"] = decision.backend_override_reason or "unknown"
+    if decision.runtime_debug:
+        payload.update(decision.runtime_debug)
     return payload

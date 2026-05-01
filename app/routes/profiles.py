@@ -78,6 +78,22 @@ def _normalize_tts_speed(value: str) -> str:
     return f"{number:.2f}".rstrip("0").rstrip(".")
 
 
+def _normalize_bool_setting(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _normalize_keep_alive_setting(value: object, key: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": f"invalid_{key}", "message": f"{key} must be a keep_alive value like 30s, 2m or 1h."},
+        )
+    return text
+
+
 def _normalize_runtime_settings(value: dict | None) -> dict:
     if not isinstance(value, dict):
         return {}
@@ -93,6 +109,15 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "rag_top_k",
         "rag_max_context_chars",
         "pipeline",
+        "max_resident_target_models",
+        "allow_light_with_heavy",
+        "single_large_target_model",
+        "preload_model_on_manual_select",
+        "auto_target_keep_alive",
+        "manual_keep_alive",
+        "code_model_keep_alive",
+        "heavy_model_keep_alive",
+        "router_keep_alive",
     }
     cleaned = {key: value[key] for key in allowed if key in value}
     preset = cleaned.get("default_pipeline_preset")
@@ -103,15 +128,36 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         )
     if preset is not None:
         cleaned["default_pipeline_preset"] = str(preset).strip().lower()
-    for key in ("mem_turns", "max_transcript_chars", "max_context_chars", "summary_memory_limit", "rag_top_k", "rag_max_context_chars"):
+    for key in (
+        "mem_turns",
+        "max_transcript_chars",
+        "max_context_chars",
+        "summary_memory_limit",
+        "rag_top_k",
+        "rag_max_context_chars",
+        "max_resident_target_models",
+    ):
         if key in cleaned and cleaned[key] is not None:
             try:
-                cleaned[key] = max(1, int(cleaned[key]))
+                parsed = max(1, int(cleaned[key]))
+                cleaned[key] = min(5, parsed) if key == "max_resident_target_models" else parsed
             except (TypeError, ValueError) as exc:
                 raise HTTPException(
                     status_code=422,
                     detail={"code": f"invalid_{key}", "message": f"{key} must be a positive integer."},
                 ) from exc
+    for key in ("allow_light_with_heavy", "single_large_target_model", "preload_model_on_manual_select"):
+        if key in cleaned and cleaned[key] is not None:
+            cleaned[key] = _normalize_bool_setting(cleaned[key])
+    for key in (
+        "auto_target_keep_alive",
+        "manual_keep_alive",
+        "code_model_keep_alive",
+        "heavy_model_keep_alive",
+        "router_keep_alive",
+    ):
+        if key in cleaned and cleaned[key] is not None:
+            cleaned[key] = _normalize_keep_alive_setting(cleaned[key], key)
     return cleaned
 
 

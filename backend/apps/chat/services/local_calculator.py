@@ -7,18 +7,67 @@ from typing import Any
 
 ALLOWED_BIN_OPS = (ast.Add, ast.Sub, ast.Mult, ast.Div)
 ALLOWED_UNARY_OPS = (ast.UAdd, ast.USub)
-CALCULATION_HINT_RE = re.compile(
-    r"(?i)(посчитай|рассчитай|сумм|сложи|сложить|прибав|плюс|итого|сколько\s+будет|"
-    r"умнож|процент|минус|вычти|раздели|[+\-*/×])"
+CALCULATION_COMMAND_RE = re.compile(
+    r"(?i)(посчитай|рассчитай|вычисл|сумм|сложи|сложить|прибав|итого|сколько\s+будет|"
+    r"сколько\s+получится|умнож|процент|вычти|раздели|разделить|подели|поделить|расстел)"
 )
 SUM_HINT_RE = re.compile(r"(?i)(сумм|сложи|сложить|прибав|плюс|итого)")
+AVERAGE_HINT_RE = re.compile(r"(?i)(средн(?:ее|яя|ий)|average|avg)")
+PRODUCT_HINT_RE = re.compile(r"(?i)(произведен|произведён|перемнож|multiply\s+all)")
+WORD_OPERATOR_RE = re.compile(r"(?i)(плюс|минус|мину\b|вычти|прибав|умнож|раздели|разделить|подели|поделить|расстел|дел[её]н)")
+TIMEZONE_CONTEXT_RE = re.compile(r"(?i)(часов(?:ой|ых)?\s+пояс|timezone|utc|gmt|москв|мск|сеул|коре|врем[ея]|утра|вечера)")
 NUMBER_TOKEN_RE = re.compile(r"(?<![\w])[-+]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,]\d+)?(?![\w])")
+NUMERIC_FRACTION_RE = re.compile(r"(?<![\w])([-+]?(?:\d+(?:[.,]\d+)?))\s*/\s*((?:\d+(?:[.,]\d+)?))(?![\w])")
 ARITHMETIC_OPERATOR_RE = re.compile(r"[+\-*/×]")
 TIME_VALUE_RE = re.compile(
     r"(?P<value>[-+]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,]\d+)?)\s*"
     r"(?P<unit>час(?:а|ов)?|ч\.?|hour|hours|hrs?|мин(?:ута|уты|ут)?|minutes?|mins?)\b",
     re.IGNORECASE,
 )
+NUMBER_WORDS = {
+    "ноль": 0,
+    "один": 1,
+    "одна": 1,
+    "одно": 1,
+    "два": 2,
+    "две": 2,
+    "три": 3,
+    "четыре": 4,
+    "пять": 5,
+    "шесть": 6,
+    "семь": 7,
+    "восемь": 8,
+    "девять": 9,
+    "десять": 10,
+}
+FRACTION_DENOMINATORS = {
+    "вторая": 2,
+    "вторых": 2,
+    "половина": 2,
+    "половину": 2,
+    "треть": 3,
+    "трети": 3,
+    "третья": 3,
+    "третьих": 3,
+    "четверть": 4,
+    "четверти": 4,
+    "четвертая": 4,
+    "четвёртая": 4,
+    "четвертых": 4,
+    "четвёртых": 4,
+    "пятая": 5,
+    "пятых": 5,
+    "шестая": 6,
+    "шестых": 6,
+    "седьмая": 7,
+    "седьмых": 7,
+    "восьмая": 8,
+    "восьмых": 8,
+    "девятая": 9,
+    "девятых": 9,
+    "десятая": 10,
+    "десятых": 10,
+}
 
 
 def _number(value: Any) -> float | None:
@@ -59,7 +108,7 @@ def _format_number_with_decimals(value: float, decimals: int) -> str:
 
 
 def _plain_number_tokens(user_message: str) -> list[str]:
-    return [match.group(0) for match in NUMBER_TOKEN_RE.finditer(user_message or "")]
+    return [match.group(0) for match in NUMBER_TOKEN_RE.finditer(_replace_text_numbers(user_message or ""))]
 
 
 def _plain_numbers(user_message: str) -> list[float]:
@@ -69,6 +118,114 @@ def _plain_numbers(user_message: str) -> list[float]:
         if value is not None:
             numbers.append(value)
     return numbers
+
+
+def _format_float_literal(value: float) -> str:
+    return f"{value:.12f}".rstrip("0").rstrip(".")
+
+
+def _replace_numeric_fraction(match: re.Match[str]) -> str:
+    numerator = _number(_normalize_number_text(match.group(1)))
+    denominator = _number(_normalize_number_text(match.group(2)))
+    if numerator is None or denominator is None or abs(denominator) < 1e-12:
+        return match.group(0)
+    return _format_float_literal(numerator / denominator)
+
+
+def _replace_text_numbers(value: str, *, numeric_fractions: bool = True) -> str:
+    text = str(value or "").lower()
+    if numeric_fractions:
+        text = NUMERIC_FRACTION_RE.sub(_replace_numeric_fraction, text)
+
+    def _replace_fraction(match: re.Match[str]) -> str:
+        numerator = NUMBER_WORDS.get(match.group("num").lower())
+        denominator = FRACTION_DENOMINATORS.get(match.group("den").lower())
+        if numerator is None or denominator is None or denominator == 0:
+            return match.group(0)
+        return _format_float_literal(numerator / denominator)
+
+    number_words = "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
+    denominator_words = "|".join(sorted(FRACTION_DENOMINATORS, key=len, reverse=True))
+    text = re.sub(
+        rf"\b(?P<num>{number_words})\s+(?P<den>{denominator_words})\b",
+        _replace_fraction,
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\bполовин[ау]?\b", "0.5", text, flags=re.IGNORECASE)
+    return text
+
+
+def _replace_word_operators(value: str, *, numeric_fractions: bool = True) -> str:
+    text = _replace_text_numbers(value, numeric_fractions=numeric_fractions)
+    replacements = (
+        (r"(?i)\bплюс\b|\bприбав(?:ь|ить)?\b", "+"),
+        (r"(?i)\bминус\b|\bмину\b|\bвычти\b", "-"),
+        (r"(?i)\bумнож(?:ь|ить)?(?:\s+на)?\b", "*"),
+        (r"(?i)\bраздели(?:ть)?(?:\s+на)?\b|\bподели(?:ть)?(?:\s+на)?\b|\bрасстел(?:и|ить)?(?:\s+на)?\b|\bдел[её]н(?:ное|ный|ная)?\s+на\b", "/"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
+def _operator_from_command(text: str) -> str | None:
+    source = str(text or "").lower()
+    if re.search(r"сумм|сложи|сложить|прибав|плюс|итого", source):
+        return "+"
+    if re.search(r"минус|вычти", source):
+        return "-"
+    if re.search(r"умнож", source):
+        return "*"
+    if re.search(r"раздели|разделить|подели|поделить|расстел|дел[её]н", source):
+        return "/"
+    return None
+
+
+def _command_expression(user_message: str) -> str | None:
+    op = _operator_from_command(user_message)
+    if op is None:
+        return None
+    tokens = _plain_number_tokens(user_message)
+    rendered = []
+    for token in tokens:
+        normalized = _normalize_number_text(token)
+        if _number(normalized) is None:
+            continue
+        rendered.append(normalized.lstrip("+") or "0")
+    if len(rendered) < 2:
+        return None
+    return f" {op} ".join(rendered)
+
+
+def _ordered_math_expression(user_message: str) -> str | None:
+    source = _replace_word_operators(user_message or "", numeric_fractions=False).replace(",", ".").replace("×", "*")
+    token_re = rf"{NUMBER_TOKEN_RE.pattern}|[+\-*/()]"
+    tokens = [token.strip() for token in re.findall(token_re, source) if token.strip()]
+    if not tokens:
+        return None
+    expression = " ".join(tokens)
+    expression = re.sub(r"(?<=\d)[ \u00a0]+(?=\d{3}(?:\D|$))", "", expression)
+    if not ARITHMETIC_OPERATOR_RE.search(expression):
+        return None
+    if not re.fullmatch(r"[0-9\.\+\-\*/\(\)\s]+", expression):
+        return None
+    try:
+        ast.parse(expression, mode="eval")
+    except SyntaxError:
+        return None
+    return expression
+
+
+def _mostly_math_text(user_message: str) -> bool:
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return False
+    text = _replace_word_operators(text)
+    text = CALCULATION_COMMAND_RE.sub(" ", text)
+    text = re.sub(NUMBER_TOKEN_RE, " ", text)
+    text = re.sub(r"[+\-*/×=().,;:!?₽$€\s]+", " ", text)
+    return len(text.strip()) <= 3
 
 
 def _time_items_from_text(user_message: str) -> list[dict[str, Any]]:
@@ -176,8 +333,17 @@ def _safe_eval(expr: str) -> float:
 def _basic_arithmetic_expression(payload: dict[str, Any], user_message: str) -> str | None:
     expression = str(payload.get("expression") or "").strip()
     if not expression:
-        candidates = re.findall(r"[0-9\.\,\+\-\*/×\(\)\s]+", user_message or "")
+        ordered_expression = _ordered_math_expression(user_message)
+        if ordered_expression:
+            return ordered_expression
+        command_expression = _command_expression(user_message)
+        if command_expression:
+            return command_expression
+        source = _replace_word_operators(user_message or "")
+        candidates = re.findall(r"[0-9\.\,\+\-\*/×\(\)\s]+", source)
         expression = max(candidates, key=len).strip() if candidates else ""
+    else:
+        expression = _replace_word_operators(expression)
     expression = expression.replace(",", ".")
     expression = expression.replace("×", "*")
     expression = re.sub(r"(?<=\d)[ \u00a0]+(?=\d{3}(?:\D|$))", "", expression)
@@ -186,21 +352,64 @@ def _basic_arithmetic_expression(payload: dict[str, Any], user_message: str) -> 
     return expression
 
 
+def _percentage_or_fraction_of(user_message: str) -> dict[str, str] | None:
+    source = _replace_text_numbers(user_message or "")
+    percent_match = re.search(
+        rf"({NUMBER_TOKEN_RE.pattern})\s*(?:%|процент(?:а|ов)?)\s+от\s+({NUMBER_TOKEN_RE.pattern})",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if percent_match:
+        percent = _number(_normalize_number_text(percent_match.group(1)))
+        base = _number(_normalize_number_text(percent_match.group(2)))
+        if percent is not None and base is not None:
+            result = base * percent / 100.0
+            return {
+                "result": _format_number(result),
+                "details": f"{_format_number(percent)}% от {_format_number(base)} = {_format_number(result)}",
+            }
+    fraction_match = re.search(
+        rf"({NUMBER_TOKEN_RE.pattern})\s+от\s+({NUMBER_TOKEN_RE.pattern})",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if fraction_match:
+        fraction = _number(_normalize_number_text(fraction_match.group(1)))
+        base = _number(_normalize_number_text(fraction_match.group(2)))
+        if fraction is not None and base is not None and abs(fraction) <= 1:
+            result = base * fraction
+            return {
+                "result": _format_number(result),
+                "details": f"{_format_number(fraction)} от {_format_number(base)} = {_format_number(result)}",
+            }
+    return None
+
+
 def looks_like_explicit_calculation(user_message: str) -> bool:
     text = str(user_message or "").strip()
     if not text:
         return False
-    if not CALCULATION_HINT_RE.search(text):
-        return False
     numbers = _plain_numbers(text)
-    if len(numbers) >= 2:
+    has_command = bool(CALCULATION_COMMAND_RE.search(text))
+    has_sum_hint = bool(SUM_HINT_RE.search(text))
+    has_word_operator = bool(WORD_OPERATOR_RE.search(text))
+    if TIMEZONE_CONTEXT_RE.search(text) and not has_command and not has_sum_hint:
+        return False
+    if len(_time_items_from_text(text)) >= 2 and (has_command or has_word_operator):
         return True
     expression = _basic_arithmetic_expression({}, text)
-    return bool(expression and ARITHMETIC_OPERATOR_RE.search(expression))
+    has_expression_operator = bool(expression and ARITHMETIC_OPERATOR_RE.search(expression))
+    if len(numbers) >= 2 and has_sum_hint:
+        return True
+    if len(numbers) >= 2 and (has_command or has_word_operator or has_expression_operator) and _mostly_math_text(text):
+        return True
+    if len(numbers) >= 2 and has_command and (has_word_operator or has_expression_operator):
+        return True
+    return False
 
 
-def try_calculate_text(user_message: str) -> dict[str, str] | None:
-    if not looks_like_explicit_calculation(user_message):
+def try_calculate_text(user_message: str, *, force: bool = False) -> dict[str, str] | None:
+    if not force and not looks_like_explicit_calculation(user_message):
         return None
     time_items = _time_items_from_text(user_message)
     if len(time_items) >= 2:
@@ -208,6 +417,9 @@ def try_calculate_text(user_message: str) -> dict[str, str] | None:
             return calculate({"operation": "sum_time_values", "items": time_items}, user_message)
         except Exception:
             pass
+    percent_or_fraction = _percentage_or_fraction_of(user_message)
+    if percent_or_fraction:
+        return percent_or_fraction
     try:
         return calculate({"operation": "basic_arithmetic"}, user_message)
     except Exception:
@@ -275,6 +487,34 @@ def calculate(payload: dict[str, Any] | None, user_message: str = "") -> dict[st
             return {
                 "result": _format_number(result),
                 "details": f"{_format_number(percent)}% от {_format_number(base)} = {_format_number(result)}",
+            }
+
+    if operation in {"basic_arithmetic", "arithmetic", ""} and AVERAGE_HINT_RE.search(user_message or ""):
+        tokens = _plain_number_tokens(user_message)
+        numbers = _plain_numbers(user_message)
+        if numbers:
+            decimals = max((_decimal_places(token) for token in tokens), default=0)
+            result = sum(numbers) / len(numbers)
+            rendered_numbers = [_format_number_with_decimals(item, decimals) for item in numbers]
+            rendered_result = _format_number_with_decimals(result, decimals)
+            return {
+                "result": rendered_result,
+                "details": f"({' + '.join(rendered_numbers)}) / {len(numbers)} = {rendered_result}",
+            }
+
+    if operation in {"basic_arithmetic", "arithmetic", ""} and PRODUCT_HINT_RE.search(user_message or ""):
+        tokens = _plain_number_tokens(user_message)
+        numbers = _plain_numbers(user_message)
+        if len(numbers) >= 2:
+            decimals = max((_decimal_places(token) for token in tokens), default=0)
+            result = 1.0
+            for number in numbers:
+                result *= number
+            rendered_numbers = [_format_number_with_decimals(item, decimals) for item in numbers]
+            rendered_result = _format_number_with_decimals(result, decimals)
+            return {
+                "result": rendered_result,
+                "details": f"{' × '.join(rendered_numbers)} = {rendered_result}",
             }
 
     if operation in {"basic_arithmetic", "arithmetic", ""} and SUM_HINT_RE.search(user_message or ""):

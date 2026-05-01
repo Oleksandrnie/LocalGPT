@@ -1032,10 +1032,23 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     effective["num_ctx_requested"] = effective.get("num_ctx")
     effective["num_ctx_applied"] = False
     effective["num_ctx_apply_method"] = "openai_compatible_not_supported"
-    settings_keys = tuple([*keys, "mem_turns", "pipeline"])
+    profile_runtime_keys = (
+        "mem_turns",
+        "max_resident_target_models",
+        "allow_light_with_heavy",
+        "single_large_target_model",
+        "preload_model_on_manual_select",
+        "auto_target_keep_alive",
+        "manual_keep_alive",
+        "code_model_keep_alive",
+        "heavy_model_keep_alive",
+        "router_keep_alive",
+    )
+    settings_keys = tuple([*keys, *profile_runtime_keys, "pipeline"])
     returned_overrides = {key: overrides.get(key) for key in settings_keys}
-    if "mem_turns" in profile_settings:
-        returned_overrides["mem_turns"] = profile_settings.get("mem_turns")
+    for key in profile_runtime_keys:
+        if key in profile_settings:
+            returned_overrides[key] = profile_settings.get(key)
     return {
         "profile_id": profile_id,
         "model_name": model_name,

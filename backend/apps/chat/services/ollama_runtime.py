@@ -12,6 +12,7 @@ LOGGER = logging.getLogger(__name__)
 
 ROUTER_MODEL_ID = "qwen3:0.6b"
 HEAVY_KEEP_ALIVE_MODELS = {"mistral-nemo:12b"}
+CODE_KEEP_ALIVE_MODELS = {"qwen2.5-coder:7b", "deepseek-coder:6.7b"}
 
 
 def _normalize_keep_alive(value: Any) -> str | None:
@@ -24,15 +25,33 @@ def is_immediate_keep_alive(value: Any) -> bool:
 
 
 def resolve_keep_alive(model_name: str, settings: dict[str, Any] | None = None, *, router: bool = False) -> str | None:
+    effective = _normalize_keep_alive((settings or {}).get("ollama_keep_alive_effective"))
+    if effective is not None:
+        return effective
     explicit = _normalize_keep_alive((settings or {}).get("ollama_keep_alive"))
     if explicit is not None:
         return explicit
     model = str(model_name or "").strip()
     if router or model == ROUTER_MODEL_ID:
-        return _normalize_keep_alive(config.SETTINGS.ollama_router_keep_alive)
+        return (
+            _normalize_keep_alive((settings or {}).get("router_keep_alive"))
+            or _normalize_keep_alive(config.SETTINGS.ollama_router_keep_alive)
+        )
     if model in HEAVY_KEEP_ALIVE_MODELS:
-        return _normalize_keep_alive(config.SETTINGS.ollama_heavy_keep_alive)
-    return _normalize_keep_alive(config.SETTINGS.ollama_chat_keep_alive)
+        return (
+            _normalize_keep_alive((settings or {}).get("heavy_model_keep_alive"))
+            or _normalize_keep_alive(config.SETTINGS.ollama_heavy_keep_alive)
+        )
+    if model in CODE_KEEP_ALIVE_MODELS:
+        return (
+            _normalize_keep_alive((settings or {}).get("code_model_keep_alive"))
+            or _normalize_keep_alive(config.SETTINGS.ollama_code_keep_alive)
+        )
+    return (
+        _normalize_keep_alive((settings or {}).get("manual_keep_alive"))
+        or _normalize_keep_alive(config.SETTINGS.ollama_manual_keep_alive)
+        or _normalize_keep_alive(config.SETTINGS.ollama_chat_keep_alive)
+    )
 
 
 def apply_keep_alive_setting(
@@ -111,6 +130,17 @@ def chat_completion(
     response = _post_json("/api/chat", payload)
     message = response.get("message") if isinstance(response.get("message"), dict) else {}
     return str(message.get("content") or response.get("response") or "")
+
+
+def load_model(model_name: str, *, keep_alive: str | None = None, timeout: float = 30.0) -> bool:
+    model = str(model_name or "").strip()
+    if not model:
+        return False
+    payload: dict[str, Any] = {"model": model, "prompt": "", "stream": False}
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
+    _post_json("/api/generate", payload, timeout=timeout)
+    return True
 
 
 def unload_model(model_name: str, *, timeout: float = 3.0) -> bool:
