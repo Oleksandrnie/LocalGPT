@@ -129,6 +129,59 @@ class ModelRouterTestCase(unittest.TestCase):
             keep_alive="45s",
         )
 
+    def test_ollama_chat_retries_metal_failure_with_cpu_fallback(self):
+        messages = [{"role": "user", "content": "hello"}]
+        metal_error = RuntimeError(
+            "Ollama API error 500: ggml_metal_init: error: failed to initialize the Metal library; "
+            "llama_init_from_model: failed to initialize Metal backend"
+        )
+
+        with (
+            patch.object(
+                ollama_runtime,
+                "_post_json",
+                side_effect=[metal_error, metal_error, {"message": {"content": "ok"}}],
+            ) as post_json,
+            patch.object(ollama_runtime, "unload_model", return_value=True) as unload_model,
+            patch.object(ollama_runtime.time, "sleep"),
+        ):
+            reply = ollama_runtime.chat_completion(
+                "qwen2.5:7b-instruct",
+                messages=messages,
+                temperature=0.1,
+                max_tokens=5,
+                keep_alive="45s",
+            )
+
+        self.assertEqual(reply, "ok")
+        self.assertEqual(post_json.call_count, 3)
+        cpu_payload = post_json.call_args_list[-1].args[1]
+        self.assertEqual(cpu_payload["options"]["num_gpu"], 0)
+        self.assertEqual(cpu_payload["keep_alive"], 0)
+        unload_model.assert_called_once_with("qwen2.5:7b-instruct", timeout=1.5)
+
+    def test_ollama_chat_can_force_cpu_runner(self):
+        messages = [{"role": "user", "content": "hello"}]
+
+        with (
+            patch.object(ollama_runtime, "_post_json", return_value={"message": {"content": "ok"}}) as post_json,
+            patch.object(ollama_runtime, "unload_model", return_value=True) as unload_model,
+        ):
+            reply = ollama_runtime.chat_completion(
+                "qwen2.5:7b-instruct",
+                messages=messages,
+                temperature=0.1,
+                max_tokens=5,
+                keep_alive="0",
+                num_gpu=0,
+            )
+
+        self.assertEqual(reply, "ok")
+        payload = post_json.call_args.args[1]
+        self.assertEqual(payload["options"]["num_gpu"], 0)
+        self.assertEqual(payload["keep_alive"], "0")
+        unload_model.assert_called_once_with("qwen2.5:7b-instruct", timeout=1.5)
+
     def test_valid_router_decision_uses_intent_target(self):
         raw = json.dumps(
             {

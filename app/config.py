@@ -169,6 +169,8 @@ class Settings:
     ollama_code_keep_alive: str
     ollama_router_keep_alive: str
     ollama_heavy_keep_alive: str
+    ollama_pipeline_keep_alive: str
+    ollama_pipeline_num_gpu: int
     max_resident_target_models: int
     allow_light_with_heavy: bool
     single_large_target_model: bool
@@ -419,6 +421,8 @@ def _load_settings() -> Settings:
         ollama_code_keep_alive=_parse_keep_alive("OLLAMA_CODE_KEEP_ALIVE", "2m"),
         ollama_router_keep_alive=_parse_keep_alive("OLLAMA_ROUTER_KEEP_ALIVE", "2m"),
         ollama_heavy_keep_alive=_parse_keep_alive("OLLAMA_HEAVY_KEEP_ALIVE", "60s"),
+        ollama_pipeline_keep_alive=_parse_keep_alive("OLLAMA_PIPELINE_KEEP_ALIVE", "0"),
+        ollama_pipeline_num_gpu=_parse_int("OLLAMA_PIPELINE_NUM_GPU", 0),
         max_resident_target_models=_parse_int("MAX_RESIDENT_TARGET_MODELS", 2),
         allow_light_with_heavy=_parse_bool("ALLOW_LIGHT_WITH_HEAVY", False),
         single_large_target_model=_parse_bool("SINGLE_LARGE_TARGET_MODEL", True),
@@ -477,6 +481,8 @@ DEFAULT_RUNTIME_SETTINGS.update(
         "code_model_keep_alive": SETTINGS.ollama_code_keep_alive,
         "heavy_model_keep_alive": SETTINGS.ollama_heavy_keep_alive,
         "router_keep_alive": SETTINGS.ollama_router_keep_alive,
+        "pipeline_keep_alive": SETTINGS.ollama_pipeline_keep_alive,
+        "pipeline_num_gpu": SETTINGS.ollama_pipeline_num_gpu,
     }
 )
 DEFAULT_SETTINGS = {

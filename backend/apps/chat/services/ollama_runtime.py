@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 from urllib import error, request
 from urllib.parse import urlsplit, urlunsplit
@@ -13,6 +14,14 @@ LOGGER = logging.getLogger(__name__)
 ROUTER_MODEL_ID = "qwen3:0.6b"
 HEAVY_KEEP_ALIVE_MODELS = {"mistral-nemo:12b"}
 CODE_KEEP_ALIVE_MODELS = {"qwen2.5-coder:7b", "deepseek-coder:6.7b"}
+METAL_BACKEND_ERROR_MARKERS = (
+    "mtllibraryerrordomain",
+    "mtlcompilerservice",
+    "ggml_metal_init",
+    "failed to initialize metal backend",
+    "failed to initialize the metal library",
+    "failed to allocate context",
+)
 
 
 def _normalize_keep_alive(value: Any) -> str | None:
@@ -77,6 +86,20 @@ def native_ollama_base_url() -> str:
     return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/")
 
 
+def is_metal_backend_error(value: Any) -> bool:
+    text = str(value or "").lower()
+    return any(marker in text for marker in METAL_BACKEND_ERROR_MARKERS)
+
+
+def _cpu_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    fallback = dict(payload)
+    options = dict(fallback.get("options") or {})
+    options["num_gpu"] = 0
+    fallback["options"] = options
+    fallback["keep_alive"] = 0
+    return fallback
+
+
 def _post_json(path: str, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
     url = f"{native_ollama_base_url()}{path}"
     data = json.dumps(payload).encode("utf-8")
@@ -103,6 +126,32 @@ def _post_json(path: str, payload: dict[str, Any], *, timeout: float | None = No
     return parsed
 
 
+def _post_json_with_metal_recovery(
+    path: str,
+    payload: dict[str, Any],
+    *,
+    model_name: str,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    try:
+        return _post_json(path, payload, timeout=timeout)
+    except RuntimeError as exc:
+        if not is_metal_backend_error(exc):
+            raise
+        LOGGER.warning("Ollama Metal backend failed for %s; unloading model and retrying once.", model_name)
+
+    unload_model(model_name, timeout=1.5)
+    time.sleep(0.75)
+
+    try:
+        return _post_json(path, payload, timeout=timeout)
+    except RuntimeError as exc:
+        if not is_metal_backend_error(exc):
+            raise
+        LOGGER.warning("Ollama Metal backend still unavailable for %s; retrying with CPU fallback.", model_name)
+        return _post_json(path, _cpu_fallback_payload(payload), timeout=timeout)
+
+
 def chat_completion(
     model_name: str,
     messages: list[dict[str, str]],
@@ -110,12 +159,15 @@ def chat_completion(
     temperature: float | None = None,
     max_tokens: int | None = None,
     keep_alive: str | None = None,
+    num_gpu: int | None = None,
 ) -> str:
     options: dict[str, Any] = {}
     if temperature is not None:
         options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = int(max_tokens)
+    if num_gpu is not None:
+        options["num_gpu"] = int(num_gpu)
 
     payload: dict[str, Any] = {
         "model": model_name,
@@ -127,7 +179,10 @@ def chat_completion(
     if keep_alive is not None:
         payload["keep_alive"] = keep_alive
 
-    response = _post_json("/api/chat", payload)
+    if num_gpu == 0:
+        unload_model(model_name, timeout=1.5)
+
+    response = _post_json_with_metal_recovery("/api/chat", payload, model_name=model_name)
     message = response.get("message") if isinstance(response.get("message"), dict) else {}
     return str(message.get("content") or response.get("response") or "")
 
@@ -139,7 +194,7 @@ def load_model(model_name: str, *, keep_alive: str | None = None, timeout: float
     payload: dict[str, Any] = {"model": model, "prompt": "", "stream": False}
     if keep_alive is not None:
         payload["keep_alive"] = keep_alive
-    _post_json("/api/generate", payload, timeout=timeout)
+    _post_json_with_metal_recovery("/api/generate", payload, model_name=model, timeout=timeout)
     return True
 
 

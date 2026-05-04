@@ -256,14 +256,23 @@ class ChatService:
         request_settings["num_ctx_applied"] = False
         request_settings["num_ctx_apply_method"] = "openai_compatible_not_supported"
         keep_alive = ollama_runtime.resolve_keep_alive(model, request_settings)
+        raw_num_gpu = request_settings.get("ollama_num_gpu", request_settings.get("num_gpu"))
+        num_gpu = None
+        if raw_num_gpu is not None:
+            try:
+                num_gpu = int(raw_num_gpu)
+            except (TypeError, ValueError):
+                num_gpu = None
         try:
-            text = ollama_runtime.chat_completion(
-                model,
-                messages=messages,
-                temperature=request_settings.get("temperature", config.SETTINGS.temperature),
-                max_tokens=request_settings.get("max_tokens", config.SETTINGS.max_tokens),
-                keep_alive=keep_alive,
-            )
+            runtime_kwargs = {
+                "messages": messages,
+                "temperature": request_settings.get("temperature", config.SETTINGS.temperature),
+                "max_tokens": request_settings.get("max_tokens", config.SETTINGS.max_tokens),
+                "keep_alive": keep_alive,
+            }
+            if num_gpu is not None:
+                runtime_kwargs["num_gpu"] = num_gpu
+            text = ollama_runtime.chat_completion(model, **runtime_kwargs)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
         return sanitize_reply(text)

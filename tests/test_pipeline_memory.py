@@ -411,6 +411,9 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn("clean summary", run["summary"])
         summary_messages = chat_mock.call_args_list[-1].args[2]
         summary_payload = summary_messages[-1]["content"]
+        first_stage_settings = chat_mock.call_args_list[0].kwargs["settings"]
+        self.assertEqual(first_stage_settings["ollama_num_gpu"], 0)
+        self.assertEqual(first_stage_settings["ollama_keep_alive_effective"], "0")
         self.assertIn("clean phrase", summary_payload)
         self.assertNotIn("raw noise phrase raw noise phrase", summary_payload)
         saved_transcript = db.get_transcript(transcript["id"])

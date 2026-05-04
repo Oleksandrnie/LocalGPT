@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / "venv"
 REQUIREMENTS = ROOT / "app" / "requirements.txt"
 DEPS_MARKER = VENV_DIR / ".deps_installed"
-OLLAMA_HEALTH_URL = "http://127.0.0.1:11434/v1/models"
+OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
+OLLAMA_HEALTH_URL = f"{OLLAMA_DEFAULT_BASE_URL}/v1/models"
 OLLAMA_LOG_FILE = ROOT / "ollama.log"
 ENV_FILE = ROOT / ".env"
 MODELS_BASE = ROOT / "models"
@@ -60,6 +61,32 @@ def read_env(path: Path) -> Dict[str, str]:
 
 
 ENV_VARS = read_env(ENV_FILE)
+for key, value in ENV_VARS.items():
+    os.environ.setdefault(key, value)
+
+
+def normalize_ollama_base_url(raw: str | None) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return OLLAMA_DEFAULT_BASE_URL
+    if not value.startswith(("http://", "https://")):
+        value = f"http://{value}"
+    value = value.rstrip("/")
+    if value.endswith("/v1"):
+        value = value[:-3].rstrip("/")
+    return value or OLLAMA_DEFAULT_BASE_URL
+
+
+def configured_ollama_base_url() -> str:
+    base_url = os.getenv("LOCAL_BASE_URL") or ENV_VARS.get("LOCAL_BASE_URL")
+    if base_url:
+        return normalize_ollama_base_url(base_url)
+    host = os.getenv("OLLAMA_HOST") or ENV_VARS.get("OLLAMA_HOST")
+    return normalize_ollama_base_url(host)
+
+
+OLLAMA_BASE_URL = configured_ollama_base_url()
+OLLAMA_HEALTH_URL = f"{OLLAMA_BASE_URL}/v1/models"
 
 
 def resolve_env_path(raw: str | Path | None, fallback: Path) -> Path:
@@ -95,7 +122,7 @@ os.environ.update(
         "CT2_TRANSLATORS_CACHE": str(CT2_CACHE_DIR),
     }
 )
-OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(OLLAMA_MODELS_DIR)}
+OLLAMA_ENV = {**os.environ, "OLLAMA_MODELS": str(OLLAMA_MODELS_DIR), "OLLAMA_HOST": OLLAMA_BASE_URL}
 
 
 def ollama_list() -> Iterable[str]:
@@ -218,7 +245,7 @@ def verify_python_multipart(python: str) -> None:
 
 
 def ensure_ollama_running() -> None:
-    """Ensure Ollama server is up (127.0.0.1:11434)."""
+    """Ensure Ollama server is up on the configured LocalGPT Ollama URL."""
     import urllib.request
 
     def ping() -> bool:

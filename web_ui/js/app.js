@@ -1671,7 +1671,17 @@ function insertVoiceTranscript(text) {
   insertPromptText(text, { append: true });
 }
 
-async function waitForVoiceTranscriptionTask(taskId, { timeoutMs = 180000 } = {}) {
+const VOICE_TRANSCRIPTION_TIMEOUT_MS = 5 * 60 * 1000;
+const FILE_TRANSCRIPTION_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_TRANSCRIPTION_TIMEOUT_MS = 60 * 60 * 1000;
+
+function transcriptionTimeoutForFile(file) {
+  const sizeMb = Number(file?.size || 0) / (1024 * 1024);
+  const sizeBudget = 10 * 60 * 1000 + sizeMb * 90 * 1000;
+  return Math.min(MAX_TRANSCRIPTION_TIMEOUT_MS, Math.max(FILE_TRANSCRIPTION_TIMEOUT_MS, sizeBudget));
+}
+
+async function waitForVoiceTranscriptionTask(taskId, { timeoutMs = VOICE_TRANSCRIPTION_TIMEOUT_MS } = {}) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const task = await request(`/transcribe/tasks/${encodeURIComponent(taskId)}`);
@@ -1687,7 +1697,7 @@ async function waitForVoiceTranscriptionTask(taskId, { timeoutMs = 180000 } = {}
     }
     await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
-  throw new Error("Истекло время ожидания распознавания голоса.");
+  throw new Error("Истекло время ожидания транскрибации. Если это первый запуск модели, повторите проверку истории через минуту.");
 }
 
 async function cancelVoiceTranscription() {
@@ -1750,7 +1760,9 @@ async function transcribeVoiceBlob(blob, mimeType) {
     state.voiceTranscriptionStartController = null;
     state.voiceTranscriptionTaskId = task?.id || null;
 
-    const result = await waitForVoiceTranscriptionTask(task?.id || "");
+    const result = await waitForVoiceTranscriptionTask(task?.id || "", {
+      timeoutMs: VOICE_TRANSCRIPTION_TIMEOUT_MS,
+    });
     if (result?.cancelled) {
       setFooter("Распознавание голоса остановлено.", "warning");
       return;
@@ -4536,7 +4548,9 @@ async function runAsrToolTranscription(file) {
     state.asrToolStartController = null;
     state.asrToolTaskId = task?.id || null;
 
-    const result = await waitForVoiceTranscriptionTask(task?.id || "");
+    const result = await waitForVoiceTranscriptionTask(task?.id || "", {
+      timeoutMs: transcriptionTimeoutForFile(file),
+    });
     if (result?.cancelled) {
       setInlineStatus(els.asrToolStatus, "Транскрибация остановлена.", "warning");
       return;
@@ -6526,7 +6540,16 @@ async function handleTranscription(file) {
     formData.append("beam_size", String(normalizeAsrBeamSize(state.selectedAsrBeamSize)));
     formData.append("threads", String(normalizeAsrThreads(state.selectedAsrThreads)));
 
-    const data = await request("/transcribe", { method: "POST", body: formData });
+    formData.append("store_result", "true");
+
+    const task = await request("/transcribe/tasks", { method: "POST", body: formData });
+    const data = await waitForVoiceTranscriptionTask(task?.id || "", {
+      timeoutMs: transcriptionTimeoutForFile(file),
+    });
+    if (data?.cancelled) {
+      setFooter("Транскрибация остановлена.", "warning");
+      return;
+    }
     await loadSessions({ preferredSessionId: sessionId });
     setFooter(
       `Транскрипт прикреплён: ${file.name} • ${(data?.text || "").length} символов`,
