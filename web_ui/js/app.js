@@ -942,7 +942,7 @@ function renderLibraryPanels() {
   const utilityCatalog = getUtilityModels();
   const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
   const chatTotal = utilityCatalog.length + chatCatalog.length;
-  const asrInstalled = state.asrModels.filter((item) => item.installed).length;
+  const asrInstalled = state.asrModels.filter((item) => isWhisperItemReady(item)).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
   const ttsInstalled = state.ttsVoiceCatalog.filter((item) => item.installed).length;
@@ -963,7 +963,7 @@ function renderLibraryPanels() {
       toggle: els.asrLibraryToggle,
       panel: els.asrLibraryPanel,
       meta: els.asrLibraryMeta,
-      metaText: `${asrInstalled} локально • ${asrTotal} моделей`,
+      metaText: `${asrInstalled} готово • ${asrTotal} моделей`,
     },
     {
       kind: "tts",
@@ -1368,11 +1368,26 @@ function getWhisperItems() {
     : WHISPER_MODELS.map((name) => ({ name, installed: false }));
 }
 
+function isWhisperItemReady(item) {
+  if (!item) return false;
+  if (Object.prototype.hasOwnProperty.call(item, "ready")) {
+    return Boolean(item.ready);
+  }
+  if (Object.prototype.hasOwnProperty.call(item, "runtime_installed")) {
+    return Boolean(item.installed && item.runtime_installed);
+  }
+  return Boolean(item.installed);
+}
+
+function getWhisperItemWarnings(item) {
+  return Array.isArray(item?.warnings) ? item.warnings.filter(Boolean).map(String) : [];
+}
+
 function isWhisperModelInstalled(modelName) {
   const target = String(modelName || "").trim();
   if (!target) return false;
   const item = state.asrModels.find((entry) => entry.name === target);
-  return Boolean(item?.installed);
+  return isWhisperItemReady(item);
 }
 
 function getSelectedChatWhisperModel() {
@@ -3197,12 +3212,16 @@ function renderWhisperControls() {
   if (els.asrSettingsStatus) {
     const selectedItem = items.find((item) => item.name === state.selectedWhisperModel);
     const isInstalled = Boolean(selectedItem?.installed);
+    const isReady = isWhisperItemReady(selectedItem);
+    const warning = getWhisperItemWarnings(selectedItem)[0] || "";
     setInlineStatus(
       els.asrSettingsStatus,
-      isInstalled
+      isReady
         ? `ASR Studio профиля использует модель ${state.selectedWhisperModel}.`
-        : `Для ASR Studio профиля выбрана модель ${state.selectedWhisperModel}, но она ещё не загружена локально.`,
-      isInstalled ? "success" : "warning",
+        : isInstalled
+          ? `ASR-модель ${state.selectedWhisperModel} скачана, но runtime не готов. ${warning || "Нажмите «Проверить», чтобы доскачать и собрать недостающие файлы."}`
+          : `Для ASR Studio профиля выбрана модель ${state.selectedWhisperModel}, но она ещё не загружена локально.`,
+      isReady ? "success" : "warning",
     );
   }
 
@@ -3225,6 +3244,9 @@ function renderAsrModelLibrary() {
   els.asrModelLibrary.innerHTML = items
     .map((item) => {
       const active = state.selectedWhisperModel === item.name;
+      const isInstalled = Boolean(item.installed);
+      const isReady = isWhisperItemReady(item);
+      const warnings = getWhisperItemWarnings(item);
       const task = item.active_task || state.asrDownloads.find((entry) => entry.model === item.name && ["pending", "running"].includes(entry.state));
       const update = state.asrUpdateChecks[item.name];
       let badge = '<span class="status-badge">Не загружена</span>';
@@ -3233,16 +3255,20 @@ function renderAsrModelLibrary() {
         badge = `<span class="status-badge status-badge--warning">${escapeHtml((task.state || "running") + percent)}</span>`;
       } else if (update?.status === "update_available") {
         badge = '<span class="status-badge status-badge--warning">Есть обновление</span>';
-      } else if (item.installed) {
-        badge = '<span class="status-badge status-badge--success">Установлена</span>';
+      } else if (isReady) {
+        badge = '<span class="status-badge status-badge--success">Готова</span>';
+      } else if (isInstalled) {
+        badge = '<span class="status-badge status-badge--warning">Требует CLI</span>';
       }
       const meta = [
         item.repo_id || null,
         item.local_revision ? `rev ${String(item.local_revision).slice(0, 8)}` : null,
       ].filter(Boolean).join(" • ");
-      const note = task?.message || update?.message || (item.installed ? "Whisper-модель готова к транскрибации." : "Сначала загрузите модель локально.");
+      const note = task?.message || update?.message || warnings[0] || (isReady ? "Whisper-модель готова к транскрибации." : "Нажмите «Проверить», чтобы скачать модель и собрать whisper-cli.");
+      const downloadLabel = isReady ? "Обновить" : isInstalled ? "Дособрать" : "Загрузить";
+      const forceDownload = isReady ? "1" : "0";
       return `
-        <article class="model-card${item.installed ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
+        <article class="model-card${isInstalled ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
           <div class="model-card__head">
             <div>
               <h5 class="model-card__title">${escapeHtml(item.name)}</h5>
@@ -3253,9 +3279,9 @@ function renderAsrModelLibrary() {
           <p class="model-card__note">${escapeHtml(note)}</p>
           <div class="button-row">
             <button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-asr-model-action="select" data-asr-model="${escapeHtml(item.name)}">Выбрать</button>
-            <button class="button button--ghost" type="button" data-asr-model-action="download" data-asr-model="${escapeHtml(item.name)}" data-asr-force="${item.installed ? "1" : "0"}">${item.installed ? "Обновить" : "Загрузить"}</button>
+            <button class="button button--ghost" type="button" data-asr-model-action="download" data-asr-model="${escapeHtml(item.name)}" data-asr-force="${forceDownload}">${downloadLabel}</button>
             <button class="button button--ghost" type="button" data-asr-model-action="check" data-asr-model="${escapeHtml(item.name)}">Проверить</button>
-            ${item.installed ? `<button class="button button--ghost" type="button" data-asr-model-action="delete" data-asr-model="${escapeHtml(item.name)}">Удалить</button>` : ""}
+            ${isInstalled ? `<button class="button button--ghost" type="button" data-asr-model-action="delete" data-asr-model="${escapeHtml(item.name)}">Удалить</button>` : ""}
           </div>
         </article>
       `;
@@ -6538,7 +6564,7 @@ async function prepareAsrModel(modelName, { force = false } = {}) {
     });
     await loadWhisperModels({ silent: true });
     renderDownloads();
-    setFooter(`${force ? "Обновление" : "Загрузка"} ASR-модели ${target} запущено.`, "success");
+    setFooter(`${force ? "Обновление" : "Подготовка"} ASR-модели ${target} запущена.`, "success");
   } catch (error) {
     setFooter(`Не удалось подготовить ASR-модель: ${error.message || error}`, "error");
   }
@@ -6551,6 +6577,11 @@ async function checkAsrModelUpdate(modelName) {
     const result = await request(`/whisper/models/update-check/${encodeURIComponent(target)}`);
     state.asrUpdateChecks = { ...state.asrUpdateChecks, [target]: result };
     renderWhisperControls();
+    if (result?.prepare_required) {
+      setFooter(result?.message || `ASR-модель ${target} требует подготовки. Запускаю загрузку/сборку.`, "warning");
+      await prepareAsrModel(target, { force: false });
+      return;
+    }
     const status = String(result?.status || "");
     const tone = status === "update_available" ? "warning" : status === "up_to_date" ? "success" : "warning";
     setFooter(result?.message || `Статус модели ${target} обновлён.`, tone);
@@ -7092,7 +7123,7 @@ function bindEvents() {
     if (!updated) return;
     closeVoiceModelMenu();
     if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-      setFooter(`Для профиля выбрана модель диктовки ${modelName}, но она ещё не загружена локально.`, "warning");
+      setFooter(`Для профиля выбрана модель диктовки ${modelName}, но она ещё не готова локально.`, "warning");
       return;
     }
     setFooter(`Модель диктовки профиля: ${modelName}`, "success");
@@ -7289,7 +7320,7 @@ function bindEvents() {
     const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
     if (!updated) return;
     if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не готова локально.`, "warning");
       return;
     }
     setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
@@ -7337,7 +7368,7 @@ function bindEvents() {
     const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
     if (!updated) return;
     if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не готова локально.`, "warning");
       return;
     }
     setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
@@ -7667,7 +7698,7 @@ function bindEvents() {
       const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
       if (!updated) return;
       if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-        setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+        setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не готова локально.`, "warning");
         return;
       }
       setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");

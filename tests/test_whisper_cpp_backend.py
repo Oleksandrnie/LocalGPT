@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from app import config
 from backend.apps.asr import downloads, whisper
-from backend.apps.asr.whisper_cpp import transcribe_with_whisper_cpp, whisper_cpp_model_path
+from backend.apps.asr.whisper_cpp import transcribe_with_whisper_cpp, whisper_cpp_model_path, whisper_cpp_runtime_status
 
 
 class WhisperCppBackendTestCase(unittest.TestCase):
@@ -112,9 +112,31 @@ class WhisperCppBackendTestCase(unittest.TestCase):
         medium = next(item for item in items if item["name"] == "medium")
 
         self.assertTrue(medium["installed"])
+        self.assertTrue(medium["ready"])
+        self.assertTrue(medium["runtime_installed"])
         self.assertEqual(medium["repo_id"], "ggerganov/whisper.cpp")
         self.assertEqual(medium["path"], str(model_path))
 
         task = downloads.start_prepare_task("medium")
         self.assertEqual(task["state"], "completed")
         self.assertEqual(task["repo_id"], "ggerganov/whisper.cpp")
+
+    def test_model_listing_marks_downloaded_model_not_ready_without_cli(self):
+        model_path = self._write_model("small")
+        missing_binary = self.tmp / "missing" / "whisper-cli"
+        config.SETTINGS.whisper_cpp_binary = str(missing_binary)
+
+        status = whisper_cpp_runtime_status("small")
+        self.assertTrue(status["model_installed"])
+        self.assertFalse(status["runtime_installed"])
+        self.assertFalse(status["ready"])
+        self.assertIn(str(model_path), status["model_path"])
+
+        items = downloads.list_local_models()
+        small = next(item for item in items if item["name"] == "small")
+
+        self.assertTrue(small["installed"])
+        self.assertFalse(small["ready"])
+        self.assertFalse(small["runtime_installed"])
+        self.assertEqual(small["runtime_binary"], str(missing_binary))
+        self.assertTrue(any("whisper-cli" in warning for warning in small["warnings"]))
