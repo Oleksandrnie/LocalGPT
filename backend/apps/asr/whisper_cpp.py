@@ -191,6 +191,32 @@ def _segments_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return segments
 
 
+def _dedupe_repeated_segments(
+    segments: list[dict[str, Any]],
+    *,
+    max_repeats: int = 2,
+    min_chars: int = 12,
+) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    previous_key = ""
+    repeat_count = 0
+
+    for segment in segments:
+        text = str(segment.get("text") or "").strip()
+        key = " ".join(text.lower().split())
+        if key and key == previous_key:
+            repeat_count += 1
+        else:
+            previous_key = key
+            repeat_count = 1
+
+        if key and len(key) >= min_chars and repeat_count > max_repeats:
+            continue
+        deduped.append(segment)
+
+    return deduped
+
+
 def _language_from_payload(payload: dict[str, Any]) -> str | None:
     result = payload.get("result")
     if not isinstance(result, dict):
@@ -206,6 +232,7 @@ def transcribe_with_whisper_cpp(
     prompt: str | None,
     language: str | None,
     beam_size: int,
+    threads: int | None = None,
 ) -> dict[str, Any]:
     model_path = whisper_cpp_model_path(model_name)
     if not model_path.exists():
@@ -230,8 +257,9 @@ def transcribe_with_whisper_cpp(
             str(output_prefix),
             "--no-prints",
         ]
-        if config.SETTINGS.whisper_cpp_threads > 0:
-            command.extend(["--threads", str(config.SETTINGS.whisper_cpp_threads)])
+        resolved_threads = int(threads if threads is not None else config.SETTINGS.whisper_cpp_threads)
+        if resolved_threads > 0:
+            command.extend(["--threads", str(resolved_threads)])
         if prompt:
             command.extend(["--prompt", prompt])
         command.extend(config.SETTINGS.whisper_cpp_extra_args)
@@ -253,8 +281,8 @@ def transcribe_with_whisper_cpp(
         if not isinstance(payload, dict):
             raise RuntimeError("WHISPER_CPP_INVALID_OUTPUT")
 
-    segments = _segments_from_payload(payload)
-    text = " ".join(segment["text"] for segment in segments).strip()
+    segments = _dedupe_repeated_segments(_segments_from_payload(payload))
+    text = "\n".join(segment["text"] for segment in segments).strip()
     return {
         "text": text,
         "segments": segments,

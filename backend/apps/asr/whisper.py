@@ -225,6 +225,15 @@ def _normalize_language(value: str | None) -> str | None:
     return normalized
 
 
+def _language_from_prompt_preset(value: str | None) -> str | None:
+    preset = (value or "").strip().lower()
+    if preset == "none":
+        preset = "auto"
+    if preset in {"ru", "en"}:
+        return preset
+    return None
+
+
 def _normalize_role_keywords(data: dict[str, Iterable[str]] | None) -> dict[str, list[str]]:
     if not data:
         return {key: list(values) for key, values in DEFAULT_ROLE_KEYWORDS.items()}
@@ -393,6 +402,7 @@ def _transcribe_with_whisper_cpp_backend(
     fallback_language: str | None,
     preferred_language: str | None,
     beam_size: int,
+    threads: int | None,
     role_keywords: dict[str, list[str]],
 ) -> dict[str, Any]:
     from backend.apps.asr.whisper_cpp import transcribe_with_whisper_cpp
@@ -405,6 +415,7 @@ def _transcribe_with_whisper_cpp_backend(
             prompt=prompt,
             language=language,
             beam_size=beam_size,
+            threads=threads,
         )
     except RuntimeError as exc:
         if str(exc).startswith("WHISPER_CPP_MODEL_NOT_FOUND::"):
@@ -421,6 +432,7 @@ def _transcribe_with_whisper_cpp_backend(
             prompt=prompt if FALLBACK_USE_PROMPT else None,
             language=fallback_language,
             beam_size=beam_size,
+            threads=threads,
         )
         text = str(transcription.get("text") or "").strip()
         segments_data = list(transcription.get("segments") or [])
@@ -455,6 +467,7 @@ def transcribe_with_fallback(
     compute_type: str | None = None,
     device: str | None = None,
     beam_size: int | None = None,
+    threads: int | None = None,
 ) -> dict[str, Any]:
     path = Path(audio_path)
     if not path.exists():
@@ -463,7 +476,10 @@ def transcribe_with_fallback(
     model = _normalize_model(model_name)
     resolved_beam_size = max(1, int(beam_size or config.SETTINGS.whisper_beam_size))
     full_prompt = build_whisper_prompt(path, prompt_preset)
-    fallback_language = _normalize_language(preferred_language) or _normalize_language(
+    requested_language = _normalize_language(preferred_language)
+    prompt_language = _language_from_prompt_preset(prompt_preset)
+    effective_language = requested_language or prompt_language
+    fallback_language = effective_language or _normalize_language(
         config.SETTINGS.whisper_fallback_language or DEFAULT_FALLBACK_LANGUAGE
     )
     fallback_prompt = full_prompt if FALLBACK_USE_PROMPT else None
@@ -475,8 +491,9 @@ def transcribe_with_fallback(
             model=model,
             prompt=full_prompt,
             fallback_language=fallback_language,
-            preferred_language=preferred_language,
+            preferred_language=effective_language,
             beam_size=resolved_beam_size,
+            threads=threads,
             role_keywords=role_keywords,
         )
 
@@ -513,9 +530,9 @@ def transcribe_with_fallback(
 
         return "".join(text_parts).strip(), collected_segments, info
 
-    text, segments_data, info = run_once(language=None, use_vad=True, prompt=full_prompt)
+    text, segments_data, info = run_once(language=effective_language, use_vad=True, prompt=full_prompt)
 
-    if not text:
+    if not text and fallback_language and fallback_language != effective_language:
         text, segments_data, info = run_once(
             language=fallback_language,
             use_vad=False,

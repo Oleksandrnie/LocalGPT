@@ -77,7 +77,9 @@ def _default_profile_preferences() -> dict[str, Any]:
         },
         "asr": {
             "studio_model": config.ASR_STUDIO_DEFAULT_MODEL,
-            "prompt_preset": "none",
+            "prompt_preset": "ru",
+            "beam_size": config.SETTINGS.whisper_beam_size,
+            "threads": config.SETTINGS.whisper_cpp_threads,
         },
         "tts": {
             "provider": config.SETTINGS.tts_default_provider,
@@ -165,6 +167,35 @@ def _migrate_whisper_cpp_dictation_default(conn: sqlite3.Connection) -> None:
 
         preferences = _normalize_profile_preferences(raw_preferences)
         preferences.setdefault("chat", {})["dictation_model"] = desired_model
+        conn.execute(
+            "UPDATE profiles SET preferences_json = ?, updated_at = ? WHERE id = ?",
+            (_to_json(preferences), now, row["id"]),
+        )
+
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        (migration_key, "1", now),
+    )
+
+
+def _migrate_asr_prompt_none_to_auto(conn: sqlite3.Connection) -> None:
+    migration_key = "migration_asr_prompt_none_to_auto"
+    existing = conn.execute("SELECT value FROM app_settings WHERE key = ?", (migration_key,)).fetchone()
+    if existing:
+        return
+
+    rows = conn.execute("SELECT id, preferences_json FROM profiles").fetchall()
+    now = _utcnow()
+    for row in rows:
+        raw_preferences = _from_json(row["preferences_json"], {})
+        raw_preferences = raw_preferences if isinstance(raw_preferences, dict) else {}
+        raw_asr = raw_preferences.get("asr") if isinstance(raw_preferences.get("asr"), dict) else {}
+        current_prompt = str(raw_asr.get("prompt_preset") or "").strip().lower()
+        if current_prompt not in {"", "none"}:
+            continue
+
+        preferences = _normalize_profile_preferences(raw_preferences)
+        preferences.setdefault("asr", {})["prompt_preset"] = "auto"
         conn.execute(
             "UPDATE profiles SET preferences_json = ?, updated_at = ? WHERE id = ?",
             (_to_json(preferences), now, row["id"]),
@@ -394,6 +425,7 @@ def init_db() -> None:
         )
         _migrate_asr_studio_default(conn)
         _migrate_whisper_cpp_dictation_default(conn)
+        _migrate_asr_prompt_none_to_auto(conn)
         conn.commit()
     ensure_default_profile()
 

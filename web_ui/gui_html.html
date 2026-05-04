@@ -218,6 +218,14 @@
                         <span class="field__label">ASR модель</span>
                         <select id="asrToolModelSelect" class="field__control"></select>
                     </label>
+                    <label class="field">
+                        <span class="field__label">Язык / prompt</span>
+                        <select id="asrToolPromptPresetSelect" class="field__control">
+                            <option value="auto">Авто</option>
+                            <option value="ru">Русский</option>
+                            <option value="en">Английский</option>
+                        </select>
+                    </label>
                     <div class="button-row">
                         <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
                             файл</button>
@@ -742,19 +750,35 @@
                         </div>
                     </div>
 
-                    <label class="field">
-                        <span class="field__label">ASR модель (Whisper)</span>
-                        <select id="whisperModelSelect" class="field__control"></select>
-                    </label>
+                    <div class="settings-grid">
+                        <label class="field">
+                            <span class="field__label">ASR модель (Whisper)</span>
+                            <select id="whisperModelSelect" class="field__control"></select>
+                            <span class="field__description">large-v3-turbo обычно лучший баланс качества и скорости для длинных созвонов.</span>
+                        </label>
 
-                    <label class="field">
-                        <span class="field__label">Промпт для Whisper</span>
-                        <select id="promptPresetSelect" class="field__control">
-                            <option value="none">none</option>
-                            <option value="ru">ru</option>
-                            <option value="en">en</option>
-                        </select>
-                    </label>
+                        <label class="field">
+                            <span class="field__label">Язык / prompt</span>
+                            <select id="promptPresetSelect" class="field__control">
+                                <option value="auto">Авто</option>
+                                <option value="ru">Русский</option>
+                                <option value="en">Английский</option>
+                            </select>
+                            <span class="field__description">Авто не задаёт язык и prompt. Русский/English добавляет начальный prompt и фиксирует язык распознавания.</span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Beam size</span>
+                            <input id="asrBeamSizeInput" class="field__control" type="number" min="1" max="10" step="1" />
+                            <span class="field__description">Сколько вариантов декодирования проверяет Whisper. 1 быстрее, 5 обычно точнее; выше 5 медленнее.</span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Threads</span>
+                            <input id="asrThreadsInput" class="field__control" type="number" min="0" max="32" step="1" />
+                            <span class="field__description">Потоки CPU для whisper.cpp. 0 значит авто/настройка окружения; 4 часто стабильно на MacBook.</span>
+                        </label>
+                    </div>
 
                     <section class="pipeline-settings-panel" id="asrPipelineSettingsPanel">
                         <div class="settings-group__header settings-group__header--inner">

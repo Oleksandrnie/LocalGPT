@@ -123,6 +123,8 @@ def _transcription_worker(
     session_id: str | None,
     store_result: bool,
     origin: str | None,
+    beam_size: int | None,
+    threads: int | None,
     result_path: str,
     error_path: str,
 ) -> None:
@@ -130,8 +132,10 @@ def _transcription_worker(
         transcription = transcribe_with_fallback(
             audio_path=input_path,
             model_name=model,
-            prompt_preset=None if prompt_preset == "none" else prompt_preset,
+            prompt_preset=None if prompt_preset in {"auto", "none"} else prompt_preset,
             preferred_language=preferred_language,
+            beam_size=beam_size,
+            threads=threads,
         )
         text = transcription.get("text", "") if isinstance(transcription, dict) else str(transcription)
         segments = list(transcription.get("segments") or []) if isinstance(transcription, dict) else []
@@ -261,6 +265,8 @@ def start_transcription_task(
     session_id: str | None,
     store_result: bool,
     origin: str | None = None,
+    beam_size: int | None = None,
+    threads: int | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -279,6 +285,8 @@ def start_transcription_task(
             session_id,
             store_result,
             origin,
+            beam_size,
+            threads,
             str(result_path),
             str(error_path),
         ),

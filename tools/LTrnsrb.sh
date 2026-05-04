@@ -21,10 +21,11 @@ BACKEND_LOG="${LOG_DIR}/backend.log"
 CADDY_LOG="${LOG_DIR}/caddy.log"
 BACKEND_PID_FILE="${LOG_DIR}/backend.pid"
 CADDY_PID_FILE="${LOG_DIR}/caddy.pid"
+BACKEND_PORT_FILE="${LOG_DIR}/backend.port"
 CADDY_CONFIG_FILE="${LOG_DIR}/Caddyfile.auto"
 LAN_IP_FILE="${LOG_DIR}/lan_ip"
 
-BACKEND_PORT=8000
+BACKEND_PORT="${LOCALGPT_BACKEND_PORT:-8000}"
 HTTPS_PORT=8443
 BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/health"
 BOOTSTRAP_PYTHON="$(command -v python3 2>/dev/null || true)"
@@ -60,6 +61,23 @@ read_pid_file() {
     return
   }
   cat "${pid_file}" 2>/dev/null || true
+}
+
+read_backend_port_file() {
+  local port=""
+  [[ -f "${BACKEND_PORT_FILE}" ]] || {
+    echo ""
+    return
+  }
+  port="$(cat "${BACKEND_PORT_FILE}" 2>/dev/null | tr -cd '0-9' || true)"
+  echo "${port}"
+}
+
+set_backend_port() {
+  local port="$1"
+  [[ -n "${port}" ]] || return
+  BACKEND_PORT="${port}"
+  BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/health"
 }
 
 is_private_ipv4() {
@@ -168,11 +186,6 @@ stop_pid_file_process() {
   rm -f "${pid_file}"
 }
 
-listeners_on_port() {
-  local port="$1"
-  lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null | sort -u
-}
-
 health_ok_http() {
   local url="$1"
   curl -fsS --max-time 2 "${url}" >/dev/null 2>&1
@@ -220,6 +233,11 @@ wait_for_https_health() {
 start_backend() {
   local backend_pid=""
   backend_pid="$(read_pid_file "${BACKEND_PID_FILE}")"
+  local existing_port=""
+  existing_port="$(read_backend_port_file)"
+  if [[ -n "${existing_port}" ]]; then
+    set_backend_port "${existing_port}"
+  fi
 
   if [[ -n "${backend_pid}" ]] && is_pid_alive "${backend_pid}" && health_ok_http "${BACKEND_HEALTH_URL}"; then
     return 0
@@ -229,24 +247,29 @@ start_backend() {
     stop_pid_file_process "${BACKEND_PID_FILE}"
   fi
 
-  local pid
-  for pid in $(listeners_on_port "${BACKEND_PORT}"); do
-    /bin/kill "${pid}" >/dev/null 2>&1 || true
-  done
-  sleep 0.3
-  for pid in $(listeners_on_port "${BACKEND_PORT}"); do
-    /bin/kill -9 "${pid}" >/dev/null 2>&1 || true
-  done
+  rm -f "${BACKEND_PORT_FILE}"
 
   (
     cd "${PROJECT_ROOT}"
     export LOCALGPT_RUNTIME_DIR="${LOG_DIR}"
     export PYTHONPATH="${PROJECT_ROOT}"
-    nohup "${BOOTSTRAP_PYTHON}" run_localgpt.py --no-browser --no-reload --exec-backend --host 127.0.0.1 --port "${BACKEND_PORT}" >>"${BACKEND_LOG}" 2>&1 &
+    nohup "${BOOTSTRAP_PYTHON}" run_localgpt.py --no-browser --no-reload --exec-backend --host 127.0.0.1 --port "${BACKEND_PORT}" --port-file "${BACKEND_PORT_FILE}" >>"${BACKEND_LOG}" 2>&1 &
     echo "$!" > "${BACKEND_PID_FILE}"
   )
 
   backend_pid="$(read_pid_file "${BACKEND_PID_FILE}")"
+  for _ in {1..120}; do
+    existing_port="$(read_backend_port_file)"
+    if [[ -n "${existing_port}" ]]; then
+      set_backend_port "${existing_port}"
+      break
+    fi
+    if ! is_pid_alive "${backend_pid}"; then
+      break
+    fi
+    sleep 0.25
+  done
+
   if ! wait_for_backend_ready "${BACKEND_HEALTH_URL}" "${backend_pid}" 240 0.5; then
     osascript -e "display alert \"LocalGPT\" message \"Backend did not start. Check ${BACKEND_LOG}\""
     return 1

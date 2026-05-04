@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from typing import Any
+
 from pydantic import BaseModel
 
 from .. import config, db
@@ -44,12 +46,46 @@ def _normalize_whisper_model(model_name: str) -> str:
 
 def _normalize_prompt_preset(value: str) -> str:
     normalized = (value or "").strip().lower()
-    if normalized not in {"none", "ru", "en"}:
+    if not normalized or normalized == "none":
+        normalized = "auto"
+    if normalized not in {"auto", "ru", "en"}:
         raise HTTPException(
             status_code=422,
-            detail={"code": "invalid_prompt_preset", "message": "Допустимые prompt preset: none, ru, en."},
+            detail={"code": "invalid_prompt_preset", "message": "Допустимые prompt preset: auto, ru, en."},
         )
     return normalized
+
+
+def _normalize_asr_beam_size(value: int | None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_beam_size", "message": "Beam должен быть целым числом от 1 до 10."},
+        ) from exc
+    if parsed < 1 or parsed > 10:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_beam_size", "message": "Beam должен быть целым числом от 1 до 10."},
+        )
+    return parsed
+
+
+def _normalize_asr_threads(value: int | None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_threads", "message": "Threads должен быть целым числом от 0 до 32."},
+        ) from exc
+    if parsed < 0 or parsed > 32:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_threads", "message": "Threads должен быть целым числом от 0 до 32."},
+        )
+    return parsed
 
 
 def _normalize_tts_provider(value: str) -> str:
@@ -211,7 +247,7 @@ def update_profile(profile_id: int, req: ProfileUpdate):
 @router.patch("/profiles/{profile_id}/preferences")
 def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
     _get_profile_or_404(profile_id)
-    updates: dict[str, dict[str, str]] = {}
+    updates: dict[str, dict[str, Any]] = {}
 
     if req.chat and req.chat.dictation_model is not None:
         updates.setdefault("chat", {})["dictation_model"] = _normalize_whisper_model(req.chat.dictation_model)
@@ -223,6 +259,10 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
             updates.setdefault("asr", {})["studio_model"] = _normalize_whisper_model(req.asr.studio_model)
         if req.asr.prompt_preset is not None:
             updates.setdefault("asr", {})["prompt_preset"] = _normalize_prompt_preset(req.asr.prompt_preset)
+        if req.asr.beam_size is not None:
+            updates.setdefault("asr", {})["beam_size"] = _normalize_asr_beam_size(req.asr.beam_size)
+        if req.asr.threads is not None:
+            updates.setdefault("asr", {})["threads"] = _normalize_asr_threads(req.asr.threads)
 
     if req.tts:
         if req.tts.provider is not None:

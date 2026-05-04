@@ -1,5 +1,9 @@
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
+const ASR_STUDIO_DEFAULT_PROMPT_PRESET = "ru";
+const ASR_DEFAULT_BEAM_SIZE = 5;
+const ASR_DEFAULT_THREADS = 0;
+const ASR_PROMPT_PRESETS = ["auto", "ru", "en"];
 const CREATE_PROFILE_VALUE = "__create_profile__";
 const AUTO_MODEL_ID = "__auto_router__";
 const AUTO_MODEL_TITLE = "Auto / Smart Router";
@@ -173,6 +177,7 @@ const els = {
   asrToolFullscreenButton: document.getElementById("asrToolFullscreenButton"),
   asrToolCloseButton: document.getElementById("asrToolCloseButton"),
   asrToolModelSelect: document.getElementById("asrToolModelSelect"),
+  asrToolPromptPresetSelect: document.getElementById("asrToolPromptPresetSelect"),
   asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
   asrToolPipelineSettingsButton: document.getElementById("asrToolPipelineSettingsButton"),
   asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
@@ -311,6 +316,8 @@ const els = {
   modelSettingsStatus: document.getElementById("modelSettingsStatus"),
   whisperModelSelect: document.getElementById("whisperModelSelect"),
   promptPresetSelect: document.getElementById("promptPresetSelect"),
+  asrBeamSizeInput: document.getElementById("asrBeamSizeInput"),
+  asrThreadsInput: document.getElementById("asrThreadsInput"),
   asrPipelineSettingsPanel: document.getElementById("asrPipelineSettingsPanel"),
   asrPipelineSettingsSummary: document.getElementById("asrPipelineSettingsSummary"),
   asrPipelineSettingsToggleButton: document.getElementById("asrPipelineSettingsToggleButton"),
@@ -367,7 +374,9 @@ const state = {
   selectedLlmModel: "",
   selectedChatWhisperModel: "medium",
   selectedWhisperModel: ASR_STUDIO_DEFAULT_MODEL,
-  selectedPromptPreset: "none",
+  selectedPromptPreset: ASR_STUDIO_DEFAULT_PROMPT_PRESET,
+  selectedAsrBeamSize: ASR_DEFAULT_BEAM_SIZE,
+  selectedAsrThreads: ASR_DEFAULT_THREADS,
   selectedTtsProvider: "piper",
   selectedTtsVoiceId: "",
   selectedTtsSpeed: "1",
@@ -1390,6 +1399,34 @@ function isWhisperModelInstalled(modelName) {
   return isWhisperItemReady(item);
 }
 
+function normalizePromptPreset(promptPreset) {
+  const preset = String(promptPreset || "").trim().toLowerCase();
+  if (preset === "none") {
+    return "auto";
+  }
+  return ASR_PROMPT_PRESETS.includes(preset) ? preset : ASR_STUDIO_DEFAULT_PROMPT_PRESET;
+}
+
+function languageForPromptPreset(promptPreset) {
+  const preset = normalizePromptPreset(promptPreset);
+  if (preset === "ru" || preset === "en") {
+    return preset;
+  }
+  return "auto";
+}
+
+function normalizeAsrBeamSize(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return ASR_DEFAULT_BEAM_SIZE;
+  return Math.min(10, Math.max(1, parsed));
+}
+
+function normalizeAsrThreads(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return ASR_DEFAULT_THREADS;
+  return Math.min(32, Math.max(0, parsed));
+}
+
 function getSelectedChatWhisperModel() {
   const items = getWhisperItems();
   const names = items.map((item) => item.name);
@@ -1701,7 +1738,7 @@ async function transcribeVoiceBlob(blob, mimeType) {
     const formData = new FormData();
     formData.append("file", blob, `voice-note.${extension}`);
     formData.append("model", getSelectedChatWhisperModel() || "medium");
-    formData.append("prompt_preset", "none");
+    formData.append("prompt_preset", "auto");
     formData.append("language", "auto");
     formData.append("store_result", "false");
 
@@ -2295,11 +2332,13 @@ function applyActiveProfilePreferences() {
   const asrStudioFallback = state.asrModels.some((item) => item.name === ASR_STUDIO_DEFAULT_MODEL)
     ? ASR_STUDIO_DEFAULT_MODEL
     : (state.asrModels[0]?.name || ASR_STUDIO_DEFAULT_MODEL);
-  const promptPreset = String(preferences?.asr?.prompt_preset || "").trim().toLowerCase();
+  const promptPreset = normalizePromptPreset(preferences?.asr?.prompt_preset);
 
   state.selectedChatWhisperModel = String(preferences?.chat?.dictation_model || "").trim() || whisperFallback;
   state.selectedWhisperModel = String(preferences?.asr?.studio_model || "").trim() || asrStudioFallback;
-  state.selectedPromptPreset = ["none", "ru", "en"].includes(promptPreset) ? promptPreset : "none";
+  state.selectedPromptPreset = promptPreset;
+  state.selectedAsrBeamSize = normalizeAsrBeamSize(preferences?.asr?.beam_size ?? ASR_DEFAULT_BEAM_SIZE);
+  state.selectedAsrThreads = normalizeAsrThreads(preferences?.asr?.threads ?? ASR_DEFAULT_THREADS);
   state.selectedTtsProvider = String(preferences?.tts?.provider || state.selectedTtsProvider || "piper").trim() || "piper";
   state.selectedTtsVoiceId = String(preferences?.tts?.voice_id || "").trim();
   state.selectedTtsSpeed = formatTtsSpeedLabel(preferences?.tts?.speed || state.selectedTtsSpeed || 1);
@@ -3207,17 +3246,24 @@ function renderWhisperControls() {
     .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
     .join("");
   els.whisperModelSelect.value = state.selectedWhisperModel;
-  els.promptPresetSelect.value = ["none", "ru", "en"].includes(state.selectedPromptPreset) ? state.selectedPromptPreset : "none";
+  els.promptPresetSelect.value = normalizePromptPreset(state.selectedPromptPreset);
+  if (els.asrBeamSizeInput) {
+    els.asrBeamSizeInput.value = String(normalizeAsrBeamSize(state.selectedAsrBeamSize));
+  }
+  if (els.asrThreadsInput) {
+    els.asrThreadsInput.value = String(normalizeAsrThreads(state.selectedAsrThreads));
+  }
 
   if (els.asrSettingsStatus) {
     const selectedItem = items.find((item) => item.name === state.selectedWhisperModel);
     const isInstalled = Boolean(selectedItem?.installed);
     const isReady = isWhisperItemReady(selectedItem);
     const warning = getWhisperItemWarnings(selectedItem)[0] || "";
+    const asrProfileSummary = `язык/prompt ${normalizePromptPreset(state.selectedPromptPreset)}, beam ${normalizeAsrBeamSize(state.selectedAsrBeamSize)}, threads ${normalizeAsrThreads(state.selectedAsrThreads)}`;
     setInlineStatus(
       els.asrSettingsStatus,
       isReady
-        ? `ASR Studio профиля использует модель ${state.selectedWhisperModel}.`
+        ? `ASR Studio профиля использует модель ${state.selectedWhisperModel}; ${asrProfileSummary}.`
         : isInstalled
           ? `ASR-модель ${state.selectedWhisperModel} скачана, но runtime не готов. ${warning || "Нажмите «Проверить», чтобы доскачать и собрать недостающие файлы."}`
           : `Для ASR Studio профиля выбрана модель ${state.selectedWhisperModel}, но она ещё не загружена локально.`,
@@ -4263,6 +4309,10 @@ function renderAsrTool() {
       : (names.includes(ASR_STUDIO_DEFAULT_MODEL) ? ASR_STUDIO_DEFAULT_MODEL : (names[0] || ASR_STUDIO_DEFAULT_MODEL));
   }
 
+  if (els.asrToolPromptPresetSelect) {
+    els.asrToolPromptPresetSelect.value = normalizePromptPreset(state.selectedPromptPreset);
+  }
+
   if (els.asrToolChooseFileButton) {
     els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
     els.asrToolChooseFileButton.textContent = state.asrToolIsTranscribing ? "Транскрибация…" : "Выбрать файл";
@@ -4473,8 +4523,10 @@ async function runAsrToolTranscription(file) {
     formData.append("file", file);
     formData.append("profile_id", String(state.activeProfileId));
     formData.append("model", state.selectedWhisperModel || ASR_STUDIO_DEFAULT_MODEL);
-    formData.append("prompt_preset", state.selectedPromptPreset || "none");
-    formData.append("language", "auto");
+    formData.append("prompt_preset", normalizePromptPreset(state.selectedPromptPreset));
+    formData.append("language", languageForPromptPreset(state.selectedPromptPreset));
+    formData.append("beam_size", String(normalizeAsrBeamSize(state.selectedAsrBeamSize)));
+    formData.append("threads", String(normalizeAsrThreads(state.selectedAsrThreads)));
     formData.append("store_result", "true");
     formData.append("origin", ASR_TOOL_ORIGIN);
 
@@ -6469,8 +6521,10 @@ async function handleTranscription(file) {
     formData.append("profile_id", String(state.activeProfileId));
     formData.append("session_id", sessionId);
     formData.append("model", getSelectedChatWhisperModel() || "small");
-    formData.append("prompt_preset", state.selectedPromptPreset || "none");
-    formData.append("language", "auto");
+    formData.append("prompt_preset", normalizePromptPreset(state.selectedPromptPreset));
+    formData.append("language", languageForPromptPreset(state.selectedPromptPreset));
+    formData.append("beam_size", String(normalizeAsrBeamSize(state.selectedAsrBeamSize)));
+    formData.append("threads", String(normalizeAsrThreads(state.selectedAsrThreads)));
 
     const data = await request("/transcribe", { method: "POST", body: formData });
     await loadSessions({ preferredSessionId: sessionId });
@@ -7327,9 +7381,26 @@ function bindEvents() {
   });
 
   els.promptPresetSelect?.addEventListener("change", async () => {
-    const promptPreset = els.promptPresetSelect.value || "none";
+    const promptPreset = normalizePromptPreset(els.promptPresetSelect.value);
     const updated = await saveActiveProfilePreferences({ asr: { prompt_preset: promptPreset } });
     if (!updated) return;
+    setFooter(`Профиль обновлён: ASR язык/prompt ${promptPreset}`, "success");
+  });
+
+  els.asrBeamSizeInput?.addEventListener("change", async () => {
+    const beamSize = normalizeAsrBeamSize(els.asrBeamSizeInput.value);
+    els.asrBeamSizeInput.value = String(beamSize);
+    const updated = await saveActiveProfilePreferences({ asr: { beam_size: beamSize } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: ASR beam ${beamSize}`, "success");
+  });
+
+  els.asrThreadsInput?.addEventListener("change", async () => {
+    const threads = normalizeAsrThreads(els.asrThreadsInput.value);
+    els.asrThreadsInput.value = String(threads);
+    const updated = await saveActiveProfilePreferences({ asr: { threads } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: ASR threads ${threads}`, "success");
   });
 
   els.ttsVoiceSelect?.addEventListener("change", async () => {
@@ -7372,6 +7443,12 @@ function bindEvents() {
       return;
     }
     setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
+  });
+  els.asrToolPromptPresetSelect?.addEventListener("change", async () => {
+    const promptPreset = normalizePromptPreset(els.asrToolPromptPresetSelect.value);
+    const updated = await saveActiveProfilePreferences({ asr: { prompt_preset: promptPreset } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: ASR язык/prompt ${promptPreset}`, "success");
   });
   els.asrToolOutput?.addEventListener("input", () => {
     state.asrToolPipelineRun = null;

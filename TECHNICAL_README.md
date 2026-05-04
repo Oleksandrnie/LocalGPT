@@ -297,7 +297,7 @@ Legacy alias:
 
 - `LTrnsrb.command`.
 
-LAN launcher стартует backend на `127.0.0.1:8000` и Caddy на `https://<lan-ip>:8443`.
+LAN launcher стартует backend с предпочтением `127.0.0.1:8000`, но если порт занят, выбирает следующий свободный локальный порт; Caddy остаётся на `https://<lan-ip>:8443` и проксирует на фактический backend-порт.
 Определение LAN IP предпочитает Wi-Fi/private IPv4 (`192.168.*`, `10.*`, `172.16-31.*`), чтобы не отдавать VPN/Tailscale IP телефону в обычной Wi-Fi сети.
 
 ## 12. Static UI system

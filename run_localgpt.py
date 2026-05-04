@@ -135,11 +135,25 @@ def ollama_list() -> Iterable[str]:
     return models
 
 
-def check_port(host: str, port: int, timeout: float = 0.5) -> bool:
-    """Return True if (host, port) is accepting connections."""
+def can_bind_port(host: str, port: int) -> bool:
+    """Return True when uvicorn can bind to the requested host/port."""
+    if port <= 0:
+        return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(timeout)
-        return s.connect_ex((host, port)) == 0
+        try:
+            s.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def find_available_port(host: str, preferred_port: int, *, attempts: int = 100) -> int:
+    """Return preferred_port if possible, otherwise the next free TCP port."""
+    start = preferred_port if preferred_port > 0 else 8000
+    for port in range(start, start + attempts):
+        if can_bind_port(host, port):
+            return port
+    raise RuntimeError(f"No free port found on {host} in range {start}-{start + attempts - 1}.")
 
 
 def ensure_venv() -> str:
@@ -325,11 +339,6 @@ def build_backend_cmd(python: str, host: str, port: int, reload_enabled: bool) -
 
 def start_backend(python: str, *, host: str, port: int, reload_enabled: bool, exec_mode: bool = False) -> None:
     """Start uvicorn backend."""
-    if check_port(host, port):
-        print(f"[!] Port {port} on {host} is already in use. Not starting backend.")
-        print("[i] If this is an old uvicorn, stop it and rerun this script.")
-        return
-
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
     cmd = build_backend_cmd(python, host, port, reload_enabled)
@@ -348,6 +357,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch LocalGPT")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--port-file",
+        default="",
+        help="Write the actual selected backend port to this file",
+    )
+    parser.add_argument(
+        "--strict-port",
+        action="store_true",
+        help="Fail if --port is busy instead of selecting the next free port",
+    )
     parser.add_argument("--no-browser", action="store_true", help="Do not open the UI in a browser")
     parser.add_argument("--no-reload", action="store_true", help="Run uvicorn without --reload")
     parser.add_argument(
@@ -372,12 +391,29 @@ def main() -> None:
     verify_python_multipart(py)
     ensure_ollama_running()
     report_chat_models()
+    requested_port = args.port if args.port > 0 else 8000
+    if args.strict_port and not can_bind_port(args.host, requested_port):
+        print(f"[!] Port {requested_port} on {args.host} is already in use. Not starting backend.")
+        print("[i] Stop the process using that port or rerun without --strict-port to auto-select another port.")
+        return
+
+    actual_port = find_available_port(args.host, requested_port)
+    if actual_port != requested_port:
+        print(f"[i] Port {requested_port} on {args.host} is busy; using {actual_port} instead.")
+    if args.port_file:
+        port_file = Path(args.port_file).expanduser()
+        if not port_file.is_absolute():
+            port_file = ROOT / port_file
+        port_file.parent.mkdir(parents=True, exist_ok=True)
+        port_file.write_text(str(actual_port), encoding="utf-8")
+    ui_url = build_ui_url(args.host, actual_port)
+    print(f"[i] UI URL: {ui_url}")
     if not args.no_browser:
-        open_browser_delayed(build_ui_url(args.host, args.port))
+        open_browser_delayed(ui_url)
     start_backend(
         py,
         host=args.host,
-        port=args.port,
+        port=actual_port,
         reload_enabled=not args.no_reload,
         exec_mode=args.exec_backend,
     )

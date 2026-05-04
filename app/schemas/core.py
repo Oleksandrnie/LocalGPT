@@ -54,6 +54,8 @@ class ChatPreferencesUpdate(BaseModel):
 class AsrPreferencesUpdate(BaseModel):
     studio_model: str | None = None
     prompt_preset: str | None = None
+    beam_size: int | None = None
+    threads: int | None = None
 
 
 class TtsPreferencesUpdate(BaseModel):
