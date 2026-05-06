@@ -4,6 +4,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -13,7 +14,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi import Request
 
 from .. import chat_tasks, config, db
-from ..roles import DEFAULT_ROLE, list_roles
 from ..schemas import DatabaseCleanupRequest, DatabaseResetRequest
 from .. import transcribe_tasks
 from ..services import tts_service
@@ -187,6 +187,20 @@ def _shutdown_worker() -> None:
     _terminate_pid(os.getpid())
 
 
+def _restart_backend_worker() -> None:
+    time.sleep(0.45)
+
+    chat_tasks.cancel_all_tasks()
+    transcribe_tasks.cancel_all_tasks()
+    tts_service.cancel_all_tasks()
+
+    argv = [sys.executable, *sys.argv]
+    try:
+        os.execv(sys.executable, argv)
+    except OSError:
+        os._exit(1)
+
+
 @router.get("/health")
 def health(request: Request):
     tts_health = tts_service.get_health()
@@ -222,16 +236,18 @@ def version():
     return {"env": config.SETTINGS.env, "model": config.SETTINGS.model, "base_url": config.SETTINGS.base_url}
 
 
-@router.get("/roles")
-def roles():
-    return {"roles": list_roles(), "default": DEFAULT_ROLE}
-
-
 @router.post("/runtime/shutdown")
 def shutdown_runtime():
     worker = threading.Thread(target=_shutdown_worker, daemon=True)
     worker.start()
     return {"status": "accepted", "message": "Shutdown started"}
+
+
+@router.post("/runtime/restart")
+def restart_backend_runtime():
+    worker = threading.Thread(target=_restart_backend_worker, daemon=True)
+    worker.start()
+    return {"status": "accepted", "message": "Backend restart started"}
 
 
 @router.post("/database/cleanup")

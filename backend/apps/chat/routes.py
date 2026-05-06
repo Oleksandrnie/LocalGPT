@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app import config, db
-from app.roles import normalize_role
 from app.schemas import ChatDebugPromptRequest, ChatRequest, ResetRequest
 from app.services import criteria as criteria_service
 from app.services import models as model_service
@@ -14,7 +14,6 @@ from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.service import (
     ChatService,
     build_messages,
-    evaluate_math_expression,
     estimate_messages_chars,
     maybe_compress_session_history,
     normalize_model_name,
@@ -22,10 +21,35 @@ from backend.apps.chat.service import (
     prompt_blocks,
     session_title_hint,
 )
+from backend.apps.chat.services import local_calculator, model_residency, model_router
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
 chat_service = ChatService()
+
+CHAT_ROLE = "chat"
+MISTRAL_NEMO_MODEL_ID = "mistral-nemo:12b"
+CODE_REQUEST_RE = re.compile(
+    r"(?i)(\bhtml\b|\bcss\b|\bjavascript\b|\bjs\b|\btypescript\b|\bts\b|\breact\b|\bvue\b|\bsvelte\b|"
+    r"\bpython\b|\bfastapi\b|\bdocker\b|\bsql\b|код|скрипт|компонент|верстк|рефактор|отлад)",
+)
+MISTRAL_CODE_REQUEST_HINT = (
+    "Суть запроса: пользователь просит обычный безопасный программный код. "
+    "Повторяющиеся фразы в исходном тексте могут быть шумом распознавания; игнорируй повторы и извлеки требования. "
+    "Это входит в задачу ассистента: не отказывайся из-за формулировки про компетенцию. "
+    "Профильные и RAG-ограничения про факты, тарифы и источники не запрещают написание шаблонного кода. "
+    "Если пользователь просит вернуть только код, соблюдай это."
+)
+
+
+def _catalog_title(model_id: str) -> str:
+    target = str(model_id or "").strip()
+    if target == model_router.LOCAL_CALCULATOR_TARGET:
+        return "Local Calculator"
+    for item in [*config.MODEL_CATALOG, *getattr(config, "UTILITY_MODEL_CATALOG", [])]:
+        if item.get("id") == target:
+            return str(item.get("title") or target)
+    return target
 
 
 def _chat_model_missing_detail(model_name: str | None = None) -> dict[str, object]:
@@ -40,6 +64,49 @@ def _chat_model_missing_detail(model_name: str | None = None) -> dict[str, objec
         "code": "chat_model_not_selected",
         "model": "",
         "message": "Нет доступных моделей. Загрузите модель и повторите отправку.",
+    }
+
+
+def _is_mistral_nemo_model(model_name: str | None) -> bool:
+    return str(model_name or "").strip().lower() == MISTRAL_NEMO_MODEL_ID
+
+
+def _looks_like_code_request(user_query: str) -> bool:
+    return bool(CODE_REQUEST_RE.search(str(user_query or "")))
+
+
+def _apply_mistral_code_request_hint(target_model: str, user_query: str, messages: list[dict[str, str]]) -> bool:
+    if not _is_mistral_nemo_model(target_model) or not _looks_like_code_request(user_query):
+        return False
+    if not messages or messages[-1].get("role") != "user":
+        return False
+    current = str(messages[-1].get("content") or "")
+    if current.startswith(MISTRAL_CODE_REQUEST_HINT):
+        return False
+    messages[-1] = {
+        **messages[-1],
+        "content": f"{MISTRAL_CODE_REQUEST_HINT}\n\nИсходный запрос пользователя:\n{current}",
+    }
+    return True
+
+
+def _router_model_missing_detail() -> dict[str, object]:
+    return {
+        "code": "router_model_missing",
+        "model": model_router.ROUTER_MODEL_ID,
+        "message": (
+            f"Router-модель {model_router.ROUTER_MODEL_ID} не установлена. "
+            "Установите её в разделе моделей или выберите модель вручную."
+        ),
+    }
+
+
+def _auto_target_missing_detail(model_name: str) -> dict[str, object]:
+    title = _catalog_title(model_name)
+    return {
+        "code": "chat_auto_target_model_missing",
+        "model": model_name,
+        "message": f"Auto выбрал модель {title}, но она не установлена. Установите модель или выберите другую вручную.",
     }
 
 
@@ -74,6 +141,139 @@ def _ensure_chat_model_available(model_name: str) -> None:
     raise HTTPException(status_code=424, detail=_chat_model_missing_detail(target))
 
 
+def _is_model_installed_or_503(model_name: str) -> bool:
+    try:
+        return model_service.is_model_installed(model_name)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "ollama_unavailable",
+                "message": detail.get("message") or "Ollama недоступна. Проверьте, что Ollama запущена.",
+            },
+        ) from exc
+
+
+def _router_notice(decision: model_router.RouterDecision) -> str:
+    title = _catalog_title(decision.target_model)
+    if decision.fallback:
+        if decision.fallback_reason == "calculator_manual_only":
+            return f"Auto не запускает Local Calculator автоматически. Использована основная модель {title}."
+        if decision.fallback_reason == "invalid_json":
+            return f"Auto не смог корректно разобрать тип задачи. Использована основная модель {title}."
+        if decision.fallback_reason == "low_confidence":
+            return f"Auto не уверен в типе задачи. Использована основная модель {title}."
+        return f"Auto не смог уверенно определить тип задачи. Использована основная модель {title}."
+    return f"Auto выбрал: {title} — {decision.reason}"
+
+
+def _apply_router_settings(prepared: dict, decision: model_router.RouterDecision) -> None:
+    prepared["router_decision"] = decision.as_dict()
+    prepared["router_notice"] = _router_notice(decision)
+    prepared["effective_settings"] = {
+        **(prepared.get("effective_settings") or {}),
+        **model_router.router_debug_settings(decision),
+    }
+
+
+def _apply_auto_router(prepared: dict) -> dict:
+    selected_model = str(prepared.get("target_model") or "").strip()
+    if selected_model == model_router.LOCAL_CALCULATOR_TARGET:
+        calc = local_calculator.try_calculate_text(str(prepared.get("user_query") or ""), force=True)
+        if calc:
+            prepared["calc_result"] = f"{calc['result']}\n\n{calc['details']}".strip()
+            prepared["effective_settings"] = {
+                **(prepared.get("effective_settings") or {}),
+                "model_selection_mode": "calculator",
+                "calculator_result": calc,
+                "calculator_backend_override": True,
+            }
+        else:
+            prepared["calc_result"] = (
+                "Не удалось распознать расчёт. Выберите обычную модель для текстового вопроса "
+                "или напишите арифметику явно: например, `сумма 10 20`, `10 + 20`, `100 минус 7`."
+            )
+            prepared["effective_settings"] = {
+                **(prepared.get("effective_settings") or {}),
+                "model_selection_mode": "calculator",
+                "calculator_backend_override": False,
+                "calculator_error": "calculation_not_recognized",
+            }
+        return prepared
+
+    if prepared.get("calc_result") is not None:
+        prepared["effective_settings"] = {
+            **(prepared.get("effective_settings") or {}),
+            "model_selection_mode": "manual",
+        }
+        return prepared
+
+    if not model_router.is_auto_model(selected_model):
+        prepared["effective_settings"] = {
+            **(prepared.get("effective_settings") or {}),
+            "model_selection_mode": "manual",
+        }
+        prepared["effective_settings"] = model_residency.apply_target_settings(
+            selected_model,
+            prepared["effective_settings"],
+            mode="manual",
+        )
+        return prepared
+
+    if not _is_model_installed_or_503(model_router.ROUTER_MODEL_ID):
+        raise HTTPException(status_code=424, detail=_router_model_missing_detail())
+
+    auto_effective_settings = dict(prepared.get("effective_settings") or {})
+    auto_effective_settings.pop("ollama_keep_alive", None)
+    auto_effective_settings.pop("ollama_keep_alive_effective", None)
+    decision = model_router.route_model(
+        str(prepared.get("user_query") or ""),
+        {
+            "profile_id": prepared.get("profile_id"),
+            "session_id": prepared.get("session_id"),
+            "role": prepared.get("role_key"),
+            "rag_enabled": bool((prepared.get("effective_settings") or {}).get("rag_enabled_effective")),
+            "recent_user_queries": prepared.get("recent_user_queries") or [],
+            "has_transcript_context": bool(prepared.get("transcript_text")),
+            "criteria_count": len(prepared.get("active_criteria") or []),
+        },
+        settings=auto_effective_settings,
+    )
+    if decision.target_model == model_router.LOCAL_CALCULATOR_TARGET:
+        decision = model_router.RouterDecision(
+            intent="unknown",
+            target_model=model_router.FALLBACK_TARGET_MODEL,
+            confidence=0.0,
+            reason="Local Calculator доступен только при ручном выборе в селекте.",
+            fallback=True,
+            fallback_reason="calculator_manual_only",
+            raw_response=decision.raw_response,
+            runtime_debug=decision.runtime_debug,
+        )
+    _apply_router_settings(prepared, decision)
+
+    if not _is_model_installed_or_503(decision.target_model):
+        raise HTTPException(status_code=424, detail=_auto_target_missing_detail(decision.target_model))
+
+    prepared["target_model"] = decision.target_model
+    target_settings = dict(prepared.get("effective_settings") or {})
+    target_settings.pop("ollama_keep_alive", None)
+    target_settings.pop("ollama_keep_alive_effective", None)
+    target_overrides = (
+        db.effective_settings(int(prepared["profile_id"]), decision.target_model, config.DEFAULT_SETTINGS).get("overrides")
+        or {}
+    )
+    if target_overrides.get("ollama_keep_alive"):
+        target_settings["ollama_keep_alive"] = target_overrides["ollama_keep_alive"]
+    prepared["effective_settings"] = model_residency.apply_target_settings(
+        decision.target_model,
+        target_settings,
+        mode="auto",
+    )
+    return prepared
+
+
 def _get_profile_or_404(profile_id: int) -> dict:
     profile = db.get_profile(profile_id)
     if not profile or not profile.get("is_active", 1):
@@ -86,7 +286,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     profile_id = req.profile_id
     user_query = (req.query or "").strip() or "проанализируй"
     transcript_text = (req.transcript or "").strip()
-    role_key = normalize_role(req.role)
+    role_key = CHAT_ROLE
     session = None
 
     if session_id:
@@ -98,20 +298,16 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         desired_model = _require_chat_model_selected(desired_model)
         if desired_model != session.get("model_name"):
             session = db.update_session(session_id, model_name=desired_model) or session
-        desired_role = normalize_role(req.role or session.get("role"))
-        if desired_role != session.get("role"):
-            session = db.update_session(session_id, role=desired_role) or session
-        role_key = desired_role
+        role_key = CHAT_ROLE
         model_name = session["model_name"]
     else:
         if profile_id is None:
             raise HTTPException(status_code=400, detail="profile_id_required")
         _get_profile_or_404(profile_id)
-        role_key = normalize_role(req.role)
         model_name = normalize_model_name(req.model or req.model_name, fallback=config.SETTINGS.model)
         model_name = _require_chat_model_selected(model_name)
         title = session_title_hint(req.title, req.query)
-        session = db.create_session(profile_id, title=title, model_name=model_name, role=role_key)
+        session = db.create_session(profile_id, title=title, model_name=model_name, role=CHAT_ROLE)
         session_id = session["id"]
 
     model_name = session["model_name"] if session else normalize_model_name(req.model or req.model_name)
@@ -132,14 +328,14 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     rag_chunks = []
     rag_context = ""
     rag_enabled = bool(effective_settings.get("rag_enabled", False))
+    history_user_queries = [
+        str(item.get("content") or "")
+        for item in history
+        if item.get("role") == "user" and str(item.get("content") or "").strip()
+    ][-3:]
     if rag_enabled:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
-        history_user_queries = [
-            str(item.get("content") or "")
-            for item in history
-            if item.get("role") == "user" and str(item.get("content") or "").strip()
-        ][-3:]
         rag_query = "\n".join([*history_user_queries, user_query]).strip()
         rag_chunks = rag_service.search(int(profile_id), rag_query or user_query, top_k=rag_top_k)
         rag_context = rag_service.build_context(rag_chunks, max_chars=rag_max_chars)
@@ -165,7 +361,14 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     else:
         transcript_warnings = []
 
-    calc_result = evaluate_math_expression(user_query) if role_key == "calc" else None
+    calc = local_calculator.try_calculate_text(user_query, force=True) if target_model == model_router.LOCAL_CALCULATOR_TARGET else None
+    calc_result = f"{calc['result']}\n\n{calc['details']}".strip() if calc else None
+    if calc:
+        effective_settings = {
+            **effective_settings,
+            "calculator_result": calc,
+            "calculator_backend_override": True,
+        }
     messages = build_messages(
         role=role_key,
         user_query=user_query,
@@ -178,6 +381,11 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         summary_memory=summary_memory,
         rag_context=rag_context,
     )
+    if _apply_mistral_code_request_hint(target_model, user_query, messages):
+        effective_settings = {
+            **effective_settings,
+            "mistral_code_request_hint": True,
+        }
     blocks = prompt_blocks(
         context=req.context,
         profile_system_prompt=profile_system_prompt,
@@ -207,6 +415,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "profile_system_prompt": profile_system_prompt,
         "rag_chunks": rag_chunks,
         "rag_context": rag_context,
+        "recent_user_queries": history_user_queries,
         "prompt_warnings": transcript_warnings,
         "calc_result": calc_result,
     }
@@ -219,7 +428,7 @@ def chat(req: ChatRequest):
     profile_id = req.profile_id
     user_query = (req.query or "").strip() or "проанализируй"
     transcript_text = (req.transcript or "").strip()
-    role_key = normalize_role(req.role)
+    role_key = CHAT_ROLE
     target_model: str | None = None
     active_criteria: list[str] = []
 
@@ -241,7 +450,7 @@ def chat(req: ChatRequest):
         chat_service.log_chat_event(payload)
 
     try:
-        prepared = _prepare_chat_request(req)
+        prepared = _apply_auto_router(_prepare_chat_request(req))
         session_id = prepared["session_id"]
         profile_id = prepared["profile_id"]
         user_query = prepared["user_query"]
@@ -253,6 +462,7 @@ def chat(req: ChatRequest):
         calc_result = prepared["calc_result"]
         messages = prepared["messages"]
         prompt_warnings = prepared.get("prompt_warnings") or []
+        router_notice = prepared.get("router_notice")
 
         if calc_result is not None:
             if session_id:
@@ -267,6 +477,7 @@ def chat(req: ChatRequest):
                 "role": role_key,
                 "used_settings": effective_settings,
                 "warnings": prompt_warnings,
+                "router_notice": router_notice,
             }
 
         _ensure_chat_model_available(target_model)
@@ -304,6 +515,7 @@ def chat(req: ChatRequest):
             "role": role_key,
             "used_settings": effective_settings,
             "warnings": prompt_warnings,
+            "router_notice": router_notice,
         }
     except HTTPException as exc:
         _log("error", error=str(exc.detail))
@@ -315,7 +527,7 @@ def chat(req: ChatRequest):
 
 @router.post("/chat/tasks")
 def start_chat_task(req: ChatRequest):
-    prepared = _prepare_chat_request(req)
+    prepared = _apply_auto_router(_prepare_chat_request(req))
     session_id = prepared["session_id"]
     profile_id = prepared["profile_id"]
     user_query = prepared["user_query"]
@@ -325,6 +537,7 @@ def start_chat_task(req: ChatRequest):
     calc_result = prepared["calc_result"]
     messages = prepared["messages"]
     prompt_warnings = prepared.get("prompt_warnings") or []
+    router_notice = prepared.get("router_notice")
 
     if calc_result is not None:
         if session_id:
@@ -337,6 +550,7 @@ def start_chat_task(req: ChatRequest):
             role=role_key,
             used_settings=effective_settings,
             reply=calc_result,
+            router_notice=router_notice,
         )
 
     try:
@@ -348,6 +562,7 @@ def start_chat_task(req: ChatRequest):
             role=role_key,
             messages=messages,
             used_settings=effective_settings,
+            router_notice=router_notice,
         )
         if session_id:
             db.add_message(session_id, "user", user_query)

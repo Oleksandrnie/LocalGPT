@@ -78,6 +78,7 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "error_code": task.get("error_code"),
         "pid": task.get("pid"),
         "used_settings": task.get("used_settings"),
+        "router_notice": task.get("router_notice"),
         "result": task.get("result"),
     }
 
@@ -189,6 +190,7 @@ def create_completed_task(
     role: str,
     used_settings: dict[str, Any],
     reply: str,
+    router_notice: str | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -205,6 +207,7 @@ def create_completed_task(
         "error_code": None,
         "pid": None,
         "used_settings": used_settings,
+        "router_notice": router_notice,
         "result": {"reply": reply},
     }
     with _LOCK:
@@ -220,6 +223,7 @@ def start_chat_task(
     role: str,
     messages: list[dict[str, str]],
     used_settings: dict[str, Any],
+    router_notice: str | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -261,6 +265,7 @@ def start_chat_task(
         "error_code": None,
         "pid": process.pid,
         "used_settings": used_settings,
+        "router_notice": router_notice,
         "result": None,
         "result_path": str(result_path),
         "error_path": str(error_path),

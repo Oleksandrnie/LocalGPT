@@ -225,6 +225,12 @@ select {
     font-size: 13px;
 }
 
+.field__description {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
 .field__control {
     width: 100%;
     min-height: 46px;
@@ -334,11 +340,83 @@ select {
     min-height: 36px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     padding: 0 10px;
     border-radius: 12px;
     background: transparent;
     color: var(--text);
     text-align: left;
+}
+
+.app-select__option-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-select__help,
+.quick-model-picker__help,
+.chip-button__help,
+.model-info-button {
+    position: relative;
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 1px solid rgba(139, 92, 246, 0.34);
+    background: rgba(124, 92, 255, 0.12);
+    color: #e9ddff;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: help;
+}
+
+button.model-info-button {
+    padding: 0;
+    background: rgba(124, 92, 255, 0.12);
+    box-shadow: none;
+}
+
+button.model-info-button:hover:not([disabled]) {
+    transform: none;
+    box-shadow: none;
+}
+
+.app-tooltip {
+    position: fixed;
+    z-index: 200;
+    width: max-content;
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 10px 12px;
+    border: 1px solid rgba(139, 92, 246, 0.28);
+    border-radius: 12px;
+    background: rgba(14, 18, 24, 0.98);
+    color: var(--text);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.45;
+    text-align: left;
+    white-space: pre-line;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(4px);
+    transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.app-tooltip[hidden] {
+    display: none;
+}
+
+.app-tooltip--visible {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .app-select__option:hover,
@@ -386,6 +464,30 @@ select {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+}
+
+.keep-alive-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(104px, 0.36fr);
+    gap: 10px;
+    min-width: 0;
+}
+
+.keep-alive-control .app-select,
+.keep-alive-control .app-select__button {
+    min-width: 0;
+}
+
+.residency-help-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: -2px;
+}
+
+.residency-help-button {
+    width: 34px;
+    height: 34px;
+    font-size: 15px;
 }
 
 .button {
@@ -1206,9 +1308,24 @@ select {
 }
 
 .quick-model-picker__item-name {
+    min-width: 0;
     font-size: 13px;
     font-weight: 700;
     line-height: 1.25;
+}
+
+.quick-model-picker__item-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.quick-model-picker__help {
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
 }
 
 .quick-model-picker__item-meta {
@@ -1241,6 +1358,7 @@ select {
     justify-content: flex-end;
     gap: 8px;
     align-self: center;
+    margin-left: 0.3125rem;
 }
 
 .topbar__actions .button {
@@ -2030,6 +2148,7 @@ select {
     left: 24px;
     width: auto;
     max-width: none;
+    grid-template-rows: auto auto minmax(0, 1fr);
     border-radius: 24px;
     background:
         linear-gradient(145deg, rgba(22, 29, 38, 0.98), rgba(12, 17, 23, 0.98)),
@@ -2040,15 +2159,51 @@ select {
     padding: 16px 22px 14px;
 }
 
+.settings-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 12px 22px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+}
+
+.settings-tab {
+    min-height: 38px;
+    flex: 0 0 auto;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.settings-tab:hover,
+.settings-tab:focus-visible {
+    border-color: rgba(139, 92, 246, 0.5);
+    color: var(--text);
+}
+
+.settings-tab--active {
+    border-color: rgba(139, 92, 246, 0.62);
+    background: rgba(139, 92, 246, 0.18);
+    color: var(--text);
+    box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.12), 0 12px 28px rgba(91, 61, 196, 0.16);
+}
+
 #settingsBackdrop .settings-panel__content {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: minmax(min-content, max-content);
     align-content: start;
     gap: 14px;
     padding: 14px;
     overflow: auto;
     counter-reset: settings-section;
+}
+
+#settingsBackdrop .settings-group[hidden] {
+    display: none;
 }
 
 .settings-panel__content--confirm {
@@ -2197,7 +2352,7 @@ select {
 
 #settingsBackdrop .settings-group {
     position: relative;
-    grid-column: span 3;
+    grid-column: 1 / -1;
     align-content: start;
     min-width: 0;
     padding: 16px;
@@ -2208,8 +2363,12 @@ select {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
-#settingsBackdrop .settings-group:nth-of-type(n + 5) {
-    grid-column: span 2;
+#settingsBackdrop .settings-group--asr {
+    grid-column: 1 / -1;
+}
+
+#settingsBackdrop .settings-group--maintenance {
+    grid-column: 1 / -1;
 }
 
 .settings-group__header {
@@ -2346,9 +2505,10 @@ select {
 
 .pipeline-stage-row {
     display: grid;
-    grid-template-columns: minmax(120px, 0.85fr) minmax(170px, 1.35fr) minmax(88px, 0.65fr) minmax(112px, 0.75fr);
-    gap: 10px;
-    align-items: end;
+    grid-template-columns: minmax(120px, 180px) minmax(260px, 1fr) minmax(104px, 128px) minmax(132px, 156px);
+    column-gap: 18px;
+    row-gap: 8px;
+    align-items: start;
     min-width: 0;
     padding: 10px;
     border: 1px solid rgba(148, 163, 184, 0.14);
@@ -2380,8 +2540,40 @@ select {
     min-width: 0;
 }
 
+.pipeline-stage-row .app-select,
+.pipeline-stage-row .app-select__button,
+.pipeline-stage-row .field__control {
+    min-width: 0;
+}
+
 .pipeline-stage-row .field__label {
     font-size: 11px;
+}
+
+.pipeline-stage-row__recommendation {
+    grid-column: 2 / -1;
+    margin: -2px 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.pipeline-stage-row__recommendation strong {
+    color: var(--text);
+    font-weight: 700;
+}
+
+.pipeline-stage-row__recommendation span {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.pipeline-stage-row__recommendation em {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-soft);
+    font-style: normal;
 }
 
 #settingsBackdrop .pipeline-stage-row .field__control {
@@ -2398,13 +2590,17 @@ select {
 .maintenance-panel {
     display: grid;
     gap: 12px;
-    margin-top: 4px;
     padding: 14px;
     border: 1px solid rgba(215, 103, 103, 0.22);
     border-radius: 10px;
     background:
         linear-gradient(135deg, rgba(215, 103, 103, 0.08), rgba(255, 255, 255, 0.015)),
         rgba(22, 30, 40, 0.58);
+}
+
+.maintenance-stack {
+    display: grid;
+    gap: 12px;
 }
 
 .maintenance-panel__copy {
@@ -2457,11 +2653,43 @@ select {
 }
 
 .chip-button {
-    padding: 9px 12px;
-    border-radius: 999px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2px 8px;
+    padding: 9px 10px 9px 12px;
+    border: 1px solid transparent;
+    border-radius: 16px;
     background: rgba(255, 255, 255, 0.04);
     color: var(--text-muted);
     font-size: 13px;
+    text-align: left;
+}
+
+.chip-button__label,
+.chip-button__meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chip-button__label {
+    color: var(--text);
+    font-weight: 650;
+}
+
+.chip-button__meta {
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.chip-button__help {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
 }
 
 .chip-button--installed {
@@ -2615,6 +2843,37 @@ select {
 .status-badge--active {
     border-color: rgba(124, 92, 255, 0.42);
     color: #dce8ff;
+}
+
+.status-badge--recommended {
+    border-color: rgba(76, 175, 131, 0.26);
+    color: #b8e2cc;
+    background: rgba(76, 175, 131, 0.08);
+}
+
+.status-badge--experimental {
+    border-color: rgba(139, 92, 246, 0.3);
+    color: #d8c8ff;
+    background: rgba(124, 92, 255, 0.1);
+}
+
+.status-badge--heavy {
+    border-color: rgba(211, 164, 88, 0.3);
+    color: #f2cb90;
+    background: rgba(211, 164, 88, 0.08);
+}
+
+.status-badge--code {
+    border-color: rgba(96, 165, 250, 0.3);
+    color: #bfdbfe;
+    background: rgba(96, 165, 250, 0.08);
+}
+
+.status-badge--utility,
+.status-badge--router {
+    border-color: rgba(148, 163, 184, 0.32);
+    color: #dbe4ef;
+    background: rgba(148, 163, 184, 0.08);
 }
 
 .download-list {
@@ -3628,6 +3887,22 @@ body.theme-light .voice-model-menu__item--active {
     color: var(--accent-primary);
 }
 
+body.theme-light .app-select__help,
+body.theme-light .quick-model-picker__help,
+body.theme-light .chip-button__help,
+body.theme-light .model-info-button {
+    border-color: rgba(124, 92, 255, 0.22);
+    background: rgba(124, 92, 255, 0.08);
+    color: #5F3FE3;
+}
+
+body.theme-light .app-tooltip {
+    background: rgba(255, 255, 255, 0.96);
+    border-color: rgba(124, 92, 255, 0.18);
+    color: var(--text);
+    box-shadow: 0 18px 42px rgba(31, 41, 55, 0.16);
+}
+
 body.theme-light .session-card {
     background: rgba(255, 255, 255, 0.46);
     border-color: rgba(31, 41, 55, 0.06);
@@ -3780,6 +4055,17 @@ body.theme-light .tool-dock__item {
     box-shadow: 0 14px 38px rgba(31, 41, 55, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
+body.theme-light .settings-tab {
+    background: rgba(255, 255, 255, 0.64);
+    border-color: rgba(31, 41, 55, 0.08);
+}
+
+body.theme-light .settings-tab--active {
+    border-color: rgba(124, 92, 255, 0.34);
+    background: rgba(124, 92, 255, 0.12);
+    color: #35296f;
+}
+
 body.theme-light #settingsBackdrop .settings-group__header::before {
     background: linear-gradient(145deg, #7C5CFF, #9F7CFF);
     box-shadow: 0 12px 24px rgba(124, 92, 255, 0.22);
@@ -3922,6 +4208,37 @@ body.theme-light .status-badge--warning,
 body.theme-light .inline-status--warning {
     border-color: rgba(183, 121, 31, 0.18);
     color: #a16207;
+}
+
+body.theme-light .status-badge--recommended {
+    border-color: rgba(22, 163, 74, 0.18);
+    color: #15803d;
+    background: rgba(22, 163, 74, 0.075);
+}
+
+body.theme-light .status-badge--experimental {
+    border-color: rgba(124, 92, 255, 0.22);
+    color: #5F3FE3;
+    background: rgba(124, 92, 255, 0.08);
+}
+
+body.theme-light .status-badge--heavy {
+    border-color: rgba(183, 121, 31, 0.18);
+    color: #a16207;
+    background: rgba(183, 121, 31, 0.075);
+}
+
+body.theme-light .status-badge--code {
+    border-color: rgba(37, 99, 235, 0.18);
+    color: #1d4ed8;
+    background: rgba(37, 99, 235, 0.075);
+}
+
+body.theme-light .status-badge--utility,
+body.theme-light .status-badge--router {
+    border-color: rgba(71, 85, 105, 0.18);
+    color: #475569;
+    background: rgba(71, 85, 105, 0.07);
 }
 
 body.theme-light .inline-status--error {
@@ -4301,12 +4618,16 @@ body.theme-light .tool-window__resize::before {
 
 @media (max-width: 1180px) {
     #settingsBackdrop .settings-panel__content {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
     }
 
     #settingsBackdrop .settings-group,
     #settingsBackdrop .settings-group:nth-of-type(n + 5) {
-        grid-column: span 1;
+        grid-column: 1 / -1;
+    }
+
+    #settingsBackdrop .settings-group--asr {
+        grid-column: 1 / -1;
     }
 
     .pipeline-stage-row {
@@ -4315,6 +4636,10 @@ body.theme-light .tool-window__resize::before {
     }
 
     .pipeline-stage-row__title {
+        grid-column: 1 / -1;
+    }
+
+    .pipeline-stage-row__recommendation {
         grid-column: 1 / -1;
     }
 }
@@ -4345,6 +4670,10 @@ body.theme-light .tool-window__resize::before {
     }
 
     .pipeline-stage-row__title {
+        grid-column: auto;
+    }
+
+    .pipeline-stage-row__recommendation {
         grid-column: auto;
     }
 }

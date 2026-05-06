@@ -1,6 +1,16 @@
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
+const ASR_STUDIO_DEFAULT_PROMPT_PRESET = "ru";
+const ASR_DEFAULT_BEAM_SIZE = 5;
+const ASR_DEFAULT_THREADS = 0;
+const ASR_PROMPT_PRESETS = ["auto", "ru", "en"];
 const CREATE_PROFILE_VALUE = "__create_profile__";
+const AUTO_MODEL_ID = "__auto_router__";
+const AUTO_MODEL_TITLE = "Auto / Smart Router";
+const AUTO_MODEL_HELP = "Автоматически классифицирует chat-запрос через qwen3:0.6b и выбирает подходящую LLM из локального каталога. Local Calculator запускается только при ручном выборе.";
+const LOCAL_CALCULATOR_MODEL_ID = "__local_calculator__";
+const LOCAL_CALCULATOR_TITLE = "Local Calculator";
+const LOCAL_CALCULATOR_HELP = "Детерминированный локальный калькулятор для явной арифметики: суммы, вычитание, проценты, часы/минуты и ставка × часы. Не использует LLM и не отвечает на обычные вопросы.";
 const STORAGE_KEYS = {
   activeProfileId: "localgpt_simple_profile_id",
   activeSessionId: "localgpt_simple_session_id",
@@ -17,6 +27,7 @@ const STORAGE_KEYS = {
   asrLibraryOpen: "localgpt_simple_asr_library_open",
   asrPipelineSettingsOpen: "localgpt_simple_asr_pipeline_settings_open",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
+  settingsTab: "localgpt_simple_settings_tab",
 };
 
 const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
@@ -28,18 +39,56 @@ const ASR_PIPELINE_STAGES = [
   { key: "structurer", label: "Структура" },
   { key: "summary", label: "Саммари" },
 ];
+const ASR_PIPELINE_MODEL_CATALOG = [
+  { id: "qwen2.5:3b-instruct", title: "Qwen 2.5 3B Instruct", note: "быстрый слой для очистки и сегментов" },
+  { id: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B Instruct", note: "сбалансированное качество для ролей и medium-summary" },
+  { id: "qwen3:8b", title: "Qwen 3 8B", note: "reasoning для структуры, решений, задач и рисков" },
+  { id: "mistral-nemo:12b", title: "Mistral Nemo 12B", note: "heavy summary и structuring длинных транскриптов" },
+  { id: "qwen3:4b", title: "Qwen 3 4B", note: "experimental fallback для быстрых проверок" },
+  { id: "qwen2.5-coder:7b", title: "Qwen 2.5 Coder 7B", note: "только для технических транскриптов с кодом" },
+  { id: "deepseek-coder:6.7b", title: "DeepSeek Coder 6.7B", note: "code-alt для технических транскриптов" },
+];
+const ASR_PIPELINE_MODEL_IDS = ASR_PIPELINE_MODEL_CATALOG.map((item) => item.id);
+const ASR_PIPELINE_LEGACY_MODEL_IDS = new Set(["qwen2.5:3b", "mistral:7b", "mistral"]);
+const ASR_PIPELINE_RECOMMENDATIONS = {
+  cleaner: {
+    primary: "qwen2.5:3b-instruct",
+    alternatives: ["qwen2.5:7b-instruct"],
+    text: "быстро чистит шум, повторы и мусор ASR без тяжёлого reasoning.",
+  },
+  segmenter: {
+    primary: "qwen2.5:3b-instruct",
+    alternatives: ["qwen2.5:7b-instruct"],
+    text: "лучший быстрый вариант для разбиения transcript на смысловые сегменты.",
+  },
+  speaker_resolver: {
+    primary: "qwen2.5:7b-instruct",
+    alternatives: ["qwen2.5:3b-instruct"],
+    text: "стабильнее сопоставляет роли и говорящих; 3B оставь для скорости.",
+  },
+  structurer: {
+    primary: "qwen3:8b",
+    alternatives: ["mistral-nemo:12b", "qwen2.5:7b-instruct"],
+    text: "лучше подходит для решений, задач, рисков и open questions.",
+  },
+  summary: {
+    primary: "mistral-nemo:12b",
+    alternatives: ["qwen3:8b", "qwen2.5:7b-instruct"],
+    text: "heavy-модель для длинного summary; если медленно, используй Qwen 3 8B или Qwen 2.5 7B.",
+  },
+};
 const ASR_PIPELINE_DEFAULTS = {
-  cleaner: { enabled: true, model: "", temperature: 0.2, max_tokens: 1200 },
-  segmenter: { enabled: true, model: "", temperature: 0.1, max_tokens: 1600 },
-  speaker_resolver: { enabled: true, model: "", temperature: 0.1, max_tokens: 1800 },
-  structurer: { enabled: true, model: "", temperature: 0.3, max_tokens: 2000 },
-  summary: { enabled: true, model: "", temperature: 0.3, max_tokens: 2000 },
+  cleaner: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.2, max_tokens: 6000 },
+  segmenter: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.1, max_tokens: 6000 },
+  speaker_resolver: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.1, max_tokens: 4000 },
+  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.3, max_tokens: 3500 },
+  summary: { enabled: true, model: "mistral-nemo:12b", temperature: 0.3, max_tokens: 3000 },
 };
 const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
   "max_tokens",
   "num_ctx",
-  "mem_turns",
+  "ollama_keep_alive",
   "pipeline_enabled",
   "summary_memory_enabled",
   "rag_enabled",
@@ -51,6 +100,17 @@ const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "rag_max_context_chars",
   "pipeline",
 ];
+const RESIDENCY_DEFAULTS = {
+  max_resident_target_models: 2,
+  allow_light_with_heavy: false,
+  single_large_target_model: true,
+  preload_model_on_manual_select: false,
+  auto_target_keep_alive: "4m",
+  manual_keep_alive: "4m",
+  code_model_keep_alive: "2m",
+  heavy_model_keep_alive: "60s",
+  router_keep_alive: "2m",
+};
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
@@ -117,6 +177,7 @@ const els = {
   asrToolFullscreenButton: document.getElementById("asrToolFullscreenButton"),
   asrToolCloseButton: document.getElementById("asrToolCloseButton"),
   asrToolModelSelect: document.getElementById("asrToolModelSelect"),
+  asrToolPromptPresetSelect: document.getElementById("asrToolPromptPresetSelect"),
   asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
   asrToolPipelineSettingsButton: document.getElementById("asrToolPipelineSettingsButton"),
   asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
@@ -184,6 +245,7 @@ const els = {
   ocrSendButton: document.getElementById("ocrSendButton"),
   ocrClearButton: document.getElementById("ocrClearButton"),
   settingsBackdrop: document.getElementById("settingsBackdrop"),
+  settingsTabList: document.getElementById("settingsTabList"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
   ragBackdrop: document.getElementById("ragBackdrop"),
   closeRagButton: document.getElementById("closeRagButton"),
@@ -233,11 +295,29 @@ const els = {
   maxTokensInput: document.getElementById("maxTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
   memTurnsInput: document.getElementById("memTurnsInput"),
+  ollamaKeepAliveInput: document.getElementById("ollamaKeepAliveInput"),
+  ollamaKeepAliveUnitSelect: document.getElementById("ollamaKeepAliveUnitSelect"),
+  maxResidentTargetModelsSelect: document.getElementById("maxResidentTargetModelsSelect"),
+  allowLightWithHeavyToggle: document.getElementById("allowLightWithHeavyToggle"),
+  singleLargeTargetModelToggle: document.getElementById("singleLargeTargetModelToggle"),
+  preloadManualSelectToggle: document.getElementById("preloadManualSelectToggle"),
+  autoTargetKeepAliveInput: document.getElementById("autoTargetKeepAliveInput"),
+  autoTargetKeepAliveUnitSelect: document.getElementById("autoTargetKeepAliveUnitSelect"),
+  manualKeepAliveInput: document.getElementById("manualKeepAliveInput"),
+  manualKeepAliveUnitSelect: document.getElementById("manualKeepAliveUnitSelect"),
+  codeKeepAliveInput: document.getElementById("codeKeepAliveInput"),
+  codeKeepAliveUnitSelect: document.getElementById("codeKeepAliveUnitSelect"),
+  heavyKeepAliveInput: document.getElementById("heavyKeepAliveInput"),
+  heavyKeepAliveUnitSelect: document.getElementById("heavyKeepAliveUnitSelect"),
+  routerKeepAliveInput: document.getElementById("routerKeepAliveInput"),
+  routerKeepAliveUnitSelect: document.getElementById("routerKeepAliveUnitSelect"),
   saveModelSettingsButton: document.getElementById("saveModelSettingsButton"),
   resetModelSettingsButton: document.getElementById("resetModelSettingsButton"),
   modelSettingsStatus: document.getElementById("modelSettingsStatus"),
   whisperModelSelect: document.getElementById("whisperModelSelect"),
   promptPresetSelect: document.getElementById("promptPresetSelect"),
+  asrBeamSizeInput: document.getElementById("asrBeamSizeInput"),
+  asrThreadsInput: document.getElementById("asrThreadsInput"),
   asrPipelineSettingsPanel: document.getElementById("asrPipelineSettingsPanel"),
   asrPipelineSettingsSummary: document.getElementById("asrPipelineSettingsSummary"),
   asrPipelineSettingsToggleButton: document.getElementById("asrPipelineSettingsToggleButton"),
@@ -267,7 +347,9 @@ const els = {
   moveModelsDirButton: document.getElementById("moveModelsDirButton"),
   lanUrlValue: document.getElementById("lanUrlValue"),
   copyLanUrlFromSettingsButton: document.getElementById("copyLanUrlFromSettingsButton"),
+  restartBackendButton: document.getElementById("restartBackendButton"),
   shutdownButton: document.getElementById("shutdownButton"),
+  appRuntimeStatus: document.getElementById("appRuntimeStatus"),
   cleanupDatabaseButton: document.getElementById("cleanupDatabaseButton"),
   resetDatabaseButton: document.getElementById("resetDatabaseButton"),
   databaseStatus: document.getElementById("databaseStatus"),
@@ -286,12 +368,15 @@ const state = {
   messages: [],
   installedModels: [],
   recommendedModels: [],
+  utilityModels: [],
   downloads: [],
   chatModelsError: null,
   selectedLlmModel: "",
   selectedChatWhisperModel: "medium",
   selectedWhisperModel: ASR_STUDIO_DEFAULT_MODEL,
-  selectedPromptPreset: "none",
+  selectedPromptPreset: ASR_STUDIO_DEFAULT_PROMPT_PRESET,
+  selectedAsrBeamSize: ASR_DEFAULT_BEAM_SIZE,
+  selectedAsrThreads: ASR_DEFAULT_THREADS,
   selectedTtsProvider: "piper",
   selectedTtsVoiceId: "",
   selectedTtsSpeed: "1",
@@ -355,7 +440,9 @@ const state = {
   asrToolHistorySearch: "",
   ragStatus: null,
   ragBusy: false,
+  activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
+  appRuntimeBusy: false,
   asrToolIsOpen: false,
   asrToolIsMinimized: false,
   asrToolBounds: null,
@@ -413,6 +500,172 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function getModelId(item) {
+  return String(item?.id || item?.name || "").trim();
+}
+
+function getModelTitle(item) {
+  const id = getModelId(item);
+  return String(item?.title || item?.label || id).trim();
+}
+
+function getModelDescription(item) {
+  return String(item?.description || "").trim();
+}
+
+function getCatalogModels() {
+  return (Array.isArray(state.recommendedModels) ? state.recommendedModels : [])
+    .filter((item) => getModelId(item));
+}
+
+function getUtilityModels() {
+  return (Array.isArray(state.utilityModels) ? state.utilityModels : [])
+    .filter((item) => getModelId(item));
+}
+
+function getCatalogModelById(modelId) {
+  const target = String(modelId || "").trim();
+  return getCatalogModels().find((item) => getModelId(item) === target) || null;
+}
+
+function getModelTooltip(item, { short = false } = {}) {
+  const id = getModelId(item);
+  const title = getModelTitle(item);
+  const description = getModelDescription(item);
+  if (short) {
+    return description || `${item?.category || "model"} • ${item?.weight || "unknown"}`;
+  }
+  return [
+    title,
+    `ID: ${id}`,
+    `Категория: ${item?.category || "-"}`,
+    `Вес: ${item?.weight || "-"}`,
+    `Рекомендована: ${item?.recommended ? "да" : "нет"}`,
+    `Экспериментальная: ${item?.experimental ? "да" : "нет"}`,
+    description,
+  ].filter(Boolean).join("\n");
+}
+
+function getModelBadges(item) {
+  const category = String(item?.category || "");
+  const weight = String(item?.weight || "");
+  const badges = [];
+  if (item?.recommended) {
+    badges.push({ label: "recommended", tone: "recommended" });
+  }
+  if (item?.experimental) {
+    badges.push({ label: "experimental", tone: "experimental" });
+  }
+  if (item?.utility) {
+    badges.push({ label: "utility", tone: "utility" });
+  }
+  if (weight === "heavy") {
+    badges.push({ label: "heavy", tone: "heavy" });
+  }
+  if (category.includes("router")) {
+    badges.push({ label: "router", tone: "router" });
+  }
+  if (category.includes("code")) {
+    badges.push({ label: "code", tone: "code" });
+  }
+  return badges;
+}
+
+function renderModelBadges(item) {
+  return getModelBadges(item)
+    .map((badge) => `<span class="status-badge status-badge--${escapeHtml(badge.tone)}">${escapeHtml(badge.label)}</span>`)
+    .join("");
+}
+
+function renderModelInfoIcon(item, className = "model-info-button") {
+  const tooltip = getModelTooltip(item);
+  return `<span class="${escapeHtml(className)}" role="img" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</span>`;
+}
+
+function renderModelInfoButton(item) {
+  const tooltip = getModelTooltip(item);
+  return `<button class="model-info-button" type="button" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</button>`;
+}
+
+let tooltipTimer = null;
+let activeTooltipTarget = null;
+
+function getTooltipNode() {
+  let node = document.getElementById("appTooltip");
+  if (!node) {
+    node = document.createElement("div");
+    node.id = "appTooltip";
+    node.className = "app-tooltip";
+    node.hidden = true;
+    document.body.appendChild(node);
+  }
+  return node;
+}
+
+function clearTooltipTimer() {
+  if (tooltipTimer) {
+    window.clearTimeout(tooltipTimer);
+    tooltipTimer = null;
+  }
+}
+
+function positionTooltip(node, target) {
+  const rect = target.getBoundingClientRect();
+  const gap = 10;
+  const margin = 10;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const maxWidth = Math.min(340, Math.max(180, viewportWidth - margin * 2));
+  node.style.maxWidth = `${maxWidth}px`;
+
+  const tooltipRect = node.getBoundingClientRect();
+  let left = rect.right + gap;
+  let top = rect.top + rect.height / 2 - tooltipRect.height / 2;
+
+  if (left + tooltipRect.width > viewportWidth - margin) {
+    left = rect.left - tooltipRect.width - gap;
+  }
+  if (left < margin) {
+    left = Math.min(viewportWidth - tooltipRect.width - margin, Math.max(margin, rect.left));
+  }
+
+  top = Math.max(margin, Math.min(top, viewportHeight - tooltipRect.height - margin));
+  node.style.left = `${Math.round(left)}px`;
+  node.style.top = `${Math.round(top)}px`;
+}
+
+function showTooltip(target) {
+  const text = target?.dataset?.tooltip || "";
+  if (!text) return;
+  const node = getTooltipNode();
+  node.textContent = text;
+  node.hidden = false;
+  node.classList.remove("app-tooltip--visible");
+  positionTooltip(node, target);
+  window.requestAnimationFrame(() => {
+    node.classList.add("app-tooltip--visible");
+  });
+}
+
+function scheduleTooltip(target) {
+  clearTooltipTimer();
+  activeTooltipTarget = target;
+  tooltipTimer = window.setTimeout(() => {
+    if (activeTooltipTarget === target) {
+      showTooltip(target);
+    }
+  }, 250);
+}
+
+function hideTooltip() {
+  clearTooltipTimer();
+  activeTooltipTarget = null;
+  const node = document.getElementById("appTooltip");
+  if (!node) return;
+  node.classList.remove("app-tooltip--visible");
+  node.hidden = true;
 }
 
 function formatInlineRichText(value) {
@@ -693,12 +946,12 @@ function getFilteredTtsVoiceCatalog() {
 }
 
 function renderLibraryPanels() {
-  const chatInstalled = state.installedModels.length;
-  const chatTotal = new Set([
-    ...state.recommendedModels.map((item) => item.name),
-    ...state.installedModels.map((item) => item.name),
-  ]).size;
-  const asrInstalled = state.asrModels.filter((item) => item.installed).length;
+  const installedChatNames = new Set(state.installedModels.map((item) => item.name));
+  const chatCatalog = getCatalogModels();
+  const utilityCatalog = getUtilityModels();
+  const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
+  const chatTotal = utilityCatalog.length + chatCatalog.length;
+  const asrInstalled = state.asrModels.filter((item) => isWhisperItemReady(item)).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
   const ttsInstalled = state.ttsVoiceCatalog.filter((item) => item.installed).length;
@@ -719,7 +972,7 @@ function renderLibraryPanels() {
       toggle: els.asrLibraryToggle,
       panel: els.asrLibraryPanel,
       meta: els.asrLibraryMeta,
-      metaText: `${asrInstalled} локально • ${asrTotal} моделей`,
+      metaText: `${asrInstalled} готово • ${asrTotal} моделей`,
     },
     {
       kind: "tts",
@@ -885,6 +1138,7 @@ function closeAppSelect(select = null) {
     entry.button.setAttribute("aria-expanded", "false");
     entry.menu.hidden = true;
   });
+  hideTooltip();
 }
 
 function syncAppSelect(select) {
@@ -896,9 +1150,15 @@ function syncAppSelect(select) {
   entry.button.setAttribute("aria-disabled", disabled ? "true" : "false");
   entry.value.textContent = appSelectLabel(select);
   entry.menu.innerHTML = Array.from(select.options || [])
+    .filter((option) => !option.hidden)
     .map((option) => {
       const active = String(option.value) === selectedValue ? " app-select__option--active" : "";
-      return `<button class="app-select__option${active}" type="button" role="option" aria-selected="${active ? "true" : "false"}" data-app-select-value="${escapeHtml(option.value)}">${escapeHtml(option.textContent || option.value)}</button>`;
+      const help = option.dataset.help || "";
+      const title = option.dataset.label || option.textContent || option.value;
+      const helpMarkup = help
+        ? `<span class="app-select__help" role="img" aria-label="${escapeHtml(help)}" data-tooltip="${escapeHtml(help)}" data-app-select-help>?</span>`
+        : "";
+      return `<button class="app-select__option${active}" type="button" role="option" aria-selected="${active ? "true" : "false"}" data-app-select-value="${escapeHtml(option.value)}"><span class="app-select__option-label">${escapeHtml(title)}</span>${helpMarkup}</button>`;
     })
     .join("");
 }
@@ -972,6 +1232,9 @@ function enhanceAppSelect(select) {
 
   menu.addEventListener("click", (event) => {
     event.stopPropagation();
+    if (event.target instanceof Element && event.target.closest("[data-app-select-help]")) {
+      return;
+    }
     const optionButton = event.target instanceof Element
       ? event.target.closest("[data-app-select-value]")
       : null;
@@ -990,16 +1253,52 @@ function initAppSelects() {
 
 function getChatModelItems() {
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const names = state.installedModels.map((item) => item.name);
-  return names.map((name) => ({
-    name,
-    installed: installedByName.get(name) || null,
+  const catalog = getCatalogModels();
+  const source = catalog.length
+    ? catalog
+    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const autoItem = {
+    id: AUTO_MODEL_ID,
+    name: AUTO_MODEL_ID,
+    title: AUTO_MODEL_TITLE,
+    category: "auto_router",
+    weight: "utility",
+    description: AUTO_MODEL_HELP,
+    installed: null,
     recommended: null,
-    task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
-  }));
+    task: null,
+  };
+  const calculatorItem = {
+    id: LOCAL_CALCULATOR_MODEL_ID,
+    name: LOCAL_CALCULATOR_MODEL_ID,
+    title: LOCAL_CALCULATOR_TITLE,
+    category: "local_calculator",
+    weight: "utility",
+    description: LOCAL_CALCULATOR_HELP,
+    installed: null,
+    recommended: null,
+    task: null,
+  };
+  return [autoItem, calculatorItem, ...source.map((model) => {
+    const name = getModelId(model);
+    return {
+      ...model,
+      name,
+      title: getModelTitle(model),
+      installed: installedByName.get(name) || null,
+      recommended: model,
+      task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
+    };
+  })];
 }
 
 function describeChatModelItem(item) {
+  if (item?.name === AUTO_MODEL_ID || getModelId(item) === AUTO_MODEL_ID) {
+    return "router • qwen3:0.6b";
+  }
+  if (item?.name === LOCAL_CALCULATOR_MODEL_ID || getModelId(item) === LOCAL_CALCULATOR_MODEL_ID) {
+    return "локальный расчёт • без LLM";
+  }
   if (!item) {
     return "Загрузите модель в настройках";
   }
@@ -1014,7 +1313,7 @@ function describeChatModelItem(item) {
     return parts.join(" • ");
   }
   if (item.recommended) {
-    return `${item.recommended.label || "Рекомендована"} • не загружена`;
+    return `${item.recommended.category || "catalog"} • ${item.recommended.weight || "weight"} • не загружена`;
   }
   return "Не загружена";
 }
@@ -1060,7 +1359,10 @@ function renderQuickModelPicker() {
           aria-checked="${active ? "true" : "false"}"
           data-quick-model="${escapeHtml(item.name)}"
         >
-          <span class="quick-model-picker__item-name">${escapeHtml(item.name)}</span>
+          <span class="quick-model-picker__item-row">
+            <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
+            ${getModelDescription(item) ? renderModelInfoIcon(item, "quick-model-picker__help") : ""}
+          </span>
           <span class="quick-model-picker__item-meta">${escapeHtml(describeChatModelItem(item))}</span>
         </button>
       `;
@@ -1075,11 +1377,54 @@ function getWhisperItems() {
     : WHISPER_MODELS.map((name) => ({ name, installed: false }));
 }
 
+function isWhisperItemReady(item) {
+  if (!item) return false;
+  if (Object.prototype.hasOwnProperty.call(item, "ready")) {
+    return Boolean(item.ready);
+  }
+  if (Object.prototype.hasOwnProperty.call(item, "runtime_installed")) {
+    return Boolean(item.installed && item.runtime_installed);
+  }
+  return Boolean(item.installed);
+}
+
+function getWhisperItemWarnings(item) {
+  return Array.isArray(item?.warnings) ? item.warnings.filter(Boolean).map(String) : [];
+}
+
 function isWhisperModelInstalled(modelName) {
   const target = String(modelName || "").trim();
   if (!target) return false;
   const item = state.asrModels.find((entry) => entry.name === target);
-  return Boolean(item?.installed);
+  return isWhisperItemReady(item);
+}
+
+function normalizePromptPreset(promptPreset) {
+  const preset = String(promptPreset || "").trim().toLowerCase();
+  if (preset === "none") {
+    return "auto";
+  }
+  return ASR_PROMPT_PRESETS.includes(preset) ? preset : ASR_STUDIO_DEFAULT_PROMPT_PRESET;
+}
+
+function languageForPromptPreset(promptPreset) {
+  const preset = normalizePromptPreset(promptPreset);
+  if (preset === "ru" || preset === "en") {
+    return preset;
+  }
+  return "auto";
+}
+
+function normalizeAsrBeamSize(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return ASR_DEFAULT_BEAM_SIZE;
+  return Math.min(10, Math.max(1, parsed));
+}
+
+function normalizeAsrThreads(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return ASR_DEFAULT_THREADS;
+  return Math.min(32, Math.max(0, parsed));
 }
 
 function getSelectedChatWhisperModel() {
@@ -1326,7 +1671,17 @@ function insertVoiceTranscript(text) {
   insertPromptText(text, { append: true });
 }
 
-async function waitForVoiceTranscriptionTask(taskId, { timeoutMs = 180000 } = {}) {
+const VOICE_TRANSCRIPTION_TIMEOUT_MS = 5 * 60 * 1000;
+const FILE_TRANSCRIPTION_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_TRANSCRIPTION_TIMEOUT_MS = 60 * 60 * 1000;
+
+function transcriptionTimeoutForFile(file) {
+  const sizeMb = Number(file?.size || 0) / (1024 * 1024);
+  const sizeBudget = 10 * 60 * 1000 + sizeMb * 90 * 1000;
+  return Math.min(MAX_TRANSCRIPTION_TIMEOUT_MS, Math.max(FILE_TRANSCRIPTION_TIMEOUT_MS, sizeBudget));
+}
+
+async function waitForVoiceTranscriptionTask(taskId, { timeoutMs = VOICE_TRANSCRIPTION_TIMEOUT_MS } = {}) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const task = await request(`/transcribe/tasks/${encodeURIComponent(taskId)}`);
@@ -1342,7 +1697,7 @@ async function waitForVoiceTranscriptionTask(taskId, { timeoutMs = 180000 } = {}
     }
     await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
-  throw new Error("Истекло время ожидания распознавания голоса.");
+  throw new Error("Истекло время ожидания транскрибации. Если это первый запуск модели, повторите проверку истории через минуту.");
 }
 
 async function cancelVoiceTranscription() {
@@ -1393,7 +1748,7 @@ async function transcribeVoiceBlob(blob, mimeType) {
     const formData = new FormData();
     formData.append("file", blob, `voice-note.${extension}`);
     formData.append("model", getSelectedChatWhisperModel() || "medium");
-    formData.append("prompt_preset", "none");
+    formData.append("prompt_preset", "auto");
     formData.append("language", "auto");
     formData.append("store_result", "false");
 
@@ -1405,7 +1760,9 @@ async function transcribeVoiceBlob(blob, mimeType) {
     state.voiceTranscriptionStartController = null;
     state.voiceTranscriptionTaskId = task?.id || null;
 
-    const result = await waitForVoiceTranscriptionTask(task?.id || "");
+    const result = await waitForVoiceTranscriptionTask(task?.id || "", {
+      timeoutMs: VOICE_TRANSCRIPTION_TIMEOUT_MS,
+    });
     if (result?.cancelled) {
       setFooter("Распознавание голоса остановлено.", "warning");
       return;
@@ -1617,14 +1974,17 @@ function autoResizePrompt() {
 function updateSendButtonState() {
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
-  const hasInstalledChatModel = state.installedModels.length > 0;
   const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
-  const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
+  const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
+  const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
+  const selectedInstalled = Boolean(selectedModel) && (
+    selectedModel === AUTO_MODEL_ID || selectedModel === LOCAL_CALCULATOR_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
+  );
   if (els.promptInput) {
     els.promptInput.disabled = false;
-    els.promptInput.placeholder = hasInstalledChatModel
-      ? "Напишите сообщение…"
-      : "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения.";
+    els.promptInput.placeholder = !hasInstalledChatModel
+      ? "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения."
+      : (!selectedModel ? "Выберите модель, чтобы отправлять сообщения." : "Напишите сообщение…");
   }
   els.sendButton.disabled = state.isSending ? false : (!hasText || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
@@ -1633,9 +1993,12 @@ function updateSendButtonState() {
 function renderChatModelNotice() {
   if (!els.chatModelNotice) return;
   const selectedModel = String(state.selectedLlmModel || "").trim();
-  const hasInstalledChatModel = state.installedModels.length > 0;
-  const selectedInstalled = Boolean(selectedModel) && state.installedModels.some((item) => item.name === selectedModel);
-  const missing = !hasInstalledChatModel || (Boolean(selectedModel) && !selectedInstalled);
+  const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
+  const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
+  const selectedInstalled = Boolean(selectedModel) && (
+    selectedModel === AUTO_MODEL_ID || selectedModel === LOCAL_CALCULATOR_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
+  );
+  const missing = !hasInstalledChatModel || !selectedModel || (Boolean(selectedModel) && !selectedInstalled);
   els.chatModelNotice.hidden = !missing;
   if (missing) {
     const title = els.chatModelNotice.querySelector("strong");
@@ -1643,6 +2006,9 @@ function renderChatModelNotice() {
     if (!hasInstalledChatModel) {
       if (title) title.textContent = "Нет доступных моделей.";
       if (text) text.textContent = "Загрузите модель в настройках, чтобы отправлять сообщения в чат.";
+    } else if (!selectedModel) {
+      if (title) title.textContent = "Модель не выбрана.";
+      if (text) text.textContent = "Выберите установленную модель в селекте или добавьте модель из каталога.";
     } else {
       if (title) title.textContent = "Модель не загружена.";
       if (text) text.textContent = "Выберите локальную модель или загрузите выбранную модель.";
@@ -1978,11 +2344,13 @@ function applyActiveProfilePreferences() {
   const asrStudioFallback = state.asrModels.some((item) => item.name === ASR_STUDIO_DEFAULT_MODEL)
     ? ASR_STUDIO_DEFAULT_MODEL
     : (state.asrModels[0]?.name || ASR_STUDIO_DEFAULT_MODEL);
-  const promptPreset = String(preferences?.asr?.prompt_preset || "").trim().toLowerCase();
+  const promptPreset = normalizePromptPreset(preferences?.asr?.prompt_preset);
 
   state.selectedChatWhisperModel = String(preferences?.chat?.dictation_model || "").trim() || whisperFallback;
   state.selectedWhisperModel = String(preferences?.asr?.studio_model || "").trim() || asrStudioFallback;
-  state.selectedPromptPreset = ["none", "ru", "en"].includes(promptPreset) ? promptPreset : "none";
+  state.selectedPromptPreset = promptPreset;
+  state.selectedAsrBeamSize = normalizeAsrBeamSize(preferences?.asr?.beam_size ?? ASR_DEFAULT_BEAM_SIZE);
+  state.selectedAsrThreads = normalizeAsrThreads(preferences?.asr?.threads ?? ASR_DEFAULT_THREADS);
   state.selectedTtsProvider = String(preferences?.tts?.provider || state.selectedTtsProvider || "piper").trim() || "piper";
   state.selectedTtsVoiceId = String(preferences?.tts?.voice_id || "").trim();
   state.selectedTtsSpeed = formatTtsSpeedLabel(preferences?.tts?.speed || state.selectedTtsSpeed || 1);
@@ -2298,57 +2666,77 @@ function renderMessages() {
 function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
-  const installedNames = new Set(state.installedModels.map((item) => item.name));
-  const installedOptions = state.installedModels.map((item) => item.name).filter(Boolean);
-  const selectedModel = String(state.selectedLlmModel || "").trim();
-  const selectedInstalled = selectedModel && installedNames.has(selectedModel);
+  const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
+  const installedNames = new Set(installedByName.keys());
+  const catalogItems = getCatalogModels().length
+    ? getCatalogModels()
+    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const utilityItems = getUtilityModels();
+  const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
+  const installedCatalogIds = catalogIds.filter((name) => installedNames.has(name));
+  const optionIds = new Set([AUTO_MODEL_ID, LOCAL_CALCULATOR_MODEL_ID, ...catalogIds]);
 
-  const optionNames = selectedModel && !selectedInstalled
-    ? [selectedModel, ...installedOptions]
-    : installedOptions;
-  const optionsMarkup = optionNames
-    .map((name) => {
-      const missing = name === selectedModel && !selectedInstalled;
-      return `<option value="${escapeHtml(name)}"${missing ? " disabled" : ""}>${escapeHtml(name)}${missing ? " (не загружена)" : ""}</option>`;
-    })
-    .join("") || '<option value="">Нет доступных моделей</option>';
+  const optionsMarkup = catalogItems.length
+    ? [
+      '<option value="" hidden>Модель не выбрана</option>',
+      `<option value="${AUTO_MODEL_ID}" data-label="${escapeHtml(AUTO_MODEL_TITLE)}" data-help="${escapeHtml(AUTO_MODEL_HELP)}">${escapeHtml(AUTO_MODEL_TITLE)}</option>`,
+      `<option value="${LOCAL_CALCULATOR_MODEL_ID}" data-label="${escapeHtml(LOCAL_CALCULATOR_TITLE)}" data-help="${escapeHtml(LOCAL_CALCULATOR_HELP)}">${escapeHtml(LOCAL_CALCULATOR_TITLE)}</option>`,
+      ...catalogItems.map((item) => {
+        const id = getModelId(item);
+        const title = getModelTitle(item);
+        const help = getModelTooltip(item, { short: true });
+        return `<option value="${escapeHtml(id)}" data-label="${escapeHtml(title)}" data-help="${escapeHtml(help)}" data-model-category="${escapeHtml(item.category || "")}" data-model-weight="${escapeHtml(item.weight || "")}">${escapeHtml(title)}</option>`;
+      }),
+    ].join("")
+    : '<option value="">Нет доступных моделей</option>';
 
   [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
     select.innerHTML = optionsMarkup;
-    select.disabled = !installedOptions.length;
+    select.disabled = !catalogItems.length;
   });
 
   const preferredModel = state.selectedLlmModel || readStored(STORAGE_KEYS.llmModel, "");
-  if (preferredModel && optionNames.includes(preferredModel)) {
+  if (preferredModel && optionIds.has(preferredModel)) {
     els.llmModelSelect.value = preferredModel;
     if (els.quickModelSelect) {
       els.quickModelSelect.value = preferredModel;
     }
-  } else if (installedOptions.length) {
-    els.llmModelSelect.value = installedOptions[0];
+  } else if (!preferredModel && installedCatalogIds.length) {
+    els.llmModelSelect.value = installedCatalogIds[0];
     if (els.quickModelSelect) {
-      els.quickModelSelect.value = installedOptions[0];
+      els.quickModelSelect.value = installedCatalogIds[0];
     }
-    state.selectedLlmModel = installedOptions[0];
-    writeStored(STORAGE_KEYS.llmModel, installedOptions[0]);
+    state.selectedLlmModel = installedCatalogIds[0];
+    writeStored(STORAGE_KEYS.llmModel, installedCatalogIds[0]);
   } else {
     state.selectedLlmModel = "";
     writeStored(STORAGE_KEYS.llmModel, "");
+    els.llmModelSelect.value = "";
+    if (els.quickModelSelect) {
+      els.quickModelSelect.value = "";
+    }
   }
 
   renderQuickModelPicker();
 
-  els.recommendedModels.innerHTML = state.recommendedModels
+  els.recommendedModels.innerHTML = [...utilityItems, ...catalogItems]
     .map((item) => {
-      const installed = installedNames.has(item.name);
-      const active = item.name === state.selectedLlmModel;
-      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(item.name)}">${escapeHtml(item.label || item.name)}</button>`;
+      const id = getModelId(item);
+      const installed = installedNames.has(id);
+      const active = id === state.selectedLlmModel;
+      const utility = Boolean(item.utility);
+      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(id)}" data-utility-model="${utility ? "1" : "0"}">
+        <span class="chip-button__label">${escapeHtml(getModelTitle(item))}</span>
+        <span class="chip-button__meta">${escapeHtml([item.category, item.weight].filter(Boolean).join(" • "))}</span>
+        ${renderModelInfoIcon(item, "chip-button__help")}
+      </button>`;
     })
     .join("");
 
   renderLibraryPanels();
   renderChatModelLibrary();
   renderChatModelNotice();
+  updateSendButtonState();
   queueSyncAppSelects();
 }
 
@@ -2367,13 +2755,35 @@ async function applySelectedLlmModel(nextModel) {
     }
   });
 
-  renderQuickModelPicker();
+  renderModelControls();
   renderContextSummary();
   renderModelSettings();
   if (state.currentSessionId && state.selectedLlmModel) {
     await updateCurrentSessionMeta({ model_name: state.selectedLlmModel });
   }
   await refreshModelSettings({ silent: true });
+  await maybePreloadManualModel(modelName);
+}
+
+async function maybePreloadManualModel(modelName) {
+  const target = String(modelName || "").trim();
+  if (!target || target === AUTO_MODEL_ID || target === LOCAL_CALCULATOR_MODEL_ID || !state.activeProfileId) return;
+  const settings = (getActiveProfilePreferences()?.settings || {});
+  if (!settings.preload_model_on_manual_select) return;
+  const installed = state.installedModels.some((item) => item.name === target);
+  if (!installed) return;
+  try {
+    await request("/models/preload", {
+      method: "POST",
+      body: {
+        model: target,
+        profile_id: state.activeProfileId,
+      },
+    });
+    setFooter(`Модель ${target} предварительно загружена в Ollama.`, "info");
+  } catch (error) {
+    setFooter(`Не удалось предварительно загрузить ${target}: ${error.message || error}`, "warning");
+  }
 }
 
 function renderChatModelLibrary() {
@@ -2384,50 +2794,49 @@ function renderChatModelLibrary() {
   }
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const recommendedByName = new Map(state.recommendedModels.map((item) => [item.name, item]));
-  const allNames = [
-    ...new Set([
-      ...state.recommendedModels.map((item) => item.name),
-      ...state.installedModels.map((item) => item.name),
-    ]),
-  ];
+  const catalogItems = [...getUtilityModels(), ...getCatalogModels()];
 
-  if (!allNames.length) {
-    els.chatModelLibrary.innerHTML = '<p class="subtle">Список Ollama-моделей пока пуст.</p>';
+  if (!catalogItems.length) {
+    els.chatModelLibrary.innerHTML = '<p class="subtle">Каталог Ollama-моделей пока пуст.</p>';
     return;
   }
 
-  els.chatModelLibrary.innerHTML = allNames
-    .map((name) => {
+  els.chatModelLibrary.innerHTML = catalogItems
+    .map((item) => {
+      const name = getModelId(item);
       const installed = installedByName.get(name);
-      const recommended = recommendedByName.get(name);
       const active = state.selectedLlmModel === name;
       const task = state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state));
-      const badge = task
+      const utility = Boolean(item.utility);
+      const statusBadge = task
         ? `<span class="status-badge status-badge--warning">${escapeHtml(task.state || "running")}</span>`
         : installed
           ? '<span class="status-badge status-badge--success">Установлена</span>'
           : '<span class="status-badge">Не загружена</span>';
       const meta = [
-        recommended?.label || null,
+        `ID: ${name}`,
+        item.category ? `Категория: ${item.category}` : null,
+        item.weight ? `Вес: ${item.weight}` : null,
         installed?.size_gb ? `${installed.size_gb} GB` : null,
         installed?.modified_at ? formatDateTime(installed.modified_at) : null,
       ].filter(Boolean).join(" • ");
-      const note = task?.message || (recommended ? "Можно загрузить или обновить прямо из настроек." : "");
+      const note = task?.message || getModelDescription(item);
       return `
         <article class="model-card${installed ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
           <div class="model-card__head">
             <div>
-              <h5 class="model-card__title">${escapeHtml(name)}</h5>
-              <p class="model-card__meta">${escapeHtml(meta || "Локальная Ollama-модель")}</p>
+              <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
+              <p class="model-card__meta">${escapeHtml(meta || name)}</p>
             </div>
-            <div class="model-card__badges">${badge}${active ? '<span class="status-badge status-badge--active">Активна</span>' : ""}</div>
+            <div class="model-card__badges">${statusBadge}${active ? '<span class="status-badge status-badge--active">Активна</span>' : ""}${renderModelBadges(item)}</div>
           </div>
-          <p class="model-card__note">${escapeHtml(note || (installed ? "Модель готова к использованию в чате." : "Сначала загрузите модель локально."))}</p>
+          <p class="model-card__note">${escapeHtml(note || (installed ? "Модель готова к использованию в чате." : "Сначала добавьте модель локально."))}</p>
           <div class="button-row">
-            <button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>
-            <button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${installed ? "Обновить" : "Загрузить"}</button>
+            ${installed && !utility ? `<button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
+            ${installed ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">Добавить</button>`}
+            <button class="button button--ghost" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>
             ${installed ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
+            ${renderModelInfoButton(item)}
           </div>
         </article>
       `;
@@ -2445,12 +2854,23 @@ function renderModelSettings() {
   }
 
   const disabled = !profile || !modelName;
+  const profileDisabled = !profile;
   const { effective = {}, overrides = {} } = state.modelSettingsState || {};
   const values = {
     temperature: overrides.temperature ?? effective.temperature ?? "",
     max_tokens: overrides.max_tokens ?? effective.max_tokens ?? "",
     num_ctx: overrides.num_ctx ?? effective.num_ctx ?? "",
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
+    ollama_keep_alive: overrides.ollama_keep_alive ?? effective.ollama_keep_alive ?? defaultKeepAliveForModel(modelName),
+    max_resident_target_models: overrides.max_resident_target_models ?? effective.max_resident_target_models ?? RESIDENCY_DEFAULTS.max_resident_target_models,
+    allow_light_with_heavy: overrides.allow_light_with_heavy ?? effective.allow_light_with_heavy ?? RESIDENCY_DEFAULTS.allow_light_with_heavy,
+    single_large_target_model: overrides.single_large_target_model ?? effective.single_large_target_model ?? RESIDENCY_DEFAULTS.single_large_target_model,
+    preload_model_on_manual_select: overrides.preload_model_on_manual_select ?? effective.preload_model_on_manual_select ?? RESIDENCY_DEFAULTS.preload_model_on_manual_select,
+    auto_target_keep_alive: overrides.auto_target_keep_alive ?? effective.auto_target_keep_alive ?? RESIDENCY_DEFAULTS.auto_target_keep_alive,
+    manual_keep_alive: overrides.manual_keep_alive ?? effective.manual_keep_alive ?? RESIDENCY_DEFAULTS.manual_keep_alive,
+    code_model_keep_alive: overrides.code_model_keep_alive ?? effective.code_model_keep_alive ?? RESIDENCY_DEFAULTS.code_model_keep_alive,
+    heavy_model_keep_alive: overrides.heavy_model_keep_alive ?? effective.heavy_model_keep_alive ?? RESIDENCY_DEFAULTS.heavy_model_keep_alive,
+    router_keep_alive: overrides.router_keep_alive ?? effective.router_keep_alive ?? RESIDENCY_DEFAULTS.router_keep_alive,
   };
 
   if (els.temperatureInput) {
@@ -2468,15 +2888,149 @@ function renderModelSettings() {
   if (els.memTurnsInput) {
     els.memTurnsInput.disabled = disabled;
     els.memTurnsInput.value = values.mem_turns === "" ? "" : String(values.mem_turns);
-    els.memTurnsInput.title = "Большие значения памяти увеличивают prompt. Для длинных диалогов лучше summary memory.";
+    els.memTurnsInput.title = "Общая память диалога для активного профиля. Применяется ко всем chat-моделям, включая Auto.";
   }
+  if (els.ollamaKeepAliveInput) {
+    const keepAlive = parseKeepAliveValue(values.ollama_keep_alive, defaultKeepAliveForModel(modelName));
+    els.ollamaKeepAliveInput.disabled = disabled;
+    els.ollamaKeepAliveInput.value = keepAlive.amount;
+    els.ollamaKeepAliveInput.title = "Сколько Ollama держит модель в RAM/GPU после ответа. 0 секунд — выгружать сразу.";
+  }
+  if (els.ollamaKeepAliveUnitSelect) {
+    const keepAlive = parseKeepAliveValue(values.ollama_keep_alive, defaultKeepAliveForModel(modelName));
+    els.ollamaKeepAliveUnitSelect.disabled = disabled;
+    els.ollamaKeepAliveUnitSelect.value = keepAlive.unit;
+    queueSyncAppSelects();
+  }
+  if (els.maxResidentTargetModelsSelect) {
+    els.maxResidentTargetModelsSelect.disabled = profileDisabled;
+    els.maxResidentTargetModelsSelect.value = String(Math.max(1, Math.min(5, Number(values.max_resident_target_models) || RESIDENCY_DEFAULTS.max_resident_target_models)));
+    els.maxResidentTargetModelsSelect.title = "Router qwen3:0.6b в этот лимит не входит.";
+  }
+  if (els.allowLightWithHeavyToggle) {
+    els.allowLightWithHeavyToggle.disabled = profileDisabled;
+    els.allowLightWithHeavyToggle.checked = Boolean(values.allow_light_with_heavy);
+    els.allowLightWithHeavyToggle.title = "Если выключено, при запуске Mistral Nemo остальные target-модели выгружаются.";
+  }
+  if (els.singleLargeTargetModelToggle) {
+    els.singleLargeTargetModelToggle.disabled = profileDisabled;
+    els.singleLargeTargetModelToggle.checked = Boolean(values.single_large_target_model);
+    els.singleLargeTargetModelToggle.title = "Если включено, LocalGPT не держит одновременно две medium/code/heavy target-модели.";
+  }
+  if (els.preloadManualSelectToggle) {
+    els.preloadManualSelectToggle.disabled = profileDisabled;
+    els.preloadManualSelectToggle.checked = Boolean(values.preload_model_on_manual_select);
+    els.preloadManualSelectToggle.title = "Если включено, ручной выбор модели сразу загружает её в Ollama.";
+  }
+  setKeepAliveControl(
+    els.autoTargetKeepAliveInput,
+    els.autoTargetKeepAliveUnitSelect,
+    values.auto_target_keep_alive,
+    RESIDENCY_DEFAULTS.auto_target_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.manualKeepAliveInput,
+    els.manualKeepAliveUnitSelect,
+    values.manual_keep_alive,
+    RESIDENCY_DEFAULTS.manual_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.codeKeepAliveInput,
+    els.codeKeepAliveUnitSelect,
+    values.code_model_keep_alive,
+    RESIDENCY_DEFAULTS.code_model_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.heavyKeepAliveInput,
+    els.heavyKeepAliveUnitSelect,
+    values.heavy_model_keep_alive,
+    RESIDENCY_DEFAULTS.heavy_model_keep_alive,
+    profileDisabled,
+  );
+  setKeepAliveControl(
+    els.routerKeepAliveInput,
+    els.routerKeepAliveUnitSelect,
+    values.router_keep_alive,
+    RESIDENCY_DEFAULTS.router_keep_alive,
+    profileDisabled,
+  );
   if (els.saveModelSettingsButton) {
-    els.saveModelSettingsButton.disabled = disabled;
+    els.saveModelSettingsButton.disabled = profileDisabled || !modelName;
   }
   if (els.resetModelSettingsButton) {
-    els.resetModelSettingsButton.disabled = disabled;
+    els.resetModelSettingsButton.disabled = profileDisabled || !modelName;
   }
+  queueSyncAppSelects();
   renderAsrPipelineSettings();
+}
+
+function defaultKeepAliveForModel(modelName = "") {
+  const target = String(modelName || "").trim();
+  if (target === "qwen3:0.6b") return RESIDENCY_DEFAULTS.router_keep_alive;
+  if (target === "mistral-nemo:12b") return RESIDENCY_DEFAULTS.heavy_model_keep_alive;
+  if (["qwen2.5-coder:7b", "deepseek-coder:6.7b"].includes(target)) return RESIDENCY_DEFAULTS.code_model_keep_alive;
+  return RESIDENCY_DEFAULTS.manual_keep_alive;
+}
+
+function parseKeepAliveValue(value, fallback = "1m") {
+  const raw = String(value || fallback || "1m").trim().replace(",", ".");
+  const match = raw.match(/^(\d+(?:\.\d+)?)\s*([smh])?$/i);
+  if (!match) {
+    return parseKeepAliveValue(fallback && fallback !== raw ? fallback : "1m", "1m");
+  }
+  const amount = Math.max(0, Number(match[1]));
+  const unit = String(match[2] || "m").toLowerCase();
+  return {
+    amount: Number.isInteger(amount) ? String(amount) : String(amount).replace(/\.0+$/, ""),
+    unit: ["s", "m", "h"].includes(unit) ? unit : "m",
+  };
+}
+
+function collectKeepAliveValue() {
+  return collectKeepAliveFromControl(els.ollamaKeepAliveInput, els.ollamaKeepAliveUnitSelect);
+}
+
+function setKeepAliveControl(input, unitSelect, value, fallback = "1m", disabled = false) {
+  const keepAlive = parseKeepAliveValue(value, fallback);
+  if (input) {
+    input.disabled = disabled;
+    input.value = keepAlive.amount;
+  }
+  if (unitSelect) {
+    unitSelect.disabled = disabled;
+    unitSelect.value = keepAlive.unit;
+  }
+}
+
+function collectKeepAliveFromControl(input, unitSelect) {
+  const rawAmount = String(input?.value || "").trim().replace(",", ".");
+  if (!rawAmount) return null;
+  const amount = Math.max(0, Number(rawAmount));
+  if (!Number.isFinite(amount)) return null;
+  const unit = ["s", "m", "h"].includes(unitSelect?.value)
+    ? unitSelect.value
+    : "m";
+  if (amount === 0) return "0s";
+  const normalizedAmount = Number.isInteger(amount) ? String(amount) : String(amount).replace(/\.0+$/, "");
+  return `${normalizedAmount}${unit}`;
+}
+
+function collectResidencySettings() {
+  const maxResident = Number.parseInt(els.maxResidentTargetModelsSelect?.value || "", 10);
+  return {
+    max_resident_target_models: Number.isFinite(maxResident) ? Math.max(1, Math.min(5, maxResident)) : RESIDENCY_DEFAULTS.max_resident_target_models,
+    allow_light_with_heavy: Boolean(els.allowLightWithHeavyToggle?.checked),
+    single_large_target_model: Boolean(els.singleLargeTargetModelToggle?.checked),
+    preload_model_on_manual_select: Boolean(els.preloadManualSelectToggle?.checked),
+    auto_target_keep_alive: collectKeepAliveFromControl(els.autoTargetKeepAliveInput, els.autoTargetKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.auto_target_keep_alive,
+    manual_keep_alive: collectKeepAliveFromControl(els.manualKeepAliveInput, els.manualKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.manual_keep_alive,
+    code_model_keep_alive: collectKeepAliveFromControl(els.codeKeepAliveInput, els.codeKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.code_model_keep_alive,
+    heavy_model_keep_alive: collectKeepAliveFromControl(els.heavyKeepAliveInput, els.heavyKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.heavy_model_keep_alive,
+    router_keep_alive: collectKeepAliveFromControl(els.routerKeepAliveInput, els.routerKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.router_keep_alive,
+  };
 }
 
 function asrPipelineSourceObject(value) {
@@ -2510,22 +3064,61 @@ function getAsrPipelineStageSettings(stageKey) {
   });
 }
 
-function pipelineModelOptionsHtml(selectedValue = "") {
+function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
   const selected = String(selectedValue || "").trim();
   const selectedLlm = String(state.selectedLlmModel || "").trim();
-  const names = [];
-  if (selected && !names.includes(selected)) names.push(selected);
-  state.installedModels.forEach((item) => {
-    const name = String(item?.name || "").trim();
-    if (name && !names.includes(name)) names.push(name);
-  });
+  const installedNames = new Set(state.installedModels.map((item) => String(item?.name || "").trim()).filter(Boolean));
+  const stageRecommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey] || null;
   const fallbackLabel = selectedLlm ? `Текущая LLM (${selectedLlm})` : "Текущая LLM";
-  return [
-    `<option value=""${selected ? "" : " selected"}>${escapeHtml(fallbackLabel)}</option>`,
-    ...names.map((name) => (
-      `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}>${escapeHtml(name)}</option>`
-    )),
-  ].join("");
+  const options = [`<option value=""${selected ? "" : " selected"}>${escapeHtml(fallbackLabel)}</option>`];
+
+  if (selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)) {
+    const legacyLabel = ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected)
+      ? `${selected} (legacy, замените)`
+      : `${selected} (вне каталога)`;
+    options.push(`<option value="${escapeHtml(selected)}" selected>${escapeHtml(legacyLabel)}</option>`);
+  }
+
+  ASR_PIPELINE_MODEL_CATALOG.forEach((item) => {
+    const markers = [];
+    if (item.id === stageRecommendation?.primary) {
+      markers.push("реком.");
+    }
+    if (!installedNames.has(item.id)) {
+      markers.push("не загружена");
+    }
+    if (item.id === "qwen3:4b") {
+      markers.push("experimental");
+    }
+    if (item.category === "code" || item.id.includes("coder")) {
+      markers.push("code");
+    }
+    const label = `${item.id}${markers.length ? ` (${markers.join(", ")})` : ""}`;
+    options.push(
+      `<option value="${escapeHtml(item.id)}"${item.id === selected ? " selected" : ""}>${escapeHtml(label)}</option>`,
+    );
+  });
+
+  return options.join("");
+}
+
+function pipelineStageRecommendationHtml(stageKey, selectedModel = "") {
+  const recommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey];
+  if (!recommendation) return "";
+  const selected = String(selectedModel || "").trim();
+  const altText = recommendation.alternatives
+    .map((modelId) => modelId)
+    .join(" / ");
+  const tokenTarget = ASR_PIPELINE_DEFAULTS[stageKey]?.max_tokens;
+  const legacyWarning = selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)
+    ? ` Сейчас выбрана ${ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected) ? "legacy-модель" : "модель вне pipeline-каталога"} ${selected}; лучше заменить на ${recommendation.primary}.`
+    : "";
+  return `
+    <p class="pipeline-stage-row__recommendation">
+      <strong>Рекомендация:</strong> <span>${escapeHtml(recommendation.primary)}</span> — ${escapeHtml(recommendation.text)}
+      <em>Max tokens: ${escapeHtml(String(tokenTarget || "—"))}. Альтернатива: ${escapeHtml(altText)}.</em>${escapeHtml(legacyWarning)}
+    </p>
+  `;
 }
 
 function clearEnhancedSelectsIn(container) {
@@ -2584,7 +3177,7 @@ function renderAsrPipelineSettings() {
           <label class="field">
             <span class="field__label">Модель</span>
             <select class="field__control" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="model"${disabled ? " disabled" : ""}>
-              ${pipelineModelOptionsHtml(settings.model)}
+              ${pipelineModelOptionsHtml(settings.model, stage.key)}
             </select>
           </label>
           <label class="field">
@@ -2595,6 +3188,7 @@ function renderAsrPipelineSettings() {
             <span class="field__label">Max tokens</span>
             <input class="field__control" type="number" min="1" step="1" value="${escapeHtml(String(settings.max_tokens))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="max_tokens"${disabled ? " disabled" : ""} />
           </label>
+          ${pipelineStageRecommendationHtml(stage.key, settings.model)}
         </article>
       `;
     })
@@ -2664,17 +3258,28 @@ function renderWhisperControls() {
     .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
     .join("");
   els.whisperModelSelect.value = state.selectedWhisperModel;
-  els.promptPresetSelect.value = ["none", "ru", "en"].includes(state.selectedPromptPreset) ? state.selectedPromptPreset : "none";
+  els.promptPresetSelect.value = normalizePromptPreset(state.selectedPromptPreset);
+  if (els.asrBeamSizeInput) {
+    els.asrBeamSizeInput.value = String(normalizeAsrBeamSize(state.selectedAsrBeamSize));
+  }
+  if (els.asrThreadsInput) {
+    els.asrThreadsInput.value = String(normalizeAsrThreads(state.selectedAsrThreads));
+  }
 
   if (els.asrSettingsStatus) {
     const selectedItem = items.find((item) => item.name === state.selectedWhisperModel);
     const isInstalled = Boolean(selectedItem?.installed);
+    const isReady = isWhisperItemReady(selectedItem);
+    const warning = getWhisperItemWarnings(selectedItem)[0] || "";
+    const asrProfileSummary = `язык/prompt ${normalizePromptPreset(state.selectedPromptPreset)}, beam ${normalizeAsrBeamSize(state.selectedAsrBeamSize)}, threads ${normalizeAsrThreads(state.selectedAsrThreads)}`;
     setInlineStatus(
       els.asrSettingsStatus,
-      isInstalled
-        ? `ASR Studio профиля использует модель ${state.selectedWhisperModel}.`
-        : `Для ASR Studio профиля выбрана модель ${state.selectedWhisperModel}, но она ещё не загружена локально.`,
-      isInstalled ? "success" : "warning",
+      isReady
+        ? `ASR Studio профиля использует модель ${state.selectedWhisperModel}; ${asrProfileSummary}.`
+        : isInstalled
+          ? `ASR-модель ${state.selectedWhisperModel} скачана, но runtime не готов. ${warning || "Нажмите «Проверить», чтобы доскачать и собрать недостающие файлы."}`
+          : `Для ASR Studio профиля выбрана модель ${state.selectedWhisperModel}, но она ещё не загружена локально.`,
+      isReady ? "success" : "warning",
     );
   }
 
@@ -2697,6 +3302,9 @@ function renderAsrModelLibrary() {
   els.asrModelLibrary.innerHTML = items
     .map((item) => {
       const active = state.selectedWhisperModel === item.name;
+      const isInstalled = Boolean(item.installed);
+      const isReady = isWhisperItemReady(item);
+      const warnings = getWhisperItemWarnings(item);
       const task = item.active_task || state.asrDownloads.find((entry) => entry.model === item.name && ["pending", "running"].includes(entry.state));
       const update = state.asrUpdateChecks[item.name];
       let badge = '<span class="status-badge">Не загружена</span>';
@@ -2705,16 +3313,20 @@ function renderAsrModelLibrary() {
         badge = `<span class="status-badge status-badge--warning">${escapeHtml((task.state || "running") + percent)}</span>`;
       } else if (update?.status === "update_available") {
         badge = '<span class="status-badge status-badge--warning">Есть обновление</span>';
-      } else if (item.installed) {
-        badge = '<span class="status-badge status-badge--success">Установлена</span>';
+      } else if (isReady) {
+        badge = '<span class="status-badge status-badge--success">Готова</span>';
+      } else if (isInstalled) {
+        badge = '<span class="status-badge status-badge--warning">Требует CLI</span>';
       }
       const meta = [
         item.repo_id || null,
         item.local_revision ? `rev ${String(item.local_revision).slice(0, 8)}` : null,
       ].filter(Boolean).join(" • ");
-      const note = task?.message || update?.message || (item.installed ? "Whisper-модель готова к транскрибации." : "Сначала загрузите модель локально.");
+      const note = task?.message || update?.message || warnings[0] || (isReady ? "Whisper-модель готова к транскрибации." : "Нажмите «Проверить», чтобы скачать модель и собрать whisper-cli.");
+      const downloadLabel = isReady ? "Обновить" : isInstalled ? "Дособрать" : "Загрузить";
+      const forceDownload = isReady ? "1" : "0";
       return `
-        <article class="model-card${item.installed ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
+        <article class="model-card${isInstalled ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
           <div class="model-card__head">
             <div>
               <h5 class="model-card__title">${escapeHtml(item.name)}</h5>
@@ -2725,9 +3337,9 @@ function renderAsrModelLibrary() {
           <p class="model-card__note">${escapeHtml(note)}</p>
           <div class="button-row">
             <button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-asr-model-action="select" data-asr-model="${escapeHtml(item.name)}">Выбрать</button>
-            <button class="button button--ghost" type="button" data-asr-model-action="download" data-asr-model="${escapeHtml(item.name)}" data-asr-force="${item.installed ? "1" : "0"}">${item.installed ? "Обновить" : "Загрузить"}</button>
+            <button class="button button--ghost" type="button" data-asr-model-action="download" data-asr-model="${escapeHtml(item.name)}" data-asr-force="${forceDownload}">${downloadLabel}</button>
             <button class="button button--ghost" type="button" data-asr-model-action="check" data-asr-model="${escapeHtml(item.name)}">Проверить</button>
-            ${item.installed ? `<button class="button button--ghost" type="button" data-asr-model-action="delete" data-asr-model="${escapeHtml(item.name)}">Удалить</button>` : ""}
+            ${isInstalled ? `<button class="button button--ghost" type="button" data-asr-model-action="delete" data-asr-model="${escapeHtml(item.name)}">Удалить</button>` : ""}
           </div>
         </article>
       `;
@@ -3709,6 +4321,10 @@ function renderAsrTool() {
       : (names.includes(ASR_STUDIO_DEFAULT_MODEL) ? ASR_STUDIO_DEFAULT_MODEL : (names[0] || ASR_STUDIO_DEFAULT_MODEL));
   }
 
+  if (els.asrToolPromptPresetSelect) {
+    els.asrToolPromptPresetSelect.value = normalizePromptPreset(state.selectedPromptPreset);
+  }
+
   if (els.asrToolChooseFileButton) {
     els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
     els.asrToolChooseFileButton.textContent = state.asrToolIsTranscribing ? "Транскрибация…" : "Выбрать файл";
@@ -3919,8 +4535,10 @@ async function runAsrToolTranscription(file) {
     formData.append("file", file);
     formData.append("profile_id", String(state.activeProfileId));
     formData.append("model", state.selectedWhisperModel || ASR_STUDIO_DEFAULT_MODEL);
-    formData.append("prompt_preset", state.selectedPromptPreset || "none");
-    formData.append("language", "auto");
+    formData.append("prompt_preset", normalizePromptPreset(state.selectedPromptPreset));
+    formData.append("language", languageForPromptPreset(state.selectedPromptPreset));
+    formData.append("beam_size", String(normalizeAsrBeamSize(state.selectedAsrBeamSize)));
+    formData.append("threads", String(normalizeAsrThreads(state.selectedAsrThreads)));
     formData.append("store_result", "true");
     formData.append("origin", ASR_TOOL_ORIGIN);
 
@@ -3930,7 +4548,9 @@ async function runAsrToolTranscription(file) {
     state.asrToolStartController = null;
     state.asrToolTaskId = task?.id || null;
 
-    const result = await waitForVoiceTranscriptionTask(task?.id || "");
+    const result = await waitForVoiceTranscriptionTask(task?.id || "", {
+      timeoutMs: transcriptionTimeoutForFile(file),
+    });
     if (result?.cancelled) {
       setInlineStatus(els.asrToolStatus, "Транскрибация остановлена.", "warning");
       return;
@@ -4917,7 +5537,45 @@ function renderDatabaseMaintenance() {
   }
 }
 
+function renderAppRuntimeMaintenance() {
+  const busy = Boolean(state.appRuntimeBusy);
+  if (els.restartBackendButton) {
+    els.restartBackendButton.disabled = busy;
+    els.restartBackendButton.textContent = busy ? "Перезапуск…" : "Перезапустить backend";
+  }
+  if (els.shutdownButton) {
+    els.shutdownButton.disabled = busy;
+    els.shutdownButton.textContent = busy ? "Остановка…" : "Остановить приложение";
+  }
+}
+
+function setSettingsTab(tabName, { persist = true, render = true } = {}) {
+  const allowed = new Set(["profile", "models", "asr", "tts", "system"]);
+  const next = allowed.has(tabName) ? tabName : "profile";
+  state.activeSettingsTab = next;
+  if (persist) {
+    writeStored(STORAGE_KEYS.settingsTab, next);
+  }
+  if (render) {
+    renderSettingsTabs();
+  }
+}
+
+function renderSettingsTabs() {
+  const active = state.activeSettingsTab || "profile";
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    const selected = button.getAttribute("data-settings-tab") === active;
+    button.classList.toggle("settings-tab--active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+    button.setAttribute("tabindex", selected ? "0" : "-1");
+  });
+  document.querySelectorAll("[data-settings-tab-panel]").forEach((panel) => {
+    panel.hidden = panel.getAttribute("data-settings-tab-panel") !== active;
+  });
+}
+
 function renderSettings() {
+  renderSettingsTabs();
   renderProfileOptions();
   renderProfileManagement();
   renderSessionList();
@@ -4929,6 +5587,7 @@ function renderSettings() {
   renderDownloads();
   renderLanUrl();
   renderDatabaseMaintenance();
+  renderAppRuntimeMaintenance();
 
   if (els.modelsDirInput && !els.modelsDirInput.value && state.modelsDir) {
     els.modelsDirInput.value = state.modelsDir;
@@ -4972,6 +5631,7 @@ function openSettings() {
 }
 
 function openAsrPipelineSettings() {
+  setSettingsTab("asr", { render: false });
   setAsrPipelineSettingsExpanded(true, { render: false });
   openSettings();
   window.setTimeout(() => {
@@ -5175,6 +5835,10 @@ async function copyText(value) {
   await navigator.clipboard.writeText(value);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function loadHealth({ silent = false } = {}) {
   try {
     const data = await request("/health");
@@ -5200,21 +5864,31 @@ async function loadModels({ silent = false } = {}) {
   try {
     const data = await request("/models");
     state.installedModels = Array.isArray(data?.installed) ? data.installed : [];
-    state.recommendedModels = Array.isArray(data?.recommended) ? data.recommended : [];
+    state.recommendedModels = Array.isArray(data?.catalog)
+      ? data.catalog
+      : (Array.isArray(data?.recommended) ? data.recommended : []);
+    state.utilityModels = Array.isArray(data?.utility) ? data.utility : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     state.chatModelsError = data?.error || null;
     const savedModel = readStored(STORAGE_KEYS.llmModel, "");
-    const installedNames = new Set(state.installedModels.map((item) => item.name));
-    if (state.selectedLlmModel && !installedNames.has(state.selectedLlmModel) && !hasActiveDownload(state.selectedLlmModel)) {
+    const catalogIds = new Set(getCatalogModels().map((item) => getModelId(item)));
+    catalogIds.add(AUTO_MODEL_ID);
+    catalogIds.add(LOCAL_CALCULATOR_MODEL_ID);
+    const installedCatalogModel = getCatalogModels().find((item) => (
+      state.installedModels.some((installed) => installed.name === getModelId(item))
+    ));
+    if (state.selectedLlmModel && !catalogIds.has(state.selectedLlmModel)) {
       state.selectedLlmModel = "";
     }
     if (!state.selectedLlmModel) {
-      state.selectedLlmModel = savedModel && installedNames.has(savedModel)
+      state.selectedLlmModel = savedModel && catalogIds.has(savedModel)
         ? savedModel
-        : state.installedModels[0]?.name || "";
+        : getModelId(installedCatalogModel) || "";
     }
     if (!state.selectedLlmModel) {
       writeStored(STORAGE_KEYS.llmModel, "");
+    } else {
+      writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
     }
     renderModelControls();
     renderDownloads();
@@ -5464,6 +6138,33 @@ async function saveModelSettingsFlow() {
 
   try {
     const memTurnsValue = parseOptionalNumber(els.memTurnsInput?.value, "int");
+    const residencySettings = collectResidencySettings();
+    const currentResidentLimit = Number(
+      state.modelSettingsState?.overrides?.max_resident_target_models
+      ?? state.modelSettingsState?.effective?.max_resident_target_models
+      ?? RESIDENCY_DEFAULTS.max_resident_target_models,
+    );
+    if (
+      residencySettings.max_resident_target_models >= 4
+      && residencySettings.max_resident_target_models !== currentResidentLimit
+    ) {
+      const approved = await openConfirmDialog({
+        eyebrow: "Ollama memory",
+        title: "Высокий лимит моделей в памяти",
+        message: "Вы выбрали высокий лимит моделей в памяти.\n\nНа Mac с 16 GB RAM это может привести к повышенному расходу памяти, swap, нагреву, замедлению системы и долгой выгрузке моделей из Ollama.\n\nРекомендуемое значение для MBP M1 Pro 16GB: 2 модели.\n\nПродолжить?",
+        confirmLabel: "Подтвердить",
+        cancelLabel: "Отмена",
+        returnFocus: els.maxResidentTargetModelsSelect,
+      });
+      if (!approved) {
+        if (els.maxResidentTargetModelsSelect) {
+          els.maxResidentTargetModelsSelect.value = String(currentResidentLimit || RESIDENCY_DEFAULTS.max_resident_target_models);
+          queueSyncAppSelects();
+        }
+        setInlineStatus(els.modelSettingsStatus, "Высокий лимит не сохранён.", "warning");
+        return;
+      }
+    }
     const memTurnsWarning = memTurnsValue && memTurnsValue > 12
       ? "Большое значение памяти увеличивает размер prompt, замедляет ответы и может ухудшить качество. Для длинных диалогов лучше использовать summary memory."
       : "";
@@ -5480,14 +6181,26 @@ async function saveModelSettingsFlow() {
         temperature: parseOptionalNumber(els.temperatureInput?.value, "float"),
         max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
-        mem_turns: memTurnsValue,
+        ollama_keep_alive: collectKeepAliveValue(),
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
-    renderModelSettings();
+    const profileSettingsPatch = {
+      ...residencySettings,
+    };
+    if (memTurnsValue !== null) {
+      profileSettingsPatch.mem_turns = memTurnsValue;
+    }
+    if (Object.keys(profileSettingsPatch).length) {
+      const updatedProfile = await saveActiveProfilePreferences({ settings: profileSettingsPatch });
+      if (!updatedProfile) {
+        throw new Error("не удалось сохранить настройки профиля");
+      }
+    }
+    await refreshModelSettings({ silent: true });
     setInlineStatus(
       els.modelSettingsStatus,
-      memTurnsWarning ? `Настройки модели сохранены. ${memTurnsWarning}` : "Настройки модели сохранены.",
+      memTurnsWarning ? `Настройки сохранены. ${memTurnsWarning}` : "Настройки сохранены.",
       memTurnsWarning ? "warning" : "success",
     );
   } catch (error) {
@@ -5528,12 +6241,12 @@ async function resetAsrPipelineSettingsFlow() {
     const data = await request("/model_settings", {
       method: "POST",
       body: buildModelSettingsPayload({
-        pipeline: null,
+        pipeline: ASR_PIPELINE_DEFAULTS,
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
-    setInlineStatus(els.asrPipelineSettingsStatus, "Настройки стадий сброшены.", "success");
+    setInlineStatus(els.asrPipelineSettingsStatus, "Настройки стадий сброшены к рекомендациям.", "success");
   } catch (error) {
     setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сбросить стадии: ${error.message || error}`, "error");
   }
@@ -5547,6 +6260,7 @@ async function resetModelSettingsFlow() {
   }
 
   try {
+    const defaultMemTurns = parseOptionalNumber(state.modelSettingsState?.defaults?.mem_turns, "int") || 6;
     const data = await request("/model_settings/reset_to_defaults", {
       method: "POST",
       body: {
@@ -5555,8 +6269,14 @@ async function resetModelSettingsFlow() {
       },
     });
     state.modelSettingsState = data || state.modelSettingsState;
+    await saveActiveProfilePreferences({
+      settings: {
+        mem_turns: defaultMemTurns,
+        ...RESIDENCY_DEFAULTS,
+      },
+    });
     await refreshModelSettings({ silent: true });
-    setInlineStatus(els.modelSettingsStatus, "Настройки модели сброшены.", "success");
+    setInlineStatus(els.modelSettingsStatus, "Настройки модели, память диалога и resident-политика сброшены.", "success");
   } catch (error) {
     setInlineStatus(els.modelSettingsStatus, `Не удалось сбросить настройки: ${error.message || error}`, "error");
   }
@@ -5659,14 +6379,35 @@ async function createSessionForCurrentContext() {
 async function ensureModelInstalled(modelName) {
   const target = String(modelName || "").trim();
   if (!target) {
-    setFooter("Нет доступных моделей. Загрузите модель и повторите отправку.", "warning");
+    setFooter("Модель не выбрана. Выберите модель и повторите отправку.", "warning");
     return false;
+  }
+  if (target === AUTO_MODEL_ID) {
+    return true;
+  }
+  if (target === LOCAL_CALCULATOR_MODEL_ID) {
+    return true;
   }
   if (state.installedModels.some((item) => item.name === target)) {
     return true;
   }
   setFooter("Модель не загружена. Загрузите модель и повторите отправку.", "warning");
   return false;
+}
+
+function autoRouterNotice(task) {
+  const explicit = String(task?.router_notice || "").trim();
+  if (explicit) return explicit;
+  const settings = task?.used_settings || {};
+  if (settings.model_selection_mode !== "auto") return "";
+  const target = settings.router_target_model === "__local_calculator__"
+    ? "Local Calculator"
+    : getModelTitle(getCatalogModelById(settings.router_target_model) || { id: settings.router_target_model });
+  const reason = settings.router_reason || "тип задачи определён автоматически.";
+  if (settings.router_fallback) {
+    return reason || `Auto использовал fallback: ${target}.`;
+  }
+  return `Auto выбрал: ${target} — ${reason}`;
 }
 
 async function sendPromptText(rawQuery, { clearInput = false } = {}) {
@@ -5715,21 +6456,26 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     state.chatTaskStartController = null;
     state.chatTaskId = task?.id || null;
     const nextSessionId = task?.session_id || state.currentSessionId;
-    state.selectedLlmModel = task?.model_name || selectedModel;
+    state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
     writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
+    const startRouterNotice = autoRouterNotice(task);
 
     if (nextSessionId) {
       await loadSessions({ preferredSessionId: nextSessionId });
     }
 
     if (String(task?.state || "") === "completed") {
-      setFooter("Ответ готов.", "success");
+      setFooter(startRouterNotice || "Ответ готов.", "success");
       return;
     }
 
     appendAssistantThinkingPlaceholder();
+    if (startRouterNotice) {
+      setFooter(startRouterNotice, "success");
+    }
     const completedTask = await waitForChatTask(task?.id || "");
     state.chatTaskId = null;
+    const completedRouterNotice = autoRouterNotice(completedTask) || startRouterNotice;
 
     if (String(completedTask?.state || "") === "cancelled") {
       removeAssistantThinkingPlaceholder();
@@ -5743,7 +6489,7 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     if (nextSessionId) {
       await loadSessions({ preferredSessionId: nextSessionId });
     }
-    setFooter("Ответ готов.", "success");
+    setFooter(completedRouterNotice || "Ответ готов.", "success");
   } catch (error) {
     if (isAbortError(error)) {
       removeAssistantThinkingPlaceholder();
@@ -5789,10 +6535,21 @@ async function handleTranscription(file) {
     formData.append("profile_id", String(state.activeProfileId));
     formData.append("session_id", sessionId);
     formData.append("model", getSelectedChatWhisperModel() || "small");
-    formData.append("prompt_preset", state.selectedPromptPreset || "none");
-    formData.append("language", "auto");
+    formData.append("prompt_preset", normalizePromptPreset(state.selectedPromptPreset));
+    formData.append("language", languageForPromptPreset(state.selectedPromptPreset));
+    formData.append("beam_size", String(normalizeAsrBeamSize(state.selectedAsrBeamSize)));
+    formData.append("threads", String(normalizeAsrThreads(state.selectedAsrThreads)));
 
-    const data = await request("/transcribe", { method: "POST", body: formData });
+    formData.append("store_result", "true");
+
+    const task = await request("/transcribe/tasks", { method: "POST", body: formData });
+    const data = await waitForVoiceTranscriptionTask(task?.id || "", {
+      timeoutMs: transcriptionTimeoutForFile(file),
+    });
+    if (data?.cancelled) {
+      setFooter("Транскрибация остановлена.", "warning");
+      return;
+    }
     await loadSessions({ preferredSessionId: sessionId });
     setFooter(
       `Транскрипт прикреплён: ${file.name} • ${(data?.text || "").length} символов`,
@@ -5811,7 +6568,7 @@ async function handleTranscription(file) {
   }
 }
 
-async function startModelDownload(modelName) {
+async function startModelDownload(modelName, { mode = "download" } = {}) {
   const target = (modelName || "").trim();
   if (!target) {
     setFooter("Укажите модель Ollama для загрузки.", "warning");
@@ -5822,23 +6579,26 @@ async function startModelDownload(modelName) {
     return;
   }
 
+  const isUpdate = mode === "update";
   const confirmed = await openConfirmDialog({
-    eyebrow: "Загрузка модели",
-    title: "Загрузить модель?",
-    message: `Будет запущена загрузка Ollama-модели: ${target}`,
-    confirmLabel: "Загрузить",
+    eyebrow: isUpdate ? "Обновление модели" : "Загрузка модели",
+    title: isUpdate ? "Обновить модель?" : "Загрузить модель?",
+    message: `Будет запущен ollama pull для модели: ${target}`,
+    confirmLabel: isUpdate ? "Обновить" : "Загрузить",
   });
   if (!confirmed) return;
 
   try {
     await request("/models/pull", { method: "POST", body: { model: target } });
-    state.selectedLlmModel = target;
-    writeStored(STORAGE_KEYS.llmModel, target);
+    if (getCatalogModelById(target)) {
+      state.selectedLlmModel = target;
+      writeStored(STORAGE_KEYS.llmModel, target);
+    }
     await loadModels();
     renderSettings();
-    setFooter(`Загрузка модели ${target} запущена.`, "success");
+    setFooter(`${isUpdate ? "Обновление" : "Загрузка"} модели ${target} запущено.`, "success");
   } catch (error) {
-    setFooter(`Не удалось запустить загрузку модели: ${error.message || error}`, "error");
+    setFooter(`Не удалось запустить ${isUpdate ? "обновление" : "загрузку"} модели: ${error.message || error}`, "error");
   }
 }
 
@@ -5881,7 +6641,7 @@ async function prepareAsrModel(modelName, { force = false } = {}) {
     });
     await loadWhisperModels({ silent: true });
     renderDownloads();
-    setFooter(`${force ? "Обновление" : "Загрузка"} ASR-модели ${target} запущено.`, "success");
+    setFooter(`${force ? "Обновление" : "Подготовка"} ASR-модели ${target} запущена.`, "success");
   } catch (error) {
     setFooter(`Не удалось подготовить ASR-модель: ${error.message || error}`, "error");
   }
@@ -5894,6 +6654,11 @@ async function checkAsrModelUpdate(modelName) {
     const result = await request(`/whisper/models/update-check/${encodeURIComponent(target)}`);
     state.asrUpdateChecks = { ...state.asrUpdateChecks, [target]: result };
     renderWhisperControls();
+    if (result?.prepare_required) {
+      setFooter(result?.message || `ASR-модель ${target} требует подготовки. Запускаю загрузку/сборку.`, "warning");
+      await prepareAsrModel(target, { force: false });
+      return;
+    }
     const status = String(result?.status || "");
     const tone = status === "update_available" ? "warning" : status === "up_to_date" ? "success" : "warning";
     setFooter(result?.message || `Статус модели ${target} обновлён.`, tone);
@@ -6132,8 +6897,83 @@ function isExpectedShutdownError(error) {
     || raw.includes("the network connection was lost");
 }
 
+async function waitForBackendRestart() {
+  await sleep(900);
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    try {
+      await request("/health");
+      await loadHealth({ silent: true });
+      return true;
+    } catch {
+      state.serverHealthy = false;
+      setHealthBadge("Перезапуск…", "warning");
+    }
+    await sleep(500);
+  }
+  return false;
+}
+
+async function restartBackendRuntime() {
+  const approved = await openConfirmDialog({
+    eyebrow: "Приложение",
+    title: "Перезапустить backend?",
+    message: "Backend LocalGPT будет перезапущен. Текущие генерации, транскрибации и TTS-задачи будут остановлены. Страница попробует восстановить соединение автоматически.",
+    confirmLabel: "Перезапустить",
+    cancelLabel: "Отмена",
+    returnFocus: els.restartBackendButton,
+  });
+  if (!approved) return;
+
+  state.appRuntimeBusy = true;
+  renderAppRuntimeMaintenance();
+  setInlineStatus(els.appRuntimeStatus, "Перезапуск backend…", "warning");
+  setFooter("Перезапуск backend…", "warning");
+  setHealthBadge("Перезапуск…", "warning");
+
+  try {
+    await request("/runtime/restart", { method: "POST", body: {} });
+  } catch (error) {
+    if (!isExpectedShutdownError(error)) {
+      setInlineStatus(els.appRuntimeStatus, `Не удалось запустить перезапуск: ${error.message || error}`, "error");
+      setFooter(`Не удалось перезапустить backend: ${error.message || error}`, "error");
+      state.appRuntimeBusy = false;
+      renderAppRuntimeMaintenance();
+      return;
+    }
+  }
+
+  const ok = await waitForBackendRestart();
+  state.appRuntimeBusy = false;
+  renderAppRuntimeMaintenance();
+  if (ok) {
+    setInlineStatus(els.appRuntimeStatus, "Backend перезапущен.", "success");
+    setFooter("Backend перезапущен.", "success");
+    await Promise.all([
+      loadModels({ silent: true }),
+      loadWhisperModels({ silent: true }),
+      loadTtsSettings({ silent: true }),
+      loadProfiles(),
+    ]);
+    return;
+  }
+  setInlineStatus(els.appRuntimeStatus, "Backend не ответил после перезапуска. Проверьте launcher или терминал.", "error");
+  setFooter("Backend не ответил после перезапуска.", "error");
+}
+
 async function shutdownRuntime() {
-  if (!window.confirm("Остановить backend и Caddy?")) return;
+  const approved = await openConfirmDialog({
+    eyebrow: "Приложение",
+    title: "Остановить приложение?",
+    message: "Backend и Caddy будут остановлены. После этого текущая страница потеряет связь с API; для нового старта понадобится launcher или ручной запуск.",
+    confirmLabel: "Остановить",
+    cancelLabel: "Отмена",
+    returnFocus: els.shutdownButton,
+  });
+  if (!approved) return;
+
+  state.appRuntimeBusy = true;
+  renderAppRuntimeMaintenance();
+  setInlineStatus(els.appRuntimeStatus, "Остановка приложения…", "warning");
   try {
     await request("/runtime/shutdown", { method: "POST", body: {} });
     setFooter("Остановка запущена. Для нового старта снова откройте launcher.", "warning");
@@ -6145,6 +6985,9 @@ async function shutdownRuntime() {
       return;
     }
     setFooter(`Не удалось остановить приложение: ${error.message || error}`, "error");
+    setInlineStatus(els.appRuntimeStatus, `Не удалось остановить: ${error.message || error}`, "error");
+    state.appRuntimeBusy = false;
+    renderAppRuntimeMaintenance();
   }
 }
 
@@ -6357,7 +7200,7 @@ function bindEvents() {
     if (!updated) return;
     closeVoiceModelMenu();
     if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-      setFooter(`Для профиля выбрана модель диктовки ${modelName}, но она ещё не загружена локально.`, "warning");
+      setFooter(`Для профиля выбрана модель диктовки ${modelName}, но она ещё не готова локально.`, "warning");
       return;
     }
     setFooter(`Модель диктовки профиля: ${modelName}`, "success");
@@ -6450,6 +7293,11 @@ function bindEvents() {
   els.themeToggleButton?.addEventListener("click", () => toggleTheme());
   els.chatModelNoticeSettingsButton?.addEventListener("click", () => openSettings());
   els.closeSettingsButton?.addEventListener("click", () => closeSettings());
+  els.settingsTabList?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-settings-tab]") : null;
+    if (!button) return;
+    setSettingsTab(button.getAttribute("data-settings-tab") || "profile");
+  });
   els.settingsBackdrop?.addEventListener("click", (event) => {
     if (event.target === els.settingsBackdrop) {
       closeSettings();
@@ -6503,6 +7351,7 @@ function bindEvents() {
   els.copyLanUrlButton?.addEventListener("click", async () => copyLanUrl());
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
   els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
+  els.restartBackendButton?.addEventListener("click", async () => restartBackendRuntime());
   els.shutdownButton?.addEventListener("click", async () => shutdownRuntime());
   els.cleanupDatabaseButton?.addEventListener("click", async () => cleanupDatabaseGarbage());
   els.resetDatabaseButton?.addEventListener("click", async () => resetDatabaseFully());
@@ -6528,6 +7377,9 @@ function bindEvents() {
   });
 
   els.quickModelMenu?.addEventListener("click", async (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
+      return;
+    }
     const button = event.target.closest("[data-quick-model]");
     if (!button) return;
     const modelName = button.dataset.quickModel || "";
@@ -6545,16 +7397,33 @@ function bindEvents() {
     const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
     if (!updated) return;
     if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не готова локально.`, "warning");
       return;
     }
     setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
   });
 
   els.promptPresetSelect?.addEventListener("change", async () => {
-    const promptPreset = els.promptPresetSelect.value || "none";
+    const promptPreset = normalizePromptPreset(els.promptPresetSelect.value);
     const updated = await saveActiveProfilePreferences({ asr: { prompt_preset: promptPreset } });
     if (!updated) return;
+    setFooter(`Профиль обновлён: ASR язык/prompt ${promptPreset}`, "success");
+  });
+
+  els.asrBeamSizeInput?.addEventListener("change", async () => {
+    const beamSize = normalizeAsrBeamSize(els.asrBeamSizeInput.value);
+    els.asrBeamSizeInput.value = String(beamSize);
+    const updated = await saveActiveProfilePreferences({ asr: { beam_size: beamSize } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: ASR beam ${beamSize}`, "success");
+  });
+
+  els.asrThreadsInput?.addEventListener("change", async () => {
+    const threads = normalizeAsrThreads(els.asrThreadsInput.value);
+    els.asrThreadsInput.value = String(threads);
+    const updated = await saveActiveProfilePreferences({ asr: { threads } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: ASR threads ${threads}`, "success");
   });
 
   els.ttsVoiceSelect?.addEventListener("change", async () => {
@@ -6593,10 +7462,16 @@ function bindEvents() {
     const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
     if (!updated) return;
     if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+      setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не готова локально.`, "warning");
       return;
     }
     setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
+  });
+  els.asrToolPromptPresetSelect?.addEventListener("change", async () => {
+    const promptPreset = normalizePromptPreset(els.asrToolPromptPresetSelect.value);
+    const updated = await saveActiveProfilePreferences({ asr: { prompt_preset: promptPreset } });
+    if (!updated) return;
+    setFooter(`Профиль обновлён: ASR язык/prompt ${promptPreset}`, "success");
   });
   els.asrToolOutput?.addEventListener("input", () => {
     state.asrToolPipelineRun = null;
@@ -6867,10 +7742,22 @@ function bindEvents() {
   });
 
   els.recommendedModels?.addEventListener("click", async (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
+      return;
+    }
     const button = event.target.closest("[data-recommended-model]");
     if (!button) return;
     const modelName = button.dataset.recommendedModel || "";
+    const isUtility = button.dataset.utilityModel === "1";
     const isInstalled = state.installedModels.some((item) => item.name === modelName);
+    if (isUtility) {
+      if (!isInstalled) {
+        await startModelDownload(modelName);
+        return;
+      }
+      setFooter(`${button.querySelector(".chip-button__label")?.textContent || modelName} используется как служебная router-модель. Для чата выберите Auto / Smart Router.`, "info");
+      return;
+    }
     if (isInstalled) {
       await applySelectedLlmModel(modelName);
       return;
@@ -6892,6 +7779,10 @@ function bindEvents() {
       await startModelDownload(modelName);
       return;
     }
+    if (action === "update") {
+      await startModelDownload(modelName, { mode: "update" });
+      return;
+    }
     if (action === "delete") {
       await deleteCurrentModel(modelName);
     }
@@ -6907,7 +7798,7 @@ function bindEvents() {
       const updated = await saveActiveProfilePreferences({ asr: { studio_model: modelName } });
       if (!updated) return;
       if (state.asrModels.length && !isWhisperModelInstalled(modelName)) {
-        setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не загружена локально.`, "warning");
+        setFooter(`Для профиля выбрана ASR-модель ${modelName}, но она ещё не готова локально.`, "warning");
         return;
       }
       setFooter(`Профиль обновлён: ASR Studio использует ${modelName}`, "success");
@@ -6966,6 +7857,34 @@ function bindEvents() {
     await saveModelsDir(true);
   });
 
+  document.addEventListener("pointerover", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (!target || target === activeTooltipTarget) return;
+    scheduleTooltip(target);
+  });
+
+  document.addEventListener("pointerout", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (!target) return;
+    if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) return;
+    hideTooltip();
+  });
+
+  document.addEventListener("focusin", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (!target) return;
+    scheduleTooltip(target);
+  });
+
+  document.addEventListener("focusout", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (target) {
+      hideTooltip();
+    }
+  });
+
+  document.addEventListener("scroll", hideTooltip, true);
+
   window.addEventListener("keydown", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b" && !event.altKey && !isTypingTarget(target)) {
@@ -6974,6 +7893,7 @@ function bindEvents() {
       return;
     }
     if (event.key === "Escape") {
+      hideTooltip();
       const appSelectOpen = Array.from(state.appSelects.values()).some((entry) => entry.wrapper.classList.contains("app-select--open"));
       if (appSelectOpen) {
         closeAppSelect();

@@ -77,7 +77,9 @@ def _default_profile_preferences() -> dict[str, Any]:
         },
         "asr": {
             "studio_model": config.ASR_STUDIO_DEFAULT_MODEL,
-            "prompt_preset": "none",
+            "prompt_preset": "ru",
+            "beam_size": config.SETTINGS.whisper_beam_size,
+            "threads": config.SETTINGS.whisper_cpp_threads,
         },
         "tts": {
             "provider": config.SETTINGS.tts_default_provider,
@@ -176,6 +178,35 @@ def _migrate_whisper_cpp_dictation_default(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_asr_prompt_none_to_auto(conn: sqlite3.Connection) -> None:
+    migration_key = "migration_asr_prompt_none_to_auto"
+    existing = conn.execute("SELECT value FROM app_settings WHERE key = ?", (migration_key,)).fetchone()
+    if existing:
+        return
+
+    rows = conn.execute("SELECT id, preferences_json FROM profiles").fetchall()
+    now = _utcnow()
+    for row in rows:
+        raw_preferences = _from_json(row["preferences_json"], {})
+        raw_preferences = raw_preferences if isinstance(raw_preferences, dict) else {}
+        raw_asr = raw_preferences.get("asr") if isinstance(raw_preferences.get("asr"), dict) else {}
+        current_prompt = str(raw_asr.get("prompt_preset") or "").strip().lower()
+        if current_prompt not in {"", "none"}:
+            continue
+
+        preferences = _normalize_profile_preferences(raw_preferences)
+        preferences.setdefault("asr", {})["prompt_preset"] = "auto"
+        conn.execute(
+            "UPDATE profiles SET preferences_json = ?, updated_at = ? WHERE id = ?",
+            (_to_json(preferences), now, row["id"]),
+        )
+
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        (migration_key, "1", now),
+    )
+
+
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     cursor = conn.execute(f"PRAGMA table_info({table});")
     columns = {row[1] for row in cursor.fetchall()}
@@ -251,6 +282,7 @@ def init_db() -> None:
                 max_tokens INTEGER NULL,
                 num_ctx INTEGER NULL,
                 mem_turns INTEGER NULL,
+                ollama_keep_alive TEXT NULL,
                 pipeline_enabled INTEGER NULL,
                 summary_memory_enabled INTEGER NULL,
                 rag_enabled INTEGER NULL,
@@ -374,6 +406,7 @@ def init_db() -> None:
         _ensure_column(conn, "chat_sessions", "role", "ALTER TABLE chat_sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'free';")
         _ensure_column(conn, "profiles", "preferences_json", "ALTER TABLE profiles ADD COLUMN preferences_json TEXT NULL;")
         _ensure_column(conn, "model_settings", "pipeline_enabled", "ALTER TABLE model_settings ADD COLUMN pipeline_enabled INTEGER NULL;")
+        _ensure_column(conn, "model_settings", "ollama_keep_alive", "ALTER TABLE model_settings ADD COLUMN ollama_keep_alive TEXT NULL;")
         _ensure_column(conn, "model_settings", "summary_memory_enabled", "ALTER TABLE model_settings ADD COLUMN summary_memory_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "rag_enabled", "ALTER TABLE model_settings ADD COLUMN rag_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "default_pipeline_preset", "ALTER TABLE model_settings ADD COLUMN default_pipeline_preset TEXT NULL;")
@@ -392,6 +425,7 @@ def init_db() -> None:
         )
         _migrate_asr_studio_default(conn)
         _migrate_whisper_cpp_dictation_default(conn)
+        _migrate_asr_prompt_none_to_auto(conn)
         conn.commit()
     ensure_default_profile()
 
@@ -550,7 +584,7 @@ def get_session(session_id: str) -> dict[str, Any] | None:
 
 
 def create_session(
-    profile_id: int, title: str, model_name: str, session_id: str | None = None, role: str = "free"
+    profile_id: int, title: str, model_name: str, session_id: str | None = None, role: str = "chat"
 ) -> dict[str, Any]:
     if not title.strip():
         raise ValueError("session_title_required")
@@ -875,7 +909,7 @@ def get_model_settings(profile_id: int, model_name: str) -> dict[str, Any] | Non
     with closing(_connect()) as conn:
         row = conn.execute(
             """
-            SELECT id, profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns,
+            SELECT id, profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns, ollama_keep_alive,
                    pipeline_enabled, summary_memory_enabled, rag_enabled,
                    default_pipeline_preset, max_transcript_chars, max_context_chars,
                    summary_memory_limit, rag_top_k, rag_max_context_chars, pipeline_json,
@@ -899,6 +933,7 @@ def upsert_model_settings(
     max_tokens: int | None = None,
     num_ctx: int | None = None,
     mem_turns: int | None = None,
+    ollama_keep_alive: str | None = None,
     pipeline_enabled: bool | None = None,
     summary_memory_enabled: bool | None = None,
     rag_enabled: bool | None = None,
@@ -921,7 +956,7 @@ def upsert_model_settings(
             conn.execute(
                 """
                 UPDATE model_settings
-                SET temperature = ?, max_tokens = ?, num_ctx = ?, mem_turns = ?,
+                SET temperature = ?, max_tokens = ?, num_ctx = ?, mem_turns = ?, ollama_keep_alive = ?,
                     pipeline_enabled = ?, summary_memory_enabled = ?, rag_enabled = ?,
                     default_pipeline_preset = ?, max_transcript_chars = ?, max_context_chars = ?,
                     summary_memory_limit = ?, rag_top_k = ?, rag_max_context_chars = ?,
@@ -933,6 +968,7 @@ def upsert_model_settings(
                     max_tokens,
                     num_ctx,
                     mem_turns,
+                    ollama_keep_alive,
                     pipeline_enabled_db,
                     summary_memory_enabled_db,
                     rag_enabled_db,
@@ -952,13 +988,13 @@ def upsert_model_settings(
             conn.execute(
                 """
                 INSERT INTO model_settings (
-                    profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns,
+                    profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns, ollama_keep_alive,
                     pipeline_enabled, summary_memory_enabled, rag_enabled,
                     default_pipeline_preset, max_transcript_chars, max_context_chars,
                     summary_memory_limit, rag_top_k, rag_max_context_chars,
                     pipeline_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_id,
@@ -967,6 +1003,7 @@ def upsert_model_settings(
                     max_tokens,
                     num_ctx,
                     mem_turns,
+                    ollama_keep_alive,
                     pipeline_enabled_db,
                     summary_memory_enabled_db,
                     rag_enabled_db,
@@ -1002,7 +1039,7 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
         "temperature",
         "max_tokens",
         "num_ctx",
-        "mem_turns",
+        "ollama_keep_alive",
         "pipeline_enabled",
         "summary_memory_enabled",
         "rag_enabled",
@@ -1027,12 +1064,28 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     effective["num_ctx_requested"] = effective.get("num_ctx")
     effective["num_ctx_applied"] = False
     effective["num_ctx_apply_method"] = "openai_compatible_not_supported"
-    settings_keys = tuple([*keys, "pipeline"])
+    profile_runtime_keys = (
+        "mem_turns",
+        "max_resident_target_models",
+        "allow_light_with_heavy",
+        "single_large_target_model",
+        "preload_model_on_manual_select",
+        "auto_target_keep_alive",
+        "manual_keep_alive",
+        "code_model_keep_alive",
+        "heavy_model_keep_alive",
+        "router_keep_alive",
+    )
+    settings_keys = tuple([*keys, *profile_runtime_keys, "pipeline"])
+    returned_overrides = {key: overrides.get(key) for key in settings_keys}
+    for key in profile_runtime_keys:
+        if key in profile_settings:
+            returned_overrides[key] = profile_settings.get(key)
     return {
         "profile_id": profile_id,
         "model_name": model_name,
         "effective": effective,
-        "overrides": {key: overrides.get(key) for key in settings_keys},
+        "overrides": returned_overrides,
         "defaults": {key: defaults.get(key) for key in settings_keys},
     }
 

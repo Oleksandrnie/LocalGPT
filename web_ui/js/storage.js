@@ -53,7 +53,7 @@ export function setSavedModel(model) {
   safeSet(STORAGE_KEYS.whisperModel, model);
 }
 
-export function getSavedPromptPreset(defaultValue = "none") {
+export function getSavedPromptPreset(defaultValue = "ru") {
   const raw = safeGet(STORAGE_KEYS.whisperPromptPreset);
   return raw || defaultValue;
 }

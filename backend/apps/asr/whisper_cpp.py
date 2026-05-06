@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -62,17 +63,64 @@ def _binary_path() -> str:
     return resolved or binary
 
 
+def whisper_cpp_binary_path() -> str:
+    return _binary_path()
+
+
+def is_whisper_cpp_binary_ready() -> bool:
+    binary = _binary_path()
+    path = Path(binary).expanduser()
+    if path.is_absolute() or len(path.parts) > 1:
+        return path.exists() and os.access(path, os.X_OK)
+
+    resolved = shutil.which(binary)
+    return bool(resolved and os.access(resolved, os.X_OK))
+
+
+def whisper_cpp_coreml_path(model_name: str) -> Path:
+    return whisper_cpp_model_path(model_name).parent / f"ggml-{model_name}-encoder.mlmodelc"
+
+
+def is_whisper_cpp_coreml_ready(model_name: str) -> bool:
+    if not config.SETTINGS.whisper_cpp_download_coreml:
+        return True
+    return whisper_cpp_coreml_path(model_name).is_dir()
+
+
+def whisper_cpp_runtime_status(model_name: str) -> dict[str, Any]:
+    model_path = whisper_cpp_model_path(model_name)
+    binary_path = whisper_cpp_binary_path()
+    coreml_path = whisper_cpp_coreml_path(model_name)
+    model_ready = model_path.exists()
+    binary_ready = is_whisper_cpp_binary_ready()
+    coreml_required = bool(config.SETTINGS.whisper_cpp_download_coreml)
+    coreml_ready = is_whisper_cpp_coreml_ready(model_name)
+    warnings: list[str] = []
+
+    if not model_ready:
+        warnings.append(f"GGML-модель не найдена: {model_path}")
+    if not binary_ready:
+        warnings.append(f"whisper-cli не найден или не исполняемый: {binary_path}")
+    if coreml_required and not coreml_ready:
+        warnings.append(f"CoreML encoder не найден: {coreml_path}")
+
+    return {
+        "ready": model_ready and binary_ready,
+        "model_installed": model_ready,
+        "model_path": str(model_path),
+        "runtime_installed": binary_ready,
+        "runtime_binary": str(binary_path),
+        "coreml_required": coreml_required,
+        "coreml_installed": coreml_ready,
+        "coreml_path": str(coreml_path),
+        "warnings": warnings,
+    }
+
+
 def is_whisper_cpp_runtime_ready(model_name: str) -> bool:
     if not is_whisper_cpp_model_ready(model_name):
         return False
-
-    binary = config.SETTINGS.whisper_cpp_binary or "whisper-cli"
-    expanded = Path(binary).expanduser()
-    if expanded.is_absolute():
-        return expanded.exists()
-    if len(expanded.parts) > 1:
-        return (config.PROJECT_ROOT / expanded).exists()
-    return shutil.which(binary) is not None
+    return is_whisper_cpp_binary_ready()
 
 
 def _prepare_audio(input_path: Path, temp_dir: Path) -> Path:
@@ -143,6 +191,32 @@ def _segments_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return segments
 
 
+def _dedupe_repeated_segments(
+    segments: list[dict[str, Any]],
+    *,
+    max_repeats: int = 2,
+    min_chars: int = 12,
+) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    previous_key = ""
+    repeat_count = 0
+
+    for segment in segments:
+        text = str(segment.get("text") or "").strip()
+        key = " ".join(text.lower().split())
+        if key and key == previous_key:
+            repeat_count += 1
+        else:
+            previous_key = key
+            repeat_count = 1
+
+        if key and len(key) >= min_chars and repeat_count > max_repeats:
+            continue
+        deduped.append(segment)
+
+    return deduped
+
+
 def _language_from_payload(payload: dict[str, Any]) -> str | None:
     result = payload.get("result")
     if not isinstance(result, dict):
@@ -158,6 +232,7 @@ def transcribe_with_whisper_cpp(
     prompt: str | None,
     language: str | None,
     beam_size: int,
+    threads: int | None = None,
 ) -> dict[str, Any]:
     model_path = whisper_cpp_model_path(model_name)
     if not model_path.exists():
@@ -182,8 +257,9 @@ def transcribe_with_whisper_cpp(
             str(output_prefix),
             "--no-prints",
         ]
-        if config.SETTINGS.whisper_cpp_threads > 0:
-            command.extend(["--threads", str(config.SETTINGS.whisper_cpp_threads)])
+        resolved_threads = int(threads if threads is not None else config.SETTINGS.whisper_cpp_threads)
+        if resolved_threads > 0:
+            command.extend(["--threads", str(resolved_threads)])
         if prompt:
             command.extend(["--prompt", prompt])
         command.extend(config.SETTINGS.whisper_cpp_extra_args)
@@ -205,8 +281,8 @@ def transcribe_with_whisper_cpp(
         if not isinstance(payload, dict):
             raise RuntimeError("WHISPER_CPP_INVALID_OUTPUT")
 
-    segments = _segments_from_payload(payload)
-    text = " ".join(segment["text"] for segment in segments).strip()
+    segments = _dedupe_repeated_segments(_segments_from_payload(payload))
+    text = "\n".join(segment["text"] for segment in segments).strip()
     return {
         "text": text,
         "segments": segments,

@@ -57,7 +57,23 @@ function renderTranscribeDefaults() {
   if (!elements.transcribeDefaults) return;
   const model = elements.modelSelect?.value || "";
   const preset = elements.promptPresetSelect?.value || "";
-  elements.transcribeDefaults.textContent = `Модель: ${model || "medium"} • Промпт: ${preset || "none"}`;
+  elements.transcribeDefaults.textContent = `Модель: ${model || "medium"} • Промпт: ${preset || "auto"}`;
+}
+
+function normalizePromptPreset(promptPreset) {
+  const preset = String(promptPreset || "").trim().toLowerCase();
+  if (preset === "none") {
+    return "auto";
+  }
+  return ["auto", "ru", "en"].includes(preset) ? preset : "ru";
+}
+
+function languageForPromptPreset(promptPreset) {
+  const preset = normalizePromptPreset(promptPreset);
+  if (preset === "ru" || preset === "en") {
+    return preset;
+  }
+  return "auto";
 }
 
 export async function loadTranscriptLibrary({ silent = false } = {}) {
@@ -127,7 +143,9 @@ async function handleTranscribe() {
   formData.append("profile_id", state.activeProfileId);
   formData.append("session_id", state.currentSessionId || "");
   formData.append("model", elements.modelSelect?.value || getSavedModel("medium"));
-  formData.append("prompt_preset", elements.promptPresetSelect?.value || getSavedPromptPreset("none"));
+  const promptPreset = normalizePromptPreset(elements.promptPresetSelect?.value || getSavedPromptPreset("ru"));
+  formData.append("prompt_preset", promptPreset);
+  formData.append("language", languageForPromptPreset(promptPreset));
   try {
     state.transcribeBusyState.defaultLabel = elements.btnTranscribe?.textContent || "Транскрибировать файл";
     if (elements.btnTranscribe) {
@@ -210,8 +228,9 @@ export function initTranscripts(criteriaManager) {
     });
   }
   if (elements.promptPresetSelect) {
-    elements.promptPresetSelect.value = getSavedPromptPreset(elements.promptPresetSelect.value || "none");
+    elements.promptPresetSelect.value = normalizePromptPreset(getSavedPromptPreset(elements.promptPresetSelect.value || "ru"));
     elements.promptPresetSelect.addEventListener("change", () => {
+      elements.promptPresetSelect.value = normalizePromptPreset(elements.promptPresetSelect.value);
       setSavedPromptPreset(elements.promptPresetSelect.value);
       renderTranscribeDefaults();
     });

@@ -28,18 +28,20 @@ def _store_upload_temp(file: UploadFile) -> tuple[str, str]:
 
 
 def _normalize_preset(prompt_preset: str) -> tuple[str, str | None]:
-    preset = (prompt_preset or "none").strip().lower()
+    preset = (prompt_preset or "auto").strip().lower()
     if not preset:
-        preset = "none"
-    if preset not in {"none", "ru", "en"}:
+        preset = "auto"
+    if preset == "none":
+        preset = "auto"
+    if preset not in {"auto", "ru", "en"}:
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "invalid_prompt_preset",
-                "message": "prompt_preset must be one of: none, ru, en.",
+                "message": "prompt_preset must be one of: auto, ru, en.",
             },
         )
-    return preset, None if preset == "none" else preset
+    return preset, None if preset == "auto" else preset
 
 
 def _normalize_language(language: str) -> tuple[str, str | None]:
@@ -55,6 +57,18 @@ def _normalize_language(language: str) -> tuple[str, str | None]:
             },
         )
     return language_raw, None if language_raw == "auto" else language_raw
+
+
+def _normalize_beam_size(value: int | None) -> int | None:
+    if value is None or int(value) <= 0:
+        return None
+    return min(10, max(1, int(value)))
+
+
+def _normalize_threads(value: int | None) -> int | None:
+    if value is None or int(value) < 0:
+        return None
+    return min(32, max(0, int(value)))
 
 
 def _resolve_transcript_context(*, session_id: str, profile_id: int, store_result: bool) -> tuple[str | None, int]:
@@ -90,6 +104,8 @@ def _transcribe_sync(
     profile_id: int,
     store_result: bool,
     origin: str | None,
+    beam_size: int | None,
+    threads: int | None,
 ) -> dict[str, object]:
     transcript_record = None
     transcription = transcribe_with_fallback(
@@ -97,6 +113,8 @@ def _transcribe_sync(
         model_name=model_name,
         prompt_preset=preset_value,
         preferred_language=preferred_language,
+        beam_size=beam_size,
+        threads=threads,
     )
     text = transcription.get("text", "") if isinstance(transcription, dict) else str(transcription)
     segments = list(transcription.get("segments") or []) if isinstance(transcription, dict) else []
@@ -141,8 +159,10 @@ def _transcribe_sync(
 def transcribe(
     file: UploadFile = File(...),
     model: str = Form(default="small"),
-    prompt_preset: str = Form(default="none"),
+    prompt_preset: str = Form(default="auto"),
     language: str = Form(default="auto"),
+    beam_size: int = Form(default=0),
+    threads: int = Form(default=-1),
     session_id: str = Form(default=""),
     profile_id: int = Form(default=0),
     store_result: bool = Form(default=True),
@@ -152,6 +172,8 @@ def transcribe(
     model_name = (model or config.SETTINGS.whisper_default_model).strip()
     preset, preset_value = _normalize_preset(prompt_preset)
     language_raw, preferred_language = _normalize_language(language)
+    resolved_beam_size = _normalize_beam_size(beam_size)
+    resolved_threads = _normalize_threads(threads)
     sid, profile_id_val = _resolve_transcript_context(
         session_id=session_id,
         profile_id=profile_id,
@@ -171,6 +193,8 @@ def transcribe(
             profile_id=profile_id_val,
             store_result=bool(store_result),
             origin=(origin or "").strip() or None,
+            beam_size=resolved_beam_size,
+            threads=resolved_threads,
         )
     except RuntimeError as exc:
         msg = str(exc)
@@ -221,8 +245,10 @@ def transcribe(
 def start_transcription_task(
     file: UploadFile = File(...),
     model: str = Form(default="small"),
-    prompt_preset: str = Form(default="none"),
+    prompt_preset: str = Form(default="auto"),
     language: str = Form(default="auto"),
+    beam_size: int = Form(default=0),
+    threads: int = Form(default=-1),
     session_id: str = Form(default=""),
     profile_id: int = Form(default=0),
     store_result: bool = Form(default=True),
@@ -232,6 +258,8 @@ def start_transcription_task(
     model_name = (model or config.SETTINGS.whisper_default_model).strip()
     preset, _ = _normalize_preset(prompt_preset)
     _, preferred_language = _normalize_language(language)
+    resolved_beam_size = _normalize_beam_size(beam_size)
+    resolved_threads = _normalize_threads(threads)
     sid, profile_id_val = _resolve_transcript_context(
         session_id=session_id,
         profile_id=profile_id,
@@ -249,6 +277,8 @@ def start_transcription_task(
             session_id=sid,
             store_result=bool(store_result),
             origin=(origin or "").strip() or None,
+            beam_size=resolved_beam_size,
+            threads=resolved_threads,
         )
     except Exception:
         try:

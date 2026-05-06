@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from .. import config, db
 from ..services import models as model_service
-from ..schemas import ModelPullRequest
+from ..schemas import ModelPreloadRequest, ModelPullRequest
+from backend.apps.chat.services import model_residency
 
 router = APIRouter()
 
@@ -19,6 +21,25 @@ def pull_model(req: ModelPullRequest):
     if not model:
         raise HTTPException(status_code=422, detail={"code": "model_required", "message": "Укажите модель"})
     return model_service.start_model_pull(model)
+
+
+@router.post("/models/preload")
+def preload_model(req: ModelPreloadRequest):
+    model = (req.model or "").strip()
+    if not model:
+        raise HTTPException(status_code=422, detail={"code": "model_required", "message": "Укажите модель"})
+    if not model_service.is_model_installed(model):
+        raise HTTPException(
+            status_code=424,
+            detail={"code": "chat_model_missing", "model": model, "message": "Модель не установлена локально."},
+        )
+    settings = {}
+    if req.profile_id is not None:
+        profile = db.get_profile(req.profile_id)
+        if profile:
+            settings = (db.effective_settings(req.profile_id, model, config.DEFAULT_SETTINGS).get("effective") or {})
+    debug = model_residency.preload_target_model(model, settings, mode="manual")
+    return {"ok": True, "model": model, **debug}
 
 
 @router.get("/models/pull/{task_id}")

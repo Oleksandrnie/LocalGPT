@@ -22,6 +22,11 @@ class ModelPullRequest(BaseModel):
     model: str
 
 
+class ModelPreloadRequest(BaseModel):
+    model: str
+    profile_id: int | None = None
+
+
 class ModelPrepareRequest(BaseModel):
     model: str
     force: bool = False
@@ -49,6 +54,8 @@ class ChatPreferencesUpdate(BaseModel):
 class AsrPreferencesUpdate(BaseModel):
     studio_model: str | None = None
     prompt_preset: str | None = None
+    beam_size: int | None = None
+    threads: int | None = None
 
 
 class TtsPreferencesUpdate(BaseModel):
@@ -84,6 +91,7 @@ class ModelSettingsRequest(BaseModel):
     max_tokens: int | None = None
     num_ctx: int | None = None
     mem_turns: int | None = None
+    ollama_keep_alive: str | None = None
     pipeline_enabled: bool | None = None
     summary_memory_enabled: bool | None = None
     rag_enabled: bool | None = None

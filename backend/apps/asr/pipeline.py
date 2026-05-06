@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from app import config, db
 from app.services import models as model_service
 from backend.apps.chat.service import ChatService
+from backend.apps.chat.services import model_residency
 
 LOGGER = logging.getLogger(__name__)
 
@@ -137,6 +138,21 @@ def _stage_settings(settings: dict[str, Any], stage: str) -> dict[str, Any]:
         "temperature": stage_cfg.get("temperature", 0.2),
         "max_tokens": stage_cfg.get("max_tokens", config.SETTINGS.max_tokens),
     }
+
+
+def _pipeline_keep_alive(settings: dict[str, Any] | None) -> str | None:
+    value = (settings or {}).get("pipeline_keep_alive", config.SETTINGS.ollama_pipeline_keep_alive)
+    text = str(value if value is not None else "").strip()
+    return text or None
+
+
+def _pipeline_num_gpu(settings: dict[str, Any] | None) -> int | None:
+    value = (settings or {}).get("pipeline_num_gpu", config.SETTINGS.ollama_pipeline_num_gpu)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _clean_text_fallback(text: str) -> str:
@@ -368,6 +384,7 @@ def _call_stage(
     messages: list[dict[str, str]],
     timings: dict[str, Any],
     warnings: list[str],
+    runtime_settings: dict[str, Any] | None = None,
 ) -> str:
     started = time.perf_counter()
     try:
@@ -381,7 +398,22 @@ def _call_stage(
                     "message": f"Pipeline model {model} is not installed.",
                 },
             )
-        return service.chat_completion(model, messages, settings={"temperature": temperature, "max_tokens": max_tokens})
+        request_settings: dict[str, Any] = {"temperature": temperature, "max_tokens": max_tokens}
+        try:
+            residency_settings = model_residency.apply_target_settings(model, runtime_settings or {}, mode="manual")
+            keep_alive = residency_settings.get("ollama_keep_alive_effective")
+            if keep_alive is not None:
+                request_settings["ollama_keep_alive_effective"] = keep_alive
+        except Exception as exc:
+            LOGGER.warning("Failed to apply pipeline model residency for %s/%s: %s", stage, model, exc)
+            warnings.append(f"{stage}_residency_warning: {exc}")
+        keep_alive = _pipeline_keep_alive(runtime_settings)
+        if keep_alive is not None:
+            request_settings["ollama_keep_alive_effective"] = keep_alive
+        num_gpu = _pipeline_num_gpu(runtime_settings)
+        if num_gpu is not None:
+            request_settings["ollama_num_gpu"] = num_gpu
+        return service.chat_completion(model, messages, settings=request_settings)
     except HTTPException:
         raise
     except Exception as exc:
@@ -466,6 +498,7 @@ def run_transcript_pipeline(
             messages=prompt,
             timings=timings,
             warnings=warnings,
+            runtime_settings=settings,
         ).strip() or _clean_text_fallback(raw_for_pipeline)
     else:
         cleaned = _clean_text_fallback(raw_for_pipeline)
@@ -494,6 +527,7 @@ def run_transcript_pipeline(
             messages=prompt,
             timings=timings,
             warnings=warnings,
+            runtime_settings=settings,
         )
         parsed = _extract_json(response, [])
         segments = [
@@ -534,6 +568,7 @@ def run_transcript_pipeline(
             messages=prompt,
             timings=timings,
             warnings=warnings,
+            runtime_settings=settings,
         )
         speaker_mapping = _sanitize_speaker_mapping(_extract_json(response, []), segments)
     else:
@@ -586,6 +621,7 @@ def run_transcript_pipeline(
             messages=prompt,
             timings=timings,
             warnings=warnings,
+            runtime_settings=settings,
         )
         parsed = _extract_json(response, _empty_structure())
         structured = _normalize_structured_output(parsed)
@@ -702,6 +738,7 @@ def generate_summary(
         messages=prompt,
         timings=timings,
         warnings=warnings,
+        runtime_settings=settings,
     ).strip()
 
 

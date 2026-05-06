@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from typing import Any
+
 from pydantic import BaseModel
 
 from .. import config, db
-from ..roles import normalize_role
 from ..schemas import (
     ModelSettingsRequest,
     ModelSettingsReset,
@@ -19,6 +20,7 @@ from ..services.chat import normalize_model_name, session_title_hint
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
+CHAT_ROLE = "chat"
 
 
 def _get_profile_or_404(profile_id: int) -> dict:
@@ -44,12 +46,46 @@ def _normalize_whisper_model(model_name: str) -> str:
 
 def _normalize_prompt_preset(value: str) -> str:
     normalized = (value or "").strip().lower()
-    if normalized not in {"none", "ru", "en"}:
+    if not normalized or normalized == "none":
+        normalized = "auto"
+    if normalized not in {"auto", "ru", "en"}:
         raise HTTPException(
             status_code=422,
-            detail={"code": "invalid_prompt_preset", "message": "Допустимые prompt preset: none, ru, en."},
+            detail={"code": "invalid_prompt_preset", "message": "Допустимые prompt preset: auto, ru, en."},
         )
     return normalized
+
+
+def _normalize_asr_beam_size(value: int | None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_beam_size", "message": "Beam должен быть целым числом от 1 до 10."},
+        ) from exc
+    if parsed < 1 or parsed > 10:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_beam_size", "message": "Beam должен быть целым числом от 1 до 10."},
+        )
+    return parsed
+
+
+def _normalize_asr_threads(value: int | None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_threads", "message": "Threads должен быть целым числом от 0 до 32."},
+        ) from exc
+    if parsed < 0 or parsed > 32:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_threads", "message": "Threads должен быть целым числом от 0 до 32."},
+        )
+    return parsed
 
 
 def _normalize_tts_provider(value: str) -> str:
@@ -78,10 +114,27 @@ def _normalize_tts_speed(value: str) -> str:
     return f"{number:.2f}".rstrip("0").rstrip(".")
 
 
+def _normalize_bool_setting(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _normalize_keep_alive_setting(value: object, key: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": f"invalid_{key}", "message": f"{key} must be a keep_alive value like 30s, 2m or 1h."},
+        )
+    return text
+
+
 def _normalize_runtime_settings(value: dict | None) -> dict:
     if not isinstance(value, dict):
         return {}
     allowed = {
+        "mem_turns",
         "pipeline_enabled",
         "summary_memory_enabled",
         "rag_enabled",
@@ -92,6 +145,15 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "rag_top_k",
         "rag_max_context_chars",
         "pipeline",
+        "max_resident_target_models",
+        "allow_light_with_heavy",
+        "single_large_target_model",
+        "preload_model_on_manual_select",
+        "auto_target_keep_alive",
+        "manual_keep_alive",
+        "code_model_keep_alive",
+        "heavy_model_keep_alive",
+        "router_keep_alive",
     }
     cleaned = {key: value[key] for key in allowed if key in value}
     preset = cleaned.get("default_pipeline_preset")
@@ -102,15 +164,36 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         )
     if preset is not None:
         cleaned["default_pipeline_preset"] = str(preset).strip().lower()
-    for key in ("max_transcript_chars", "max_context_chars", "summary_memory_limit", "rag_top_k", "rag_max_context_chars"):
+    for key in (
+        "mem_turns",
+        "max_transcript_chars",
+        "max_context_chars",
+        "summary_memory_limit",
+        "rag_top_k",
+        "rag_max_context_chars",
+        "max_resident_target_models",
+    ):
         if key in cleaned and cleaned[key] is not None:
             try:
-                cleaned[key] = max(1, int(cleaned[key]))
+                parsed = max(1, int(cleaned[key]))
+                cleaned[key] = min(5, parsed) if key == "max_resident_target_models" else parsed
             except (TypeError, ValueError) as exc:
                 raise HTTPException(
                     status_code=422,
                     detail={"code": f"invalid_{key}", "message": f"{key} must be a positive integer."},
                 ) from exc
+    for key in ("allow_light_with_heavy", "single_large_target_model", "preload_model_on_manual_select"):
+        if key in cleaned and cleaned[key] is not None:
+            cleaned[key] = _normalize_bool_setting(cleaned[key])
+    for key in (
+        "auto_target_keep_alive",
+        "manual_keep_alive",
+        "code_model_keep_alive",
+        "heavy_model_keep_alive",
+        "router_keep_alive",
+    ):
+        if key in cleaned and cleaned[key] is not None:
+            cleaned[key] = _normalize_keep_alive_setting(cleaned[key], key)
     return cleaned
 
 
@@ -164,7 +247,7 @@ def update_profile(profile_id: int, req: ProfileUpdate):
 @router.patch("/profiles/{profile_id}/preferences")
 def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
     _get_profile_or_404(profile_id)
-    updates: dict[str, dict[str, str]] = {}
+    updates: dict[str, dict[str, Any]] = {}
 
     if req.chat and req.chat.dictation_model is not None:
         updates.setdefault("chat", {})["dictation_model"] = _normalize_whisper_model(req.chat.dictation_model)
@@ -176,6 +259,10 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
             updates.setdefault("asr", {})["studio_model"] = _normalize_whisper_model(req.asr.studio_model)
         if req.asr.prompt_preset is not None:
             updates.setdefault("asr", {})["prompt_preset"] = _normalize_prompt_preset(req.asr.prompt_preset)
+        if req.asr.beam_size is not None:
+            updates.setdefault("asr", {})["beam_size"] = _normalize_asr_beam_size(req.asr.beam_size)
+        if req.asr.threads is not None:
+            updates.setdefault("asr", {})["threads"] = _normalize_asr_threads(req.asr.threads)
 
     if req.tts:
         if req.tts.provider is not None:
@@ -224,9 +311,8 @@ def create_chat_session(req: SessionCreate):
     _get_profile_or_404(req.profile_id)
     title = session_title_hint(req.title, None)
     model_name = normalize_model_name(req.model_name, fallback=config.SETTINGS.model)
-    role = normalize_role(req.role)
     try:
-        session = db.create_session(req.profile_id, title=title, model_name=model_name, role=role)
+        session = db.create_session(req.profile_id, title=title, model_name=model_name, role=CHAT_ROLE)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Укажите название сессии"}) from exc
     return session
@@ -247,8 +333,7 @@ def update_chat_session(session_id: str, req: SessionUpdate):
     if not session:
         raise HTTPException(status_code=404, detail="session_not_found")
     new_model = normalize_model_name(req.model_name) if req.model_name else None
-    new_role = normalize_role(req.role) if req.role else None
-    updated = db.update_session(session_id, title=req.title, model_name=new_model, role=new_role)
+    updated = db.update_session(session_id, title=req.title, model_name=new_model, role=None)
     if not updated:
         raise HTTPException(status_code=404, detail="session_not_found")
     return updated
@@ -303,7 +388,8 @@ def save_model_settings(req: ModelSettingsRequest):
         temperature=req.temperature,
         max_tokens=req.max_tokens,
         num_ctx=req.num_ctx,
-        mem_turns=req.mem_turns,
+        mem_turns=None,
+        ollama_keep_alive=(req.ollama_keep_alive.strip() if isinstance(req.ollama_keep_alive, str) and req.ollama_keep_alive.strip() else None),
         pipeline_enabled=req.pipeline_enabled,
         summary_memory_enabled=req.summary_memory_enabled,
         rag_enabled=req.rag_enabled,
