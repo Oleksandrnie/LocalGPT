@@ -66,10 +66,12 @@
 - assistant-card рендерится по `message.status`, а не по локальному transient placeholder;
 - `generating`: показать `Генерирую ответ...` и status badge;
 - `streaming`: показывать partial content и animated continuation indicator;
+- active assistant-card (`generating`/`streaming`) держит стабильную ширину и минимальную высоту, чтобы карточка не прыгала от маленькой к большой во время live-печати;
 - `completed`: показывать обычный assistant-message;
 - `failed`: показывать сохранённый `message.error` и кнопку `Повторить`;
 - `cancelled`: показывать остановленное состояние;
-- при включённой настройке `Стриминг ответов` UI подписывается на SSE и применяет `delta` к assistant-message;
+- при включённой настройке `Стриминг ответов` UI подписывается на SSE и применяет `delta` к assistant-message через typewriter-buffer;
+- плавность печати регулируется в `web_ui/js/app.js` константами `STREAM_TYPEWRITER_INTERVAL_MS`, `STREAM_TYPEWRITER_MIN_CHARS`, `STREAM_TYPEWRITER_MAX_CHARS`, `STREAM_TYPEWRITER_BACKLOG_STEP`, `STREAM_TYPEWRITER_FINAL_FLUSH_CHARS`;
 - если SSE обрывается, UI возвращается к polling и перечитывает messages после финала;
 - при открытии чата UI ищет active assistant-message с `task_id`, восстанавливает SSE/polling наблюдение и использует сохранённый partial content как replay-base, чтобы не продублировать старые чанки.
 
@@ -102,6 +104,10 @@ ThemeToggle:
 ## Toast
 
 Все системные уведомления идут через `setFooter(...)`, который теперь показывает toast под topbar и не пишет статус внизу интерфейса.
+
+Обычный chat lifecycle не создаёт toast: старт генерации, переход в `streaming`, успешный `completed`, autorouter confidence и выбранная answer-модель отображаются только через состояние assistant-card или metadata. Toast остаётся для ошибок, отмены и degraded recovery, например обрыва SSE с переходом на polling.
+
+Загрузка LLM-моделей тоже не создаёт progress/success toast. После подтверждения `/models/pull` пользователь видит состояние в `download-card`; повторный клик по уже активной загрузке остаётся тихим, а незагруженная модель не становится выбранной chat-моделью до появления в локальном списке.
 
 Типы:
 

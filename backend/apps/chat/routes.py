@@ -265,17 +265,10 @@ def _is_model_installed_or_503(model_name: str) -> bool:
         ) from exc
 
 
-def _router_notice(decision: model_router.RouterDecision) -> str:
-    title = _catalog_title(decision.target_model)
-    if decision.fallback:
-        if decision.fallback_reason == "calculator_manual_only":
-            return f"Auto не запускает Local Calculator автоматически. Использована основная модель {title}."
-        if decision.fallback_reason == "invalid_json":
-            return f"Auto не смог корректно разобрать тип задачи. Использована основная модель {title}."
-        if decision.fallback_reason == "low_confidence":
-            return f"Auto не уверен в типе задачи. Использована основная модель {title}."
-        return f"Auto не смог уверенно определить тип задачи. Использована основная модель {title}."
-    return f"Auto выбрал: {title} — {decision.reason}"
+def _router_notice(_decision: model_router.RouterDecision) -> str:
+    # Keep normal router decisions in used_settings/model_selected only.
+    # Returning human text here caused success toasts after the answer completed.
+    return ""
 
 
 def _apply_router_settings(prepared: dict, decision: model_router.RouterDecision) -> None:

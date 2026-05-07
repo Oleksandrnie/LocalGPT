@@ -87,7 +87,7 @@
 - RAG state button в topbar должен отражать `rag_enabled` активного профиля, а не быть декоративным индикатором.
 - Все системные уведомления должны идти через toast под topbar, не через нижнюю input area.
 - Если нет локальной chat-модели, composer input остаётся активным, но send disabled; попытка отправки показывает toast и не создаёт backend LLM request.
-- Запуск загрузки LLM-модели требует явного подтверждения пользователя.
+- Запуск загрузки LLM-модели требует явного подтверждения пользователя; normal progress отображается в download-card без повторяющихся toast.
 - Видимые select-контролы должны использовать кастомный `AppSelect`; native `<select>` допустим только как скрытый backing-state.
 - Checkbox `Стриминг ответов` находится первой карточкой в Settings → `Чат / LLM`, сохраняется сразу при переключении в profile preferences как `streaming_enabled` и отправляется в `POST /chat/tasks` как `stream`. Новые профили получают `streaming_enabled=true` по умолчанию.
 - Assistant cards должны рендериться по persistent `message.status`; локальный optimistic placeholder не является источником generation state.
@@ -97,7 +97,7 @@
 Актуальный chat runtime перед SSE rollout:
 
 - `POST /chat/tasks` создаёт или продолжает session, валидирует модель и запускает background process;
-- autorouter, если выбран `Auto / Smart Router`, завершает route selection до старта answer-модели и отдаёт только metadata (`router_notice`, `used_settings`);
+- autorouter, если выбран `Auto / Smart Router`, завершает route selection до старта answer-модели и отдаёт route metadata через `used_settings` / `model_selected`; user-facing `router_notice` для normal-success routing пустой, чтобы UI не показывал success-toast про confidence/выбранную модель;
 - static UI передаёт `stream` из profile preference `settings.streaming_enabled`;
 - task state доступен через polling `GET /chat/tasks/{task_id}` и lifecycle SSE `GET /chat/tasks/{task_id}/events`;
 - если request содержит `stream=true`, backend вызывает native Ollama streaming API для финальной answer-модели и отдаёт `delta` через SSE;

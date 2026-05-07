@@ -32,6 +32,9 @@
 
 ## Последние изменения (по свежим коммитам)
 
+- **2026-05-07** — chat UI получил typewriter-buffer для SSE `delta`: ответ модели отображается более плавно, а скорость печати регулируется константами `STREAM_TYPEWRITER_*` в `web_ui/js/app.js`.
+- **2026-05-07** — нормальный chat lifecycle стал тише: старт генерации, streaming-progress, completed state и autorouter confidence/model selection больше не показываются toast-уведомлениями; статус остаётся внутри assistant-card.
+- **2026-05-07** — загрузка LLM-моделей стала тихой: `/models/pull` после подтверждения обновляет карточку прогресса без success/progress toast, повторный клик по активной загрузке не спамит, а ещё не установленная модель не выбирается автоматически для чата.
 - **2026-05-07** — настройка `Стриминг ответов` поднята в начало вкладки Settings → `Чат / LLM`, новые профили получают `streaming_enabled=true` по умолчанию, а reset возвращает default вместо принудительного выключения.
 - **2026-05-06** — завершён verification pass для persistent generation state + SSE: покрыты `stream=true`, `stream=false`, stale-task recovery, missing-model failure, autorouter non-streaming selection и backend/UI smoke-запуск.
 - **2026-05-06** — live Ollama SSE smoke подтверждён на локальной `qwen2.5:3b-instruct`; дополнительно усилен Metal-to-CPU retry: перед CPU fallback модель выгружается повторно и для streaming, и для full-response paths.
@@ -76,7 +79,8 @@
 - при `stream=true` backend вызывает streaming API Ollama только для финальной answer-модели, пишет partial content в SQLite и отдаёт `delta` через SSE; autorouter остаётся lifecycle/selection этапом без token delta;
 - при `stream=false` или отсутствии поля `stream` backend использует full-response fallback без `delta`, но assistant-message всё равно живёт в persistent lifecycle;
 - UI рендерит карточки assistant по persistent `status`; `Генерирую ответ...` больше не живёт только в локальном optimistic placeholder;
-- при включённом streaming UI подписывается на `GET /chat/tasks/{task_id}/events`, обновляет partial content по `delta`, а при обрыве SSE возвращается к polling;
+- при включённом streaming UI подписывается на `GET /chat/tasks/{task_id}/events`, складывает `delta` в typewriter-buffer и плавно допечатывает ответ; скорость регулируется в `web_ui/js/app.js` через `STREAM_TYPEWRITER_INTERVAL_MS`, `STREAM_TYPEWRITER_MIN_CHARS`, `STREAM_TYPEWRITER_MAX_CHARS`, `STREAM_TYPEWRITER_BACKLOG_STEP`, `STREAM_TYPEWRITER_FINAL_FLUSH_CHARS`;
+- обычный путь chat generation не показывает toast на start/streaming/completed и не выводит пользователю autorouter confidence/model-selection; backend не заполняет user-facing `router_notice` для normal-success routing, а toast остаётся для ошибок, отмены и degraded recovery вроде обрыва SSE;
 - при открытии чата UI перечитывает messages, ищет active assistant-message с `task_id` и восстанавливает наблюдение за task; если backend task уже потерян, связанное сообщение переводится в `failed`.
 
 Verification snapshot для этого flow:
@@ -229,7 +233,7 @@ start_localgpt_lan.command
 - sidebar можно свернуть/развернуть центральной pill-кнопкой;
 - состояние sidebar сохраняется в `localStorage.sidebar_open`;
 - горячая клавиша `Cmd+B` на macOS и `Ctrl+B` на Windows/Linux открывает или закрывает sidebar;
-- системные статусы показываются toast-уведомлениями под topbar по центру;
+- системные статусы показываются toast-уведомлениями под topbar по центру, но обычный chat lifecycle отображается внутри карточек сообщений без дополнительных toast;
 - нижняя зона оставлена только под ввод сообщения;
 - `RAG` в topbar показывает состояние активного профиля через dot:
   серый OFF, фиолетовый ON;
@@ -374,6 +378,7 @@ LAN_HTTPS_PORT=8443
 
 Загрузка Ollama-моделей идёт через `/models/pull`.
 UI показывает stderr/stdout tail от `ollama pull` и человекочитаемое сообщение.
+Нормальный progress загрузки отображается только в карточке `download-card`: UI не показывает toast `загрузка началась`/`уже выполняется`, не выбирает незагруженную модель в чат автоматически и включает модель для чата только после появления в локальном списке.
 Список моделей больше не запускает auto-pull: если chat-моделей нет, composer остаётся доступен для ввода, но отправка отключена; ASR/TTS/OCR остаются доступны.
 
 ## ASR и разгрузка CPU на Mac

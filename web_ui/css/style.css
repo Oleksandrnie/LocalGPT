@@ -1559,6 +1559,7 @@ button.model-info-button:hover:not([disabled]) {
 }
 
 .message-row--assistant .message-card {
+    width: min(760px, 100%);
     background: rgba(255, 255, 255, 0.04);
     box-shadow:
         0 0 0 1px rgba(255, 255, 255, 0.04),
@@ -1568,6 +1569,7 @@ button.model-info-button:hover:not([disabled]) {
 
 .message-row--status-generating .message-card,
 .message-row--status-streaming .message-card {
+    min-height: 132px;
     box-shadow:
         0 0 0 1px rgba(124, 92, 255, 0.16),
         0 12px 34px rgba(124, 92, 255, 0.10),

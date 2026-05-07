@@ -11,6 +11,12 @@ const AUTO_MODEL_HELP = "Автоматически классифицирует
 const LOCAL_CALCULATOR_MODEL_ID = "__local_calculator__";
 const LOCAL_CALCULATOR_TITLE = "Local Calculator";
 const LOCAL_CALCULATOR_HELP = "Детерминированный локальный калькулятор для явной арифметики: суммы, вычитание, проценты, часы/минуты и ставка × часы. Не использует LLM и не отвечает на обычные вопросы.";
+const STREAM_TYPEWRITER_INTERVAL_MS = 28;
+const STREAM_TYPEWRITER_MIN_CHARS = 1;
+const STREAM_TYPEWRITER_MAX_CHARS = 8;
+const STREAM_TYPEWRITER_BACKLOG_STEP = 60;
+const STREAM_TYPEWRITER_FINAL_FLUSH_CHARS = 24;
+const ACTIVE_DOWNLOAD_STATES = new Set(["pending", "queued", "running", "paused"]);
 const STORAGE_KEYS = {
   activeProfileId: "localgpt_simple_profile_id",
   activeSessionId: "localgpt_simple_session_id",
@@ -398,6 +404,7 @@ const state = {
   chatTaskStartController: null,
   chatTaskEventSource: null,
   chatTaskReplay: null,
+  chatTypingStreams: new Map(),
   isSpeaking: false,
   autoScrollPinned: true,
   theme: "dark",
@@ -528,11 +535,6 @@ function getCatalogModels() {
 function getUtilityModels() {
   return (Array.isArray(state.utilityModels) ? state.utilityModels : [])
     .filter((item) => getModelId(item));
-}
-
-function getCatalogModelById(modelId) {
-  const target = String(modelId || "").trim();
-  return getCatalogModels().find((item) => getModelId(item) === target) || null;
 }
 
 function getModelTooltip(item, { short = false } = {}) {
@@ -1025,12 +1027,19 @@ function collectModelOperations() {
   });
 }
 
-function hasActiveDownload(modelName) {
+function isActiveDownloadState(stateValue) {
+  return ACTIVE_DOWNLOAD_STATES.has(String(stateValue || "").trim());
+}
+
+function getActiveChatDownload(modelName = "") {
   const target = String(modelName || "").trim();
-  if (!target) return false;
-  return (state.downloads || []).some(
-    (item) => item.model === target && ["pending", "running", "paused"].includes(item.state),
-  );
+  return (state.downloads || []).find((item) => (
+    isActiveDownloadState(item.state) && (!target || item.model === target)
+  )) || null;
+}
+
+function hasActiveDownload(modelName) {
+  return Boolean(getActiveChatDownload(modelName));
 }
 
 function isMobileLayout() {
@@ -1292,7 +1301,7 @@ function getChatModelItems() {
       title: getModelTitle(model),
       installed: installedByName.get(name) || null,
       recommended: model,
-      task: state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state)) || null,
+      task: getActiveChatDownload(name),
     };
   })];
 }
@@ -1663,6 +1672,117 @@ function consumeChatTaskDelta(task, text) {
   return "";
 }
 
+function chatTypingStreamKey(taskOrPayload) {
+  return chatTaskIdFrom(taskOrPayload) || String(taskOrPayload?.assistant_message_id || "").trim();
+}
+
+function splitTypewriterChunk(text, { finalFlush = false } = {}) {
+  const chars = Array.from(String(text || ""));
+  if (!chars.length) return ["", ""];
+  const maxChars = finalFlush ? STREAM_TYPEWRITER_FINAL_FLUSH_CHARS : STREAM_TYPEWRITER_MAX_CHARS;
+  const backlogBoost = Math.ceil(chars.length / STREAM_TYPEWRITER_BACKLOG_STEP);
+  const count = Math.max(
+    STREAM_TYPEWRITER_MIN_CHARS,
+    Math.min(maxChars, backlogBoost),
+  );
+  return [
+    chars.slice(0, count).join(""),
+    chars.slice(count).join(""),
+  ];
+}
+
+function appendAssistantTypingDelta(stream, delta) {
+  const text = String(delta || "");
+  if (!text) return;
+  updateAssistantMessageFromTask(stream.task, {
+    ...stream.latestPayload,
+    status: "streaming",
+    delta: text,
+  });
+}
+
+function stopChatTypingStream(key, { flush = false } = {}) {
+  const stream = state.chatTypingStreams.get(key);
+  if (!stream) return;
+  if (stream.timer) {
+    window.clearInterval(stream.timer);
+  }
+  if (flush && stream.pendingText) {
+    appendAssistantTypingDelta(stream, stream.pendingText);
+  }
+  state.chatTypingStreams.delete(key);
+}
+
+function drainChatTypingStream(key) {
+  const stream = state.chatTypingStreams.get(key);
+  if (!stream) return;
+  const [chunk, rest] = splitTypewriterChunk(stream.pendingText, { finalFlush: stream.finalFlush });
+  stream.pendingText = rest;
+  appendAssistantTypingDelta(stream, chunk);
+
+  if (!stream.pendingText) {
+    if (stream.timer) {
+      window.clearInterval(stream.timer);
+      stream.timer = null;
+    }
+    if (stream.onDrained) {
+      const onDrained = stream.onDrained;
+      state.chatTypingStreams.delete(key);
+      onDrained();
+    }
+  }
+}
+
+function scheduleChatTypingStream(key) {
+  const stream = state.chatTypingStreams.get(key);
+  if (!stream || stream.timer) return;
+  stream.timer = window.setInterval(() => drainChatTypingStream(key), STREAM_TYPEWRITER_INTERVAL_MS);
+}
+
+function queueAssistantTypingDelta(task, payload, delta) {
+  const key = chatTypingStreamKey(task) || chatTypingStreamKey(payload);
+  const text = String(delta || "");
+  if (!key || !text) return;
+  const existing = state.chatTypingStreams.get(key);
+  const stream = existing || {
+    task,
+    latestPayload: {},
+    pendingText: "",
+    timer: null,
+    onDrained: null,
+    finalFlush: false,
+  };
+  stream.task = { ...stream.task, ...task };
+  stream.latestPayload = { ...stream.latestPayload, ...payload, status: "streaming" };
+  stream.pendingText = `${stream.pendingText || ""}${text}`;
+  state.chatTypingStreams.set(key, stream);
+  scheduleChatTypingStream(key);
+}
+
+function finishChatTypingStream(task, onDrained, { finalFlush = true } = {}) {
+  const key = chatTypingStreamKey(task);
+  const stream = key ? state.chatTypingStreams.get(key) : null;
+  if (!stream || !stream.pendingText) {
+    if (key) {
+      stopChatTypingStream(key);
+    }
+    onDrained();
+    return;
+  }
+  stream.onDrained = onDrained;
+  stream.finalFlush = finalFlush;
+  scheduleChatTypingStream(key);
+}
+
+function clearChatTypingStreams(taskOrId = "", { flush = false } = {}) {
+  const key = typeof taskOrId === "string" ? String(taskOrId || "").trim() : chatTypingStreamKey(taskOrId);
+  if (key) {
+    stopChatTypingStream(key, { flush });
+    return;
+  }
+  [...state.chatTypingStreams.keys()].forEach((itemKey) => stopChatTypingStream(itemKey, { flush }));
+}
+
 function normalizeMessageStatus(message) {
   const status = String(message?.status || "").trim().toLowerCase();
   if (MESSAGE_STATUSES.has(status)) return status;
@@ -1776,6 +1896,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     prepareChatTaskReplay(task, replayBaseContent);
     const source = new window.EventSource(`/chat/tasks/${encodeURIComponent(taskId)}/events`);
     let settled = false;
+    let terminalEventReceived = false;
     const timeoutId = window.setTimeout(() => {
       const error = new Error("Истекло время ожидания генерации ответа.");
       error.streamConnectionFailed = true;
@@ -1788,6 +1909,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
       window.clearTimeout(timeoutId);
       closeChatTaskEventSource(source);
       clearChatTaskReplay(taskId);
+      clearChatTypingStreams(taskId);
       callback();
     };
 
@@ -1800,9 +1922,6 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
         ...data,
         status,
       });
-      if (status === "streaming") {
-        setFooter("Ответ приходит частями…", "warning");
-      }
     });
 
     source.addEventListener("model_selected", (event) => {
@@ -1816,24 +1935,32 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     source.addEventListener("delta", (event) => {
       const data = parseSsePayload(event);
       const delta = consumeChatTaskDelta(task, data.text);
-      updateAssistantMessageFromTask(task, {
-        ...data,
-        status: "streaming",
-        delta,
-      });
+      if (delta) {
+        queueAssistantTypingDelta(task, data, delta);
+      } else {
+        updateAssistantMessageFromTask(task, {
+          ...data,
+          status: "streaming",
+        });
+      }
     });
 
     source.addEventListener("done", (event) => {
       const data = parseSsePayload(event);
-      updateAssistantMessageFromTask(task, {
-        ...data,
-        status: "completed",
+      terminalEventReceived = true;
+      finishChatTypingStream(task, () => {
+        updateAssistantMessageFromTask(task, {
+          ...data,
+          status: "completed",
+        });
+        finish(() => resolve({ ...task, ...data, state: "completed" }));
       });
-      finish(() => resolve({ ...task, ...data, state: "completed" }));
     });
 
     source.addEventListener("cancelled", (event) => {
       const data = parseSsePayload(event);
+      terminalEventReceived = true;
+      clearChatTypingStreams(task, { flush: true });
       updateAssistantMessageFromTask(task, {
         ...data,
         status: "cancelled",
@@ -1846,6 +1973,8 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
         return;
       }
       const data = parseSsePayload(event);
+      terminalEventReceived = true;
+      clearChatTypingStreams(task, { flush: true });
       updateAssistantMessageFromTask(task, {
         ...data,
         status: "failed",
@@ -1857,8 +1986,10 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.onerror = () => {
+      if (terminalEventReceived) return;
       const error = new Error("SSE-соединение прервалось.");
       error.streamConnectionFailed = true;
+      clearChatTypingStreams(task, { flush: true });
       finish(() => reject(error));
     };
   });
@@ -1903,7 +2034,7 @@ async function refreshCurrentSessionMessages({ sessionId = state.currentSessionI
   return true;
 }
 
-async function recoverActiveChatTaskFromMessages({ silent = true } = {}) {
+async function recoverActiveChatTaskFromMessages() {
   const activeMessage = latestActiveAssistantMessageWithTask();
   const taskId = String(activeMessage?.task_id || "").trim();
   if (!activeMessage || !taskId) return;
@@ -1927,10 +2058,6 @@ async function recoverActiveChatTaskFromMessages({ silent = true } = {}) {
       return;
     }
 
-    if (!silent) {
-      setFooter("Восстанавливаю поток генерации ответа…", "warning");
-    }
-
     let completedTask = null;
     const shouldUseSse = Boolean(task.stream && task.id);
     if (shouldUseSse) {
@@ -1952,8 +2079,6 @@ async function recoverActiveChatTaskFromMessages({ silent = true } = {}) {
     await refreshCurrentSessionMessages({ sessionId, scroll: true });
     if (String(completedTask?.state || "") === "cancelled") {
       setFooter("Генерация ответа остановлена.", "warning");
-    } else {
-      setFooter(autoRouterNotice(completedTask) || "Ответ готов.", "success");
     }
   } catch (error) {
     if ((error?.status || 0) === 404) {
@@ -1969,6 +2094,7 @@ async function recoverActiveChatTaskFromMessages({ silent = true } = {}) {
       state.isSending = false;
       closeChatTaskEventSource();
       clearChatTaskReplay(taskId);
+      clearChatTypingStreams(taskId);
       updateSendButtonState();
     }
   }
@@ -2006,6 +2132,7 @@ async function cancelCurrentChatGeneration() {
   state.chatTaskStartController = null;
   closeChatTaskEventSource();
   clearChatTaskReplay();
+  clearChatTypingStreams(taskId, { flush: true });
   state.isSending = false;
   if (state.currentSessionId) {
     await loadSessions({ preferredSessionId: state.currentSessionId });
@@ -2353,6 +2480,7 @@ function updateSendButtonState() {
 function renderChatModelNotice() {
   if (!els.chatModelNotice) return;
   const selectedModel = String(state.selectedLlmModel || "").trim();
+  const activeDownload = getActiveChatDownload(selectedModel) || getActiveChatDownload();
   const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
   const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
   const selectedInstalled = Boolean(selectedModel) && (
@@ -2363,7 +2491,10 @@ function renderChatModelNotice() {
   if (missing) {
     const title = els.chatModelNotice.querySelector("strong");
     const text = els.chatModelNotice.querySelector("span");
-    if (!hasInstalledChatModel) {
+    if (activeDownload && (!selectedModel || !selectedInstalled)) {
+      if (title) title.textContent = "Модель загружается.";
+      if (text) text.textContent = activeDownload.message || "Прогресс показан в карточке загрузки. Чат станет доступен после установки модели.";
+    } else if (!hasInstalledChatModel) {
       if (title) title.textContent = "Нет доступных моделей.";
       if (text) text.textContent = "Загрузите модель в настройках, чтобы отправлять сообщения в чат.";
     } else if (!selectedModel) {
@@ -2373,14 +2504,6 @@ function renderChatModelNotice() {
       if (title) title.textContent = "Модель не загружена.";
       if (text) text.textContent = "Выберите локальную модель или загрузите выбранную модель.";
     }
-  }
-  if (missing && !state.isSending) {
-    setFooter(
-      hasInstalledChatModel
-        ? "Модель не загружена. Загрузите модель и повторите отправку."
-        : "Нет доступных моделей. Загрузите модель и повторите отправку.",
-      "warning",
-    );
   }
   updateSendButtonState();
 }
@@ -2841,7 +2964,7 @@ async function request(path, options = {}) {
 }
 
 function syncDownloadsPolling() {
-  const hasRunning = collectModelOperations().some((item) => ["pending", "queued", "running", "paused"].includes(item.state));
+  const hasRunning = collectModelOperations().some((item) => isActiveDownloadState(item.state));
   if (!hasRunning && downloadsPollTimer) {
     window.clearInterval(downloadsPollTimer);
     downloadsPollTimer = null;
@@ -3246,7 +3369,7 @@ function renderChatModelLibrary() {
       const name = getModelId(item);
       const installed = installedByName.get(name);
       const active = state.selectedLlmModel === name;
-      const task = state.downloads.find((item) => item.model === name && ["pending", "running", "paused"].includes(item.state));
+      const task = getActiveChatDownload(name);
       const utility = Boolean(item.utility);
       const statusBadge = task
         ? `<span class="status-badge status-badge--warning">${escapeHtml(task.state || "running")}</span>`
@@ -5937,7 +6060,7 @@ function renderDownloads() {
       const downloaded = (item.downloaded_bytes || item.completed) ? formatBytes(item.downloaded_bytes || item.completed) : "";
       const total = (item.total_bytes || item.total) ? formatBytes(item.total_bytes || item.total) : "";
       const transfer = downloaded && total ? ` • ${downloaded} / ${total}` : downloaded ? ` • ${downloaded}` : "";
-      const canCancel = item.source === "chat" && ["pending", "running", "paused"].includes(item.state);
+      const canCancel = item.source === "chat" && isActiveDownloadState(item.state);
       const sourceLabel = item.source === "asr" ? "ASR" : item.source === "tts" ? "TTS" : "CHAT";
       const outputTail = Array.isArray(item.output_tail) && item.output_tail.length
         ? `<pre class="download-card__log">${escapeHtml(item.output_tail.slice(-4).join("\n"))}</pre>`
@@ -6317,6 +6440,10 @@ async function loadModels({ silent = false } = {}) {
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     state.chatModelsError = data?.error || null;
     const savedModel = readStored(STORAGE_KEYS.llmModel, "");
+    const installedModelNames = new Set(state.installedModels.map((item) => item.name));
+    const isSelectableNow = (modelName) => (
+      modelName === AUTO_MODEL_ID || modelName === LOCAL_CALCULATOR_MODEL_ID || installedModelNames.has(modelName)
+    );
     const catalogIds = new Set(getCatalogModels().map((item) => getModelId(item)));
     catalogIds.add(AUTO_MODEL_ID);
     catalogIds.add(LOCAL_CALCULATOR_MODEL_ID);
@@ -6326,8 +6453,11 @@ async function loadModels({ silent = false } = {}) {
     if (state.selectedLlmModel && !catalogIds.has(state.selectedLlmModel)) {
       state.selectedLlmModel = "";
     }
+    if (state.selectedLlmModel && !isSelectableNow(state.selectedLlmModel)) {
+      state.selectedLlmModel = "";
+    }
     if (!state.selectedLlmModel) {
-      state.selectedLlmModel = savedModel && catalogIds.has(savedModel)
+      state.selectedLlmModel = savedModel && catalogIds.has(savedModel) && isSelectableNow(savedModel)
         ? savedModel
         : getModelId(installedCatalogModel) || "";
     }
@@ -6502,7 +6632,7 @@ async function openSession(sessionId) {
     renderMessages();
     renderTranscriptStrip();
     scrollMessagesToBottom({ force: true });
-    void recoverActiveChatTaskFromMessages({ silent: true });
+    void recoverActiveChatTaskFromMessages();
   } catch (error) {
     setFooter(`Не удалось загрузить чат: ${error.message || error}`, "error");
   } finally {
@@ -6873,21 +7003,6 @@ async function ensureModelInstalled(modelName) {
   return false;
 }
 
-function autoRouterNotice(task) {
-  const explicit = String(task?.router_notice || "").trim();
-  if (explicit) return explicit;
-  const settings = task?.used_settings || {};
-  if (settings.model_selection_mode !== "auto") return "";
-  const target = settings.router_target_model === "__local_calculator__"
-    ? "Local Calculator"
-    : getModelTitle(getCatalogModelById(settings.router_target_model) || { id: settings.router_target_model });
-  const reason = settings.router_reason || "тип задачи определён автоматически.";
-  if (settings.router_fallback) {
-    return reason || `Auto использовал fallback: ${target}.`;
-  }
-  return `Auto выбрал: ${target} — ${reason}`;
-}
-
 async function sendPromptText(rawQuery, { clearInput = false } = {}) {
   const query = String(rawQuery || "").trim();
   if (state.isSending) {
@@ -6916,8 +7031,8 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     autoResizePrompt();
     updateSendButtonState();
   }
-  setFooter("Генерация ответа… Нажмите «Стоп», чтобы остановить.", "warning");
 
+  let activeTaskId = "";
   try {
     const payload = {
       query,
@@ -6932,25 +7047,21 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     }
 
     const task = await request("/chat/tasks", { method: "POST", body: payload, signal: controller.signal });
+    activeTaskId = task?.id || task?.task_id || "";
     state.chatTaskStartController = null;
     state.chatTaskId = task?.id || null;
     const nextSessionId = task?.session_id || state.currentSessionId;
     state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
     writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
-    const startRouterNotice = autoRouterNotice(task);
 
     if (nextSessionId) {
       await loadSessions({ preferredSessionId: nextSessionId });
     }
 
     if (String(task?.state || "") === "completed") {
-      setFooter(startRouterNotice || "Ответ готов.", "success");
       return;
     }
 
-    if (startRouterNotice) {
-      setFooter(startRouterNotice, "success");
-    }
     let completedTask = null;
     const shouldUseSse = Boolean(payload.stream && task?.id);
     if (shouldUseSse) {
@@ -6967,7 +7078,6 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
       completedTask = await waitForChatTask(task?.id || "");
     }
     state.chatTaskId = null;
-    const completedRouterNotice = autoRouterNotice(completedTask) || startRouterNotice;
 
     if (String(completedTask?.state || "") === "cancelled") {
       if (nextSessionId) {
@@ -6984,7 +7094,6 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
         preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
       });
     }
-    setFooter(completedRouterNotice || "Ответ готов.", "success");
   } catch (error) {
     if (isAbortError(error)) {
       setFooter("Генерация ответа остановлена.", "warning");
@@ -6999,6 +7108,7 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     state.chatTaskStartController = null;
     closeChatTaskEventSource();
     clearChatTaskReplay();
+    clearChatTypingStreams(activeTaskId);
     state.isSending = false;
     updateSendButtonState();
     scrollMessagesToBottom({ force: true });
@@ -7070,7 +7180,7 @@ async function startModelDownload(modelName, { mode = "download" } = {}) {
     return;
   }
   if (hasActiveDownload(target)) {
-    setFooter(`Загрузка ${target} уже выполняется.`, "warning");
+    renderDownloads();
     return;
   }
 
@@ -7085,13 +7195,8 @@ async function startModelDownload(modelName, { mode = "download" } = {}) {
 
   try {
     await request("/models/pull", { method: "POST", body: { model: target } });
-    if (getCatalogModelById(target)) {
-      state.selectedLlmModel = target;
-      writeStored(STORAGE_KEYS.llmModel, target);
-    }
-    await loadModels();
+    await loadModels({ silent: true });
     renderSettings();
-    setFooter(`${isUpdate ? "Обновление" : "Загрузка"} модели ${target} запущено.`, "success");
   } catch (error) {
     setFooter(`Не удалось запустить ${isUpdate ? "обновление" : "загрузку"} модели: ${error.message || error}`, "error");
   }

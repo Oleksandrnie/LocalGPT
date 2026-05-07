@@ -22,7 +22,7 @@
 - `LOCAL_MODEL` может быть пустым; пустое значение означает `Модель не загружена`.
 - Startup не запускает `ollama pull`, не скачивает `qwen2.5:3b` и не пишет fallback в `.env`.
 - `/models` только читает локальный список и текущие download task statuses.
-- `/models/pull` запускается только после явного действия пользователя и подтверждения в UI.
+- `/models/pull` запускается только после явного действия пользователя и подтверждения в UI; normal progress показывается в download-card без success/progress toast и без авто-выбора ещё не установленной модели.
 - Если локальных chat-моделей нет, UI оставляет input активным, но отключает отправку и показывает toast; backend-запрос к LLM не создаётся.
 
 ## 2. Mini-app layout
@@ -75,8 +75,9 @@ Shared/core слой пока остаётся в `app/`: `config`, `db`, `schem
 - omitted/`stream=false` request не запускает streaming worker path: task остаётся `generating` до полного ответа, затем переходит в `completed` или `failed`;
 - UI settings содержит первую Generation-card `Стриминг ответов` во вкладке `Чат / LLM`, сразу сохраняет значение в profile preferences как `streaming_enabled` и передаёт его в `POST /chat/tasks` как `stream`; default для новых/неинициализированных профилей — `true`;
 - UI в `web_ui/js/app.js` рендерит assistant-message по persistent `status`;
-- при `stream=true` UI подписывается на `GET /chat/tasks/{task_id}/events`, применяет `delta` к assistant-message и возвращается к polling, если SSE-соединение оборвалось;
+- при `stream=true` UI подписывается на `GET /chat/tasks/{task_id}/events`, кладёт `delta` в typewriter-buffer, плавно допечатывает assistant-message и возвращается к polling, если SSE-соединение оборвалось;
 - non-streaming fallback в UI по-прежнему использует polling `GET /chat/tasks/{task_id}` через `waitForChatTask()`;
+- normal chat lifecycle не вызывает toast/footer для start, streaming-progress, completed или autorouter confidence/model-selection; router decision остаётся в `used_settings`/`model_selected`, а user-facing `router_notice` для normal-success routing намеренно пустой;
 - при открытии session UI ищет active assistant-message с `task_id`; если task ещё жив, UI восстанавливает SSE/polling наблюдение, а уже сохранённый partial content используется как replay-base, чтобы старые `delta` не добавились повторно;
 - optimistic placeholder `Думаю…` больше не используется для assistant generation state;
 - SQLite `chat_messages` поддерживает persistent lifecycle fields, а текущий task route уже создаёт assistant-message до запуска answer-модели;
@@ -93,7 +94,7 @@ Shared/core слой пока остаётся в `app/`: `config`, `db`, `schem
 - `user_message_id`: persisted user-message;
 - `assistant_message_id`: persisted assistant-message;
 - `state`: `generating`, `streaming`, `completed`, `failed`, `cancelled` или transitional `cancelling`;
-- `model_name`, `used_settings`, `router_notice`, `warnings`;
+- `model_name`, `used_settings`, `router_notice`, `warnings`; для normal-success autorouter path `router_notice` пустой, а route-debug данные остаются в `used_settings`;
 - `stream` / `streaming_enabled`: включён ли streaming для финальной answer-модели.
 
 Если ошибка возникает после создания session/message state, route возвращает failed task и сохраняет ошибку в assistant-message `error`. Если модель не выбрана вообще, запрос по-прежнему отклоняется до создания session.
@@ -132,6 +133,7 @@ Recovery строится от persistent message state:
 - если последнее active assistant-message имеет `task_id`, UI запрашивает `GET /chat/tasks/{task_id}`;
 - живой streaming task переподписывается на `GET /chat/tasks/{task_id}/events`, non-streaming task продолжает polling;
 - SSE может replay-нуть старые `delta`, поэтому `web_ui/js/app.js` сравнивает replay с уже сохранённым partial `message.content` и добавляет только новую часть;
+- плавность live-печати регулируется только на UI-слое в `web_ui/js/app.js`: константы `STREAM_TYPEWRITER_INTERVAL_MS`, `STREAM_TYPEWRITER_MIN_CHARS`, `STREAM_TYPEWRITER_MAX_CHARS`, `STREAM_TYPEWRITER_BACKLOG_STEP`, `STREAM_TYPEWRITER_FINAL_FLUSH_CHARS`;
 - если task завершился, UI перечитывает messages и показывает финальный `completed` / `failed` / `cancelled`;
 - если task не найден, backend помечает связанное active assistant-message как `failed`, а UI перечитывает messages.
 
