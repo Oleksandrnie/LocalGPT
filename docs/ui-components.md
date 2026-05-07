@@ -45,6 +45,34 @@
 - textarea в composer должна оставаться компактной и авторасширяться только по содержимому;
 - системные статусы не размещаются в input area.
 
+## Checkbox
+
+Базовый паттерн: `.field.field--checkbox`.
+
+Правила:
+
+- checkbox должен использовать обычный `<input type="checkbox">` внутри label;
+- для двухстрочного описания используется `.field__checkbox-copy`: `strong` для названия и `small` для пояснения;
+- настройка `Стриминг ответов` находится первой карточкой в Settings → `Чат / LLM` как заметная `.generation-toggle-card`, сохраняется сразу при переключении в profile preferences как `streaming_enabled` и отправляется в chat request как `stream`;
+- в пользовательском тексте не использовать внутренние названия флагов.
+
+## Chat Messages
+
+Текущий message runtime рендерится в `web_ui/js/app.js` через контейнеры `#messageList` и `.message-card`.
+
+Текущий status rendering:
+
+- сообщения в UI перечитываются из `GET /sessions/{session_id}/messages`;
+- assistant-card рендерится по `message.status`, а не по локальному transient placeholder;
+- `generating`: показать `Генерирую ответ...` и status badge;
+- `streaming`: показывать partial content и animated continuation indicator;
+- `completed`: показывать обычный assistant-message;
+- `failed`: показывать сохранённый `message.error` и кнопку `Повторить`;
+- `cancelled`: показывать остановленное состояние;
+- при включённой настройке `Стриминг ответов` UI подписывается на SSE и применяет `delta` к assistant-message;
+- если SSE обрывается, UI возвращается к polling и перечитывает messages после финала;
+- при открытии чата UI ищет active assistant-message с `task_id`, восстанавливает SSE/polling наблюдение и использует сохранённый partial content как replay-base, чтобы не продублировать старые чанки.
+
 ## SidebarToggle
 
 Класс: `.sidebar-toggle-pill`.

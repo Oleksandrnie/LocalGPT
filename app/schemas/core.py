@@ -16,6 +16,7 @@ class ChatRequest(BaseModel):
     model_name: str | None = None
     title: str | None = None
     role: str | None = None
+    stream: bool = False
 
 
 class ModelPullRequest(BaseModel):

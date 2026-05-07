@@ -32,6 +32,19 @@
 
 ## Последние изменения (по свежим коммитам)
 
+- **2026-05-07** — настройка `Стриминг ответов` поднята в начало вкладки Settings → `Чат / LLM`, новые профили получают `streaming_enabled=true` по умолчанию, а reset возвращает default вместо принудительного выключения.
+- **2026-05-06** — завершён verification pass для persistent generation state + SSE: покрыты `stream=true`, `stream=false`, stale-task recovery, missing-model failure, autorouter non-streaming selection и backend/UI smoke-запуск.
+- **2026-05-06** — live Ollama SSE smoke подтверждён на локальной `qwen2.5:3b-instruct`; дополнительно усилен Metal-to-CPU retry: перед CPU fallback модель выгружается повторно и для streaming, и для full-response paths.
+- **2026-05-06** — настройка `Стриминг ответов` вынесена в заметную Generation-card и теперь сохраняется сразу при переключении, чтобы следующее сообщение не ушло случайно с `stream=false`.
+- **2026-05-06** — chat UI восстанавливает активную генерацию при открытии чата после переключения или refresh: находит active assistant-message с `task_id`, переподписывается на SSE/polling и не дублирует уже сохранённый partial content.
+- **2026-05-06** — chat UI начал рендерить persistent assistant-message статусы (`generating`, `streaming`, `completed`, `failed`, `cancelled`) и использовать SSE `delta` при включённом стриминге.
+- **2026-05-06** — в Settings → `Чат / LLM` добавлен checkbox `Стриминг ответов`; значение хранится в profile preferences как `streaming_enabled` и отправляется в chat generation как `stream`.
+- **2026-05-06** — закреплён non-streaming fallback: если `stream` не передан или равен `false`, backend ждёт полный ответ Ollama, не создаёт `delta`, но сохраняет persistent assistant-message lifecycle.
+- **2026-05-06** — подключён Ollama streaming для финальной answer-модели: `stream=true` в chat request включает запись partial content в SQLite и передачу `delta` через SSE.
+- **2026-05-06** — добавлен backend SSE endpoint `GET /chat/tasks/{task_id}/events` для lifecycle-событий chat generation (`status`, `model_selected`, `done`, `error`, `cancelled`).
+- **2026-05-06** — `POST /chat/tasks` подключён к persistent lifecycle: сразу сохраняет user-message и assistant-message `status=generating`, возвращает `user_message_id` / `assistant_message_id`, а завершение task обновляет это assistant-сообщение.
+- **2026-05-06** — добавлен storage-слой persistent message lifecycle: `chat_messages` хранит `status`, `model`, `updated_at`, `error`, `task_id`, partial-state и timestamps генерации; старые сообщения мигрируют в `completed`.
+- **2026-05-06** — проведён audit текущего chat runtime перед rollout persistent generation state и SSE: активный UI живёт в `web_ui/js/app.js`, чат уже использует `POST /chat/tasks`, но сейчас это polling-only flow без persistent assistant lifecycle.
 - **2026-04-28** — старт проекта больше не выбирает fallback LLM и не запускает `ollama pull`; чат блокирует отправку без локальной модели и показывает toast.
 - **2026-04-28** — в настройках добавлена очистка БД: удаление осиротевших данных и полный сброс профилей/чатов/RAG-индекса.
 - **2026-04-27** — добавлена светлая тема UI с `ThemeToggle`, сохранением в `localStorage`, light tokens и glass-слоями для topbar/sidebar/cards/modals/tools.
@@ -50,6 +63,31 @@
 Для инженерного обсуждения архитектуры и планирования развития добавлен отдельный технический документ:
 
 - [`TECHNICAL_README.md`](TECHNICAL_README.md) — память (`mem_turns`), сборка контекста, токены на вход/выход, текущие ограничения и roadmap-пункты.
+
+## Текущий Chat Runtime
+
+Перед внедрением streaming-аудит зафиксировал текущий flow:
+
+- активный chat UI подключён через [`web_ui/gui_html.html`](web_ui/gui_html.html) и [`web_ui/js/app.js`](web_ui/js/app.js); старые модульные файлы `web_ui/js/chat.js`, `web_ui/js/main.js`, `web_ui/js/api.js`, `web_ui/js/sessions.js` не подключены к текущей странице;
+- отправка сообщения идёт через `POST /chat/tasks`, а состояние task можно читать через polling `GET /chat/tasks/{task_id}` или lifecycle SSE `GET /chat/tasks/{task_id}/events`;
+- storage уже поддерживает persistent statuses `generating`, `streaming`, `completed`, `failed`, `cancelled`, partial content и связь сообщения с `task_id`;
+- backend task flow сразу создаёт user-message и assistant-message `status=generating`, возвращает `task_id`, `user_message_id`, `assistant_message_id`, а финализация обновляет тот же assistant-message;
+- настройка `Стриминг ответов` живёт первой карточкой в Settings → `Чат / LLM`, сохраняется сразу при переключении в profile preferences как `streaming_enabled` и применяется к следующей отправке; для новых/неинициализированных профилей default — `true`;
+- при `stream=true` backend вызывает streaming API Ollama только для финальной answer-модели, пишет partial content в SQLite и отдаёт `delta` через SSE; autorouter остаётся lifecycle/selection этапом без token delta;
+- при `stream=false` или отсутствии поля `stream` backend использует full-response fallback без `delta`, но assistant-message всё равно живёт в persistent lifecycle;
+- UI рендерит карточки assistant по persistent `status`; `Генерирую ответ...` больше не живёт только в локальном optimistic placeholder;
+- при включённом streaming UI подписывается на `GET /chat/tasks/{task_id}/events`, обновляет partial content по `delta`, а при обрыве SSE возвращается к polling;
+- при открытии чата UI перечитывает messages, ищет active assistant-message с `task_id` и восстанавливает наблюдение за task; если backend task уже потерян, связанное сообщение переводится в `failed`.
+
+Verification snapshot для этого flow:
+
+- `node --check web_ui/js/app.js`;
+- `python -m py_compile` для chat/backend/test файлов;
+- `python -m unittest tests.test_pipeline_memory tests.test_model_router -q`;
+- smoke-запуск `uvicorn backend.server:app` + `/health` + `/ui/gui_html.html`;
+- API-smoke на временной SQLite-базе для `stream=true`, `stream=false`, refresh-state, stale-task и missing-model paths;
+- live Ollama smoke на локальной модели с реальными SSE `delta` и финальным persisted assistant-message;
+- контроль отсутствия запрещённого AI-флага и realtime-транспорта вне `compare-branch/`.
 
 ## Архитектурный принцип
 
@@ -451,6 +489,14 @@ Health:
 ```bash
 curl -s http://127.0.0.1:8000/health
 ```
+
+Если в UI нет карточки `Стриминг ответов`, сначала проверьте, из какой папки запущен активный backend на том порту, который открыт в браузере:
+
+```bash
+lsof -p $(lsof -tiTCP:<port> -sTCP:LISTEN | head -1) | grep cwd
+```
+
+Runtime должен быть запущен из текущего checkout LocalGPT; старый процесс из другой копии проекта будет отдавать устаревший `web_ui/gui_html.html`.
 
 Prompt debug:
 

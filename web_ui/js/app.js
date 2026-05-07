@@ -30,6 +30,8 @@ const STORAGE_KEYS = {
   settingsTab: "localgpt_simple_settings_tab",
 };
 
+const MESSAGE_STATUSES = new Set(["generating", "streaming", "completed", "failed", "cancelled"]);
+const MESSAGE_FINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const DEFAULT_TTS_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 1.9, 2];
 const ASR_TOOL_ORIGIN = "asr_tool";
 const ASR_PIPELINE_STAGES = [
@@ -294,6 +296,7 @@ const els = {
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
+  streamingEnabledToggle: document.getElementById("streamingEnabledToggle"),
   memTurnsInput: document.getElementById("memTurnsInput"),
   ollamaKeepAliveInput: document.getElementById("ollamaKeepAliveInput"),
   ollamaKeepAliveUnitSelect: document.getElementById("ollamaKeepAliveUnitSelect"),
@@ -393,6 +396,8 @@ const state = {
   voiceTranscriptionStartController: null,
   chatTaskId: null,
   chatTaskStartController: null,
+  chatTaskEventSource: null,
+  chatTaskReplay: null,
   isSpeaking: false,
   autoScrollPinned: true,
   theme: "dark",
@@ -1572,31 +1577,176 @@ function isAbortError(error) {
   return error?.name === "AbortError" || String(error?.message || error || "").toLowerCase().includes("aborted");
 }
 
-function appendAssistantThinkingPlaceholder() {
-  const lastMessage = state.messages[state.messages.length - 1];
-  if (lastMessage?.role === "assistant" && lastMessage?._optimisticThinking) {
-    return;
+function parseSsePayload(event) {
+  try {
+    return JSON.parse(event?.data || "{}");
+  } catch {
+    return {};
   }
-  state.messages = [
-    ...state.messages,
-    {
-      role: "assistant",
-      content: "Думаю…",
-      created_at: new Date().toISOString(),
-      _optimisticThinking: true,
-    },
-  ];
-  renderMessages();
-  scrollMessagesToBottom({ force: true });
 }
 
-function removeAssistantThinkingPlaceholder() {
-  const lastMessage = state.messages[state.messages.length - 1];
-  if (!lastMessage?._optimisticThinking) {
+function closeChatTaskEventSource(source = state.chatTaskEventSource) {
+  if (!source) return;
+  try {
+    source.close();
+  } catch {
+    // Ignore close errors from browser EventSource implementations.
+  }
+  if (state.chatTaskEventSource === source) {
+    state.chatTaskEventSource = null;
+  }
+}
+
+function chatTaskIdFrom(taskOrMessage) {
+  return String(taskOrMessage?.task_id || taskOrMessage?.id || "").trim();
+}
+
+function findAssistantMessageForTask(taskOrMessage) {
+  const taskId = chatTaskIdFrom(taskOrMessage);
+  const assistantMessageId = String(taskOrMessage?.assistant_message_id || taskOrMessage?.id || "").trim();
+  return state.messages.find((message) => {
+    if (message?.role !== "assistant") return false;
+    if (taskId && String(message.task_id || "") === taskId) return true;
+    return Boolean(assistantMessageId && String(message.id || "") === assistantMessageId);
+  }) || null;
+}
+
+function clearChatTaskReplay(taskId = "") {
+  const target = String(taskId || "").trim();
+  if (!state.chatTaskReplay) return;
+  if (!target || state.chatTaskReplay.taskId === target) {
+    state.chatTaskReplay = null;
+  }
+}
+
+function prepareChatTaskReplay(task, baseContent = null) {
+  const taskId = chatTaskIdFrom(task);
+  if (!taskId) {
+    state.chatTaskReplay = null;
     return;
   }
-  state.messages = state.messages.slice(0, -1);
+  const message = findAssistantMessageForTask(task);
+  const content = baseContent === null ? String(message?.content || "") : String(baseContent || "");
+  state.chatTaskReplay = {
+    taskId,
+    baseContent: content,
+    replayedText: "",
+    caughtUp: content.length === 0,
+  };
+}
+
+function consumeChatTaskDelta(task, text) {
+  const taskId = chatTaskIdFrom(task);
+  const delta = String(text || "");
+  if (!delta) return "";
+  const replay = state.chatTaskReplay;
+  if (!replay || replay.taskId !== taskId || replay.caughtUp) {
+    return delta;
+  }
+
+  const previousReplay = replay.replayedText;
+  const nextReplay = `${previousReplay}${delta}`;
+  const baseContent = replay.baseContent || "";
+  replay.replayedText = nextReplay;
+
+  if (baseContent.startsWith(nextReplay)) {
+    return "";
+  }
+  if (nextReplay.startsWith(baseContent)) {
+    replay.caughtUp = true;
+    const appendFrom = Math.max(0, baseContent.length - previousReplay.length);
+    return delta.slice(appendFrom);
+  }
+
+  // If persisted partial content was normalized unexpectedly, avoid duplicating old replayed chunks.
+  replay.caughtUp = true;
+  return "";
+}
+
+function normalizeMessageStatus(message) {
+  const status = String(message?.status || "").trim().toLowerCase();
+  if (MESSAGE_STATUSES.has(status)) return status;
+  if (message?.role === "assistant" && message?._optimisticThinking) return "generating";
+  return "completed";
+}
+
+function isAssistantMessageActive(message) {
+  const status = normalizeMessageStatus(message);
+  return message?.role === "assistant" && !MESSAGE_FINAL_STATUSES.has(status);
+}
+
+function assistantStatusMeta(status) {
+  if (status === "streaming") {
+    return { label: "Генерирует", text: "Генерирую дальше…" };
+  }
+  if (status === "failed") {
+    return { label: "Ошибка", text: "Генерация ответа завершилась ошибкой." };
+  }
+  if (status === "cancelled") {
+    return { label: "Остановлено", text: "Генерация ответа остановлена." };
+  }
+  if (status === "generating") {
+    return { label: "Генерация", text: "Генерирую ответ..." };
+  }
+  return { label: "", text: "" };
+}
+
+function findMessageIndexById(messageId) {
+  const target = String(messageId ?? "");
+  if (!target) return -1;
+  return state.messages.findIndex((message) => String(message?.id ?? "") === target);
+}
+
+function taskConversationId(taskOrPayload) {
+  return taskOrPayload?.conversation_id || taskOrPayload?.session_id || state.currentSessionId || "";
+}
+
+function updateAssistantMessageFromTask(task, updates = {}) {
+  const assistantMessageId = updates.assistant_message_id || task?.assistant_message_id;
+  const conversationId = taskConversationId(updates) || taskConversationId(task);
+  if (conversationId && state.currentSessionId && String(conversationId) !== String(state.currentSessionId)) {
+    return;
+  }
+
+  let index = findMessageIndexById(assistantMessageId);
+  if (index < 0 && assistantMessageId) {
+    state.messages = [
+      ...state.messages,
+      {
+        id: assistantMessageId,
+        session_id: conversationId || state.currentSessionId,
+        role: "assistant",
+        content: "",
+        status: "generating",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+    index = state.messages.length - 1;
+  }
+  if (index < 0) return;
+
+  const current = state.messages[index] || {};
+  const status = updates.status || current.status || "generating";
+  const nextContent = Object.prototype.hasOwnProperty.call(updates, "content")
+    ? String(updates.content || "")
+    : `${current.content || ""}${updates.delta || ""}`;
+  const nextMessage = {
+    ...current,
+    status,
+    content: nextContent,
+    model: updates.model || current.model || task?.model_name || "",
+    error: Object.prototype.hasOwnProperty.call(updates, "error") ? updates.error : current.error,
+    task_id: task?.id || task?.task_id || current.task_id,
+    is_partial: !MESSAGE_FINAL_STATUSES.has(String(status)),
+    updated_at: new Date().toISOString(),
+  };
+
+  state.messages = state.messages.map((message, itemIndex) => (itemIndex === index ? nextMessage : message));
   renderMessages();
+  if (state.autoScrollPinned) {
+    scrollMessagesToBottom({ force: true });
+  }
 }
 
 async function waitForChatTask(taskId, { timeoutMs = 300000 } = {}) {
@@ -1607,12 +1757,221 @@ async function waitForChatTask(taskId, { timeoutMs = 300000 } = {}) {
     if (taskState === "completed" || taskState === "cancelled") {
       return task;
     }
-    if (taskState === "error") {
+    if (taskState === "error" || taskState === "failed") {
       throw new Error(task?.message || "Генерация ответа завершилась ошибкой.");
     }
     await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
   throw new Error("Истекло время ожидания генерации ответа.");
+}
+
+function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = null } = {}) {
+  const taskId = task?.id || task?.task_id || "";
+  if (!taskId || typeof window.EventSource !== "function") {
+    return Promise.reject(new Error("SSE недоступен в этом браузере."));
+  }
+
+  return new Promise((resolve, reject) => {
+    closeChatTaskEventSource();
+    prepareChatTaskReplay(task, replayBaseContent);
+    const source = new window.EventSource(`/chat/tasks/${encodeURIComponent(taskId)}/events`);
+    let settled = false;
+    const timeoutId = window.setTimeout(() => {
+      const error = new Error("Истекло время ожидания генерации ответа.");
+      error.streamConnectionFailed = true;
+      finish(() => reject(error));
+    }, timeoutMs);
+
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      closeChatTaskEventSource(source);
+      clearChatTaskReplay(taskId);
+      callback();
+    };
+
+    state.chatTaskEventSource = source;
+
+    source.addEventListener("status", (event) => {
+      const data = parseSsePayload(event);
+      const status = String(data.status || "generating");
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        status,
+      });
+      if (status === "streaming") {
+        setFooter("Ответ приходит частями…", "warning");
+      }
+    });
+
+    source.addEventListener("model_selected", (event) => {
+      const data = parseSsePayload(event);
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        model: data.model,
+      });
+    });
+
+    source.addEventListener("delta", (event) => {
+      const data = parseSsePayload(event);
+      const delta = consumeChatTaskDelta(task, data.text);
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        status: "streaming",
+        delta,
+      });
+    });
+
+    source.addEventListener("done", (event) => {
+      const data = parseSsePayload(event);
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        status: "completed",
+      });
+      finish(() => resolve({ ...task, ...data, state: "completed" }));
+    });
+
+    source.addEventListener("cancelled", (event) => {
+      const data = parseSsePayload(event);
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        status: "cancelled",
+      });
+      finish(() => resolve({ ...task, ...data, state: "cancelled" }));
+    });
+
+    source.addEventListener("error", (event) => {
+      if (typeof event?.data !== "string") {
+        return;
+      }
+      const data = parseSsePayload(event);
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        status: "failed",
+        error: data.message || "Генерация ответа завершилась ошибкой.",
+      });
+      const error = new Error(data.message || "Генерация ответа завершилась ошибкой.");
+      error.chatTaskFailed = true;
+      finish(() => reject(error));
+    });
+
+    source.onerror = () => {
+      const error = new Error("SSE-соединение прервалось.");
+      error.streamConnectionFailed = true;
+      finish(() => reject(error));
+    };
+  });
+}
+
+function isFinalChatTaskState(taskState) {
+  return ["completed", "failed", "error", "cancelled"].includes(String(taskState || "").toLowerCase());
+}
+
+function latestActiveAssistantMessageWithTask(messages = state.messages) {
+  return [...(messages || [])]
+    .reverse()
+    .find((message) => message?.role === "assistant" && message?.task_id && isAssistantMessageActive(message)) || null;
+}
+
+function taskFromAssistantMessage(message) {
+  const taskId = String(message?.task_id || "").trim();
+  return {
+    id: taskId,
+    task_id: taskId,
+    state: normalizeMessageStatus(message),
+    session_id: message?.session_id || state.currentSessionId,
+    conversation_id: message?.session_id || state.currentSessionId,
+    assistant_message_id: message?.id,
+    model_name: message?.model || state.selectedLlmModel || "",
+    stream: activeProfileStreamingEnabled(),
+  };
+}
+
+async function refreshCurrentSessionMessages({ sessionId = state.currentSessionId, scroll = false } = {}) {
+  const targetSessionId = String(sessionId || "").trim();
+  if (!targetSessionId) return false;
+  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages`);
+  if (String(state.currentSessionId || "") !== targetSessionId) {
+    return false;
+  }
+  state.messages = Array.isArray(data?.messages) ? data.messages : [];
+  renderMessages();
+  if (scroll) {
+    scrollMessagesToBottom({ force: true });
+  }
+  return true;
+}
+
+async function recoverActiveChatTaskFromMessages({ silent = true } = {}) {
+  const activeMessage = latestActiveAssistantMessageWithTask();
+  const taskId = String(activeMessage?.task_id || "").trim();
+  if (!activeMessage || !taskId) return;
+  if (state.chatTaskId === taskId) return;
+
+  const fallbackTask = taskFromAssistantMessage(activeMessage);
+  const sessionId = activeMessage.session_id || state.currentSessionId;
+  let task = fallbackTask;
+  state.chatTaskId = taskId;
+  state.isSending = true;
+  updateSendButtonState();
+
+  try {
+    task = {
+      ...fallbackTask,
+      ...await request(`/chat/tasks/${encodeURIComponent(taskId)}`),
+      assistant_message_id: activeMessage.id,
+    };
+    if (isFinalChatTaskState(task.state)) {
+      await refreshCurrentSessionMessages({ sessionId, scroll: false });
+      return;
+    }
+
+    if (!silent) {
+      setFooter("Восстанавливаю поток генерации ответа…", "warning");
+    }
+
+    let completedTask = null;
+    const shouldUseSse = Boolean(task.stream && task.id);
+    if (shouldUseSse) {
+      try {
+        completedTask = await waitForChatTaskEvents(task, {
+          replayBaseContent: activeMessage.content || "",
+        });
+      } catch (streamError) {
+        if (streamError?.chatTaskFailed) {
+          throw streamError;
+        }
+        setFooter("Поток ответа прервался, жду финальный результат…", "warning");
+        completedTask = await waitForChatTask(taskId);
+      }
+    } else {
+      completedTask = await waitForChatTask(taskId);
+    }
+
+    await refreshCurrentSessionMessages({ sessionId, scroll: true });
+    if (String(completedTask?.state || "") === "cancelled") {
+      setFooter("Генерация ответа остановлена.", "warning");
+    } else {
+      setFooter(autoRouterNotice(completedTask) || "Ответ готов.", "success");
+    }
+  } catch (error) {
+    if ((error?.status || 0) === 404) {
+      await refreshCurrentSessionMessages({ sessionId, scroll: false });
+      setFooter("Генерация больше не активна: task не найден, сообщение помечено как ошибка.", "warning");
+      return;
+    }
+    await refreshCurrentSessionMessages({ sessionId, scroll: false }).catch(() => false);
+    setFooter(`Не удалось восстановить генерацию: ${error.message || error}`, "error");
+  } finally {
+    if (state.chatTaskId === taskId) {
+      state.chatTaskId = null;
+      state.isSending = false;
+      closeChatTaskEventSource();
+      clearChatTaskReplay(taskId);
+      updateSendButtonState();
+    }
+  }
 }
 
 async function cancelCurrentChatGeneration() {
@@ -1645,8 +2004,9 @@ async function cancelCurrentChatGeneration() {
 
   state.chatTaskId = null;
   state.chatTaskStartController = null;
+  closeChatTaskEventSource();
+  clearChatTaskReplay();
   state.isSending = false;
-  removeAssistantThinkingPlaceholder();
   if (state.currentSessionId) {
     await loadSessions({ preferredSessionId: state.currentSessionId });
   }
@@ -2338,6 +2698,12 @@ function getActiveProfilePreferences() {
   return getActiveProfile()?.preferences || {};
 }
 
+function activeProfileStreamingEnabled() {
+  const preferences = getActiveProfilePreferences();
+  const value = preferences?.settings?.streaming_enabled;
+  return value === undefined || value === null ? true : Boolean(value);
+}
+
 function applyActiveProfilePreferences() {
   const preferences = getActiveProfilePreferences();
   const whisperFallback = state.asrModels[0]?.name || "medium";
@@ -2363,6 +2729,26 @@ function applyActiveProfilePreferences() {
 function replaceProfileState(profile) {
   if (!profile?.id) return;
   state.profiles = state.profiles.map((item) => (item.id === profile.id ? profile : item));
+}
+
+function patchActiveProfileSettingsLocal(settingsPatch) {
+  const profile = getActiveProfile();
+  if (!profile || !settingsPatch || typeof settingsPatch !== "object") return null;
+  const preferences = profile.preferences || {};
+  const nextProfile = {
+    ...profile,
+    preferences: {
+      ...preferences,
+      settings: {
+        ...(preferences.settings || {}),
+        ...settingsPatch,
+      },
+    },
+  };
+  replaceProfileState(nextProfile);
+  applyActiveProfilePreferences();
+  renderModelSettings();
+  return nextProfile;
 }
 
 async function saveActiveProfilePreferences(preferencesPatch) {
@@ -2641,17 +3027,54 @@ function renderMessages() {
     .map((message, index) => {
       const role = message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "system";
       const author = role === "user" ? "Вы" : role === "assistant" ? "LocalGPT" : "Система";
-      const canCopy = role !== "user" && message.content;
+      const status = normalizeMessageStatus(message);
+      const statusMeta = role === "assistant" ? assistantStatusMeta(status) : { label: "", text: "" };
+      const content = String(message.content || "");
+      const errorText = String(message.error || "").trim();
+      const hasContent = Boolean(content.trim());
+      const isActive = isAssistantMessageActive(message);
+      const canCopy = role !== "user" && hasContent;
+      const body = (() => {
+        if (role !== "assistant") return formatRichMessage(content);
+        if (status === "failed") {
+          return [
+            hasContent ? formatRichMessage(content) : "",
+            `<p class="message-status-text message-status-text--error">${escapeHtml(errorText || statusMeta.text)}</p>`,
+          ].filter(Boolean).join("");
+        }
+        if (status === "cancelled") {
+          return [
+            hasContent ? formatRichMessage(content) : "",
+            `<p class="message-status-text">${escapeHtml(statusMeta.text)}</p>`,
+          ].filter(Boolean).join("");
+        }
+        if (!hasContent && status === "generating") {
+          return `<p class="message-status-text">${escapeHtml(statusMeta.text)}</p>`;
+        }
+        if (isActive) {
+          return [
+            hasContent ? formatRichMessage(content) : `<p class="message-status-text">${escapeHtml(statusMeta.text)}</p>`,
+            `<span class="message-streaming-indicator" aria-label="${escapeHtml(statusMeta.text)}"></span>`,
+          ].join("");
+        }
+        return formatRichMessage(content);
+      })();
       return `
-        <div class="message-row message-row--${role}">
+        <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}` : ""}">
           <article class="message-card">
             <div class="message-card__top">
               <span class="message-card__author">${escapeHtml(author)}</span>
-              <span class="message-card__time">${escapeHtml(formatDateTime(message.created_at))}</span>
+              <span class="message-card__top-meta">
+                ${role === "assistant" && statusMeta.label ? `<span class="message-status-badge message-status-badge--${escapeHtml(status)}">${escapeHtml(statusMeta.label)}</span>` : ""}
+                <span class="message-card__time">${escapeHtml(formatDateTime(message.created_at))}</span>
+              </span>
             </div>
-            <div class="message-card__body">${formatRichMessage(message.content || "")}</div>
-            ${canCopy
-              ? `<div class="message-card__actions"><button class="message-copy-button" type="button" data-copy-index="${index}">Скопировать</button></div>`
+            <div class="message-card__body">${body}</div>
+            ${canCopy || (role === "assistant" && status === "failed")
+              ? `<div class="message-card__actions">
+                  ${role === "assistant" && status === "failed" ? `<button class="message-copy-button" type="button" data-retry-message-index="${index}">Повторить</button>` : ""}
+                  ${canCopy ? `<button class="message-copy-button" type="button" data-copy-index="${index}">Скопировать</button>` : ""}
+                </div>`
               : ""}
           </article>
         </div>
@@ -2661,6 +3084,23 @@ function renderMessages() {
   requestAnimationFrame(() => {
     syncMessageScrollState();
   });
+}
+
+async function retryFailedAssistantMessage(messageIndex) {
+  const index = Number(messageIndex);
+  if (!Number.isFinite(index) || index < 0) return;
+  let userMessage = null;
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (state.messages[cursor]?.role === "user" && String(state.messages[cursor]?.content || "").trim()) {
+      userMessage = state.messages[cursor];
+      break;
+    }
+  }
+  if (!userMessage) {
+    setFooter("Не нашёл исходное сообщение для повтора.", "warning");
+    return;
+  }
+  await sendPromptText(userMessage.content, { clearInput: false });
 }
 
 function renderModelControls() {
@@ -2861,6 +3301,7 @@ function renderModelSettings() {
     max_tokens: overrides.max_tokens ?? effective.max_tokens ?? "",
     num_ctx: overrides.num_ctx ?? effective.num_ctx ?? "",
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
+    streaming_enabled: activeProfileStreamingEnabled(),
     ollama_keep_alive: overrides.ollama_keep_alive ?? effective.ollama_keep_alive ?? defaultKeepAliveForModel(modelName),
     max_resident_target_models: overrides.max_resident_target_models ?? effective.max_resident_target_models ?? RESIDENCY_DEFAULTS.max_resident_target_models,
     allow_light_with_heavy: overrides.allow_light_with_heavy ?? effective.allow_light_with_heavy ?? RESIDENCY_DEFAULTS.allow_light_with_heavy,
@@ -2889,6 +3330,11 @@ function renderModelSettings() {
     els.memTurnsInput.disabled = disabled;
     els.memTurnsInput.value = values.mem_turns === "" ? "" : String(values.mem_turns);
     els.memTurnsInput.title = "Общая память диалога для активного профиля. Применяется ко всем chat-моделям, включая Auto.";
+  }
+  if (els.streamingEnabledToggle) {
+    els.streamingEnabledToggle.disabled = profileDisabled;
+    els.streamingEnabledToggle.checked = Boolean(values.streaming_enabled);
+    els.streamingEnabledToggle.title = "Применяется только к финальной answer-модели. Auto-router не отдаёт token delta.";
   }
   if (els.ollamaKeepAliveInput) {
     const keepAlive = parseKeepAliveValue(values.ollama_keep_alive, defaultKeepAliveForModel(modelName));
@@ -6056,6 +6502,7 @@ async function openSession(sessionId) {
     renderMessages();
     renderTranscriptStrip();
     scrollMessagesToBottom({ force: true });
+    void recoverActiveChatTaskFromMessages({ silent: true });
   } catch (error) {
     setFooter(`Не удалось загрузить чат: ${error.message || error}`, "error");
   } finally {
@@ -6187,6 +6634,7 @@ async function saveModelSettingsFlow() {
     state.modelSettingsState = data || state.modelSettingsState;
     const profileSettingsPatch = {
       ...residencySettings,
+      streaming_enabled: Boolean(els.streamingEnabledToggle?.checked),
     };
     if (memTurnsValue !== null) {
       profileSettingsPatch.mem_turns = memTurnsValue;
@@ -6206,6 +6654,34 @@ async function saveModelSettingsFlow() {
   } catch (error) {
     setInlineStatus(els.modelSettingsStatus, `Не удалось сохранить настройки: ${error.message || error}`, "error");
   }
+}
+
+async function saveStreamingPreferenceFlow() {
+  if (!els.streamingEnabledToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.streamingEnabledToggle.checked);
+  const previous = activeProfileStreamingEnabled();
+
+  patchActiveProfileSettingsLocal({ streaming_enabled: checked });
+  els.streamingEnabledToggle.disabled = true;
+  setInlineStatus(
+    els.modelSettingsStatus,
+    checked ? "Стриминг ответов включается…" : "Стриминг ответов выключается…",
+    "warning",
+  );
+
+  const updatedProfile = await saveActiveProfilePreferences({ settings: { streaming_enabled: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileSettingsLocal({ streaming_enabled: previous });
+    setInlineStatus(els.modelSettingsStatus, "Не удалось сохранить настройку стриминга.", "error");
+    return;
+  }
+
+  setInlineStatus(
+    els.modelSettingsStatus,
+    checked ? "Стриминг ответов включён. Следующее сообщение пойдёт через SSE." : "Стриминг ответов выключен. Следующее сообщение дождётся полного ответа.",
+    "success",
+  );
+  renderModelSettings();
 }
 
 async function saveAsrPipelineSettingsFlow() {
@@ -6261,6 +6737,7 @@ async function resetModelSettingsFlow() {
 
   try {
     const defaultMemTurns = parseOptionalNumber(state.modelSettingsState?.defaults?.mem_turns, "int") || 6;
+    const defaultStreamingEnabled = state.modelSettingsState?.defaults?.streaming_enabled !== false;
     const data = await request("/model_settings/reset_to_defaults", {
       method: "POST",
       body: {
@@ -6272,6 +6749,7 @@ async function resetModelSettingsFlow() {
     await saveActiveProfilePreferences({
       settings: {
         mem_turns: defaultMemTurns,
+        streaming_enabled: defaultStreamingEnabled,
         ...RESIDENCY_DEFAULTS,
       },
     });
@@ -6446,6 +6924,7 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
       profile_id: state.activeProfileId,
       model: selectedModel,
       model_name: selectedModel,
+      stream: activeProfileStreamingEnabled(),
     };
 
     if (state.currentSessionId) {
@@ -6469,34 +6948,48 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
       return;
     }
 
-    appendAssistantThinkingPlaceholder();
     if (startRouterNotice) {
       setFooter(startRouterNotice, "success");
     }
-    const completedTask = await waitForChatTask(task?.id || "");
+    let completedTask = null;
+    const shouldUseSse = Boolean(payload.stream && task?.id);
+    if (shouldUseSse) {
+      try {
+        completedTask = await waitForChatTaskEvents(task);
+      } catch (streamError) {
+        if (streamError?.chatTaskFailed) {
+          throw streamError;
+        }
+        setFooter("Поток ответа прервался, жду финальный результат…", "warning");
+        completedTask = await waitForChatTask(task?.id || "");
+      }
+    } else {
+      completedTask = await waitForChatTask(task?.id || "");
+    }
     state.chatTaskId = null;
     const completedRouterNotice = autoRouterNotice(completedTask) || startRouterNotice;
 
     if (String(completedTask?.state || "") === "cancelled") {
-      removeAssistantThinkingPlaceholder();
       if (nextSessionId) {
-        await loadSessions({ preferredSessionId: nextSessionId });
+        await loadSessions({
+          preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
+        });
       }
       setFooter("Генерация ответа остановлена.", "warning");
       return;
     }
 
     if (nextSessionId) {
-      await loadSessions({ preferredSessionId: nextSessionId });
+      await loadSessions({
+        preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
+      });
     }
     setFooter(completedRouterNotice || "Ответ готов.", "success");
   } catch (error) {
     if (isAbortError(error)) {
-      removeAssistantThinkingPlaceholder();
       setFooter("Генерация ответа остановлена.", "warning");
       return;
     }
-    removeAssistantThinkingPlaceholder();
     if (state.currentSessionId) {
       await loadSessions({ preferredSessionId: state.currentSessionId });
     }
@@ -6504,6 +6997,8 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
   } finally {
     state.chatTaskId = null;
     state.chatTaskStartController = null;
+    closeChatTaskEventSource();
+    clearChatTaskReplay();
     state.isSending = false;
     updateSendButtonState();
     scrollMessagesToBottom({ force: true });
@@ -7276,6 +7771,12 @@ function bindEvents() {
       return;
     }
 
+    const retryButton = event.target.closest("[data-retry-message-index]");
+    if (retryButton) {
+      await retryFailedAssistantMessage(retryButton.dataset.retryMessageIndex);
+      return;
+    }
+
     const copyButton = event.target.closest("[data-copy-index]");
     if (!copyButton) return;
     try {
@@ -7360,6 +7861,7 @@ function bindEvents() {
   els.deleteProfileButton?.addEventListener("click", async () => deleteCurrentProfileFlow());
   els.saveModelSettingsButton?.addEventListener("click", async () => saveModelSettingsFlow());
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
+  els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
   els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
   els.asrPipelineSettingsToggleButton?.addEventListener("click", () => {
@@ -7997,6 +8499,11 @@ function bindEvents() {
 
   window.addEventListener("drop", () => {
     clearAllDropOverlays();
+  });
+
+  window.addEventListener("pagehide", () => {
+    closeChatTaskEventSource();
+    clearChatTaskReplay();
   });
 }
 

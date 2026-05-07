@@ -337,6 +337,7 @@ DEFAULT_PIPELINE = {
 }
 
 DEFAULT_RUNTIME_SETTINGS = {
+    "streaming_enabled": True,
     "pipeline_enabled": True,
     "summary_memory_enabled": True,
     "rag_enabled": False,

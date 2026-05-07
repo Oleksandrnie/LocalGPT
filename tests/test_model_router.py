@@ -129,6 +129,61 @@ class ModelRouterTestCase(unittest.TestCase):
             keep_alive="45s",
         )
 
+    def test_chat_completion_stream_passes_keep_alive_to_native_ollama_request(self):
+        service = ChatService()
+        messages = [{"role": "user", "content": "hello"}]
+
+        with patch.object(ollama_runtime, "chat_completion_stream", return_value=iter(["при", "вет"])) as native_chat:
+            chunks = list(
+                service.chat_completion_stream(
+                    "qwen2.5:7b-instruct",
+                    messages,
+                    settings={"temperature": 0.1, "max_tokens": 5, "ollama_keep_alive": "45s"},
+                )
+            )
+
+        self.assertEqual(chunks, ["при", "вет"])
+        native_chat.assert_called_once_with(
+            "qwen2.5:7b-instruct",
+            messages=messages,
+            temperature=0.1,
+            max_tokens=5,
+            keep_alive="45s",
+        )
+
+    def test_ollama_chat_stream_parses_native_chat_chunks(self):
+        messages = [{"role": "user", "content": "hello"}]
+
+        with patch.object(
+            ollama_runtime,
+            "_post_json_stream",
+            return_value=iter(
+                [
+                    {"message": {"content": "При"}},
+                    {"message": {"content": "вет"}},
+                    {"done": True},
+                ]
+            ),
+        ) as post_stream:
+            chunks = list(
+                ollama_runtime.chat_completion_stream(
+                    "qwen2.5:7b-instruct",
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=5,
+                    keep_alive="45s",
+                )
+            )
+
+        self.assertEqual(chunks, ["При", "вет"])
+        payload = post_stream.call_args.args[1]
+        self.assertTrue(payload["stream"])
+        self.assertEqual(payload["model"], "qwen2.5:7b-instruct")
+        self.assertEqual(payload["messages"], messages)
+        self.assertEqual(payload["options"]["temperature"], 0.1)
+        self.assertEqual(payload["options"]["num_predict"], 5)
+        self.assertEqual(payload["keep_alive"], "45s")
+
     def test_ollama_chat_retries_metal_failure_with_cpu_fallback(self):
         messages = [{"role": "user", "content": "hello"}]
         metal_error = RuntimeError(
@@ -158,7 +213,46 @@ class ModelRouterTestCase(unittest.TestCase):
         cpu_payload = post_json.call_args_list[-1].args[1]
         self.assertEqual(cpu_payload["options"]["num_gpu"], 0)
         self.assertEqual(cpu_payload["keep_alive"], 0)
-        unload_model.assert_called_once_with("qwen2.5:7b-instruct", timeout=1.5)
+        self.assertEqual(unload_model.call_count, 2)
+        unload_model.assert_called_with("qwen2.5:7b-instruct", timeout=1.5)
+
+    def test_ollama_chat_stream_retries_metal_failure_with_cpu_fallback(self):
+        messages = [{"role": "user", "content": "hello"}]
+        metal_error = RuntimeError(
+            "Ollama API error 500: ggml_metal_init: error: failed to initialize the Metal library; "
+            "llama_init_from_model: failed to initialize Metal backend"
+        )
+
+        with (
+            patch.object(
+                ollama_runtime,
+                "_post_json_stream",
+                side_effect=[
+                    metal_error,
+                    metal_error,
+                    iter([{"message": {"content": "ok"}}, {"done": True}]),
+                ],
+            ) as post_stream,
+            patch.object(ollama_runtime, "unload_model", return_value=True) as unload_model,
+            patch.object(ollama_runtime.time, "sleep"),
+        ):
+            chunks = list(
+                ollama_runtime.chat_completion_stream(
+                    "qwen2.5:7b-instruct",
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=5,
+                    keep_alive="45s",
+                )
+            )
+
+        self.assertEqual(chunks, ["ok"])
+        self.assertEqual(post_stream.call_count, 3)
+        cpu_payload = post_stream.call_args_list[-1].args[1]
+        self.assertEqual(cpu_payload["options"]["num_gpu"], 0)
+        self.assertEqual(cpu_payload["keep_alive"], 0)
+        self.assertEqual(unload_model.call_count, 2)
+        unload_model.assert_called_with("qwen2.5:7b-instruct", timeout=1.5)
 
     def test_ollama_chat_can_force_cpu_runner(self):
         messages = [{"role": "user", "content": "hello"}]
@@ -509,12 +603,19 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
         req = ChatRequest(query="Объясни коротко", profile_id=self.profile_id, model_name=model_router.AUTO_MODEL_ID)
 
         with patch.object(model_service, "is_model_installed", return_value=False):
-            with self.assertRaises(HTTPException) as ctx:
-                start_chat_task(req)
+            task = start_chat_task(req)
 
-        self.assertEqual(ctx.exception.status_code, 424)
-        self.assertEqual(ctx.exception.detail["code"], "router_model_missing")
-        self.assertEqual(ctx.exception.detail["model"], "qwen3:0.6b")
+        self.assertEqual(task["state"], "failed")
+        self.assertEqual(task["error_code"], "router_model_missing")
+        self.assertEqual(task["model_name"], "qwen3:0.6b")
+        self.assertIsNotNone(task["user_message_id"])
+        self.assertIsNotNone(task["assistant_message_id"])
+        messages = db.get_messages(task["session_id"])
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertEqual(messages[0]["content"], "Объясни коротко")
+        self.assertEqual(messages[1]["status"], "failed")
+        self.assertEqual(messages[1]["task_id"], task["id"])
+        self.assertIn("Router-модель", messages[1]["error"])
 
     def test_auto_router_calculation_uses_fallback_llm_not_local_calculator(self):
         req = ChatRequest(query="Сколько минут: 1.5 часа плюс 35 минут?", profile_id=self.profile_id, model_name=model_router.AUTO_MODEL_ID)
@@ -599,7 +700,7 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
         ):
             start_task.return_value = {
                 "id": "ct_test",
-                "state": "running",
+                "state": "generating",
                 "session_id": "s_test",
                 "profile_id": self.profile_id,
                 "model_name": "qwen2.5:7b-instruct",
@@ -607,9 +708,64 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
             }
             task = start_chat_task(req)
 
-        self.assertEqual(task["state"], "running")
+        self.assertEqual(task["state"], "generating")
         start_task.assert_called_once()
         self.assertEqual(start_task.call_args.kwargs["model_name"], "qwen2.5:7b-instruct")
+
+    def test_auto_router_stream_true_only_applies_to_final_answer_task(self):
+        req = ChatRequest(
+            query="Напиши HTML код кнопки",
+            profile_id=self.profile_id,
+            model_name=model_router.AUTO_MODEL_ID,
+            stream=True,
+        )
+        router_payload = json.dumps(
+            {
+                "intent": "code",
+                "target_model": "qwen2.5-coder:7b",
+                "confidence": 0.91,
+                "reason": "Запрос связан с кодом.",
+            },
+            ensure_ascii=False,
+        )
+
+        def fake_start_task(**kwargs):
+            return {
+                "id": "ct_auto_stream",
+                "task_id": "ct_auto_stream",
+                "state": "generating",
+                "session_id": kwargs["session_id"],
+                "conversation_id": kwargs["session_id"],
+                "profile_id": kwargs["profile_id"],
+                "model_name": kwargs["model_name"],
+                "role": kwargs["role"],
+                "user_message_id": kwargs["user_message_id"],
+                "assistant_message_id": kwargs["assistant_message_id"],
+                "message": "Chat generation started.",
+                "error_code": None,
+                "pid": 123,
+                "used_settings": kwargs["used_settings"],
+                "router_notice": kwargs["router_notice"],
+                "result": None,
+                "stream": bool(kwargs.get("stream")),
+                "streaming_enabled": bool(kwargs.get("stream")),
+            }
+
+        with (
+            patch.object(model_service, "is_model_installed", return_value=True),
+            patch.object(ollama_runtime, "chat_completion", return_value=router_payload) as router_chat,
+            patch.object(ollama_runtime, "chat_completion_stream") as router_stream,
+            patch("backend.apps.chat.routes.chat_tasks.start_chat_task", side_effect=fake_start_task) as start_task,
+        ):
+            task = start_chat_task(req)
+
+        router_chat.assert_called_once()
+        router_stream.assert_not_called()
+        start_task.assert_called_once()
+        self.assertEqual(start_task.call_args.kwargs["model_name"], "qwen2.5-coder:7b")
+        self.assertTrue(start_task.call_args.kwargs["stream"])
+        self.assertEqual(start_task.call_args.kwargs["used_settings"]["model_selection_mode"], "auto")
+        self.assertTrue(task["stream"])
 
     def test_manual_local_calculator_model_uses_local_calculator(self):
         req = ChatRequest(query="Сумма (7339.50 7339.50)", profile_id=self.profile_id, model_name=model_router.LOCAL_CALCULATOR_TARGET)
@@ -649,12 +805,16 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
             patch.object(model_service, "is_model_installed", side_effect=installed),
             patch.object(model_router, "route_model", return_value=decision),
         ):
-            with self.assertRaises(HTTPException) as ctx:
-                start_chat_task(req)
+            task = start_chat_task(req)
 
-        self.assertEqual(ctx.exception.status_code, 424)
-        self.assertEqual(ctx.exception.detail["code"], "chat_auto_target_model_missing")
-        self.assertEqual(ctx.exception.detail["model"], "qwen2.5-coder:7b")
+        self.assertEqual(task["state"], "failed")
+        self.assertEqual(task["error_code"], "chat_auto_target_model_missing")
+        self.assertEqual(task["model_name"], "qwen2.5-coder:7b")
+        messages = db.get_messages(task["session_id"])
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertEqual(messages[1]["status"], "failed")
+        self.assertEqual(messages[1]["model"], "qwen2.5-coder:7b")
+        self.assertIn("Auto выбрал модель", messages[1]["error"])
 
     def test_model_settings_persist_ollama_keep_alive(self):
         db.upsert_model_settings(

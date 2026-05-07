@@ -49,7 +49,7 @@ Shared/core слой пока остаётся в `app/`: `config`, `db`, `schem
 
 ## 3. Chat request flow
 
-1. UI отправляет `POST /chat/tasks`.
+1. UI отправляет `POST /chat/tasks`; поле `stream` берётся из profile preference `settings.streaming_enabled`.
 2. Backend валидирует profile/session/model.
 3. Если модель не выбрана, возвращается readable `chat_model_not_selected` до создания session.
 4. Если выбранная chat-модель не установлена, возвращается readable `chat_model_missing`; auto-pull не запускается.
@@ -58,8 +58,116 @@ Shared/core слой пока остаётся в `app/`: `config`, `db`, `schem
 7. Подгружается только short raw history по `mem_turns`.
 8. Если включён RAG, выполняется retrieval по активному профилю.
 9. Собирается `messages[]`.
-10. Запрос отправляется в Ollama OpenAI-compatible endpoint.
-11. Ответ очищается через `sanitize_reply()`, сохраняется в SQLite и возвращается UI.
+10. Backend сохраняет user-message и assistant-message со `status=generating`.
+11. Создаётся generation task, который возвращает `task_id`, `user_message_id`, `assistant_message_id`.
+12. Запрос отправляется в Ollama OpenAI-compatible endpoint.
+13. Если request содержит `stream=true`, ответ финальной answer-модели приходит chunks через native Ollama streaming API, partial content сохраняется в SQLite и отдаётся через SSE `delta`.
+14. Если `stream=false` или поле `stream` отсутствует, worker использует full-response fallback без `delta`, очищает ответ через `sanitize_reply()`, сохраняет его в тот же assistant-message и возвращает результат через task polling.
+
+### 3.1. Current task lifecycle limitations
+
+Текущий chat task runtime уже вынесен в отдельные backend task-роуты. SSE endpoint отдаёт lifecycle-события и, при `stream=true`, token delta от финальной answer-модели:
+
+- `backend/apps/chat/routes.py` создаёт chat task через `POST /chat/tasks`;
+- `backend/apps/chat/tasks.py` запускает отдельный process, держит runtime-state в памяти и во временных JSON-артефактах внутри `app/data/chat_tasks`;
+- публичные task-state сейчас: `generating`, `streaming`, `completed`, `failed`, `cancelled`, `cancelling`;
+- backend отдаёт lifecycle stream через `GET /chat/tasks/{task_id}/events`;
+- omitted/`stream=false` request не запускает streaming worker path: task остаётся `generating` до полного ответа, затем переходит в `completed` или `failed`;
+- UI settings содержит первую Generation-card `Стриминг ответов` во вкладке `Чат / LLM`, сразу сохраняет значение в profile preferences как `streaming_enabled` и передаёт его в `POST /chat/tasks` как `stream`; default для новых/неинициализированных профилей — `true`;
+- UI в `web_ui/js/app.js` рендерит assistant-message по persistent `status`;
+- при `stream=true` UI подписывается на `GET /chat/tasks/{task_id}/events`, применяет `delta` к assistant-message и возвращается к polling, если SSE-соединение оборвалось;
+- non-streaming fallback в UI по-прежнему использует polling `GET /chat/tasks/{task_id}` через `waitForChatTask()`;
+- при открытии session UI ищет active assistant-message с `task_id`; если task ещё жив, UI восстанавливает SSE/polling наблюдение, а уже сохранённый partial content используется как replay-base, чтобы старые `delta` не добавились повторно;
+- optimistic placeholder `Думаю…` больше не используется для assistant generation state;
+- SQLite `chat_messages` поддерживает persistent lifecycle fields, а текущий task route уже создаёт assistant-message до запуска answer-модели;
+- `GET /sessions/{session_id}/messages` возвращает сохранённые lifecycle-поля, по которым UI восстанавливает visual-state и active generation state;
+- если `GET /chat/tasks/{task_id}` или SSE endpoint больше не находит runtime task, backend переводит связанное active assistant-message в `failed`, чтобы пользователь не оставался с вечным `generating`;
+- autorouter (`backend/apps/chat/services/model_router.py`) уже выполняется как отдельная lifecycle-стадия до target-model и не отдаёт token delta.
+
+### 3.1.1. Chat task response
+
+`POST /chat/tasks` возвращает backward-compatible task payload:
+
+- `id` / `task_id`: id generation task;
+- `session_id` / `conversation_id`: id текущего chat session;
+- `user_message_id`: persisted user-message;
+- `assistant_message_id`: persisted assistant-message;
+- `state`: `generating`, `streaming`, `completed`, `failed`, `cancelled` или transitional `cancelling`;
+- `model_name`, `used_settings`, `router_notice`, `warnings`;
+- `stream` / `streaming_enabled`: включён ли streaming для финальной answer-модели.
+
+Если ошибка возникает после создания session/message state, route возвращает failed task и сохраняет ошибку в assistant-message `error`. Если модель не выбрана вообще, запрос по-прежнему отклоняется до создания session.
+
+### 3.1.2. Chat task lifecycle SSE
+
+`GET /chat/tasks/{task_id}/events` возвращает `text/event-stream` и закрывает соединение после финального события.
+
+Lifecycle events:
+
+- `status`: текущий transitional state, например `generating` или `cancelling`;
+- `model_selected`: answer-модель, записанная в task после ручного выбора или autorouter selection;
+- `delta`: chunk текста от финальной answer-модели, доступен только если task создан с `stream=true`;
+- `done`: финал `{"status":"completed"}`;
+- `error`: финал `{"status":"failed","message":"...","code":"..."}`;
+- `cancelled`: финал `{"status":"cancelled"}`.
+
+Autorouter не является источником `delta`: route selection выполняется до старта answer-модели и отражается только через metadata/lifecycle.
+
+### 3.1.3. Non-streaming fallback
+
+Fallback остаётся штатным backend path:
+
+- request без `stream` трактуется как `stream=false`;
+- `POST /chat/tasks` всё равно создаёт user-message и assistant-message со `status=generating`;
+- worker вызывает non-streaming `ChatService.chat_completion()`;
+- SSE stream для такого task может отдавать lifecycle events, но не отдаёт `delta`;
+- после полного ответа assistant-message получает `content`, `status=completed`, `is_partial=false`;
+- при ошибке assistant-message получает `status=failed` и сохранённый `error`.
+
+### 3.1.4. Reconnect / refresh recovery
+
+Recovery строится от persistent message state:
+
+- UI при `openSession()` перечитывает `GET /sessions/{session_id}/messages`;
+- если последнее active assistant-message имеет `task_id`, UI запрашивает `GET /chat/tasks/{task_id}`;
+- живой streaming task переподписывается на `GET /chat/tasks/{task_id}/events`, non-streaming task продолжает polling;
+- SSE может replay-нуть старые `delta`, поэтому `web_ui/js/app.js` сравнивает replay с уже сохранённым partial `message.content` и добавляет только новую часть;
+- если task завершился, UI перечитывает messages и показывает финальный `completed` / `failed` / `cancelled`;
+- если task не найден, backend помечает связанное active assistant-message как `failed`, а UI перечитывает messages.
+
+### 3.1.5. Verification checklist
+
+Последний verification pass для persistent generation state + SSE проверяет:
+
+- `stream=true`: task payload содержит `stream=true`, SSE отдаёт `delta` и `done`, assistant-message сохраняется как `completed`;
+- `stream=false`: task payload содержит `stream=false`, SSE/polling не отдаёт `delta`, assistant-message сохраняет полный ответ как `completed`;
+- live Ollama smoke: локальная answer-модель отдаёт реальные SSE `delta`, task завершается `completed`, assistant-message содержит persisted `content` и `task_id`;
+- switching/refresh source of truth: `GET /sessions/{session_id}/messages` возвращает active `streaming` assistant-message с `content` и `task_id`;
+- stale runtime task: `GET /chat/tasks/{task_id}` переводит связанное active assistant-message в `failed`;
+- missing model: user-message сохраняется, assistant-message получает `failed` и readable `error`;
+- autorouter: route selection использует non-streaming `chat_completion`, а `stream=true` передаётся только в task финальной answer-модели;
+- project smoke: `uvicorn backend.server:app`, `/health` и static UI route стартуют без active LLM-модели;
+- hygiene: вне `compare-branch/` нет запрещённого AI-флага и realtime-транспорта.
+
+Metal-to-CPU recovery:
+
+- если native Ollama request падает на Metal backend до выдачи текста, runtime выгружает модель и повторяет запрос;
+- если повтор тоже падает на Metal backend, runtime ещё раз выгружает модель перед CPU fallback payload (`num_gpu=0`, `keep_alive=0`);
+- для streaming path fallback разрешён только до первого text chunk, чтобы не смешивать два разных ответа в одном assistant-message.
+
+### 3.2. Message lifecycle storage
+
+`chat_messages` расширена без потери истории:
+
+- `status`: `generating`, `streaming`, `completed`, `failed`, `cancelled`;
+- `model`: answer-модель, связанная с assistant-message;
+- `updated_at`: время последнего изменения content/status;
+- `error`: сохранённый текст ошибки для `failed`;
+- `generation_started_at` / `generation_finished_at`: timestamps генерации assistant-message;
+- `is_partial`: признак незавершённого partial content;
+- `task_id`: связь assistant-message с generation task.
+
+Старые сообщения при миграции получают `status=completed`, `is_partial=false`, а `updated_at` backfill-ится из `created_at`. DB helper layer теперь умеет создавать assistant placeholder через `create_assistant_message()`, обновлять lifecycle через `update_message()`, накапливать partial content через `append_message_content()` и искать assistant-message по `task_id`.
 
 ## 4. Prompt assembly order
 
@@ -232,6 +340,7 @@ UI-кнопки обслуживания БД находятся в settings-с�
 - `max_tokens`;
 - `num_ctx`;
 - `mem_turns`;
+- `streaming_enabled` (profile runtime setting, default `true`);
 - `pipeline_enabled`;
 - `summary_memory_enabled`;
 - `rag_enabled`;

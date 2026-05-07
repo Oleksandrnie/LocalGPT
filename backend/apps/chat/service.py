@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from fastapi import HTTPException
 
@@ -250,7 +250,7 @@ class ChatService:
         except Exception as exc:  # pragma: no cover - лог только для диагностики
             LOGGER.warning("Failed to write chat log: %s", exc)
 
-    def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
+    def _runtime_kwargs(self, model: str, settings: dict) -> dict[str, Any]:
         request_settings = dict(settings or {})
         request_settings["num_ctx_requested"] = request_settings.get("num_ctx")
         request_settings["num_ctx_applied"] = False
@@ -263,19 +263,27 @@ class ChatService:
                 num_gpu = int(raw_num_gpu)
             except (TypeError, ValueError):
                 num_gpu = None
+        runtime_kwargs = {
+            "temperature": request_settings.get("temperature", config.SETTINGS.temperature),
+            "max_tokens": request_settings.get("max_tokens", config.SETTINGS.max_tokens),
+            "keep_alive": keep_alive,
+        }
+        if num_gpu is not None:
+            runtime_kwargs["num_gpu"] = num_gpu
+        return runtime_kwargs
+
+    def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
         try:
-            runtime_kwargs = {
-                "messages": messages,
-                "temperature": request_settings.get("temperature", config.SETTINGS.temperature),
-                "max_tokens": request_settings.get("max_tokens", config.SETTINGS.max_tokens),
-                "keep_alive": keep_alive,
-            }
-            if num_gpu is not None:
-                runtime_kwargs["num_gpu"] = num_gpu
-            text = ollama_runtime.chat_completion(model, **runtime_kwargs)
+            text = ollama_runtime.chat_completion(model, messages=messages, **self._runtime_kwargs(model, settings))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
         return sanitize_reply(text)
+
+    def chat_completion_stream(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> Iterator[str]:
+        try:
+            yield from ollama_runtime.chat_completion_stream(model, messages=messages, **self._runtime_kwargs(model, settings))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
 
 
 def session_title_hint(raw_title: str | None, query: str | None) -> str:

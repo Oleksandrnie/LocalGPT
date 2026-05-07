@@ -135,6 +135,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         return {}
     allowed = {
         "mem_turns",
+        "streaming_enabled",
         "pipeline_enabled",
         "summary_memory_enabled",
         "rag_enabled",
@@ -182,7 +183,12 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                     status_code=422,
                     detail={"code": f"invalid_{key}", "message": f"{key} must be a positive integer."},
                 ) from exc
-    for key in ("allow_light_with_heavy", "single_large_target_model", "preload_model_on_manual_select"):
+    for key in (
+        "streaming_enabled",
+        "allow_light_with_heavy",
+        "single_large_target_model",
+        "preload_model_on_manual_select",
+    ):
         if key in cleaned and cleaned[key] is not None:
             cleaned[key] = _normalize_bool_setting(cleaned[key])
     for key in (
