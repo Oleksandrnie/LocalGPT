@@ -16,7 +16,7 @@ from backend.apps.chat import routes as chat_routes
 from backend.apps.asr import pipeline
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, _sse_event, router as chat_router, start_chat_task
-from backend.apps.chat.service import sanitize_reply
+from backend.apps.chat.service import response_language_instruction, sanitize_reply
 from backend.apps.rag import service as rag_service
 
 
@@ -663,7 +663,27 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         contents = [item["content"] for item in prepared["messages"]]
 
         self.assertFalse(any("ТОЛЬКО на русском" in item for item in contents))
-        self.assertTrue(any("языке последнего сообщения пользователя" in item.lower() for item in contents))
+        self.assertTrue(any("Языковое правило" in item for item in contents))
+        self.assertTrue(any("Ответь на английском" in item for item in contents))
+
+    def test_language_policy_ignores_profile_language_without_user_request(self):
+        db.update_profile_preferences(self.profile_id, {"chat": {"system_prompt": "Always answer in English."}})
+
+        prepared = _prepare_chat_request(
+            ChatRequest(query="как узнать id папки google drive?", profile_id=self.profile_id, model_name="qwen2.5:3b")
+        )
+        contents = [item["content"] for item in prepared["messages"]]
+        profile_index = next(idx for idx, item in enumerate(contents) if "Always answer in English." in item)
+        language_index = next(idx for idx, item in enumerate(contents) if "Ответь на русском" in item)
+
+        self.assertGreater(language_index, profile_index)
+        self.assertIn("профильных инструкций не является разрешением", contents[language_index])
+
+    def test_explicit_response_language_can_override_question_language(self):
+        instruction = response_language_instruction("Ответь на английском: как узнать ID папки Google Drive?")
+
+        self.assertIn("явно просит ответить на английском", instruction)
+        self.assertIn("Ответь на английском", instruction)
 
     def test_response_formatting_guardrail_is_global(self):
         prepared = _prepare_chat_request(

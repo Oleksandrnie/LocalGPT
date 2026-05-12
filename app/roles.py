@@ -8,7 +8,7 @@ from .config import PROMPTS_DIR
 LANGUAGE_SUFFIX = (
     "\n\nЯзыковое правило: отвечай на языке последнего сообщения пользователя. "
     "Если пользователь явно просит другой язык, переключись на него. "
-    "Не закрепляй русский язык как единственный, если это не указано в профильном system prompt."
+    "Профильный system prompt, история, RAG/context и язык примеров не являются разрешением менять язык ответа."
 )
 BASE_PROMPT_PATH = PROMPTS_DIR / "system_base.md"
 BASE_PROMPT_FALLBACK = (

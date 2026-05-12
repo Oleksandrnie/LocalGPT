@@ -1,3 +1,5 @@
+import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
+
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
 const ASR_STUDIO_DEFAULT_PROMPT_PRESET = "ru";
@@ -693,120 +695,7 @@ function formatCodeLanguageLabel(value) {
 }
 
 function formatRichMessage(value) {
-  const source = String(value || "").replace(/\r\n?/g, "\n");
-  if (!source.trim()) return "";
-
-  const output = [];
-  const paragraph = [];
-  const codeLines = [];
-  let listType = null;
-  let inCodeBlock = false;
-  let codeBlockLanguage = "";
-
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    output.push(`<p class="message-md-paragraph">${paragraph.map((line) => formatInlineRichText(line)).join("<br />")}</p>`);
-    paragraph.length = 0;
-  };
-
-  const closeList = () => {
-    if (!listType) return;
-    output.push(listType === "ol" ? "</ol>" : "</ul>");
-    listType = null;
-  };
-
-  const flushCodeBlock = () => {
-    const rawCode = codeLines.join("\n").replace(/\n+$/, "");
-    const codeIndex = registerRenderedCodeBlock(rawCode);
-    const languageLabel = formatCodeLanguageLabel(codeBlockLanguage);
-    output.push(`
-      <div class="message-md-codeblock">
-        <div class="message-md-codeblock__toolbar">
-          <span class="message-md-codeblock__lang">${escapeHtml(languageLabel)}</span>
-          <button class="message-md-codeblock__copy" type="button" data-code-copy-index="${codeIndex}">Копировать код</button>
-        </div>
-        <pre class="message-md-codeblock__pre"><code>${escapeHtml(rawCode)}</code></pre>
-      </div>
-    `);
-    codeLines.length = 0;
-    codeBlockLanguage = "";
-  };
-
-  for (const rawLine of source.split("\n")) {
-    const trimmed = rawLine.trim();
-
-    if (inCodeBlock) {
-      if (trimmed.startsWith("```")) {
-        flushCodeBlock();
-        inCodeBlock = false;
-      } else {
-        codeLines.push(rawLine);
-      }
-      continue;
-    }
-
-    if (trimmed.startsWith("```")) {
-      flushParagraph();
-      closeList();
-      inCodeBlock = true;
-      codeLines.length = 0;
-      codeBlockLanguage = trimmed.slice(3).trim();
-      continue;
-    }
-
-    if (!trimmed) {
-      flushParagraph();
-      closeList();
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
-      flushParagraph();
-      closeList();
-      const level = Math.min(4, headingMatch[1].length);
-      output.push(
-        `<div class="message-md-heading message-md-heading--${level}">${formatInlineRichText(headingMatch[2])}</div>`,
-      );
-      continue;
-    }
-
-    const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
-    if (orderedMatch) {
-      flushParagraph();
-      if (listType !== "ol") {
-        closeList();
-        output.push('<ol class="message-md-list message-md-list--ordered">');
-        listType = "ol";
-      }
-      output.push(`<li>${formatInlineRichText(orderedMatch[1])}</li>`);
-      continue;
-    }
-
-    const unorderedMatch = trimmed.match(/^[-*•]\s+(.+)$/);
-    if (unorderedMatch) {
-      flushParagraph();
-      if (listType !== "ul") {
-        closeList();
-        output.push('<ul class="message-md-list message-md-list--unordered">');
-        listType = "ul";
-      }
-      output.push(`<li>${formatInlineRichText(unorderedMatch[1])}</li>`);
-      continue;
-    }
-
-    if (listType) {
-      closeList();
-    }
-    paragraph.push(trimmed);
-  }
-
-  if (inCodeBlock) {
-    flushCodeBlock();
-  }
-  flushParagraph();
-  closeList();
-  return output.join("");
+  return formatMarkdownMessage(value, { registerCodeBlock: registerRenderedCodeBlock });
 }
 
 function stripRichTextToPlain(value) {
