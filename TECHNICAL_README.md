@@ -438,7 +438,7 @@ LAN launcher стартует backend с предпочтением `127.0.0.1:<
 - `Cmd+B` / `Ctrl+B` переключает sidebar;
 - toast-система отображает уведомления строго под topbar по центру;
 - нижняя composer-зона не содержит системных статусов;
-- `RAG` topbar button показывает состояние активного профиля через dot и glow;
+- icon-only RAG topbar button показывает состояние активного профиля: OFF без dot/glow, ON с фиолетовым dot и glow;
 - soft message cards используют прозрачность, blur, внутренний свет и shadow-контур вместо жёсткого border;
 - единый `AppSelect` строится JS-слоем поверх скрытого native `<select>`.
 

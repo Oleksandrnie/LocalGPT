@@ -259,6 +259,8 @@ const els = {
   closeSettingsButton: document.getElementById("closeSettingsButton"),
   ragBackdrop: document.getElementById("ragBackdrop"),
   closeRagButton: document.getElementById("closeRagButton"),
+  ragQuickMenu: document.getElementById("ragQuickMenu"),
+  ragQuickEnabledToggle: document.getElementById("ragQuickEnabledToggle"),
   ragSourceDirValue: document.getElementById("ragSourceDirValue"),
   ragEnabledToggle: document.getElementById("ragEnabledToggle"),
   ragAddFilesButton: document.getElementById("ragAddFilesButton"),
@@ -427,6 +429,7 @@ const state = {
   },
   asrPipelineSettingsExpanded: readStored(STORAGE_KEYS.asrPipelineSettingsOpen, "") === "1",
   voiceModelMenuPosition: null,
+  ragQuickMenuPosition: null,
   confirmResolver: null,
   confirmReturnFocus: null,
   toastTimer: null,
@@ -6104,7 +6107,11 @@ function closeSettings() {
 
 function activeProfileRagEnabled() {
   const preferences = getActiveProfilePreferences();
-  return Boolean(preferences?.settings?.rag_enabled);
+  const value = preferences?.settings?.rag_enabled;
+  if (typeof value === "string") {
+    return value.trim().toLowerCase() === "true";
+  }
+  return value === true || value === 1;
 }
 
 function renderRagButton() {
@@ -6114,6 +6121,34 @@ function renderRagButton() {
   els.openRagButton.setAttribute("aria-pressed", enabled ? "true" : "false");
   els.openRagButton.setAttribute("aria-label", enabled ? "Открыть RAG, включён" : "Открыть RAG, выключен");
   els.openRagButton.title = enabled ? "RAG включён для активного профиля" : "RAG выключен для активного профиля";
+}
+
+function closeRagQuickMenu() {
+  if (!els.ragQuickMenu) return;
+  els.ragQuickMenu.hidden = true;
+  els.ragQuickMenu.style.left = "";
+  els.ragQuickMenu.style.top = "";
+  state.ragQuickMenuPosition = null;
+}
+
+function positionRagQuickMenu(clientX, clientY) {
+  if (!els.ragQuickMenu || els.ragQuickMenu.hidden) return;
+  const rect = els.ragQuickMenu.getBoundingClientRect();
+  const padding = 12;
+  const left = Math.max(padding, Math.min(clientX, window.innerWidth - rect.width - padding));
+  const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
+  els.ragQuickMenu.style.left = `${left}px`;
+  els.ragQuickMenu.style.top = `${top}px`;
+}
+
+function renderRagQuickMenu() {
+  renderRagButton();
+  if (!els.ragQuickEnabledToggle) return;
+  els.ragQuickEnabledToggle.disabled = !state.activeProfileId;
+  els.ragQuickEnabledToggle.checked = activeProfileRagEnabled();
+  if (!els.ragQuickMenu?.hidden && state.ragQuickMenuPosition) {
+    positionRagQuickMenu(state.ragQuickMenuPosition.x, state.ragQuickMenuPosition.y);
+  }
 }
 
 function renderRagPanel() {
@@ -6167,6 +6202,7 @@ async function loadRagStatus({ silent = false } = {}) {
 
 async function openRagPanel() {
   if (!els.ragBackdrop) return;
+  closeRagQuickMenu();
   els.ragBackdrop.hidden = false;
   renderRagPanel();
   await loadRagStatus({ silent: true });
@@ -6175,6 +6211,23 @@ async function openRagPanel() {
 function closeRagPanel() {
   if (!els.ragBackdrop) return;
   els.ragBackdrop.hidden = true;
+}
+
+function openRagQuickMenu() {
+  if (!els.ragQuickMenu) return;
+  closeRagPanel();
+  closeQuickModelMenu();
+  closeVoiceModelMenu();
+  toggleComposerMenu(false);
+  const buttonRect = els.openRagButton?.getBoundingClientRect();
+  state.ragQuickMenuPosition = {
+    x: Math.round(buttonRect?.left || 12),
+    y: Math.round((buttonRect?.bottom || 0) + 10),
+  };
+  renderRagQuickMenu();
+  els.ragQuickMenu.hidden = false;
+  positionRagQuickMenu(state.ragQuickMenuPosition.x, state.ragQuickMenuPosition.y);
+  window.setTimeout(() => els.ragQuickEnabledToggle?.focus(), 0);
 }
 
 async function ingestRagSources(force = false) {
@@ -6273,18 +6326,22 @@ async function deleteRagFile(sourceId, returnFocus = null) {
   }
 }
 
-async function toggleRagForActiveProfile(enabled) {
+async function toggleRagForActiveProfile(enabled, { notify = true } = {}) {
   const updated = await saveActiveProfilePreferences({ settings: { rag_enabled: Boolean(enabled) } });
   if (updated) {
     renderRagPanel();
-    setFooter(
-      enabled
-        ? "RAG включён: локальный контекст будет подмешиваться в каждый chat prompt активного профиля."
-        : "RAG выключен: локальные документы не будут использоваться в chat prompt.",
-      "success",
-    );
+    renderRagQuickMenu();
+    if (notify) {
+      setFooter(
+        enabled
+          ? "RAG включён: локальный контекст будет подмешиваться в каждый chat prompt активного профиля."
+          : "RAG выключен: локальные документы не будут использоваться в chat prompt.",
+        "success",
+      );
+    }
   } else {
     renderRagPanel();
+    renderRagQuickMenu();
   }
 }
 
@@ -7783,8 +7840,19 @@ function bindEvents() {
     }
   });
 
+  const openRagQuickFromPointer = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openRagQuickMenu();
+  };
   els.openSettingsButton?.addEventListener("click", () => openSettings());
   els.openRagButton?.addEventListener("click", async () => openRagPanel());
+  els.openRagButton?.addEventListener("mousedown", (event) => {
+    if (event.button === 2) {
+      openRagQuickFromPointer(event);
+    }
+  });
+  els.openRagButton?.addEventListener("contextmenu", openRagQuickFromPointer);
   els.themeToggleButton?.addEventListener("click", () => toggleTheme());
   els.chatModelNoticeSettingsButton?.addEventListener("click", () => openSettings());
   els.closeSettingsButton?.addEventListener("click", () => closeSettings());
@@ -7803,6 +7871,9 @@ function bindEvents() {
     if (event.target === els.ragBackdrop) {
       closeRagPanel();
     }
+  });
+  els.ragQuickEnabledToggle?.addEventListener("change", async () => {
+    await toggleRagForActiveProfile(Boolean(els.ragQuickEnabledToggle.checked), { notify: false });
   });
   els.ragRefreshButton?.addEventListener("click", async () => {
     await loadRagStatus();
@@ -8400,6 +8471,10 @@ function bindEvents() {
         resolveConfirmDialog(false);
         return;
       }
+      if (!els.ragQuickMenu?.hidden) {
+        closeRagQuickMenu();
+        return;
+      }
       closeSidebar();
       closeOcrEditor();
       closeSettings();
@@ -8421,6 +8496,7 @@ function bindEvents() {
     const insideComposerMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
+    const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
@@ -8435,6 +8511,9 @@ function bindEvents() {
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
     }
+    if (!insideRagQuickMenu) {
+      closeRagQuickMenu();
+    }
     if (!insideAppSelect) {
       closeAppSelect();
     }
@@ -8444,6 +8523,7 @@ function bindEvents() {
     const target = event.target instanceof Element ? event.target : null;
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
@@ -8454,6 +8534,9 @@ function bindEvents() {
     }
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
+    }
+    if (!insideRagQuickMenu) {
+      closeRagQuickMenu();
     }
     if (!insideAppSelect) {
       closeAppSelect();
@@ -8471,6 +8554,7 @@ function bindEvents() {
     toggleComposerMenu(false);
     closeQuickModelMenu();
     closeVoiceModelMenu();
+    closeRagQuickMenu();
     closeAppSelect();
     closeSessionContextMenu();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {

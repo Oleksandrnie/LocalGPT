@@ -84,7 +84,7 @@
 - Static UI живёт в `web_ui/`; backend отдаёт его как runtime asset.
 - `ThemeToggle` в topbar переключает `body.theme-dark` / `body.theme-light` и сохраняет состояние в `localStorage`.
 - Sidebar state хранится в `localStorage.sidebar_open` и переключается через UI trigger или `Cmd+B` / `Ctrl+B`.
-- RAG state button в topbar должен отражать `rag_enabled` активного профиля, а не быть декоративным индикатором.
+- Icon-only RAG state button в topbar должен отражать `rag_enabled` активного профиля: dot показывается только в active/on состоянии.
 - Все системные уведомления должны идти через toast под topbar, не через нижнюю input area.
 - Если нет локальной chat-модели, composer input остаётся активным, но send disabled; попытка отправки показывает toast и не создаёт backend LLM request.
 - Запуск загрузки LLM-модели требует явного подтверждения пользователя; normal progress отображается в download-card без повторяющихся toast.
