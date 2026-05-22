@@ -17,6 +17,7 @@ RUNTIME_BASE="${RUNTIME_BASE%/}"
 LOG_DIR="${RUNTIME_BASE}/LocalGPT-${UID}"
 mkdir -p "${LOG_DIR}"
 
+DOTENV_FILE="${PROJECT_ROOT}/.env"
 BACKEND_LOG="${LOG_DIR}/backend.log"
 CADDY_LOG="${LOG_DIR}/caddy.log"
 BACKEND_PID_FILE="${LOG_DIR}/backend.pid"
@@ -24,16 +25,83 @@ CADDY_PID_FILE="${LOG_DIR}/caddy.pid"
 BACKEND_PORT_FILE="${LOG_DIR}/backend.port"
 CADDY_CONFIG_FILE="${LOG_DIR}/Caddyfile.auto"
 LAN_IP_FILE="${LOG_DIR}/lan_ip"
+LAUNCH_AGENT_LABEL="local.localgpt.caddy"
+LAUNCH_AGENT_FILE="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
 
-BACKEND_PORT="${LOCALGPT_BACKEND_PORT:-8000}"
-HTTPS_PORT=8443
-BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/health"
 BOOTSTRAP_PYTHON="$(command -v python3 2>/dev/null || true)"
 
 if [[ -z "${BOOTSTRAP_PYTHON}" ]]; then
   osascript -e 'display alert "LocalGPT" message "Python 3 was not found."'
   exit 1
 fi
+
+read_dotenv_value() {
+  local key="$1"
+  [[ -f "${DOTENV_FILE}" ]] || {
+    echo ""
+    return
+  }
+  /usr/bin/awk -v wanted="${key}" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      split(line, parts, "=")
+      key = parts[1]
+      sub(/[[:space:]]*$/, "", key)
+      if (key != wanted) next
+      value = line
+      sub(/^[^=]*=/, "", value)
+      sub(/^[[:space:]]*/, "", value)
+      sub(/[[:space:]]*$/, "", value)
+      if ((substr(value, 1, 1) == "\"" && substr(value, length(value), 1) == "\"") ||
+          (substr(value, 1, 1) == "'"'"'" && substr(value, length(value), 1) == "'"'"'")) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      print value
+    }
+  ' "${DOTENV_FILE}" | tail -n 1
+}
+
+resolve_setting() {
+  local key="$1"
+  local fallback="${2:-}"
+  local value="${(P)key:-}"
+  if [[ -n "${value}" ]]; then
+    echo "${value}"
+    return
+  fi
+  value="$(read_dotenv_value "${key}")"
+  if [[ -n "${value}" ]]; then
+    echo "${value}"
+    return
+  fi
+  echo "${fallback}"
+}
+
+normalize_port() {
+  local value="$1"
+  local fallback="$2"
+  local label="$3"
+  if [[ "${value}" =~ '^[0-9]+$' ]] && (( value > 0 && value < 65536 )); then
+    echo "${value}"
+    return
+  fi
+  echo "[!] Invalid ${label} port '${value}', using ${fallback}." >&2
+  echo "${fallback}"
+}
+
+BACKEND_PORT="$(resolve_setting LOCALGPT_PORT "")"
+if [[ -z "${BACKEND_PORT}" ]]; then
+  BACKEND_PORT="$(resolve_setting LOCALGPT_BACKEND_PORT "8000")"
+fi
+HTTPS_PORT="$(resolve_setting LOCALGPT_LAN_HTTPS_PORT "")"
+if [[ -z "${HTTPS_PORT}" ]]; then
+  HTTPS_PORT="$(resolve_setting LAN_HTTPS_PORT "8443")"
+fi
+BACKEND_PORT="$(normalize_port "${BACKEND_PORT}" "8000" "backend")"
+HTTPS_PORT="$(normalize_port "${HTTPS_PORT}" "8443" "LAN HTTPS")"
+BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/health"
 
 is_pid_alive() {
   local pid="$1"
@@ -43,7 +111,7 @@ is_pid_alive() {
 
 cleanup_stale_pidfile() {
   local pid_file="$1"
-  [[ -f "${pid_file}" ]] || return
+  [[ -f "${pid_file}" ]] || return 0
   local pid
   pid="$(cat "${pid_file}" 2>/dev/null || true)"
   if ! is_pid_alive "${pid}"; then
@@ -149,29 +217,47 @@ build_caddy_hosts() {
   echo "${hosts}"
 }
 
+build_caddy_upstreams() {
+  local preferred_port="${BACKEND_PORT:-8000}"
+  echo "127.0.0.1:${preferred_port}"
+}
+
 write_caddy_config() {
   local lan_ip="$1"
   local hosts=""
+  local upstreams=""
   hosts="$(build_caddy_hosts "${lan_ip}")"
+  upstreams="$(build_caddy_upstreams)"
   cat > "${CADDY_CONFIG_FILE}" <<EOF
 {
   admin off
 }
 ${hosts} {
   tls internal
-  reverse_proxy 127.0.0.1:${BACKEND_PORT}
+  reverse_proxy ${upstreams} {
+    lb_try_duration 5s
+    lb_try_interval 250ms
+    flush_interval -1
+  }
 }
 EOF
+}
+
+stop_caddy_launch_agent() {
+  if [[ -x "/bin/launchctl" ]]; then
+    /bin/launchctl bootout "gui/${UID}/${LAUNCH_AGENT_LABEL}" >/dev/null 2>&1 || true
+    /bin/launchctl bootout "gui/${UID}" "${LAUNCH_AGENT_FILE}" >/dev/null 2>&1 || true
+  fi
 }
 
 stop_pid_file_process() {
   local pid_file="$1"
   local pid=""
   pid="$(read_pid_file "${pid_file}")"
-  [[ -n "${pid}" ]] || return
+  [[ -n "${pid}" ]] || return 0
   if ! is_pid_alive "${pid}"; then
     rm -f "${pid_file}"
-    return
+    return 0
   fi
   /bin/kill "${pid}" >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -186,9 +272,115 @@ stop_pid_file_process() {
   rm -f "${pid_file}"
 }
 
+listeners_on_port() {
+  local port="$1"
+  lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null | sort -u
+}
+
+caddy_listener_on_https_port() {
+  local pid=""
+  for pid in $(listeners_on_port "${HTTPS_PORT}"); do
+    local command=""
+    command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    if [[ "${command}" == *"caddy"* ]]; then
+      echo "${pid}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+stop_caddy_listener_on_https_port() {
+  local pid=""
+  for pid in $(listeners_on_port "${HTTPS_PORT}"); do
+    local command=""
+    command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+    if [[ "${command}" == *"caddy"* ]]; then
+      /bin/kill "${pid}" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+write_caddy_launch_agent() {
+  mkdir -p "$(dirname "${LAUNCH_AGENT_FILE}")"
+  LOCALGPT_LAUNCH_AGENT_LABEL="${LAUNCH_AGENT_LABEL}" \
+  LOCALGPT_LAUNCH_AGENT_FILE="${LAUNCH_AGENT_FILE}" \
+  LOCALGPT_CADDY_BIN="${CADDY_BIN}" \
+  LOCALGPT_CADDY_CONFIG_FILE="${CADDY_CONFIG_FILE}" \
+  LOCALGPT_PROJECT_ROOT="${PROJECT_ROOT}" \
+  LOCALGPT_CADDY_LOG="${CADDY_LOG}" \
+  LOCALGPT_PATH="${PATH}" \
+  "${BOOTSTRAP_PYTHON}" - <<'PY'
+import os
+import plistlib
+
+plist = {
+    "Label": os.environ["LOCALGPT_LAUNCH_AGENT_LABEL"],
+    "ProgramArguments": [
+        os.environ["LOCALGPT_CADDY_BIN"],
+        "run",
+        "--config",
+        os.environ["LOCALGPT_CADDY_CONFIG_FILE"],
+    ],
+    "WorkingDirectory": os.environ["LOCALGPT_PROJECT_ROOT"],
+    "RunAtLoad": True,
+    "KeepAlive": False,
+    "StandardOutPath": os.environ["LOCALGPT_CADDY_LOG"],
+    "StandardErrorPath": os.environ["LOCALGPT_CADDY_LOG"],
+    "EnvironmentVariables": {
+        "HOME": os.path.expanduser("~"),
+        "PATH": os.environ["LOCALGPT_PATH"],
+    },
+}
+
+with open(os.environ["LOCALGPT_LAUNCH_AGENT_FILE"], "wb") as handle:
+    plistlib.dump(plist, handle)
+PY
+}
+
+start_caddy_launch_agent() {
+  [[ -x "/bin/launchctl" ]] || return 1
+  write_caddy_launch_agent
+  stop_caddy_launch_agent
+  if ! /bin/launchctl bootstrap "gui/${UID}" "${LAUNCH_AGENT_FILE}" >>"${CADDY_LOG}" 2>&1; then
+    return 1
+  fi
+  /bin/launchctl kickstart -k "gui/${UID}/${LAUNCH_AGENT_LABEL}" >>"${CADDY_LOG}" 2>&1 || true
+  return 0
+}
+
 health_ok_http() {
   local url="$1"
   curl -fsS --max-time 2 "${url}" >/dev/null 2>&1
+}
+
+health_ok_localgpt_port() {
+  local port="$1"
+  curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" 2>/dev/null | grep -q '"status":"ok"'
+}
+
+discover_existing_backend_port() {
+  local start="${BACKEND_PORT:-8000}"
+  local end=$((start + 99))
+  local port="${start}"
+  while (( port <= end )); do
+    if health_ok_localgpt_port "${port}"; then
+      echo "${port}"
+      return 0
+    fi
+    port=$((port + 1))
+  done
+
+  port=8000
+  while (( port <= 8099 )); do
+    if health_ok_localgpt_port "${port}"; then
+      echo "${port}"
+      return 0
+    fi
+    port=$((port + 1))
+  done
+
+  return 1
 }
 
 health_ok_https_insecure() {
@@ -240,6 +432,21 @@ start_backend() {
   fi
 
   if [[ -n "${backend_pid}" ]] && is_pid_alive "${backend_pid}" && health_ok_http "${BACKEND_HEALTH_URL}"; then
+    return 0
+  fi
+
+  if [[ -z "${backend_pid}" ]] && health_ok_http "${BACKEND_HEALTH_URL}"; then
+    echo "${BACKEND_PORT}" > "${BACKEND_PORT_FILE}"
+    echo "[i] Reusing existing LocalGPT backend: ${BACKEND_HEALTH_URL}"
+    return 0
+  fi
+
+  local discovered_port=""
+  discovered_port="$(discover_existing_backend_port || true)"
+  if [[ -n "${discovered_port}" ]]; then
+    set_backend_port "${discovered_port}"
+    echo "${BACKEND_PORT}" > "${BACKEND_PORT_FILE}"
+    echo "[i] Reusing existing LocalGPT backend: ${BACKEND_HEALTH_URL}"
     return 0
   fi
 
@@ -306,19 +513,37 @@ start_or_restart_caddy() {
     return 0
   fi
 
+  if [[ -z "${caddy_pid}" ]] && health_ok_https_insecure "${https_health_url}"; then
+    caddy_pid="$(caddy_listener_on_https_port || true)"
+    if [[ -n "${caddy_pid}" ]]; then
+      echo "${caddy_pid}" > "${CADDY_PID_FILE}"
+    fi
+    return 0
+  fi
+
   if [[ -n "${caddy_pid}" ]] && is_pid_alive "${caddy_pid}"; then
+    stop_caddy_launch_agent
     stop_pid_file_process "${CADDY_PID_FILE}"
   fi
 
-  (
-    cd "${PROJECT_ROOT}"
-    nohup "${CADDY_BIN}" run --config "${CADDY_CONFIG_FILE}" >>"${CADDY_LOG}" 2>&1 &
-    echo "$!" > "${CADDY_PID_FILE}"
-  )
+  stop_caddy_launch_agent
+  stop_caddy_listener_on_https_port
+  rm -f "${CADDY_PID_FILE}"
+
+  if ! start_caddy_launch_agent; then
+    (
+      cd "${PROJECT_ROOT}"
+      "${CADDY_BIN}" start --config "${CADDY_CONFIG_FILE}" >>"${CADDY_LOG}" 2>&1
+    )
+  fi
 
   if ! wait_for_https_health "${https_health_url}" 80 0.25; then
     osascript -e "display alert \"LocalGPT\" message \"Caddy did not start HTTPS correctly. Check ${CADDY_LOG}\""
     return 1
+  fi
+  caddy_pid="$(caddy_listener_on_https_port || true)"
+  if [[ -n "${caddy_pid}" ]]; then
+    echo "${caddy_pid}" > "${CADDY_PID_FILE}"
   fi
   return 0
 }
@@ -345,6 +570,8 @@ fi
 if [[ -n "${LAN_IP}" ]]; then
   start_or_restart_caddy "${LAN_IP}" || exit 1
   echo "${LAN_IP}" > "${LAN_IP_FILE}"
+  echo "[i] LocalGPT LAN URL: https://${LAN_IP}:${HTTPS_PORT}/ui/gui_html.html"
+  echo "[i] Backend remains local: http://127.0.0.1:${BACKEND_PORT}"
   open "https://${LAN_IP}:${HTTPS_PORT}/ui/gui_html.html"
 else
   osascript -e 'display alert "LocalGPT" message "LAN IP was not detected. Opening localhost UI instead."'

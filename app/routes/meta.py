@@ -25,6 +25,7 @@ _DEFAULT_RUNTIME_DIR = Path(tempfile.gettempdir()) / f"LocalGPT-{_USER_ID}"
 RUNTIME_DIR = Path(os.getenv("LOCALGPT_RUNTIME_DIR", str(_DEFAULT_RUNTIME_DIR)))
 BACKEND_PID_FILE = RUNTIME_DIR / "backend.pid"
 CADDY_PID_FILE = RUNTIME_DIR / "caddy.pid"
+CADDY_LAUNCH_AGENT_LABEL = "local.localgpt.caddy"
 
 
 def _is_private_lan_ipv4(value: str | None) -> bool:
@@ -113,6 +114,21 @@ def _get_access_url(request: Request) -> str | None:
     return None
 
 
+def _is_tcp_port_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _lan_https_port() -> str:
+    port = (os.getenv("LAN_HTTPS_PORT", "") or "").strip()
+    if not port:
+        port = (os.getenv("IOS_HTTPS_PORT", "8443") or "").strip()
+    return port or "8443"
+
+
 def _get_lan_url(request: Request) -> str | None:
     explicit = (os.getenv("LAN_ACCESS_URL", "") or "").strip()
     if not explicit:
@@ -128,10 +144,13 @@ def _get_lan_url(request: Request) -> str | None:
     if not lan_ip:
         return None
 
-    port = (os.getenv("LAN_HTTPS_PORT", "") or "").strip()
-    if not port:
-        port = (os.getenv("IOS_HTTPS_PORT", "8443") or "").strip()
-    port = port or "8443"
+    port = _lan_https_port()
+    try:
+        port_int = int(port)
+    except ValueError:
+        return None
+    if not _is_tcp_port_open(lan_ip, port_int):
+        return None
     return f"https://{lan_ip}:{port}/ui/gui_html.html"
 
 
@@ -166,12 +185,30 @@ def _safe_unlink(path: Path) -> None:
         pass
 
 
+def _stop_caddy_launch_agent() -> None:
+    if sys.platform != "darwin" or not hasattr(os, "getuid"):
+        return
+    uid = os.getuid()
+    launch_agent_file = Path.home() / "Library" / "LaunchAgents" / f"{CADDY_LAUNCH_AGENT_LABEL}.plist"
+    commands = [
+        ["/bin/launchctl", "bootout", f"gui/{uid}/{CADDY_LAUNCH_AGENT_LABEL}"],
+        ["/bin/launchctl", "bootout", f"gui/{uid}", str(launch_agent_file)],
+    ]
+    for command in commands:
+        try:
+            subprocess.run(command, check=False, capture_output=True, timeout=2)
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+
 def _shutdown_worker() -> None:
     time.sleep(0.45)
 
     chat_tasks.cancel_all_tasks()
     transcribe_tasks.cancel_all_tasks()
     tts_service.cancel_all_tasks()
+
+    _stop_caddy_launch_agent()
 
     caddy_pid = _read_pid(CADDY_PID_FILE)
     if caddy_pid:
