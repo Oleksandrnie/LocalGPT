@@ -1,0 +1,1 @@
+"""Internal plugin registry package."""

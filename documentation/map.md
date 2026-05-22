@@ -4,6 +4,7 @@ This map gives a quick orientation across the documentation-hub files.
 
 | File | Source | What it is for |
 | --- | --- | --- |
+| [tailscale-plugin-plan.md](tailscale-plugin-plan.md) | temporary hub document | Working plan, stage checklist, safety rules, and context-compaction handoff notes for the Tailscale Plugin task. Delete after the task is complete. |
 | [README.project.md](README.project.md) | `README.md` | Main project overview: launch flows, user-facing scenarios, LAN runtime notes, environment examples, and project structure. Read this first. |
 | [TECHNICAL_README.md](TECHNICAL_README.md) | `TECHNICAL_README.md` | Technical architecture reference: backend/UI runtime, contracts, LAN diagnostics, static UI system, and implementation notes. |
 | [README.backend_structure.md](README.backend_structure.md) | `backend/README.md` | Backend structure map: packages, API areas, runtime contracts, static UI serving, and backend maintenance notes. |

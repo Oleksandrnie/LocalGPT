@@ -88,6 +88,27 @@ def _from_json(raw: str | None, fallback: Any = None) -> Any:
         return fallback
 
 
+def get_app_setting(key: str, fallback: str | None = None) -> str | None:
+    clean_key = (key or "").strip()
+    if not clean_key:
+        return fallback
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (clean_key,)).fetchone()
+    return str(row["value"]) if row else fallback
+
+
+def set_app_setting(key: str, value: str) -> None:
+    clean_key = (key or "").strip()
+    if not clean_key:
+        raise ValueError("app setting key is required")
+    with closing(_connect()) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+            (clean_key, str(value), _utcnow()),
+        )
+        conn.commit()
+
+
 def _default_profile_preferences() -> dict[str, Any]:
     whisper_model = config.SETTINGS.whisper_default_model
     preferences = {

@@ -355,6 +355,10 @@ const els = {
   ttsLibraryPanel: document.getElementById("ttsLibraryPanel"),
   ttsVoiceSearchInput: document.getElementById("ttsVoiceSearchInput"),
   ttsVoiceLibrary: document.getElementById("ttsVoiceLibrary"),
+  pluginsSummary: document.getElementById("pluginsSummary"),
+  pluginsList: document.getElementById("pluginsList"),
+  pluginsStatus: document.getElementById("pluginsStatus"),
+  refreshPluginsButton: document.getElementById("refreshPluginsButton"),
   modelsDirInput: document.getElementById("modelsDirInput"),
   applyModelsDirButton: document.getElementById("applyModelsDirButton"),
   moveModelsDirButton: document.getElementById("moveModelsDirButton"),
@@ -457,6 +461,13 @@ const state = {
   asrToolHistorySearch: "",
   ragStatus: null,
   ragBusy: false,
+  pluginsState: {
+    plugins: [],
+    invalid_plugins: [],
+    trusted_plugin_ids: [],
+    message: "",
+  },
+  pluginsLoading: false,
   activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
   appRuntimeBusy: false,
@@ -5986,6 +5997,144 @@ function renderLanUrl() {
   }
 }
 
+function pluginStatusLabel(plugin) {
+  if (!plugin?.trusted) return "Detected, not trusted";
+  if (plugin?.enabled && plugin?.effective_enabled) return "Enabled";
+  return "Disabled";
+}
+
+function pluginStatusClass(plugin) {
+  if (!plugin?.trusted) return "plugin-status--untrusted";
+  if (plugin?.enabled && plugin?.effective_enabled) return "plugin-status--enabled";
+  return "plugin-status--disabled";
+}
+
+function renderPluginPills(items, emptyText = "none", extraClass = "") {
+  if (!Array.isArray(items) || !items.length) {
+    return `<span class="plugin-pill plugin-pill--muted">${escapeHtml(emptyText)}</span>`;
+  }
+  return items
+    .map((item) => `<span class="plugin-pill ${extraClass}">${escapeHtml(item)}</span>`)
+    .join("");
+}
+
+function renderPluginDocs(plugin) {
+  const docs = Array.isArray(plugin?.docs_status) ? plugin.docs_status : [];
+  if (!docs.length) {
+    return '<span class="plugin-pill plugin-pill--muted">no docs</span>';
+  }
+  return docs
+    .map((doc) => {
+      const available = doc?.available === true;
+      const className = available ? "plugin-pill" : "plugin-pill plugin-pill--muted";
+      const suffix = available ? "" : " (missing)";
+      return `<span class="${className}">${escapeHtml(`${doc?.path || "doc"}${suffix}`)}</span>`;
+    })
+    .join("");
+}
+
+function renderPluginCard(plugin) {
+  const id = String(plugin?.id || "");
+  const trusted = plugin?.trusted === true;
+  const disabled = state.pluginsLoading || !trusted;
+  const checked = trusted && plugin?.enabled === true;
+  const dangerous = Array.isArray(plugin?.dangerous_permissions) ? plugin.dangerous_permissions : [];
+  const warning = dangerous.length
+    ? `<div class="plugin-warning">Dangerous permissions: ${renderPluginPills(dangerous, "none", "plugin-pill--danger")}</div>`
+    : "";
+  const trustNote = trusted
+    ? "Trusted backend handler available."
+    : "Detected, but not trusted. Execution unavailable.";
+
+  return `
+    <article class="plugin-card" data-plugin-id="${escapeHtml(id)}">
+      <div class="plugin-card__main">
+        <div class="plugin-card__title-row">
+          <div>
+            <strong>${escapeHtml(plugin?.name || id || "Plugin")}</strong>
+            <span>${escapeHtml(plugin?.id || "unknown")} • ${escapeHtml(plugin?.type || "unknown")} • v${escapeHtml(plugin?.version || "0")}</span>
+          </div>
+          <span class="plugin-status ${pluginStatusClass(plugin)}">${escapeHtml(pluginStatusLabel(plugin))}</span>
+        </div>
+        <p>${escapeHtml(plugin?.description || "")}</p>
+        <div class="plugin-meta-row">
+          <span class="plugin-meta-row__label">Permissions</span>
+          <span>${renderPluginPills(plugin?.permissions, "none")}</span>
+        </div>
+        ${warning}
+        <div class="plugin-meta-row">
+          <span class="plugin-meta-row__label">Docs</span>
+          <span>${renderPluginDocs(plugin)}</span>
+        </div>
+        <p class="plugin-note">${escapeHtml(plugin?.security_note || trustNote)}</p>
+      </div>
+      <label class="field field--checkbox plugin-toggle">
+        <input type="checkbox" data-plugin-toggle="${escapeHtml(id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+        <span>${checked ? "Enabled" : "Disabled"}</span>
+      </label>
+    </article>
+  `;
+}
+
+function renderInvalidPluginCard(plugin) {
+  const errors = Array.isArray(plugin?.errors) ? plugin.errors : ["Invalid plugin manifest"];
+  return `
+    <article class="plugin-card plugin-card--invalid">
+      <div class="plugin-card__main">
+        <div class="plugin-card__title-row">
+          <div>
+            <strong>${escapeHtml(plugin?.plugin_dir || "Invalid plugin")}</strong>
+            <span>${escapeHtml(plugin?.manifest_path || "plugin.json")}</span>
+          </div>
+          <span class="plugin-status plugin-status--invalid">Invalid</span>
+        </div>
+        <div class="plugin-warning">${renderPluginPills(errors, "invalid", "plugin-pill--danger")}</div>
+      </div>
+    </article>
+  `;
+}
+
+function renderPlugins() {
+  const plugins = Array.isArray(state.pluginsState?.plugins) ? state.pluginsState.plugins : [];
+  const invalidPlugins = Array.isArray(state.pluginsState?.invalid_plugins) ? state.pluginsState.invalid_plugins : [];
+  const trustedIds = Array.isArray(state.pluginsState?.trusted_plugin_ids) ? state.pluginsState.trusted_plugin_ids : [];
+  const enabledCount = plugins.filter((plugin) => plugin?.effective_enabled).length;
+
+  if (els.refreshPluginsButton) {
+    els.refreshPluginsButton.disabled = state.pluginsLoading;
+    els.refreshPluginsButton.textContent = state.pluginsLoading ? "Обновление…" : "Обновить";
+  }
+
+  if (els.pluginsSummary) {
+    els.pluginsSummary.innerHTML = `
+      <span>Installed: <strong>${plugins.length}</strong></span>
+      <span>Enabled: <strong>${enabledCount}</strong></span>
+      <span>Trusted ids: <strong>${escapeHtml(trustedIds.join(", ") || "none")}</strong></span>
+    `;
+  }
+
+  if (!els.pluginsList) return;
+  if (state.pluginsLoading && !plugins.length && !invalidPlugins.length) {
+    els.pluginsList.innerHTML = '<p class="subtle">Загружаю plugins registry…</p>';
+    return;
+  }
+
+  if (!plugins.length && !invalidPlugins.length) {
+    els.pluginsList.innerHTML = `
+      <div class="plugins-empty">
+        <strong>No plugins installed.</strong>
+        <span>${escapeHtml(state.pluginsState?.message || "Add a plugin folder to plugins/ to make it appear here.")}</span>
+      </div>
+    `;
+    return;
+  }
+
+  els.pluginsList.innerHTML = [
+    ...plugins.map(renderPluginCard),
+    ...invalidPlugins.map(renderInvalidPluginCard),
+  ].join("");
+}
+
 function renderDatabaseMaintenance() {
   const busy = Boolean(state.databaseMaintenanceBusy);
   if (els.cleanupDatabaseButton) {
@@ -6011,7 +6160,7 @@ function renderAppRuntimeMaintenance() {
 }
 
 function setSettingsTab(tabName, { persist = true, render = true } = {}) {
-  const allowed = new Set(["profile", "models", "asr", "tts", "system"]);
+  const allowed = new Set(["profile", "models", "asr", "tts", "plugins", "system"]);
   const next = allowed.has(tabName) ? tabName : "profile";
   state.activeSettingsTab = next;
   if (persist) {
@@ -6047,6 +6196,7 @@ function renderSettings() {
   renderTtsControls();
   renderDownloads();
   renderLanUrl();
+  renderPlugins();
   renderDatabaseMaintenance();
   renderAppRuntimeMaintenance();
 
@@ -6089,6 +6239,7 @@ function openSettings() {
   void loadWhisperModels({ silent: true });
   void loadTtsSettings({ silent: true });
   void loadTtsLibrary({ silent: true });
+  void loadPlugins({ silent: true });
 }
 
 function openAsrPipelineSettings() {
@@ -6372,6 +6523,62 @@ async function loadHealth({ silent = false } = {}) {
     if (!silent) {
       setFooter(`Сервер недоступен: ${error.message || error}`, "error");
     }
+  }
+}
+
+async function loadPlugins({ silent = false } = {}) {
+  state.pluginsLoading = true;
+  renderPlugins();
+  try {
+    const data = await request("/plugins");
+    state.pluginsState = {
+      plugins: Array.isArray(data?.plugins) ? data.plugins : [],
+      invalid_plugins: Array.isArray(data?.invalid_plugins) ? data.invalid_plugins : [],
+      trusted_plugin_ids: Array.isArray(data?.trusted_plugin_ids) ? data.trusted_plugin_ids : [],
+      message: data?.message || "",
+    };
+    if (!silent) {
+      const count = state.pluginsState.plugins.length + state.pluginsState.invalid_plugins.length;
+      setInlineStatus(els.pluginsStatus, count ? "Plugins registry обновлён." : "Plugins не установлены.", "success");
+    }
+  } catch (error) {
+    if (!silent) {
+      setInlineStatus(els.pluginsStatus, `Не удалось загрузить plugins: ${error.message || error}`, "error");
+    }
+  } finally {
+    state.pluginsLoading = false;
+    renderPlugins();
+  }
+}
+
+async function setPluginEnabled(pluginId, enabled) {
+  const id = String(pluginId || "").trim();
+  if (!id || state.pluginsLoading) return;
+
+  state.pluginsLoading = true;
+  renderPlugins();
+  setInlineStatus(els.pluginsStatus, enabled ? "Включаю plugin…" : "Отключаю plugin…", "warning");
+
+  try {
+    const data = await request(`/plugins/${encodeURIComponent(id)}/enabled`, {
+      method: "POST",
+      body: { enabled: Boolean(enabled) },
+    });
+    state.pluginsState = {
+      plugins: Array.isArray(data?.plugins) ? data.plugins : [],
+      invalid_plugins: Array.isArray(data?.invalid_plugins) ? data.invalid_plugins : [],
+      trusted_plugin_ids: Array.isArray(data?.trusted_plugin_ids) ? data.trusted_plugin_ids : [],
+      message: data?.message || "",
+    };
+    setInlineStatus(els.pluginsStatus, enabled ? "Plugin включён." : "Plugin отключён.", "success");
+    setFooter(enabled ? "Plugin включён." : "Plugin отключён.", "success");
+  } catch (error) {
+    setInlineStatus(els.pluginsStatus, `Не удалось изменить plugin: ${error.message || error}`, "error");
+    setFooter(`Plugin: ${error.message || error}`, "error");
+    await loadPlugins({ silent: true });
+  } finally {
+    state.pluginsLoading = false;
+    renderPlugins();
   }
 }
 
@@ -7917,6 +8124,12 @@ function bindEvents() {
   els.copyLanUrlButton?.addEventListener("click", async () => copyLanUrl());
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
   els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
+  els.refreshPluginsButton?.addEventListener("click", async () => loadPlugins());
+  els.pluginsList?.addEventListener("change", async (event) => {
+    const input = event.target instanceof Element ? event.target.closest("[data-plugin-toggle]") : null;
+    if (!(input instanceof HTMLInputElement)) return;
+    await setPluginEnabled(input.getAttribute("data-plugin-toggle"), Boolean(input.checked));
+  });
   els.restartBackendButton?.addEventListener("click", async () => restartBackendRuntime());
   els.shutdownButton?.addEventListener("click", async () => shutdownRuntime());
   els.cleanupDatabaseButton?.addEventListener("click", async () => cleanupDatabaseGarbage());

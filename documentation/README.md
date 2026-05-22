@@ -6,6 +6,7 @@ Most files here are copies of source documents that still live in their original
 
 ## Start here
 
+- [tailscale-plugin-plan.md](tailscale-plugin-plan.md) — temporary working plan and handoff checklist for the Tailscale Plugin task; delete after the task is complete.
 - [map.md](map.md) — quick map of documentation-hub files and what each one is for.
 - [README.project.md](README.project.md) — copy of the root project README.
 - [TECHNICAL_README.md](TECHNICAL_README.md) — technical architecture, runtime, UI, and maintenance notes.

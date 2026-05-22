@@ -2645,6 +2645,10 @@ button.model-info-button:hover:not([disabled]) {
     grid-column: 1 / -1;
 }
 
+#settingsBackdrop .settings-group--plugins {
+    grid-column: 1 / -1;
+}
+
 .settings-group__header {
     display: flex;
     align-items: flex-start;
@@ -2901,6 +2905,175 @@ button.model-info-button:hover:not([disabled]) {
 
 .maintenance-panel__actions .button {
     flex: 1 1 150px;
+}
+
+.plugins-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.plugins-summary span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 5px 9px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.plugins-list {
+    display: grid;
+    gap: 10px;
+}
+
+.plugins-empty {
+    display: grid;
+    gap: 5px;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+    color: var(--text-muted);
+}
+
+.plugins-empty strong {
+    color: var(--text);
+}
+
+.plugin-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.plugin-card--invalid {
+    border-color: rgba(215, 103, 103, 0.26);
+    background: rgba(215, 103, 103, 0.06);
+}
+
+.plugin-card__main {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.plugin-card__main p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.plugin-card__title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.plugin-card__title-row > div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.plugin-card__title-row strong {
+    font-size: 14px;
+}
+
+.plugin-card__title-row span:not(.plugin-status) {
+    color: var(--text-soft);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.plugin-status {
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.plugin-status--enabled {
+    border-color: rgba(74, 222, 128, 0.28);
+    color: #a3dfbf;
+    background: rgba(74, 222, 128, 0.08);
+}
+
+.plugin-status--disabled {
+    border-color: rgba(148, 163, 184, 0.18);
+    color: var(--text-muted);
+}
+
+.plugin-status--untrusted,
+.plugin-status--invalid {
+    border-color: rgba(215, 103, 103, 0.26);
+    color: #f0b4b4;
+    background: rgba(215, 103, 103, 0.08);
+}
+
+.plugin-meta-row {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    min-width: 0;
+}
+
+.plugin-meta-row__label {
+    color: var(--text-soft);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.plugin-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    margin: 0 5px 5px 0;
+    padding: 3px 7px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-muted);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.plugin-pill--muted {
+    opacity: 0.72;
+}
+
+.plugin-pill--danger {
+    border-color: rgba(215, 103, 103, 0.24);
+    color: #f0b4b4;
+    background: rgba(215, 103, 103, 0.07);
+}
+
+.plugin-warning {
+    color: #f0b4b4;
+    font-size: 12px;
+}
+
+.plugin-note {
+    color: var(--text-soft);
+}
+
+.plugin-toggle {
+    align-self: start;
+    min-width: 128px;
 }
 
 #settingsBackdrop .library-toggle {
@@ -4394,6 +4567,23 @@ body.theme-light .maintenance-panel {
     background:
         linear-gradient(135deg, rgba(217, 79, 99, 0.055), rgba(255, 255, 255, 0.48)),
         rgba(255, 255, 255, 0.58);
+}
+
+body.theme-light .plugins-summary span,
+body.theme-light .plugins-empty,
+body.theme-light .plugin-card {
+    border-color: rgba(31, 41, 55, 0.08);
+    background: rgba(255, 255, 255, 0.64);
+}
+
+body.theme-light .plugin-card--invalid {
+    border-color: rgba(190, 75, 75, 0.22);
+    background: rgba(215, 103, 103, 0.08);
+}
+
+body.theme-light .plugin-pill {
+    border-color: rgba(31, 41, 55, 0.1);
+    background: rgba(255, 255, 255, 0.58);
 }
 
 body.theme-light .maintenance-panel__label {

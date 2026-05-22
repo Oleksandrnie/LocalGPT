@@ -523,6 +523,7 @@
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="models">Чат / LLM</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="asr">ASR</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="tts">TTS</button>
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="plugins">Plugins</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="system">Система</button>
             </nav>
 
@@ -924,6 +925,23 @@
                             <div class="model-library" id="ttsVoiceLibrary"></div>
                         </div>
                     </div>
+                </section>
+
+                <section class="settings-group settings-group--plugins" data-settings-tab-panel="plugins">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Plugins</p>
+                            <h4>Плагины</h4>
+                        </div>
+                        <button class="button button--ghost" id="refreshPluginsButton" type="button">Обновить</button>
+                    </div>
+
+                    <div class="plugins-summary" id="pluginsSummary">
+                        <span class="subtle">Registry не загружен.</span>
+                    </div>
+
+                    <div class="plugins-list" id="pluginsList"></div>
+                    <p class="inline-status" id="pluginsStatus"></p>
                 </section>
 
                 <section class="settings-group" data-settings-tab-panel="system">
