@@ -428,6 +428,20 @@ When all task stages are complete:
 
 ## Handoff Checklist Before Context Compaction
 
+Trigger phrase:
+
+```text
+давай подготовимся к переносу в другой чат
+```
+
+When the user says this phrase, do the handoff routine:
+
+- update this temporary file with the latest completed stage, commit hash, checks, open changes, blockers, and next exact step;
+- commit the handoff update if there are file changes;
+- return two continuation prompts in chat:
+  - Russian prompt for the user;
+  - English prompt for Codex.
+
 Before tokens run low, update this section with:
 
 - Last completed stage.
