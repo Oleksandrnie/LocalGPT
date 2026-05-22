@@ -1,17 +1,22 @@
+import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from app import config, db
 from app.routes import profiles as profile_routes
-from app.schemas import ChatRequest, ProfileCreate, ProfileUpdate
+from app.schemas import ChatRequest, ProfileCreate, ProfilePreferencesUpdate, ProfileUpdate
 from app.services import models as model_service
+from backend.apps.chat import routes as chat_routes
 from backend.apps.asr import pipeline
-from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, start_chat_task
-from backend.apps.chat.service import sanitize_reply
+from backend.apps.chat import tasks as chat_tasks
+from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, _sse_event, router as chat_router, start_chat_task
+from backend.apps.chat.service import response_language_instruction, sanitize_reply
 from backend.apps.rag import service as rag_service
 
 
@@ -25,6 +30,8 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.profile_id = db.ensure_default_profile()
 
     def tearDown(self):
+        with chat_tasks._LOCK:
+            chat_tasks._TASKS.clear()
         config.RAG_SOURCE_DIR = self.original_rag_source_dir
         self.tmpdir.cleanup()
 
@@ -77,6 +84,30 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(updated["description"], "Updated description")
         self.assertEqual(updated["preferences"]["chat"]["system_prompt"], "Updated prompt")
 
+    def test_profile_preferences_persist_streaming_enabled(self):
+        profile = db.get_profile(self.profile_id)
+        self.assertTrue(profile["preferences"]["settings"]["streaming_enabled"])
+
+        updated = profile_routes.update_profile_preferences(
+            self.profile_id,
+            ProfilePreferencesUpdate(settings={"streaming_enabled": False}),
+        )
+        settings = db.effective_settings(self.profile_id, "qwen2.5:7b-instruct", config.DEFAULT_SETTINGS)
+
+        self.assertFalse(updated["preferences"]["settings"]["streaming_enabled"])
+        self.assertFalse(settings["effective"]["streaming_enabled"])
+        self.assertFalse(settings["overrides"]["streaming_enabled"])
+
+        updated = profile_routes.update_profile_preferences(
+            self.profile_id,
+            ProfilePreferencesUpdate(settings={"streaming_enabled": True}),
+        )
+        settings = db.effective_settings(self.profile_id, "qwen2.5:7b-instruct", config.DEFAULT_SETTINGS)
+
+        self.assertTrue(updated["preferences"]["settings"]["streaming_enabled"])
+        self.assertTrue(settings["effective"]["streaming_enabled"])
+        self.assertTrue(settings["overrides"]["streaming_enabled"])
+
     def test_chat_model_missing_is_readable(self):
         with patch.object(model_service, "is_model_installed", return_value=False):
             with self.assertRaises(HTTPException) as ctx:
@@ -85,14 +116,23 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 424)
         self.assertEqual(ctx.exception.detail["code"], "chat_model_missing")
 
-    def test_chat_task_model_missing_is_not_wrapped(self):
+    def test_chat_task_model_missing_creates_failed_assistant_message(self):
         req = ChatRequest(query="hello", profile_id=self.profile_id, model_name="qwen2.5:3b")
         with patch.object(model_service, "is_model_installed", return_value=False):
-            with self.assertRaises(HTTPException) as ctx:
-                start_chat_task(req)
+            task = start_chat_task(req)
 
-        self.assertEqual(ctx.exception.status_code, 424)
-        self.assertEqual(ctx.exception.detail["code"], "chat_model_missing")
+        self.assertEqual(task["state"], "failed")
+        self.assertEqual(task["error_code"], "chat_model_missing")
+        self.assertIsNotNone(task["user_message_id"])
+        self.assertIsNotNone(task["assistant_message_id"])
+
+        messages = db.get_messages(task["session_id"])
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertEqual(messages[0]["content"], "hello")
+        self.assertEqual(messages[0]["status"], "completed")
+        self.assertEqual(messages[1]["status"], "failed")
+        self.assertEqual(messages[1]["error"], "Модель не загружена. Загрузите модель и повторите отправку.")
+        self.assertEqual(messages[1]["task_id"], task["id"])
 
     def test_chat_task_without_model_is_rejected_before_session_created(self):
         req = ChatRequest(query="hello", profile_id=self.profile_id)
@@ -103,6 +143,249 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 424)
         self.assertEqual(ctx.exception.detail["code"], "chat_model_not_selected")
         self.assertEqual(db.list_sessions(self.profile_id), [])
+
+    def test_chat_task_creates_persistent_user_and_assistant_before_worker(self):
+        req = ChatRequest(query="hello", profile_id=self.profile_id, model_name="qwen2.5:7b-instruct")
+
+        def fake_start_chat_task(**kwargs):
+            return {
+                "id": "ct_fake",
+                "task_id": "ct_fake",
+                "state": "generating",
+                "session_id": kwargs["session_id"],
+                "conversation_id": kwargs["session_id"],
+                "profile_id": kwargs["profile_id"],
+                "model_name": kwargs["model_name"],
+                "role": kwargs["role"],
+                "user_message_id": kwargs["user_message_id"],
+                "assistant_message_id": kwargs["assistant_message_id"],
+                "message": "Chat generation started.",
+                "error_code": None,
+                "pid": 123,
+                "used_settings": kwargs["used_settings"],
+                "router_notice": kwargs["router_notice"],
+                "result": None,
+                "stream": bool(kwargs.get("stream")),
+                "streaming_enabled": bool(kwargs.get("stream")),
+            }
+
+        with (
+            patch.object(model_service, "is_model_installed", return_value=True),
+            patch("backend.apps.chat.routes.chat_tasks.start_chat_task", side_effect=fake_start_chat_task) as task_mock,
+        ):
+            task = start_chat_task(req)
+
+        self.assertEqual(task["state"], "generating")
+        self.assertEqual(task["task_id"], "ct_fake")
+        self.assertIsNotNone(task["user_message_id"])
+        self.assertIsNotNone(task["assistant_message_id"])
+        self.assertFalse(task["stream"])
+        self.assertFalse(task["streaming_enabled"])
+        task_mock.assert_called_once()
+        self.assertFalse(task_mock.call_args.kwargs["stream"])
+        self.assertFalse(task_mock.call_args.kwargs["used_settings"]["streaming_enabled"])
+
+        messages = db.get_messages(task["session_id"])
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertEqual(messages[0]["id"], task["user_message_id"])
+        self.assertEqual(messages[0]["content"], "hello")
+        self.assertEqual(messages[0]["status"], "completed")
+        self.assertEqual(messages[1]["id"], task["assistant_message_id"])
+        self.assertEqual(messages[1]["content"], "")
+        self.assertEqual(messages[1]["status"], "generating")
+        self.assertEqual(messages[1]["model"], "qwen2.5:7b-instruct")
+
+    def test_chat_task_stream_true_is_passed_to_worker(self):
+        req = ChatRequest(query="hello", profile_id=self.profile_id, model_name="qwen2.5:7b-instruct", stream=True)
+
+        def fake_start_chat_task(**kwargs):
+            return {
+                "id": "ct_stream_true",
+                "task_id": "ct_stream_true",
+                "state": "generating",
+                "session_id": kwargs["session_id"],
+                "conversation_id": kwargs["session_id"],
+                "profile_id": kwargs["profile_id"],
+                "model_name": kwargs["model_name"],
+                "role": kwargs["role"],
+                "user_message_id": kwargs["user_message_id"],
+                "assistant_message_id": kwargs["assistant_message_id"],
+                "message": "Chat generation started.",
+                "error_code": None,
+                "pid": 123,
+                "used_settings": kwargs["used_settings"],
+                "router_notice": kwargs["router_notice"],
+                "result": None,
+                "stream": bool(kwargs.get("stream")),
+                "streaming_enabled": bool(kwargs.get("stream")),
+            }
+
+        with (
+            patch.object(model_service, "is_model_installed", return_value=True),
+            patch("backend.apps.chat.routes.chat_tasks.start_chat_task", side_effect=fake_start_chat_task) as task_mock,
+        ):
+            task = start_chat_task(req)
+
+        self.assertTrue(task["stream"])
+        self.assertTrue(task["streaming_enabled"])
+        task_mock.assert_called_once()
+        self.assertTrue(task_mock.call_args.kwargs["stream"])
+        self.assertTrue(task_mock.call_args.kwargs["used_settings"]["streaming_enabled"])
+        self.assertEqual(db.get_message(task["assistant_message_id"])["status"], "generating")
+
+    def test_sse_event_formats_utf8_json(self):
+        event = _sse_event("status", {"status": "generating", "message": "Привет"})
+
+        self.assertEqual(event, 'event: status\ndata: {"status":"generating","message":"Привет"}\n\n')
+
+    def test_chat_task_events_returns_model_and_done_events(self):
+        session = db.create_session(self.profile_id, "SSE lifecycle", "qwen2.5:7b-instruct")
+        user_message = db.add_message(session["id"], "user", "hello")
+        assistant_message = db.create_assistant_message(
+            session["id"],
+            model="qwen2.5:7b-instruct",
+        )
+        task = chat_tasks.create_completed_task(
+            session_id=session["id"],
+            profile_id=self.profile_id,
+            model_name="qwen2.5:7b-instruct",
+            role="chat",
+            used_settings={},
+            reply="Привет, готово.",
+            user_message_id=user_message["id"],
+            assistant_message_id=assistant_message["id"],
+        )
+
+        app = FastAPI()
+        app.include_router(chat_router)
+        client = TestClient(app)
+
+        with client.stream("GET", f"/chat/tasks/{task['id']}/events") as response:
+            self.assertEqual(response.status_code, 200)
+            body = "".join(response.iter_text())
+
+        self.assertIn("event: model_selected\n", body)
+        self.assertIn('"model":"qwen2.5:7b-instruct"', body)
+        self.assertIn("event: done\n", body)
+        self.assertIn('"status":"completed"', body)
+
+    def test_non_streaming_worker_uses_full_response_and_updates_assistant_message(self):
+        session = db.create_session(self.profile_id, "Non-streaming fallback", "qwen2.5:7b-instruct")
+        assistant_message = db.create_assistant_message(
+            session["id"],
+            model="qwen2.5:7b-instruct",
+            task_id="ct_non_streaming",
+        )
+        result_path = Path(self.tmpdir.name) / "non-streaming.result.json"
+        error_path = Path(self.tmpdir.name) / "non-streaming.error.json"
+        delta_path = Path(self.tmpdir.name) / "non-streaming.deltas.jsonl"
+        status_path = Path(self.tmpdir.name) / "non-streaming.status.json"
+
+        with (
+            patch("backend.apps.chat.tasks.ChatService.chat_completion", return_value="Полный ответ") as full_response,
+            patch("backend.apps.chat.tasks.ChatService.chat_completion_stream") as stream_response,
+        ):
+            chat_tasks._chat_worker(
+                "qwen2.5:7b-instruct",
+                [{"role": "user", "content": "hello"}],
+                {"streaming_enabled": False},
+                session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                False,
+                str(delta_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+            )
+
+        full_response.assert_called_once()
+        stream_response.assert_not_called()
+        self.assertFalse(delta_path.exists())
+        self.assertFalse(status_path.exists())
+        self.assertFalse(error_path.exists())
+        self.assertEqual(json.loads(result_path.read_text(encoding="utf-8"))["reply"], "Полный ответ")
+
+        updated_message = db.get_message(assistant_message["id"])
+        self.assertEqual(updated_message["status"], "completed")
+        self.assertEqual(updated_message["content"], "Полный ответ")
+        self.assertFalse(updated_message["is_partial"])
+        self.assertIsNone(updated_message["error"])
+
+    def test_chat_task_events_streams_delta_events_from_task_artifact(self):
+        session = db.create_session(self.profile_id, "SSE delta", "qwen2.5:7b-instruct")
+        delta_path = Path(self.tmpdir.name) / "task.deltas.jsonl"
+        task_id = "ct_delta_test"
+        chat_tasks._append_delta_jsonl(delta_path, 1, "При")
+        chat_tasks._append_delta_jsonl(delta_path, 2, "вет")
+        with chat_tasks._LOCK:
+            chat_tasks._TASKS[task_id] = {
+                "id": task_id,
+                "state": "completed",
+                "created_at": "2026-05-06T10:00:00Z",
+                "updated_at": "2026-05-06T10:00:01Z",
+                "session_id": session["id"],
+                "profile_id": self.profile_id,
+                "model_name": "qwen2.5:7b-instruct",
+                "role": "chat",
+                "assistant_message_id": 42,
+                "message": "Chat generation completed.",
+                "error_code": None,
+                "used_settings": {},
+                "result": {"reply": "Привет"},
+                "delta_path": str(delta_path),
+                "stream": True,
+            }
+
+        app = FastAPI()
+        app.include_router(chat_router)
+        client = TestClient(app)
+
+        with client.stream("GET", f"/chat/tasks/{task_id}/events") as response:
+            self.assertEqual(response.status_code, 200)
+            body = "".join(response.iter_text())
+
+        self.assertIn("event: delta\n", body)
+        self.assertIn('"sequence":1', body)
+        self.assertIn('"text":"При"', body)
+        self.assertIn('"sequence":2', body)
+        self.assertIn('"text":"вет"', body)
+        self.assertIn("event: done\n", body)
+
+    def test_missing_runtime_task_marks_active_assistant_message_failed(self):
+        session = db.create_session(self.profile_id, "Stale task", "qwen2.5:7b-instruct")
+        assistant_message = db.create_assistant_message(
+            session["id"],
+            model="qwen2.5:7b-instruct",
+            task_id="ct_missing_runtime",
+        )
+
+        app = FastAPI()
+        app.include_router(chat_router)
+        client = TestClient(app)
+        response = client.get("/chat/tasks/ct_missing_runtime")
+
+        self.assertEqual(response.status_code, 404)
+        updated_message = db.get_message(assistant_message["id"])
+        self.assertEqual(updated_message["status"], "failed")
+        self.assertFalse(updated_message["is_partial"])
+        self.assertIn("backend был перезапущен", updated_message["error"])
+
+    def test_missing_runtime_sse_marks_active_assistant_message_failed(self):
+        session = db.create_session(self.profile_id, "Stale SSE", "qwen2.5:7b-instruct")
+        assistant_message = db.create_assistant_message(
+            session["id"],
+            model="qwen2.5:7b-instruct",
+            task_id="ct_missing_sse",
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            chat_routes.get_chat_task_events("ct_missing_sse", request=None)
+
+        self.assertEqual(ctx.exception.status_code, 404)
+        updated_message = db.get_message(assistant_message["id"])
+        self.assertEqual(updated_message["status"], "failed")
+        self.assertFalse(updated_message["is_partial"])
 
     def test_database_cleanup_removes_orphans_but_keeps_asr_history_and_manual_rag(self):
         session = db.create_session(self.profile_id, "Cleanup test", "qwen2.5:3b")
@@ -224,6 +507,122 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(db.list_sessions(profiles[0]["id"]), [])
         self.assertEqual(db.rag_stats()["documents"], 0)
 
+    def test_chat_message_lifecycle_helpers(self):
+        session = db.create_session(self.profile_id, "Lifecycle test", "qwen2.5:7b-instruct")
+
+        user_message = db.add_message(session["id"], "user", "hello")
+        assistant_message = db.create_assistant_message(
+            session["id"],
+            model="qwen2.5:7b-instruct",
+            task_id="ct_test",
+        )
+
+        self.assertEqual(user_message["status"], "completed")
+        self.assertFalse(user_message["is_partial"])
+        self.assertEqual(assistant_message["status"], "generating")
+        self.assertTrue(assistant_message["is_partial"])
+        self.assertEqual(assistant_message["content"], "")
+        self.assertEqual(assistant_message["model"], "qwen2.5:7b-instruct")
+        self.assertEqual(assistant_message["task_id"], "ct_test")
+        self.assertIsNotNone(assistant_message["generation_started_at"])
+        self.assertEqual(db.get_message_by_task_id("ct_test")["id"], assistant_message["id"])
+
+        streaming_message = db.append_message_content(assistant_message["id"], "Привет", status="streaming")
+        self.assertEqual(streaming_message["status"], "streaming")
+        self.assertEqual(streaming_message["content"], "Привет")
+        self.assertTrue(streaming_message["is_partial"])
+
+        completed_message = db.update_message(
+            assistant_message["id"],
+            content="Привет, готово.",
+            status="completed",
+            error=None,
+        )
+        self.assertEqual(completed_message["status"], "completed")
+        self.assertEqual(completed_message["content"], "Привет, готово.")
+        self.assertFalse(completed_message["is_partial"])
+        self.assertIsNotNone(completed_message["generation_finished_at"])
+
+        messages = db.get_messages(session["id"])
+        self.assertEqual([item["id"] for item in messages], [user_message["id"], assistant_message["id"]])
+        self.assertTrue(all("updated_at" in item for item in messages))
+
+    def test_legacy_chat_messages_migrate_to_completed(self):
+        legacy_path = Path(self.tmpdir.name) / "legacy-messages.db"
+        db.DB_PATH = legacy_path
+        now = "2026-05-06T10:00:00"
+        with sqlite3.connect(legacy_path) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT NULL,
+                    color TEXT NULL,
+                    preferences_json TEXT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE TABLE chat_sessions (
+                    id TEXT PRIMARY KEY,
+                    profile_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    model_name TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'chat',
+                    criteria_json TEXT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                );
+
+                CREATE TABLE chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at DATETIME NOT NULL
+                );
+
+                CREATE TABLE app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at DATETIME NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO profiles (id, name, description, color, preferences_json, created_at, updated_at, is_active)
+                VALUES (1, 'Default', 'Default profile', NULL, NULL, ?, ?, 1)
+                """,
+                (now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO chat_sessions (id, profile_id, title, model_name, role, created_at, updated_at)
+                VALUES ('legacy-session', 1, 'Legacy', 'qwen2.5:7b-instruct', 'chat', ?, ?)
+                """,
+                (now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO chat_messages (session_id, role, content, created_at)
+                VALUES ('legacy-session', 'assistant', 'old answer', ?)
+                """,
+                (now,),
+            )
+            conn.commit()
+
+        db.init_db()
+        messages = db.get_messages("legacy-session")
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["content"], "old answer")
+        self.assertEqual(messages[0]["status"], "completed")
+        self.assertEqual(messages[0]["updated_at"], now)
+        self.assertFalse(messages[0]["is_partial"])
+
     def test_prompt_uses_summary_memory_before_short_history(self):
         session = db.create_session(self.profile_id, "Memory test", "qwen2.5:3b")
         for idx in range(4):
@@ -264,7 +663,27 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         contents = [item["content"] for item in prepared["messages"]]
 
         self.assertFalse(any("ТОЛЬКО на русском" in item for item in contents))
-        self.assertTrue(any("языке последнего сообщения пользователя" in item.lower() for item in contents))
+        self.assertTrue(any("Языковое правило" in item for item in contents))
+        self.assertTrue(any("Ответь на английском" in item for item in contents))
+
+    def test_language_policy_ignores_profile_language_without_user_request(self):
+        db.update_profile_preferences(self.profile_id, {"chat": {"system_prompt": "Always answer in English."}})
+
+        prepared = _prepare_chat_request(
+            ChatRequest(query="как узнать id папки google drive?", profile_id=self.profile_id, model_name="qwen2.5:3b")
+        )
+        contents = [item["content"] for item in prepared["messages"]]
+        profile_index = next(idx for idx, item in enumerate(contents) if "Always answer in English." in item)
+        language_index = next(idx for idx, item in enumerate(contents) if "Ответь на русском" in item)
+
+        self.assertGreater(language_index, profile_index)
+        self.assertIn("профильных инструкций не является разрешением", contents[language_index])
+
+    def test_explicit_response_language_can_override_question_language(self):
+        instruction = response_language_instruction("Ответь на английском: как узнать ID папки Google Drive?")
+
+        self.assertIn("явно просит ответить на английском", instruction)
+        self.assertIn("Ответь на английском", instruction)
 
     def test_response_formatting_guardrail_is_global(self):
         prepared = _prepare_chat_request(

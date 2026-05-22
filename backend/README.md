@@ -7,7 +7,7 @@
 - `backend/apps/chat/`
   - `routes.py` — chat API
   - `service.py` — LLM/chat logic, prompt assembly, response sanitizing and calculation/currency formatting guardrails
-  - `tasks.py` — background generation tasks
+  - `tasks.py` — background generation tasks; current contract supports polling plus SSE (`POST /chat/tasks`, `GET /chat/tasks/{id}`, `GET /chat/tasks/{id}/events`), assistant reply and partial chunks are persisted into the pre-created assistant message
   - debug endpoints for assembled prompt inspection
 
 - `backend/apps/asr/`
@@ -87,5 +87,48 @@
 - RAG state button в topbar должен отражать `rag_enabled` активного профиля, а не быть декоративным индикатором.
 - Все системные уведомления должны идти через toast под topbar, не через нижнюю input area.
 - Если нет локальной chat-модели, composer input остаётся активным, но send disabled; попытка отправки показывает toast и не создаёт backend LLM request.
-- Запуск загрузки LLM-модели требует явного подтверждения пользователя.
+- Запуск загрузки LLM-модели требует явного подтверждения пользователя; normal progress отображается в download-card без повторяющихся toast.
 - Видимые select-контролы должны использовать кастомный `AppSelect`; native `<select>` допустим только как скрытый backing-state.
+- Checkbox `Стриминг ответов` находится первой карточкой в Settings → `Чат / LLM`, сохраняется сразу при переключении в profile preferences как `streaming_enabled` и отправляется в `POST /chat/tasks` как `stream`. Новые профили получают `streaming_enabled=true` по умолчанию.
+- Assistant cards должны рендериться по persistent `message.status`; локальный optimistic placeholder не является источником generation state.
+
+## Current chat task contract
+
+Актуальный chat runtime перед SSE rollout:
+
+- `POST /chat/tasks` создаёт или продолжает session, валидирует модель и запускает background process;
+- autorouter, если выбран `Auto / Smart Router`, завершает route selection до старта answer-модели и отдаёт route metadata через `used_settings` / `model_selected`; user-facing `router_notice` для normal-success routing пустой, чтобы UI не показывал success-toast про confidence/выбранную модель;
+- static UI передаёт `stream` из profile preference `settings.streaming_enabled`;
+- task state доступен через polling `GET /chat/tasks/{task_id}` и lifecycle SSE `GET /chat/tasks/{task_id}/events`;
+- если request содержит `stream=true`, backend вызывает native Ollama streaming API для финальной answer-модели и отдаёт `delta` через SSE;
+- если request не содержит `stream` или содержит `stream=false`, backend использует non-streaming fallback: ждёт полный ответ, не отдаёт `delta`, но сохраняет lifecycle в том же assistant-message;
+- SSE events: `status`, `model_selected`, `delta`, `done`, `error`, `cancelled`;
+- storage уже поддерживает persistent assistant lifecycle fields и partial content;
+- user-message и assistant-message сохраняются при старте task; assistant-message получает `status=generating` и затем обновляется task-финализацией;
+- response payload содержит `id`, `task_id`, `session_id`, `conversation_id`, `user_message_id`, `assistant_message_id`, `state`, `model_name`, `used_settings`, `stream`, `streaming_enabled`;
+- отмена идёт через `POST /chat/tasks/{task_id}/cancel`;
+- static UI использует SSE для `stream=true` и fallback polling для non-streaming или оборванного SSE-соединения;
+- при повторном открытии чата UI восстанавливает active task из persisted assistant-message `task_id`;
+- если runtime task уже не найден, `GET /chat/tasks/{task_id}`, SSE endpoint и cancel route помечают связанное active assistant-message как `failed`, чтобы состояние не зависало в `generating`.
+
+Task 10 verification для backend contract:
+
+- unit tests покрывают streaming/non-streaming worker paths, SSE `delta`, missing-model failures, stale-task reconciliation и autorouter selection без token streaming;
+- API-smoke на временной SQLite-базе проверяет `POST /chat/tasks`, `GET /chat/tasks/{id}/events`, `GET /sessions/{id}/messages` и failed recovery paths;
+- backend smoke запускает `backend.server:app` через uvicorn и проверяет `/health` плюс static UI route;
+- live Ollama smoke проверяет реальный answer-model streaming с SSE `delta`, `done` и persisted assistant-message;
+- Ollama Metal-to-CPU fallback перед CPU retry повторно выгружает модель, чтобы не переиспользовать зависший Metal runner.
+
+## Chat message lifecycle storage
+
+`app/db.py` хранит для `chat_messages` поля `status`, `model`, `updated_at`, `error`, `generation_started_at`, `generation_finished_at`, `is_partial` и `task_id`.
+
+Lifecycle statuses:
+
+- `generating` — assistant-message создан, ответ ещё не готов;
+- `streaming` — content приходит частями;
+- `completed` — ответ завершён успешно;
+- `failed` — генерация завершилась ошибкой, текст ошибки хранится в `error`;
+- `cancelled` — генерация отменена.
+
+Legacy rows мигрируют в `completed`, поэтому старая история читается как обычные завершённые сообщения.

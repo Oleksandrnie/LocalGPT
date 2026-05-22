@@ -15,6 +15,11 @@ DB_PATH = Path(os.getenv("LOCALGPT_DB_PATH", str(PROJECT_ROOT / "db" / "localgpt
 if not DB_PATH.is_absolute():
     DB_PATH = (PROJECT_ROOT.parent / DB_PATH).resolve()
 
+MESSAGE_STATUSES = {"generating", "streaming", "completed", "failed", "cancelled"}
+MESSAGE_ACTIVE_STATUSES = {"generating", "streaming"}
+MESSAGE_FINAL_STATUSES = {"completed", "failed", "cancelled"}
+_MESSAGE_UNSET = object()
+
 
 def _utcnow() -> str:
     return datetime.utcnow().isoformat(timespec="seconds")
@@ -32,6 +37,21 @@ def _row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return {key: row[key] for key in row.keys()}
+
+
+def _normalize_message_status(status: str | None, *, default: str = "completed") -> str:
+    value = str(status or default or "completed").strip().lower()
+    return value if value in MESSAGE_STATUSES else default
+
+
+def _message_row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    data = _row_dict(row)
+    if not data:
+        return None
+    data["status"] = _normalize_message_status(data.get("status"))
+    data["updated_at"] = data.get("updated_at") or data.get("created_at")
+    data["is_partial"] = bool(data.get("is_partial"))
+    return data
 
 
 def _merge_dict(target: dict[str, Any], updates: dict[str, Any] | None) -> dict[str, Any]:
@@ -247,6 +267,14 @@ def init_db() -> None:
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'completed',
+                model TEXT NULL,
+                updated_at DATETIME NOT NULL,
+                error TEXT NULL,
+                generation_started_at DATETIME NULL,
+                generation_finished_at DATETIME NULL,
+                is_partial INTEGER NOT NULL DEFAULT 0,
+                task_id TEXT NULL,
                 created_at DATETIME NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
             );
@@ -404,6 +432,14 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "chat_sessions", "role", "ALTER TABLE chat_sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'free';")
+        _ensure_column(conn, "chat_messages", "status", "ALTER TABLE chat_messages ADD COLUMN status TEXT NOT NULL DEFAULT 'completed';")
+        _ensure_column(conn, "chat_messages", "model", "ALTER TABLE chat_messages ADD COLUMN model TEXT NULL;")
+        _ensure_column(conn, "chat_messages", "updated_at", "ALTER TABLE chat_messages ADD COLUMN updated_at DATETIME NULL;")
+        _ensure_column(conn, "chat_messages", "error", "ALTER TABLE chat_messages ADD COLUMN error TEXT NULL;")
+        _ensure_column(conn, "chat_messages", "generation_started_at", "ALTER TABLE chat_messages ADD COLUMN generation_started_at DATETIME NULL;")
+        _ensure_column(conn, "chat_messages", "generation_finished_at", "ALTER TABLE chat_messages ADD COLUMN generation_finished_at DATETIME NULL;")
+        _ensure_column(conn, "chat_messages", "is_partial", "ALTER TABLE chat_messages ADD COLUMN is_partial INTEGER NOT NULL DEFAULT 0;")
+        _ensure_column(conn, "chat_messages", "task_id", "ALTER TABLE chat_messages ADD COLUMN task_id TEXT NULL;")
         _ensure_column(conn, "profiles", "preferences_json", "ALTER TABLE profiles ADD COLUMN preferences_json TEXT NULL;")
         _ensure_column(conn, "model_settings", "pipeline_enabled", "ALTER TABLE model_settings ADD COLUMN pipeline_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "ollama_keep_alive", "ALTER TABLE model_settings ADD COLUMN ollama_keep_alive TEXT NULL;")
@@ -419,6 +455,21 @@ def init_db() -> None:
         _ensure_column(conn, "transcripts", "summary", "ALTER TABLE transcripts ADD COLUMN summary TEXT NULL;")
         _ensure_column(conn, "transcripts", "structured_json", "ALTER TABLE transcripts ADD COLUMN structured_json TEXT NULL;")
         _ensure_column(conn, "transcripts", "latest_pipeline_run_id", "ALTER TABLE transcripts ADD COLUMN latest_pipeline_run_id INTEGER NULL;")
+        conn.execute("UPDATE chat_messages SET status = 'completed' WHERE status IS NULL OR status = ''")
+        conn.execute("UPDATE chat_messages SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''")
+        conn.execute("UPDATE chat_messages SET is_partial = 0 WHERE is_partial IS NULL")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_task
+            ON chat_messages (task_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_status
+            ON chat_messages (session_id, status)
+            """
+        )
         conn.execute(
             "UPDATE profiles SET preferences_json = COALESCE(preferences_json, ?)",
             (default_preferences,),
@@ -642,24 +693,204 @@ def update_session(
     return get_session(session_id)  # type: ignore[return-value]
 
 
-def add_message(session_id: str, role: str, content: str) -> None:
+def add_message(
+    session_id: str,
+    role: str,
+    content: str,
+    *,
+    status: str | None = None,
+    model: str | None = None,
+    error: str | None = None,
+    task_id: str | None = None,
+    is_partial: bool = False,
+    generation_started_at: str | None = None,
+    generation_finished_at: str | None = None,
+) -> dict[str, Any]:
     now = _utcnow()
+    clean_role = str(role or "").strip() or "assistant"
+    clean_status = _normalize_message_status(status, default="completed")
+    partial = bool(is_partial or clean_status in MESSAGE_ACTIVE_STATUSES)
     with closing(_connect()) as conn:
-        conn.execute(
-            "INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, role, content, now),
+        cur = conn.execute(
+            """
+            INSERT INTO chat_messages (
+                session_id, role, content, status, model, created_at, updated_at, error,
+                generation_started_at, generation_finished_at, is_partial, task_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                clean_role,
+                content,
+                clean_status,
+                model,
+                now,
+                now,
+                error,
+                generation_started_at,
+                generation_finished_at,
+                int(partial),
+                task_id,
+            ),
         )
         conn.execute("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", (now, session_id))
         conn.commit()
+        new_id = int(cur.lastrowid)
+    return get_message(new_id) or {}
+
+
+def create_assistant_message(
+    session_id: str,
+    *,
+    model: str | None = None,
+    task_id: str | None = None,
+    status: str = "generating",
+) -> dict[str, Any]:
+    now = _utcnow()
+    return add_message(
+        session_id,
+        "assistant",
+        "",
+        status=status,
+        model=model,
+        task_id=task_id,
+        is_partial=True,
+        generation_started_at=now,
+    )
+
+
+def get_message(message_id: int | str) -> dict[str, Any] | None:
+    try:
+        mid = int(message_id)
+    except (TypeError, ValueError):
+        return None
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            """
+            SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
+                   generation_started_at, generation_finished_at, is_partial, task_id
+            FROM chat_messages
+            WHERE id = ?
+            """,
+            (mid,),
+        ).fetchone()
+    return _message_row_dict(row)
+
+
+def get_message_by_task_id(task_id: str) -> dict[str, Any] | None:
+    target = str(task_id or "").strip()
+    if not target:
+        return None
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            """
+            SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
+                   generation_started_at, generation_finished_at, is_partial, task_id
+            FROM chat_messages
+            WHERE task_id = ? AND role = 'assistant'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (target,),
+        ).fetchone()
+    return _message_row_dict(row)
+
+
+def update_message(
+    message_id: int | str,
+    *,
+    content: Any = _MESSAGE_UNSET,
+    status: str | None = None,
+    model: Any = _MESSAGE_UNSET,
+    error: Any = _MESSAGE_UNSET,
+    task_id: Any = _MESSAGE_UNSET,
+    is_partial: bool | None = None,
+    generation_started_at: Any = _MESSAGE_UNSET,
+    generation_finished_at: Any = _MESSAGE_UNSET,
+) -> dict[str, Any] | None:
+    try:
+        mid = int(message_id)
+    except (TypeError, ValueError):
+        return None
+
+    current = get_message(mid)
+    if not current:
+        return None
+
+    now = _utcnow()
+    fields: list[str] = []
+    params: list[Any] = []
+    next_status = _normalize_message_status(status, default=current.get("status") or "completed") if status is not None else None
+
+    if content is not _MESSAGE_UNSET:
+        fields.append("content = ?")
+        params.append(str(content or ""))
+    if next_status is not None:
+        fields.append("status = ?")
+        params.append(next_status)
+        if is_partial is None:
+            is_partial = next_status in MESSAGE_ACTIVE_STATUSES
+        if next_status in MESSAGE_FINAL_STATUSES and generation_finished_at is _MESSAGE_UNSET:
+            generation_finished_at = now
+    if model is not _MESSAGE_UNSET:
+        fields.append("model = ?")
+        params.append(model)
+    if error is not _MESSAGE_UNSET:
+        fields.append("error = ?")
+        params.append(error)
+    if task_id is not _MESSAGE_UNSET:
+        fields.append("task_id = ?")
+        params.append(task_id)
+    if is_partial is not None:
+        fields.append("is_partial = ?")
+        params.append(int(bool(is_partial)))
+    if generation_started_at is not _MESSAGE_UNSET:
+        fields.append("generation_started_at = ?")
+        params.append(generation_started_at)
+    if generation_finished_at is not _MESSAGE_UNSET:
+        fields.append("generation_finished_at = ?")
+        params.append(generation_finished_at)
+
+    if not fields:
+        return current
+
+    fields.append("updated_at = ?")
+    params.append(now)
+    params.append(mid)
+    with closing(_connect()) as conn:
+        conn.execute(f"UPDATE chat_messages SET {', '.join(fields)} WHERE id = ?", params)
+        conn.execute("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", (now, current["session_id"]))
+        conn.commit()
+    return get_message(mid)
+
+
+def append_message_content(message_id: int | str, delta: str, *, status: str | None = None) -> dict[str, Any] | None:
+    current = get_message(message_id)
+    if not current:
+        return None
+    next_partial = None
+    if status is not None:
+        next_status = _normalize_message_status(status, default=current.get("status") or "completed")
+        next_partial = next_status in MESSAGE_ACTIVE_STATUSES
+    elif current.get("is_partial"):
+        next_partial = True
+    return update_message(
+        current["id"],
+        content=f"{current.get('content') or ''}{delta or ''}",
+        status=status,
+        is_partial=next_partial,
+    )
 
 
 def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[str, Any]]:
     limit = limit_pairs * 2 if limit_pairs else None
     query = """
-        SELECT role, content, created_at
+        SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
+               generation_started_at, generation_finished_at, is_partial, task_id
         FROM chat_messages
         WHERE session_id = ?
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
     """
     params: list[Any] = [session_id]
     if limit:
@@ -667,11 +898,7 @@ def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[s
         params.append(limit)
     with closing(_connect()) as conn:
         rows = conn.execute(query, params).fetchall()
-    messages = [
-        {"role": row["role"], "content": row["content"], "created_at": row["created_at"]}
-        for row in rows
-        if row
-    ]
+    messages = [item for row in rows if (item := _message_row_dict(row))]
     messages.reverse()
     return messages
 
@@ -1066,6 +1293,7 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     effective["num_ctx_apply_method"] = "openai_compatible_not_supported"
     profile_runtime_keys = (
         "mem_turns",
+        "streaming_enabled",
         "max_resident_target_models",
         "allow_light_with_heavy",
         "single_large_target_model",
@@ -1099,18 +1327,15 @@ def count_messages(session_id: str) -> int:
 def get_messages_before_latest(session_id: str, keep_pairs: int) -> list[dict[str, Any]]:
     keep_count = max(0, int(keep_pairs or 0) * 2)
     query = """
-        SELECT role, content, created_at
+        SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
+               generation_started_at, generation_finished_at, is_partial, task_id
         FROM chat_messages
         WHERE session_id = ?
-        ORDER BY created_at ASC
+        ORDER BY created_at ASC, id ASC
     """
     with closing(_connect()) as conn:
         rows = conn.execute(query, (session_id,)).fetchall()
-    messages = [
-        {"role": row["role"], "content": row["content"], "created_at": row["created_at"]}
-        for row in rows
-        if row
-    ]
+    messages = [item for row in rows if (item := _message_row_dict(row))]
     if keep_count <= 0:
         return messages
     return messages[:-keep_count]

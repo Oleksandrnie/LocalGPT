@@ -484,7 +484,7 @@
 
             <nav class="settings-tabs" id="settingsTabList" role="tablist" aria-label="Разделы настроек">
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="profile">Профиль</button>
-                <button class="settings-tab" type="button" role="tab" data-settings-tab="models">Модели</button>
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="models">Чат / LLM</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="asr">ASR</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="tts">TTS</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="system">Система</button>
@@ -546,6 +546,15 @@
                             <h4>Модели и параметры LLM</h4>
                         </div>
                     </div>
+
+                    <label class="field field--checkbox generation-toggle-card">
+                        <input id="streamingEnabledToggle" type="checkbox" aria-describedby="streamingEnabledDescription" />
+                        <span class="generation-toggle-card__body">
+                            <span class="generation-toggle-card__eyebrow">Generation</span>
+                            <span class="generation-toggle-card__title">Стриминг ответов</span>
+                            <span class="generation-toggle-card__text" id="streamingEnabledDescription">Показывать ответ модели по мере генерации, а не ждать полный результат.</span>
+                        </span>
+                    </label>
 
                     <label class="field">
                         <span class="field__label">LLM модель</span>

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, Iterator
 from urllib import error, request
 from urllib.parse import urlsplit, urlunsplit
 
@@ -149,7 +149,39 @@ def _post_json_with_metal_recovery(
         if not is_metal_backend_error(exc):
             raise
         LOGGER.warning("Ollama Metal backend still unavailable for %s; retrying with CPU fallback.", model_name)
+        unload_model(model_name, timeout=1.5)
+        time.sleep(0.75)
         return _post_json(path, _cpu_fallback_payload(payload), timeout=timeout)
+
+
+def _post_json_stream(path: str, payload: dict[str, Any], *, timeout: float | None = None) -> Iterator[dict[str, Any]]:
+    url = f"{native_ollama_base_url()}{path}"
+    data = json.dumps(payload).encode("utf-8")
+    req = request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        kwargs = {} if timeout is None else {"timeout": timeout}
+        with request.urlopen(req, **kwargs) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(f"Ollama API returned invalid stream JSON: {line[:500]}") from exc
+                if not isinstance(parsed, dict):
+                    raise RuntimeError("Ollama API returned a non-object stream response")
+                if parsed.get("error"):
+                    raise RuntimeError(f"Ollama API stream error: {parsed.get('error')}")
+                yield parsed
+    except error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8")
+        except OSError:
+            body = str(exc)
+        raise RuntimeError(f"Ollama API error {exc.code}: {body}") from exc
+    except (OSError, error.URLError) as exc:
+        raise RuntimeError(f"Ollama API request failed: {exc}") from exc
 
 
 def chat_completion(
@@ -185,6 +217,60 @@ def chat_completion(
     response = _post_json_with_metal_recovery("/api/chat", payload, model_name=model_name)
     message = response.get("message") if isinstance(response.get("message"), dict) else {}
     return str(message.get("content") or response.get("response") or "")
+
+
+def chat_completion_stream(
+    model_name: str,
+    messages: list[dict[str, str]],
+    *,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    keep_alive: str | None = None,
+    num_gpu: int | None = None,
+) -> Iterator[str]:
+    options: dict[str, Any] = {}
+    if temperature is not None:
+        options["temperature"] = temperature
+    if max_tokens is not None:
+        options["num_predict"] = int(max_tokens)
+    if num_gpu is not None:
+        options["num_gpu"] = int(num_gpu)
+
+    payload: dict[str, Any] = {
+        "model": model_name,
+        "messages": messages,
+        "stream": True,
+    }
+    if options:
+        payload["options"] = options
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
+
+    if num_gpu == 0:
+        unload_model(model_name, timeout=1.5)
+
+    attempts = [payload, payload, _cpu_fallback_payload(payload)]
+    for attempt_index, current_payload in enumerate(attempts):
+        yielded = False
+        try:
+            for parsed in _post_json_stream("/api/chat", current_payload):
+                message = parsed.get("message") if isinstance(parsed.get("message"), dict) else {}
+                text = str(message.get("content") or parsed.get("response") or "")
+                if text:
+                    yielded = True
+                    yield text
+            return
+        except RuntimeError as exc:
+            if yielded or not is_metal_backend_error(exc) or attempt_index >= len(attempts) - 1:
+                raise
+            if attempt_index == 0:
+                LOGGER.warning("Ollama Metal backend failed for %s; unloading model and retrying once.", model_name)
+                unload_model(model_name, timeout=1.5)
+                time.sleep(0.75)
+            else:
+                LOGGER.warning("Ollama Metal backend still unavailable for %s; retrying with CPU fallback.", model_name)
+                unload_model(model_name, timeout=1.5)
+                time.sleep(0.75)
 
 
 def load_model(model_name: str, *, keep_alive: str | None = None, timeout: float = 30.0) -> bool:

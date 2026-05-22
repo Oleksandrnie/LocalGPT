@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from fastapi import HTTPException
 
@@ -20,11 +21,37 @@ RESPONSE_FORMATTING_GUARDRAIL = (
     "- Денежные суммы пиши обычным текстом в человекочитаемом русском формате."
 )
 
+LANGUAGE_MATCHING_POLICY = (
+    "Языковое правило:\n"
+    "- Отвечай на языке последнего сообщения пользователя.\n"
+    "- Переходи на другой язык только если именно последнее сообщение пользователя явно просит ответить на конкретном другом языке.\n"
+    "- Язык истории, RAG, transcript/context, примеров кода и профильных инструкций не является разрешением менять язык ответа."
+)
+
+EXPLICIT_RESPONSE_LANGUAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+english\b", re.IGNORECASE), "английском"),
+    (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+russian\b", re.IGNORECASE), "русском"),
+    (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+spanish\b", re.IGNORECASE), "испанском"),
+    (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+french\b", re.IGNORECASE), "французском"),
+    (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+german\b", re.IGNORECASE), "немецком"),
+    (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+ukrainian\b", re.IGNORECASE), "украинском"),
+    (re.compile(r"(?:ответь|отвечай|напиши|дай\s+ответ)\s+(?:на|по-)\s*английск", re.IGNORECASE), "английском"),
+    (re.compile(r"(?:ответь|отвечай|напиши|дай\s+ответ)\s+(?:на|по-)\s*русск", re.IGNORECASE), "русском"),
+    (re.compile(r"(?:ответь|отвечай|напиши|дай\s+ответ)\s+(?:на|по-)\s*испанск", re.IGNORECASE), "испанском"),
+    (re.compile(r"(?:ответь|отвечай|напиши|дай\s+ответ)\s+(?:на|по-)\s*французск", re.IGNORECASE), "французском"),
+    (re.compile(r"(?:ответь|отвечай|напиши|дай\s+ответ)\s+(?:на|по-)\s*немецк", re.IGNORECASE), "немецком"),
+    (re.compile(r"(?:ответь|отвечай|напиши|дай\s+ответ)\s+(?:на|по-)\s*украинск", re.IGNORECASE), "украинском"),
+)
+CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
+LATIN_RE = re.compile(r"[A-Za-z]")
+COMMON_ENGLISH_RE = re.compile(
+    r"\b(?:the|what|how|why|where|when|who|is|are|do|does|did|can|could|please|you|your|tell|explain|write|create|fix)\b",
+    re.IGNORECASE,
+)
+
 
 def sanitize_reply(text: str) -> str:
     """Убирает повторы и случайные мусорные блоки из ответа модели."""
-    import re
-
     text = re.sub(r"[\u4e00-\u9fff]{2,}.*?(?:[.!?。！？]|$)", "", text)
     text = re.sub(r"\\\[(.*?)\\\]", r"\1", text, flags=re.DOTALL)
     text = re.sub(r"\\\((.*?)\\\)", r"\1", text, flags=re.DOTALL)
@@ -70,6 +97,29 @@ def sanitize_reply(text: str) -> str:
         lines.append(line)
 
     return "\n".join(lines).strip()
+
+
+def response_language_instruction(user_query: str) -> str:
+    query = str(user_query or "")
+    for pattern, language_name in EXPLICIT_RESPONSE_LANGUAGE_PATTERNS:
+        if pattern.search(query):
+            return (
+                f"{LANGUAGE_MATCHING_POLICY}\n"
+                f"Последнее сообщение пользователя явно просит ответить на {language_name}. Ответь на {language_name}."
+            )
+
+    cyrillic_count = len(CYRILLIC_RE.findall(query))
+    latin_count = len(LATIN_RE.findall(query))
+    if cyrillic_count >= max(2, latin_count):
+        detected = "Последнее сообщение пользователя выглядит русскоязычным. Ответь на русском."
+    elif latin_count >= 2 and COMMON_ENGLISH_RE.search(query):
+        detected = "Последнее сообщение пользователя выглядит англоязычным. Ответь на английском."
+    elif latin_count >= 2:
+        detected = "Последнее сообщение пользователя написано латиницей. Ответь на том же естественном языке этого сообщения."
+    else:
+        detected = "Если язык последнего сообщения неоднозначен, сохрани язык и стиль последнего сообщения пользователя."
+
+    return f"{LANGUAGE_MATCHING_POLICY}\n{detected}"
 
 
 def build_messages(
@@ -121,7 +171,7 @@ def build_messages(
             "role": "system",
             "content": (
                 "Отвечай на последний вопрос пользователя, без повторения уже выданных ответов и без пересказа предыдущего анализа. "
-                "Язык ответа должен соответствовать последнему сообщению пользователя, если профильный system prompt явно не требует иначе.\n\n"
+                f"{response_language_instruction(user_query)}\n\n"
                 f"{RESPONSE_FORMATTING_GUARDRAIL}"
             ),
         }
@@ -250,7 +300,7 @@ class ChatService:
         except Exception as exc:  # pragma: no cover - лог только для диагностики
             LOGGER.warning("Failed to write chat log: %s", exc)
 
-    def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
+    def _runtime_kwargs(self, model: str, settings: dict) -> dict[str, Any]:
         request_settings = dict(settings or {})
         request_settings["num_ctx_requested"] = request_settings.get("num_ctx")
         request_settings["num_ctx_applied"] = False
@@ -263,19 +313,27 @@ class ChatService:
                 num_gpu = int(raw_num_gpu)
             except (TypeError, ValueError):
                 num_gpu = None
+        runtime_kwargs = {
+            "temperature": request_settings.get("temperature", config.SETTINGS.temperature),
+            "max_tokens": request_settings.get("max_tokens", config.SETTINGS.max_tokens),
+            "keep_alive": keep_alive,
+        }
+        if num_gpu is not None:
+            runtime_kwargs["num_gpu"] = num_gpu
+        return runtime_kwargs
+
+    def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
         try:
-            runtime_kwargs = {
-                "messages": messages,
-                "temperature": request_settings.get("temperature", config.SETTINGS.temperature),
-                "max_tokens": request_settings.get("max_tokens", config.SETTINGS.max_tokens),
-                "keep_alive": keep_alive,
-            }
-            if num_gpu is not None:
-                runtime_kwargs["num_gpu"] = num_gpu
-            text = ollama_runtime.chat_completion(model, **runtime_kwargs)
+            text = ollama_runtime.chat_completion(model, messages=messages, **self._runtime_kwargs(model, settings))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
         return sanitize_reply(text)
+
+    def chat_completion_stream(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> Iterator[str]:
+        try:
+            yield from ollama_runtime.chat_completion_stream(model, messages=messages, **self._runtime_kwargs(model, settings))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
 
 
 def session_title_hint(raw_title: str | None, query: str | None) -> str:

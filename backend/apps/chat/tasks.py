@@ -12,7 +12,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from app import config, db
-from backend.apps.chat.service import ChatService, maybe_compress_session_history
+from backend.apps.chat.service import ChatService, maybe_compress_session_history, sanitize_reply
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -20,7 +20,7 @@ TASKS_DIR.mkdir(parents=True, exist_ok=True)
 _PROCESS_CTX = mp.get_context("spawn")
 _LOCK = threading.Lock()
 _TASKS: dict[str, dict[str, Any]] = {}
-_FINAL_STATES = {"completed", "error", "cancelled"}
+_FINAL_STATES = {"completed", "failed", "error", "cancelled"}
 
 
 def _utc_now() -> str:
@@ -64,6 +64,17 @@ def _atomic_write_json(path: Path | str, payload: dict[str, Any]) -> None:
     Path(temp_name).replace(target)
 
 
+def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
+    if not path or not text:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"sequence": sequence, "text": text}
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+        fh.flush()
+
+
 def _public_task(task: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": task.get("id"),
@@ -71,15 +82,21 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "created_at": task.get("created_at"),
         "updated_at": task.get("updated_at"),
         "session_id": task.get("session_id"),
+        "conversation_id": task.get("session_id"),
         "profile_id": task.get("profile_id"),
         "model_name": task.get("model_name"),
         "role": task.get("role"),
+        "user_message_id": task.get("user_message_id"),
+        "assistant_message_id": task.get("assistant_message_id"),
+        "task_id": task.get("id"),
         "message": task.get("message"),
         "error_code": task.get("error_code"),
         "pid": task.get("pid"),
         "used_settings": task.get("used_settings"),
         "router_notice": task.get("router_notice"),
         "result": task.get("result"),
+        "stream": bool(task.get("stream")),
+        "streaming_enabled": bool(task.get("stream")),
     }
 
 
@@ -89,14 +106,44 @@ def _chat_worker(
     settings: dict[str, Any],
     session_id: str,
     profile_id: int | None,
+    assistant_message_id: int | None,
+    stream: bool,
+    delta_path: str,
+    status_path: str,
     result_path: str,
     error_path: str,
 ) -> None:
     try:
         service = ChatService()
-        reply = service.chat_completion(model_name, messages, settings=settings)
+        if stream:
+            chunks: list[str] = []
+            sequence = 0
+            streaming_started = False
+            for delta in service.chat_completion_stream(model_name, messages, settings=settings):
+                if not delta:
+                    continue
+                if not streaming_started:
+                    _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                    streaming_started = True
+                sequence += 1
+                chunks.append(delta)
+                _append_delta_jsonl(delta_path, sequence, delta)
+                if assistant_message_id:
+                    db.append_message_content(assistant_message_id, delta, status="streaming")
+            reply = sanitize_reply("".join(chunks))
+        else:
+            reply = service.chat_completion(model_name, messages, settings=settings)
+        _atomic_write_json(result_path, {"reply": reply})
         if session_id:
-            db.add_message(session_id, "assistant", reply)
+            if assistant_message_id:
+                db.update_message(
+                    assistant_message_id,
+                    content=reply,
+                    status="completed",
+                    model=model_name,
+                    error=None,
+                    is_partial=False,
+                )
             if profile_id:
                 try:
                     maybe_compress_session_history(
@@ -108,15 +155,26 @@ def _chat_worker(
                     )
                 except Exception:
                     pass
-        _atomic_write_json(result_path, {"reply": reply})
     except Exception as exc:  # pragma: no cover - runtime path
         message = getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
+        if assistant_message_id:
+            try:
+                db.update_message(
+                    assistant_message_id,
+                    status="failed",
+                    model=model_name,
+                    error=str(message),
+                    is_partial=False,
+                )
+            except Exception:
+                pass
         _atomic_write_json(error_path, {"code": "chat_generation_failed", "message": str(message)})
 
 
 def _cleanup_task_files(task: dict[str, Any]) -> None:
     _safe_unlink(task.get("result_path"))
     _safe_unlink(task.get("error_path"))
+    _safe_unlink(task.get("status_path"))
 
 
 def _finalize_task_locked(task: dict[str, Any]) -> None:
@@ -132,21 +190,25 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
         task["message"] = "Chat generation cancelled."
         task["error_code"] = "task_cancelled"
         task["result"] = None
+        _update_assistant_from_task(task, status="cancelled", error=task["message"])
     elif result:
         task["state"] = "completed"
         task["message"] = "Chat generation completed."
         task["error_code"] = None
         task["result"] = result
+        _update_assistant_from_task(task, status="completed", content=str(result.get("reply") or ""), error=None)
     elif error:
-        task["state"] = "error"
+        task["state"] = "failed"
         task["message"] = error.get("message") or "chat_generation_failed"
         task["error_code"] = error.get("code") or "chat_generation_failed"
         task["result"] = None
+        _update_assistant_from_task(task, status="failed", error=task["message"])
     else:
-        task["state"] = "error"
+        task["state"] = "failed"
         task["message"] = "Chat process exited without result."
         task["error_code"] = "chat_generation_failed"
         task["result"] = None
+        _update_assistant_from_task(task, status="failed", error=task["message"])
 
     task["updated_at"] = _utc_now()
     task["pid"] = None
@@ -156,9 +218,39 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
     _cleanup_task_files(task)
 
 
+def _update_assistant_from_task(
+    task: dict[str, Any],
+    *,
+    status: str,
+    content: str | None = None,
+    error: str | None = None,
+) -> None:
+    assistant_message_id = task.get("assistant_message_id")
+    if not assistant_message_id:
+        return
+    try:
+        updates: dict[str, Any] = {
+            "status": status,
+            "model": task.get("model_name"),
+            "error": error,
+            "is_partial": status in db.MESSAGE_ACTIVE_STATUSES,
+        }
+        if content is not None:
+            updates["content"] = content
+        db.update_message(assistant_message_id, **updates)
+    except Exception:
+        pass
+
+
 def _refresh_task_locked(task: dict[str, Any]) -> None:
     if task.get("state") in _FINAL_STATES:
         return
+    status = _read_json(task.get("status_path"))
+    status_state = str((status or {}).get("state") or "").strip()
+    if status_state == "streaming" and task.get("state") not in {"cancelling", "cancelled"}:
+        task["state"] = "streaming"
+        task["message"] = str((status or {}).get("message") or "Chat generation streaming.")
+        task["updated_at"] = _utc_now()
     process = task.get("_process")
     if process is not None and process.is_alive():
         return
@@ -190,10 +282,22 @@ def create_completed_task(
     role: str,
     used_settings: dict[str, Any],
     reply: str,
+    user_message_id: int | None = None,
+    assistant_message_id: int | None = None,
     router_notice: str | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
+    if assistant_message_id:
+        db.update_message(
+            assistant_message_id,
+            content=reply,
+            status="completed",
+            model=model_name,
+            error=None,
+            task_id=task_id,
+            is_partial=False,
+        )
     task = {
         "id": task_id,
         "state": "completed",
@@ -203,12 +307,63 @@ def create_completed_task(
         "profile_id": profile_id,
         "model_name": model_name,
         "role": role,
+        "user_message_id": user_message_id,
+        "assistant_message_id": assistant_message_id,
         "message": "Chat generation completed.",
         "error_code": None,
         "pid": None,
         "used_settings": used_settings,
         "router_notice": router_notice,
         "result": {"reply": reply},
+        "stream": False,
+    }
+    with _LOCK:
+        _TASKS[task_id] = task
+    return _public_task(task)
+
+
+def create_failed_task(
+    *,
+    session_id: str,
+    profile_id: int | None,
+    model_name: str,
+    role: str,
+    used_settings: dict[str, Any],
+    message: str,
+    error_code: str = "chat_generation_failed",
+    user_message_id: int | None = None,
+    assistant_message_id: int | None = None,
+    router_notice: str | None = None,
+) -> dict[str, Any]:
+    task_id = _generate_id()
+    now = _utc_now()
+    if assistant_message_id:
+        db.update_message(
+            assistant_message_id,
+            status="failed",
+            model=model_name,
+            error=message,
+            task_id=task_id,
+            is_partial=False,
+        )
+    task = {
+        "id": task_id,
+        "state": "failed",
+        "created_at": now,
+        "updated_at": now,
+        "session_id": session_id,
+        "profile_id": profile_id,
+        "model_name": model_name,
+        "role": role,
+        "user_message_id": user_message_id,
+        "assistant_message_id": assistant_message_id,
+        "message": message,
+        "error_code": error_code,
+        "pid": None,
+        "used_settings": used_settings,
+        "router_notice": router_notice,
+        "result": None,
+        "stream": False,
     }
     with _LOCK:
         _TASKS[task_id] = task
@@ -223,12 +378,26 @@ def start_chat_task(
     role: str,
     messages: list[dict[str, str]],
     used_settings: dict[str, Any],
+    user_message_id: int | None = None,
+    assistant_message_id: int | None = None,
     router_notice: str | None = None,
+    stream: bool = False,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
     result_path = _artifact_path(task_id, "result")
     error_path = _artifact_path(task_id, "error")
+    delta_path = _artifact_path(task_id, "deltas")
+    status_path = _artifact_path(task_id, "status")
+
+    if assistant_message_id:
+        db.update_message(
+            assistant_message_id,
+            status="generating",
+            model=model_name,
+            task_id=task_id,
+            is_partial=True,
+        )
 
     process = _PROCESS_CTX.Process(
         target=_chat_worker,
@@ -238,6 +407,10 @@ def start_chat_task(
             used_settings,
             session_id,
             profile_id,
+            assistant_message_id,
+            bool(stream),
+            str(delta_path),
+            str(status_path),
             str(result_path),
             str(error_path),
         ),
@@ -250,17 +423,29 @@ def start_chat_task(
     except Exception:
         _safe_unlink(result_path)
         _safe_unlink(error_path)
+        _safe_unlink(delta_path)
+        _safe_unlink(status_path)
+        if assistant_message_id:
+            db.update_message(
+                assistant_message_id,
+                status="failed",
+                model=model_name,
+                error="Failed to start chat generation process.",
+                is_partial=False,
+            )
         raise
 
     task = {
         "id": task_id,
-        "state": "running",
+        "state": "generating",
         "created_at": now,
         "updated_at": now,
         "session_id": session_id,
         "profile_id": profile_id,
         "model_name": model_name,
         "role": role,
+        "user_message_id": user_message_id,
+        "assistant_message_id": assistant_message_id,
         "message": "Chat generation started.",
         "error_code": None,
         "pid": process.pid,
@@ -269,6 +454,9 @@ def start_chat_task(
         "result": None,
         "result_path": str(result_path),
         "error_path": str(error_path),
+        "delta_path": str(delta_path),
+        "status_path": str(status_path),
+        "stream": bool(stream),
         "cancel_requested": False,
         "_process": process,
     }
@@ -292,6 +480,43 @@ def get_chat_task(task_id: str) -> dict[str, Any] | None:
             return None
         _refresh_task_locked(task)
         return _public_task(task)
+
+
+def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    if not task_id:
+        return [], offset
+    with _LOCK:
+        task = _TASKS.get(task_id)
+        delta_path = task.get("delta_path") if task else None
+    if not delta_path:
+        return [], offset
+    target = Path(str(delta_path))
+    if not target.exists():
+        return [], offset
+
+    deltas: list[dict[str, Any]] = []
+    try:
+        with target.open("rb") as fh:
+            fh.seek(max(0, int(offset or 0)))
+            for raw_line in fh:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict) and payload.get("text"):
+                    deltas.append(
+                        {
+                            "sequence": payload.get("sequence"),
+                            "text": str(payload.get("text") or ""),
+                        }
+                    )
+            next_offset = fh.tell()
+    except OSError:
+        return deltas, offset
+    return deltas, next_offset
 
 
 def cancel_chat_task(task_id: str) -> dict[str, Any] | None:
