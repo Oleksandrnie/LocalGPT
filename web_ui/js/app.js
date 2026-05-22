@@ -150,6 +150,7 @@ const els = {
   quickModelMenu: document.getElementById("quickModelMenu"),
   quickModelSelect: document.getElementById("quickModelSelect"),
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
+  networkAddressMenu: document.getElementById("networkAddressMenu"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   openRagButton: document.getElementById("openRagButton"),
   themeToggleButton: document.getElementById("themeToggleButton"),
@@ -468,6 +469,9 @@ const state = {
     message: "",
   },
   pluginsLoading: false,
+  networkAddresses: [],
+  networkAddressesLoading: false,
+  networkAddressMenuPosition: null,
   activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
   appRuntimeBusy: false,
@@ -5984,17 +5988,100 @@ function renderDownloads() {
     .join("");
 }
 
+function normalizeNetworkAddressItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, index) => {
+      const rawUrl = String(item?.url || "").trim();
+      if (!rawUrl || rawUrl.includes("<") || rawUrl.includes(">")) return null;
+      try {
+        const parsed = new URL(rawUrl);
+        if (!["http:", "https:"].includes(parsed.protocol)) return null;
+      } catch {
+        return null;
+      }
+      return {
+        id: String(item?.id || item?.provider_id || `address-${index}`),
+        provider_id: String(item?.provider_id || item?.id || `address-${index}`),
+        label: String(item?.label || item?.provider_id || "Address"),
+        url: rawUrl,
+        detail: String(item?.detail || item?.security_note || ""),
+        copyable: item?.copyable !== false,
+        priority: Number.isFinite(Number(item?.priority)) ? Number(item.priority) : 100,
+      };
+    })
+    .filter((item) => item && item.copyable)
+    .sort((a, b) => (a.priority - b.priority) || a.label.localeCompare(b.label));
+}
+
+function availableNetworkAddresses() {
+  return Array.isArray(state.networkAddresses) ? state.networkAddresses : [];
+}
+
+function closeNetworkAddressMenu() {
+  if (!els.networkAddressMenu) return;
+  els.networkAddressMenu.hidden = true;
+  els.networkAddressMenu.style.left = "";
+  els.networkAddressMenu.style.top = "";
+  state.networkAddressMenuPosition = null;
+  els.copyLanUrlButton?.setAttribute("aria-expanded", "false");
+}
+
+function positionNetworkAddressMenu(clientX, clientY) {
+  if (!els.networkAddressMenu || els.networkAddressMenu.hidden) return;
+  const rect = els.networkAddressMenu.getBoundingClientRect();
+  const padding = 12;
+  const left = Math.max(padding, Math.min(clientX, window.innerWidth - rect.width - padding));
+  const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
+  els.networkAddressMenu.style.left = `${left}px`;
+  els.networkAddressMenu.style.top = `${top}px`;
+}
+
+function renderNetworkAddressMenu() {
+  if (!els.networkAddressMenu) return;
+  const items = availableNetworkAddresses();
+  els.networkAddressMenu.innerHTML = [
+    '<div class="network-address-menu__header">Адрес доступа</div>',
+    ...items.map((item, index) => `
+      <button class="network-address-menu__item" type="button" role="menuitem" data-network-address-index="${index}">
+        <span>
+          <strong>${escapeHtml(item.label)}</strong>
+          ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}
+        </span>
+        <code>${escapeHtml(item.url)}</code>
+      </button>
+    `),
+  ].join("");
+  if (!els.networkAddressMenu.hidden && state.networkAddressMenuPosition) {
+    positionNetworkAddressMenu(state.networkAddressMenuPosition.x, state.networkAddressMenuPosition.y);
+  }
+}
+
 function renderLanUrl() {
   const value = state.lanUrl || "Недоступно";
+  const addresses = availableNetworkAddresses();
+  const topbarDisabled = state.networkAddressesLoading || !addresses.length;
   if (els.lanUrlValue) {
     els.lanUrlValue.textContent = value;
   }
   if (els.copyLanUrlButton) {
-    els.copyLanUrlButton.disabled = !state.lanUrl;
+    els.copyLanUrlButton.disabled = topbarDisabled;
+    els.copyLanUrlButton.setAttribute("aria-expanded", els.networkAddressMenu?.hidden === false ? "true" : "false");
+    if (addresses.length > 1) {
+      els.copyLanUrlButton.title = "Выбрать адрес доступа";
+      els.copyLanUrlButton.setAttribute("aria-label", "Выбрать адрес доступа");
+    } else if (addresses.length === 1) {
+      els.copyLanUrlButton.title = `Скопировать ${addresses[0].label} URL`;
+      els.copyLanUrlButton.setAttribute("aria-label", `Скопировать ${addresses[0].label} URL`);
+    } else {
+      els.copyLanUrlButton.title = "Адрес доступа недоступен";
+      els.copyLanUrlButton.setAttribute("aria-label", "Адрес доступа недоступен");
+    }
   }
   if (els.copyLanUrlFromSettingsButton) {
     els.copyLanUrlFromSettingsButton.disabled = !state.lanUrl;
   }
+  renderNetworkAddressMenu();
 }
 
 function pluginStatusLabel(plugin) {
@@ -6033,6 +6120,39 @@ function renderPluginDocs(plugin) {
     .join("");
 }
 
+function renderPluginSecurityWarnings(plugin) {
+  const warnings = Array.isArray(plugin?.security_warnings)
+    ? plugin.security_warnings
+    : Array.isArray(plugin?.handler_status?.security_warnings)
+      ? plugin.handler_status.security_warnings
+      : [];
+  if (!warnings.length) return "";
+  return `<div class="plugin-warning">Security warnings: ${renderPluginPills(warnings, "none", "plugin-pill--danger")}</div>`;
+}
+
+function renderPluginHandlerStatus(plugin) {
+  const handler = plugin?.handler_status;
+  if (!handler || typeof handler !== "object") return "";
+  const command = handler.manual_command || handler.manual_command_template || "";
+  const cliState = handler.cli_available ? "tailscale CLI found" : "tailscale CLI not found";
+  const serveState = handler.serve_localgpt_detected
+    ? "LocalGPT Serve active"
+    : handler.serve_active
+      ? "Serve active for another target"
+      : "Serve not detected";
+  const message = handler.message ? `<span>${escapeHtml(handler.message)}</span>` : "";
+  return `
+    <div class="plugin-runtime">
+      <div class="plugin-runtime__row">
+        <span>${escapeHtml(cliState)}</span>
+        <span>${escapeHtml(serveState)}</span>
+      </div>
+      ${command ? `<code>${escapeHtml(command)}</code>` : ""}
+      ${message}
+    </div>
+  `;
+}
+
 function renderPluginCard(plugin) {
   const id = String(plugin?.id || "");
   const trusted = plugin?.trusted === true;
@@ -6045,6 +6165,8 @@ function renderPluginCard(plugin) {
   const trustNote = trusted
     ? "Trusted backend handler available."
     : "Detected, but not trusted. Execution unavailable.";
+  const securityWarnings = renderPluginSecurityWarnings(plugin);
+  const handlerStatus = trusted ? renderPluginHandlerStatus(plugin) : "";
 
   return `
     <article class="plugin-card" data-plugin-id="${escapeHtml(id)}">
@@ -6062,10 +6184,12 @@ function renderPluginCard(plugin) {
           <span>${renderPluginPills(plugin?.permissions, "none")}</span>
         </div>
         ${warning}
+        ${securityWarnings}
         <div class="plugin-meta-row">
           <span class="plugin-meta-row__label">Docs</span>
           <span>${renderPluginDocs(plugin)}</span>
         </div>
+        ${handlerStatus}
         <p class="plugin-note">${escapeHtml(plugin?.security_note || trustNote)}</p>
       </div>
       <label class="field field--checkbox plugin-toggle">
@@ -6367,6 +6491,7 @@ function closeRagPanel() {
 function openRagQuickMenu() {
   if (!els.ragQuickMenu) return;
   closeRagPanel();
+  closeNetworkAddressMenu();
   closeQuickModelMenu();
   closeVoiceModelMenu();
   toggleComposerMenu(false);
@@ -6515,14 +6640,37 @@ async function loadHealth({ silent = false } = {}) {
     setHealthBadge("Онлайн", "success");
     renderLanUrl();
     renderContextSummary();
+    await loadNetworkAddresses({ silent: true });
   } catch (error) {
     state.serverHealthy = false;
     state.lanUrl = fallbackLanUrl();
+    state.networkAddresses = [];
     setHealthBadge("Нет связи", "error");
     renderLanUrl();
     if (!silent) {
       setFooter(`Сервер недоступен: ${error.message || error}`, "error");
     }
+  }
+}
+
+async function loadNetworkAddresses({ silent = false } = {}) {
+  state.networkAddressesLoading = true;
+  renderLanUrl();
+  try {
+    const data = await request("/plugins/network-addresses");
+    state.networkAddresses = normalizeNetworkAddressItems(data?.items);
+    if (!state.networkAddresses.length) {
+      closeNetworkAddressMenu();
+    }
+  } catch (error) {
+    state.networkAddresses = [];
+    closeNetworkAddressMenu();
+    if (!silent) {
+      setFooter(`Не удалось загрузить адреса доступа: ${error.message || error}`, "error");
+    }
+  } finally {
+    state.networkAddressesLoading = false;
+    renderLanUrl();
   }
 }
 
@@ -6572,6 +6720,7 @@ async function setPluginEnabled(pluginId, enabled) {
     };
     setInlineStatus(els.pluginsStatus, enabled ? "Plugin включён." : "Plugin отключён.", "success");
     setFooter(enabled ? "Plugin включён." : "Plugin отключён.", "success");
+    await loadNetworkAddresses({ silent: true });
   } catch (error) {
     setInlineStatus(els.pluginsStatus, `Не удалось изменить plugin: ${error.message || error}`, "error");
     setFooter(`Plugin: ${error.message || error}`, "error");
@@ -7628,7 +7777,7 @@ async function deleteCurrentContext() {
   }
 }
 
-async function copyLanUrl() {
+async function copyLanUrlOnly() {
   if (!state.lanUrl) {
     setFooter("LAN URL пока недоступен.", "warning");
     return;
@@ -7639,6 +7788,55 @@ async function copyLanUrl() {
   } catch {
     setFooter("Не удалось скопировать LAN URL.", "error");
   }
+}
+
+async function copyNetworkAddressItem(item) {
+  if (!item?.url) {
+    setFooter("Адрес доступа пока недоступен.", "warning");
+    return;
+  }
+  try {
+    await copyText(item.url);
+    setFooter(`${item.label || "Адрес"} URL скопирован.`, "success");
+  } catch {
+    setFooter("Не удалось скопировать адрес доступа.", "error");
+  }
+}
+
+function openNetworkAddressMenu() {
+  if (!els.networkAddressMenu || !els.copyLanUrlButton) return;
+  const items = availableNetworkAddresses();
+  if (items.length < 2) return;
+  closeRagQuickMenu();
+  closeQuickModelMenu();
+  closeVoiceModelMenu();
+  toggleComposerMenu(false);
+  const rect = els.copyLanUrlButton.getBoundingClientRect();
+  state.networkAddressMenuPosition = {
+    x: Math.round(rect.left),
+    y: Math.round(rect.bottom + 10),
+  };
+  renderNetworkAddressMenu();
+  els.networkAddressMenu.hidden = false;
+  els.copyLanUrlButton.setAttribute("aria-expanded", "true");
+  positionNetworkAddressMenu(state.networkAddressMenuPosition.x, state.networkAddressMenuPosition.y);
+  window.setTimeout(() => {
+    els.networkAddressMenu?.querySelector("[data-network-address-index]")?.focus();
+  }, 0);
+}
+
+async function copyNetworkAddress() {
+  await loadNetworkAddresses({ silent: true });
+  const items = availableNetworkAddresses();
+  if (!items.length) {
+    setFooter("Адрес доступа пока недоступен.", "warning");
+    return;
+  }
+  if (items.length === 1) {
+    await copyNetworkAddressItem(items[0]);
+    return;
+  }
+  openNetworkAddressMenu();
 }
 
 function isExpectedShutdownError(error) {
@@ -8121,9 +8319,17 @@ function bindEvents() {
     }
   });
 
-  els.copyLanUrlButton?.addEventListener("click", async () => copyLanUrl());
+  els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
-  els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
+  els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrlOnly());
+  els.networkAddressMenu?.addEventListener("click", async (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-network-address-index]") : null;
+    if (!button) return;
+    const index = Number(button.getAttribute("data-network-address-index"));
+    const item = Number.isFinite(index) ? availableNetworkAddresses()[index] : null;
+    closeNetworkAddressMenu();
+    await copyNetworkAddressItem(item);
+  });
   els.refreshPluginsButton?.addEventListener("click", async () => loadPlugins());
   els.pluginsList?.addEventListener("change", async (event) => {
     const input = event.target instanceof Element ? event.target.closest("[data-plugin-toggle]") : null;
@@ -8688,6 +8894,10 @@ function bindEvents() {
         closeRagQuickMenu();
         return;
       }
+      if (!els.networkAddressMenu?.hidden) {
+        closeNetworkAddressMenu();
+        return;
+      }
       closeSidebar();
       closeOcrEditor();
       closeSettings();
@@ -8710,6 +8920,7 @@ function bindEvents() {
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
+    const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
@@ -8727,6 +8938,9 @@ function bindEvents() {
     if (!insideRagQuickMenu) {
       closeRagQuickMenu();
     }
+    if (!insideNetworkAddressMenu) {
+      closeNetworkAddressMenu();
+    }
     if (!insideAppSelect) {
       closeAppSelect();
     }
@@ -8737,6 +8951,7 @@ function bindEvents() {
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
+    const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
@@ -8750,6 +8965,9 @@ function bindEvents() {
     }
     if (!insideRagQuickMenu) {
       closeRagQuickMenu();
+    }
+    if (!insideNetworkAddressMenu) {
+      closeNetworkAddressMenu();
     }
     if (!insideAppSelect) {
       closeAppSelect();
@@ -8768,6 +8986,7 @@ function bindEvents() {
     closeQuickModelMenu();
     closeVoiceModelMenu();
     closeRagQuickMenu();
+    closeNetworkAddressMenu();
     closeAppSelect();
     closeSessionContextMenu();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {

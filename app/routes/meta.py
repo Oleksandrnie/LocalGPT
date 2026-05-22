@@ -154,6 +154,25 @@ def _get_lan_url(request: Request) -> str | None:
     return f"https://{lan_ip}:{port}/ui/gui_html.html"
 
 
+def get_network_address_items(request: Request) -> list[dict[str, object]]:
+    lan_url = _get_lan_url(request)
+    if not lan_url:
+        return []
+    return [
+        {
+            "id": "lan",
+            "provider_id": "lan",
+            "label": "LAN",
+            "url": lan_url,
+            "detail": "LAN HTTPS через Caddy.",
+            "trusted": True,
+            "copyable": True,
+            "priority": 10,
+            "security_note": "Доступен только когда LAN HTTPS listener реально отвечает.",
+        }
+    ]
+
+
 def _read_pid(path: Path) -> int | None:
     try:
         raw = path.read_text(encoding="utf-8").strip()

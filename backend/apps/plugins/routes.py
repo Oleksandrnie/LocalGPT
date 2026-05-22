@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.routes import meta as meta_routes
 from backend.apps.plugins import registry
 
 router = APIRouter()
@@ -13,8 +14,8 @@ class PluginEnabledRequest(BaseModel):
 
 
 @router.get("/plugins")
-def list_plugins() -> dict[str, object]:
-    return registry.list_plugins()
+def list_plugins(request: Request) -> dict[str, object]:
+    return registry.list_plugins(request=request)
 
 
 @router.post("/plugins/{plugin_id}/enabled")
@@ -29,5 +30,8 @@ def set_plugin_enabled(plugin_id: str, req: PluginEnabledRequest) -> dict[str, o
 
 
 @router.get("/plugins/network-addresses")
-def network_addresses() -> dict[str, object]:
-    return registry.list_network_addresses()
+def network_addresses(request: Request) -> dict[str, object]:
+    return registry.list_network_addresses(
+        request=request,
+        core_items=meta_routes.get_network_address_items(request),
+    )

@@ -7,10 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from app import config, db
+from backend.apps.plugins import tailscale
 
 PLUGIN_STATE_KEY = "plugins.enabled"
 PLUGINS_DIR = config.PROJECT_ROOT / "plugins"
 TRUSTED_PLUGIN_IDS = frozenset({"tailscale"})
+TRUSTED_HANDLER_STATUS = {
+    "tailscale": tailscale.get_status,
+}
+TRUSTED_NETWORK_ADDRESS_ITEMS = {
+    "tailscale": tailscale.network_address_item,
+}
 
 PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 REQUIRED_FIELDS = (
@@ -211,8 +218,29 @@ def scan_plugins(
     return RegistryScan(plugins=plugins, invalid_plugins=invalid_plugins, message=message)
 
 
-def list_plugins() -> dict[str, Any]:
-    return scan_plugins().as_response()
+def _attach_handler_status(response: dict[str, Any], *, request: Any | None = None) -> dict[str, Any]:
+    for plugin in response.get("plugins", []):
+        if not isinstance(plugin, dict) or not plugin.get("trusted"):
+            continue
+        status_provider = TRUSTED_HANDLER_STATUS.get(str(plugin.get("id") or ""))
+        if not status_provider:
+            continue
+        plugin["handler_status"] = status_provider(request=request)
+        if plugin["id"] == "tailscale":
+            plugin["security_warnings"] = list(tailscale.SECURITY_WARNINGS)
+    return response
+
+
+def list_plugins(
+    *,
+    request: Any | None = None,
+    plugins_dir: Path | None = None,
+    enabled_state: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    return _attach_handler_status(
+        scan_plugins(plugins_dir=plugins_dir, enabled_state=enabled_state).as_response(),
+        request=request,
+    )
 
 
 def set_plugin_enabled(plugin_id: str, enabled: bool) -> dict[str, Any]:
@@ -231,11 +259,48 @@ def set_plugin_enabled(plugin_id: str, enabled: bool) -> dict[str, Any]:
     state = _load_enabled_state()
     state[requested_id] = bool(enabled)
     _save_enabled_state(state)
-    return scan_plugins().as_response()
+    return list_plugins()
 
 
-def list_network_addresses() -> dict[str, Any]:
+def list_network_addresses(
+    *,
+    request: Any | None = None,
+    plugins_dir: Path | None = None,
+    enabled_state: dict[str, bool] | None = None,
+    handler_status: dict[str, dict[str, Any]] | None = None,
+    core_items: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    scan = scan_plugins(plugins_dir=plugins_dir, enabled_state=enabled_state)
+    items: list[dict[str, Any]] = [
+        item for item in (core_items or []) if item.get("copyable") and str(item.get("url") or "").strip()
+    ]
+    providers: list[dict[str, Any]] = []
+
+    for plugin in scan.plugins:
+        plugin_id = str(plugin.get("id") or "")
+        if not plugin.get("effective_enabled"):
+            continue
+        status_provider = TRUSTED_HANDLER_STATUS.get(plugin_id)
+        item_provider = TRUSTED_NETWORK_ADDRESS_ITEMS.get(plugin_id)
+        if not status_provider or not item_provider:
+            continue
+        status = (handler_status or {}).get(plugin_id) or status_provider(request=request)
+        providers.append(
+            {
+                "id": plugin_id,
+                "enabled": True,
+                "trusted": True,
+                "address_available": bool(status.get("address_available")),
+                "message": status.get("message") or "",
+            }
+        )
+        item = item_provider(status)
+        if item:
+            items.append(item)
+
+    items.sort(key=lambda item: (int(item.get("priority") or 100), str(item.get("label") or "")))
     return {
-        "items": [],
-        "message": "No plugin network address providers are enabled.",
+        "items": items,
+        "providers": providers,
+        "message": "No network addresses are available." if not items else "",
     }

@@ -35,6 +35,11 @@
   - `routes.py` — RAG status/ingest/upload/search API
   - `service.py` — profile folders, MD->JSON companions, chunking, local embeddings, retrieval context
 
+- `backend/apps/plugins/`
+  - `registry.py` — Plugin Registry v0: manifest scan, trusted/untrusted state, enabled state, network address aggregation
+  - `routes.py` — plugin API (`GET /plugins`, `POST /plugins/{plugin_id}/enabled`, `GET /plugins/network-addresses`)
+  - `tailscale.py` — trusted backend-owned handler for official/internal Tailscale remote access plugin
+
 ## Shared/core layer
 
 Пока shared-слой ещё остаётся в `app/`:
@@ -78,6 +83,24 @@
 - OCR v1 ограничен изображениями, PDF OCR не входит в текущую итерацию.
 - Chat prompt всегда получает общий guardrail: не использовать LaTeX/MathML/markdown-формулы для расчётов и не писать запятые как разделитель тысяч в ценах.
 - `sanitize_reply()` нормализует типичный LaTeX currency output локальных моделей перед сохранением ответа.
+- Plugin Registry v0 читает `plugins/*/plugin.json` только как metadata. Код из `plugins/` не импортируется и не исполняется.
+- Unknown plugin ids отображаются как untrusted и не могут стать effectively enabled. Plugins disabled by default.
+- Trusted plugin behavior живёт только в backend-owned handlers, например `backend/apps/plugins/tailscale.py`.
+- Tailscale handler делает read-only status checks и отдаёт manual command text, но не запускает `tailscale serve`, не включает Funnel и не открывает public ports.
+
+## Plugin API contracts
+
+Current plugin API:
+
+- `GET /plugins` — список valid/invalid manifests, trusted/untrusted state, enabled/effective_enabled, docs status, permissions, dangerous permissions, trusted handler status;
+- `POST /plugins/{plugin_id}/enabled` — сохраняет локальное enabled state; untrusted plugin cannot be enabled effectively;
+- `GET /plugins/network-addresses` — отдаёт copyable backend-provided network address items.
+
+Network address providers:
+
+- core LAN item строится из существующего `/health.lan_url` helper и появляется только когда LAN HTTPS listener реально доступен;
+- trusted plugin items добавляются только если plugin trusted/enabled и handler подтверждает доступный адрес;
+- frontend не должен hardcode-ить Tailscale URLs, а должен копировать только backend-provided items.
 
 ## UI contracts
 
@@ -90,6 +113,8 @@
 - Запуск загрузки LLM-модели требует явного подтверждения пользователя; normal progress отображается в download-card без повторяющихся toast.
 - Видимые select-контролы должны использовать кастомный `AppSelect`; native `<select>` допустим только как скрытый backing-state.
 - Checkbox `Стриминг ответов` находится первой карточкой в Settings → `Чат / LLM`, сохраняется сразу при переключении в profile preferences как `streaming_enabled` и отправляется в `POST /chat/tasks` как `stream`. Новые профили получают `streaming_enabled=true` по умолчанию.
+- Settings -> Plugins показывает trusted/untrusted plugins, permissions, dangerous permissions, docs status, security warnings, handler status и enable/disable control.
+- Topbar network address button сохраняет fast path: 0 адресов disabled/warning, 1 адрес copied by left click, 2+ адреса left-click menu. Right-click-only selection запрещён.
 - Assistant cards должны рендериться по persistent `message.status`; локальный optimistic placeholder не является источником generation state.
 
 ## Current chat task contract

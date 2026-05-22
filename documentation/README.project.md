@@ -30,11 +30,14 @@
 - обновлённый static Web UI:
   collapsible sidebar, toast-уведомления под topbar, единый `AppSelect`, мягкие карточки сообщений, RAG status button, переключатель dark/light theme;
 - запуск по локальной сети с телефона через Caddy;
+- Plugin Registry v0: `Settings -> Plugins`, metadata-only manifests, trusted backend handlers и безопасное включение официальных/internal plugins;
+- secure remote access через Tailscale private tailnet: официальный/internal `tailscale` plugin, read-only status checks и ручной `tailscale serve`;
 - единое хранение моделей и кэшей только внутри `/models`.
 
 ## Последние изменения (по свежим коммитам)
 
 - **2026-05-22** — LAN runtime синхронизирован с `.env`: `LOCALGPT_PORT`/`LAN_HTTPS_PORT` теперь учитываются launcher-ами, CORS по умолчанию ограничен private/local-origin regex вместо `*`.
+- **2026-05-22** — добавлен Plugin Registry v0 и Tailscale private-tailnet remote access: plugins disabled by default, `plugins/` metadata-only, trusted handler для `tailscale`, меню копирования LAN/Tailscale адресов и security docs.
 - **2026-05-07** — chat UI получил typewriter-buffer для SSE `delta`: ответ модели отображается более плавно, а скорость печати регулируется константами `STREAM_TYPEWRITER_*` в `web_ui/js/app.js`.
 - **2026-05-07** — нормальный chat lifecycle стал тише: старт генерации, streaming-progress, completed state и autorouter confidence/model selection больше не показываются toast-уведомлениями; статус остаётся внутри assistant-card.
 - **2026-05-07** — загрузка LLM-моделей стала тихой: `/models/pull` после подтверждения обновляет карточку прогресса без success/progress toast, повторный клик по активной загрузке не спамит, а ещё не установленная модель не выбирается автоматически для чата.
@@ -74,7 +77,7 @@
 
 Перед внедрением streaming-аудит зафиксировал текущий flow:
 
-- активный chat UI подключён через `web_ui/gui_html.html` и `web_ui/js/app.js`; старые модульные файлы `web_ui/js/chat.js`, `web_ui/js/main.js`, `web_ui/js/api.js`, `web_ui/js/sessions.js` не подключены к текущей странице;
+- активный chat UI подключён через [`web_ui/gui_html.html`](web_ui/gui_html.html) и [`web_ui/js/app.js`](web_ui/js/app.js); старые модульные файлы `web_ui/js/chat.js`, `web_ui/js/main.js`, `web_ui/js/api.js`, `web_ui/js/sessions.js` не подключены к текущей странице;
 - отправка сообщения идёт через `POST /chat/tasks`, а состояние task можно читать через polling `GET /chat/tasks/{task_id}` или lifecycle SSE `GET /chat/tasks/{task_id}/events`;
 - storage уже поддерживает persistent statuses `generating`, `streaming`, `completed`, `failed`, `cancelled`, partial content и связь сообщения с `task_id`;
 - backend task flow сразу создаёт user-message и assistant-message `status=generating`, возвращает `task_id`, `user_message_id`, `assistant_message_id`, а финализация обновляет тот же assistant-message;
@@ -108,8 +111,10 @@ Runtime не должен зависеть от кода внутри `compare-b
 - `tts` — `Voice Studio`, Piper-голоса и аудиоистория;
 - `ocr` — извлечение текста из изображений;
 - `rag` — локальные документы, chunks/embeddings, профильная изоляция;
+- `plugins` — metadata-only manifests, trusted backend handlers, Settings -> Plugins и network address providers;
 - `models` — единый корень для всех model-artifacts и кэшей;
-- `runtime/LAN` — launcher, Caddy, LAN URL, shutdown-flow.
+- `runtime/LAN` — launcher, Caddy, LAN URL, shutdown-flow;
+- `runtime/Tailscale` — private-tailnet remote access через ручной Tailscale Serve без Funnel/public exposure.
 
 ## Быстрый запуск
 
@@ -258,6 +263,57 @@ curl -kfsS https://<lan-ip>:8443/health
 - `start_localgpt_lan.command`
 - `Caddyfile.lan`
 
+## Доступ через Tailscale private tailnet
+
+Tailscale remote access реализован как официальный/internal plugin, а не как произвольный plugin runtime.
+
+Ключевые правила безопасности:
+
+```text
+Do not expose LocalGPT directly to the public internet.
+Do not enable Tailscale Funnel unless you fully understand the risk.
+Preferred mode: Tailscale private tailnet only.
+```
+
+Что есть:
+
+- `plugins/tailscale/plugin.json` — metadata-only manifest;
+- `backend/apps/plugins/tailscale.py` — trusted backend-owned handler;
+- `Settings -> Plugins` — включение/выключение plugin и read-only статус;
+- `GET /plugins/network-addresses` — backend-provided LAN/Tailscale адреса для UI;
+- topbar address button:
+  - один доступный адрес копируется сразу;
+  - несколько адресов открывают меню выбора;
+  - frontend не hardcode-ит Tailscale URL.
+
+Что не делается автоматически:
+
+- `tailscale serve` не запускается приложением;
+- Tailscale Funnel не включается;
+- public/router ports не открываются;
+- код из `plugins/` не импортируется и не исполняется.
+
+Ручная команда на MacBook, где запущен LocalGPT:
+
+```bash
+tailscale serve --bg http://127.0.0.1:<LOCALGPT_PORT>
+```
+
+Если LocalGPT запущен на стандартном порту:
+
+```bash
+tailscale serve --bg http://127.0.0.1:8000
+```
+
+MacBook запускает LocalGPT/model runtime, iPhone является только browser client. Оба устройства должны быть в одном tailnet, MacBook должен быть awake/online, а Tailscale Serve должен указывать на активный LocalGPT backend port.
+
+Документация:
+
+- [`documentation/remote-access-tailscale.md`](documentation/remote-access-tailscale.md)
+- [`documentation/how-to-use-tailscale-mode.md`](documentation/how-to-use-tailscale-mode.md)
+- [`documentation/plugin-architecture.md`](documentation/plugin-architecture.md)
+- [`documentation/backlog.md`](documentation/backlog.md)
+
 ## UI сценарии
 
 ### Профили
@@ -295,7 +351,7 @@ curl -kfsS https://<lan-ip>:8443/health
 
 UI component guide:
 
-- [`ui-components.md`](ui-components.md)
+- [`docs/ui-components.md`](docs/ui-components.md)
 
 ### `+` меню
 
@@ -366,7 +422,7 @@ UI component guide:
 
 Подробная инструкция по подготовке RAG-документов:
 
-- [`README.rag.md`](README.rag.md)
+- [`rag_sources/README.md`](rag_sources/README.md)
 
 Практическое правило:
 

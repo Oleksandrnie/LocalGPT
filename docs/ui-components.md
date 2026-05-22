@@ -99,6 +99,17 @@ Settings:
 - кнопка icon-only с классической шестерёнкой;
 - без status dot.
 
+Network address:
+
+- topbar-кнопка адреса использует `.button.button--ghost.lan-url-button`;
+- icon-only состояние должно оставаться 36-44px по высоте;
+- адреса берутся из backend `GET /plugins/network-addresses`, frontend не hardcode-ит Tailscale URL;
+- 0 адресов: кнопка disabled или warning при попытке copy;
+- 1 адрес: left-click сразу копирует;
+- 2+ адреса: left-click открывает `.network-address-menu`;
+- right-click-only выбор адреса запрещён;
+- menu items должны показывать provider label, detail и copyable URL без placeholder-значений.
+
 ThemeToggle:
 
 - класс `.theme-toggle-button`;
@@ -107,6 +118,21 @@ ThemeToggle:
 - состояние хранится в `localStorage` через ключ `localgpt_simple_theme`;
 - светлая тема использует `body.theme-light`, тёмная тема использует `body.theme-dark`;
 - видимая иконка соответствует активной теме: солнце для light, луна для dark.
+
+## Plugins
+
+Settings -> Plugins использует существующие Settings group/card patterns.
+
+Правила:
+
+- plugin list рендерится карточками `.plugin-card`;
+- trusted/enabled/untrusted/invalid состояние показывается через `.plugin-status`;
+- permissions и docs показываются compact pills `.plugin-pill`;
+- dangerous permissions и security warnings выделяются `.plugin-pill--danger`;
+- trusted handler status показывается в `.plugin-runtime`;
+- enable/disable control использует обычный checkbox pattern `.field.field--checkbox`;
+- untrusted plugins не должны давать активный enable control;
+- UI не должен обещать, что plugin code исполняется из `plugins/`: manifest/docs являются metadata-only.
 
 ## Toast
 
