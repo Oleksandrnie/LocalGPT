@@ -32,6 +32,7 @@
 
 ## Последние изменения (по свежим коммитам)
 
+- **2026-05-22** — LAN runtime синхронизирован с `.env`: `LOCALGPT_PORT`/`LAN_HTTPS_PORT` теперь учитываются launcher-ами, CORS по умолчанию ограничен private/local-origin regex вместо `*`.
 - **2026-05-07** — chat UI получил typewriter-buffer для SSE `delta`: ответ модели отображается более плавно, а скорость печати регулируется константами `STREAM_TYPEWRITER_*` в `web_ui/js/app.js`.
 - **2026-05-07** — нормальный chat lifecycle стал тише: старт генерации, streaming-progress, completed state и autorouter confidence/model selection больше не показываются toast-уведомлениями; статус остаётся внутри assistant-card.
 - **2026-05-07** — загрузка LLM-моделей стала тихой: `/models/pull` после подтверждения обновляет карточку прогресса без success/progress toast, повторный клик по активной загрузке не спамит, а ещё не установленная модель не выбирается автоматически для чата.
@@ -160,6 +161,7 @@ LTrnsrb.command
 - проверяет и при необходимости запускает Ollama;
 - выводит список локальных Ollama-моделей без выбора fallback и без загрузки модели;
 - поднимает backend на `8000` или на следующем свободном порту, если `8000` занят;
+- читает `LOCALGPT_HOST` и `LOCALGPT_PORT` из `.env`, если они заданы;
 - открывает локальный UI.
 
 Launcher не делает `ollama pull`, не подставляет `qwen2.5:3b` и не блокирует запуск, если chat-моделей нет. Зависимости, директории и лёгкие health-check операции при первом запуске остаются частью bootstrap.
@@ -188,11 +190,58 @@ start_localgpt_lan.command
 
 Что делает LAN launcher:
 
-- запускает backend в фоне;
+- запускает backend в фоне на `127.0.0.1:<LOCALGPT_PORT>` или переиспользует уже запущенный LocalGPT backend;
 - определяет LAN IP;
-- поднимает Caddy на HTTPS;
+- поднимает Caddy на HTTPS `https://<lan-ip>:<LAN_HTTPS_PORT>`;
 - открывает unified UI по LAN URL;
 - пишет runtime-логи во временную директорию пользователя.
+
+LAN launcher держит FastAPI backend локальным и отдаёт доступ в сеть через Caddy reverse proxy. Если локальный запуск выбрал не `8000`, а следующий свободный порт, например `8002`, LAN launcher находит живой backend через `/health`, пишет фактический порт в runtime-файл и генерирует Caddy reverse proxy уже на этот порт.
+Caddy не требует второго backend: перед стартом launcher обнаруживает текущий LocalGPT port и генерирует proxy на один актуальный upstream. На macOS Caddy запускается через пользовательский LaunchAgent `local.localgpt.caddy`, поэтому он продолжает слушать `LAN_HTTPS_PORT` после завершения wrapper-скрипта.
+
+Исправленная диагностика LAN:
+
+- `LOCALGPT_PORT` / legacy `LOCALGPT_BACKEND_PORT` читаются из shell env или `.env`;
+- `LAN_HTTPS_PORT` / `LOCALGPT_LAN_HTTPS_PORT` читаются из shell env или `.env`;
+- Caddyfile для LAN генерируется во временной runtime-директории под текущий LAN IP;
+- если backend уже запущен на `127.0.0.1:<LOCALGPT_PORT>`, LAN launcher переиспользует его и не поднимает второй backend;
+- если локальный launcher выбрал другой порт, например `8002`, LAN launcher находит живой backend и проксирует Caddy на фактический порт;
+- Caddy получает один актуальный upstream, поэтому не нужно держать второй backend только ради LAN;
+- Caddy запускается как user LaunchAgent `local.localgpt.caddy`; macOS может показать уведомление, что `caddy` может работать в фоне;
+- backend отдаёт `lan_url` в `/health` только когда LAN HTTPS port реально слушает, чтобы UI не копировал мёртвый URL;
+- статический `Caddyfile.lan` в корне является только fallback-примером и не содержит старого hardcoded IP;
+- UI делает API-запросы same-origin, поэтому chat task polling работает через LAN URL так же, как через localhost.
+
+Проверка LAN:
+
+```bash
+./start_localgpt_lan.sh
+curl -k https://<lan-ip>:8443/health
+```
+
+Если локальный UI открыт, например, как:
+
+```text
+http://127.0.0.1:8002/ui/gui_html.html
+```
+
+это нормально: `8002` — локальный backend-порт на MacBook. Для телефона URL остаётся на Caddy HTTPS-порту:
+
+```text
+https://<lan-ip>:8443/ui/gui_html.html
+```
+
+Кнопка `LAN URL` в UI становится полезной только когда Caddy реально слушает `LAN_HTTPS_PORT`. Если Caddy не запущен, `/health` возвращает `lan_url: null`, а UI должен показывать LAN URL как недоступный вместо копирования мёртвой ссылки.
+
+Диагностика, если LAN URL не открывается:
+
+```bash
+lsof -nP -iTCP:8443 -sTCP:LISTEN
+curl -fsS http://127.0.0.1:<local-port>/health
+curl -kfsS https://<lan-ip>:8443/health
+```
+
+Первый `curl` проверяет локальный backend, второй — LAN reverse proxy через Caddy. Если локальный backend отвечает, а `8443` не слушает, нужно запускать именно LAN entrypoint `./start_localgpt_lan.sh`, а не только обычный `run_localgpt.py`.
 
 Что нужно отдельно:
 
@@ -202,10 +251,10 @@ start_localgpt_lan.command
 
 Полезные LAN файлы:
 
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/tools/LTrnsrb.sh`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/start_localgpt_lan.sh`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/start_localgpt_lan.command`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/Caddyfile.lan`
+- `tools/LTrnsrb.sh`
+- `start_localgpt_lan.sh`
+- `start_localgpt_lan.command`
+- `Caddyfile.lan`
 
 ## UI сценарии
 
@@ -358,9 +407,17 @@ LOCAL_BASE_URL=http://localhost:11434/v1
 LOCAL_API_KEY=LOCAL-KEY
 LOCAL_MODEL=
 
+LOCALGPT_HOST=127.0.0.1
+LOCALGPT_PORT=8000
+LOCALGPT_REMOTE_ACCESS=false
+LOCALGPT_REMOTE_ACCESS_MODE=local
 LAN_ACCESS_URL=
 LAN_HTTPS_PORT=8443
+LOCALGPT_CORS_ALLOW_ORIGINS=
+LOCALGPT_CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}|[a-z0-9.-]+\.local)(:[0-9]+)?$
 ```
+
+Штатный Web UI работает same-origin, поэтому CORS почти не нужен для обычного localhost/LAN запуска. По умолчанию backend больше не отвечает `Access-Control-Allow-Origin: *`; local/private origins (`localhost`, LAN RFC1918, Tailscale CGNAT `100.64.0.0/10`, `.local`) разрешены, а для отдельного dev frontend можно явно задать `LOCALGPT_CORS_ALLOW_ORIGINS`.
 
 ## LLM-модели и загрузка
 

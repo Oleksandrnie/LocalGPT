@@ -26,9 +26,13 @@ config.log_startup(LOGGER)
 
 app = FastAPI(title="LocalGPT API")
 
+cors_allow_origins = list(config.SETTINGS.cors_allow_origins)
+cors_allow_origin_regex = config.SETTINGS.cors_allow_origin_regex or None
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_allow_origins,
+    allow_origin_regex=cors_allow_origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=False,

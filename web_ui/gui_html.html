@@ -69,7 +69,21 @@
                 </div>
 
                 <div class="topbar__actions">
-                    <button class="button button--ghost" id="copyLanUrlButton" type="button">LAN URL</button>
+                    <button class="button button--ghost lan-url-button lan-url-button--icon-only"
+                        id="copyLanUrlButton" type="button"
+                        aria-label="Скопировать LAN URL" title="Скопировать LAN URL">
+                        <svg class="lan-url-button__icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <circle cx="5" cy="6" r="2"></circle>
+                            <circle cx="19" cy="6" r="2"></circle>
+                            <circle cx="5" cy="18" r="2"></circle>
+                            <circle cx="19" cy="18" r="2"></circle>
+                            <path d="M7 7.3 10 10"></path>
+                            <path d="M17 7.3 14 10"></path>
+                            <path d="M7 16.7 10 14"></path>
+                            <path d="M17 16.7 14 14"></path>
+                        </svg>
+                    </button>
                     <button class="button button--ghost rag-status-button" id="openRagButton" type="button"
                         aria-pressed="false" aria-label="Открыть RAG, выключен">
                         <span>RAG</span>
@@ -925,8 +939,21 @@
                     </div>
 
                     <div class="button-row">
-                        <button class="button button--ghost" id="copyLanUrlFromSettingsButton" type="button">Скопировать
-                            URL</button>
+                        <button class="button button--ghost lan-url-button" id="copyLanUrlFromSettingsButton"
+                            type="button">
+                            <svg class="lan-url-button__icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <circle cx="5" cy="6" r="2"></circle>
+                                <circle cx="19" cy="6" r="2"></circle>
+                                <circle cx="5" cy="18" r="2"></circle>
+                                <circle cx="19" cy="18" r="2"></circle>
+                                <path d="M7 7.3 10 10"></path>
+                                <path d="M17 7.3 14 10"></path>
+                                <path d="M7 16.7 10 14"></path>
+                                <path d="M17 16.7 14 14"></path>
+                            </svg>
+                            <span>Скопировать URL</span>
+                        </button>
                     </div>
                 </section>
 

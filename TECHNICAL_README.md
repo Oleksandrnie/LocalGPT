@@ -408,8 +408,23 @@ Legacy alias:
 
 - `LTrnsrb.command`.
 
-LAN launcher стартует backend с предпочтением `127.0.0.1:8000`, но если порт занят, выбирает следующий свободный локальный порт; Caddy остаётся на `https://<lan-ip>:8443` и проксирует на фактический backend-порт.
+LAN launcher стартует backend с предпочтением `127.0.0.1:<LOCALGPT_PORT>`, но если порт занят, выбирает следующий свободный локальный порт; Caddy остаётся на `https://<lan-ip>:<LAN_HTTPS_PORT>` и проксирует на фактический backend-порт.
 Определение LAN IP предпочитает Wi-Fi/private IPv4 (`192.168.*`, `10.*`, `172.16-31.*`), чтобы не отдавать VPN/Tailscale IP телефону в обычной Wi-Fi сети.
+
+Диагностика/фикс LAN runtime:
+
+- `run_localgpt.py` читает `LOCALGPT_HOST` и `LOCALGPT_PORT` из `.env`, defaults остаются безопасными: `127.0.0.1:8000`;
+- `tools/LTrnsrb.sh` читает `LOCALGPT_PORT`, legacy `LOCALGPT_BACKEND_PORT`, `LAN_HTTPS_PORT` и `LOCALGPT_LAN_HTTPS_PORT` из shell env или `.env`;
+- если backend уже жив на `127.0.0.1:<LOCALGPT_PORT>`, LAN launcher переиспользует его и не стартует второй backend;
+- если backend уже жив на соседнем auto-selected порту (`8000..8099`), LAN launcher обнаруживает его через `/health` и проксирует Caddy на фактический порт;
+- фактический backend port пишется в runtime-файл и используется при генерации Caddy config;
+- Caddy config включает один актуальный upstream `127.0.0.1:<detected-port>` с retry и `flush_interval -1`, поэтому streaming/SSE не буферизуется reverse proxy;
+- Caddy стартует через user LaunchAgent `local.localgpt.caddy`, чтобы `LAN_HTTPS_PORT` оставался слушать после выхода wrapper-скрипта;
+- Caddy config генерируется под текущий LAN IP во временной runtime-директории, а корневой `Caddyfile.lan` остаётся fallback-примером;
+- `/health.lan_url` возвращается только если LAN HTTPS port реально слушает, чтобы UI не предлагал мёртвый LAN URL;
+- локальный backend-port и LAN proxy-port разделены: `http://127.0.0.1:8002/...` может быть текущим локальным UI, но телефон всё равно идёт через `https://<lan-ip>:8443/...`;
+- UI использует same-origin API (`window.location.origin` / relative paths), поэтому polling `/chat/tasks` и остальные API работают за reverse proxy без отдельного CORS;
+- CORS default больше не `*`: backend разрешает local/private-origin regex (`localhost`, LAN RFC1918, Tailscale CGNAT `100.64.0.0/10`, `.local`), а дополнительные origins задаются через `LOCALGPT_CORS_ALLOW_ORIGINS`.
 
 ## 12. Static UI system
 

@@ -65,6 +65,31 @@ for key, value in ENV_VARS.items():
     os.environ.setdefault(key, value)
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def configured_host() -> str:
+    return (os.getenv("LOCALGPT_HOST", "127.0.0.1") or "127.0.0.1").strip() or "127.0.0.1"
+
+
+def configured_port() -> int:
+    return env_int("LOCALGPT_PORT", env_int("LOCALGPT_BACKEND_PORT", 8000))
+
+
 def normalize_ollama_base_url(raw: str | None) -> str:
     value = (raw or "").strip()
     if not value:
@@ -327,7 +352,29 @@ def report_chat_models() -> None:
 
 
 def build_ui_url(host: str, port: int) -> str:
-    return f"http://{host}:{port}/ui/gui_html.html"
+    browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    if browser_host == "::1":
+        browser_host = "[::1]"
+    return f"http://{browser_host}:{port}/ui/gui_html.html"
+
+
+def report_access_mode(host: str, port: int) -> None:
+    remote_enabled = env_bool("LOCALGPT_REMOTE_ACCESS", False)
+    remote_mode = (os.getenv("LOCALGPT_REMOTE_ACCESS_MODE", "local") or "local").strip().lower() or "local"
+    remote_label = f"enabled ({remote_mode})" if remote_enabled else "disabled"
+    print(f"[i] Remote access: {remote_label}")
+    print(f"[i] Bind address: {host}:{port}")
+    if host in {"0.0.0.0", "::"}:
+        print("[!] LocalGPT is listening on all network interfaces.")
+        if not remote_enabled:
+            print(
+                "[!] LOCALGPT_REMOTE_ACCESS is not enabled; use 127.0.0.1 unless you intentionally need LAN access."
+            )
+        print("[!] Do not expose this port directly to the public internet.")
+    else:
+        print("[i] Public exposure: none by default; LocalGPT is bound to localhost/private host only.")
+        if remote_mode in {"tailscale", "tailnet"}:
+            print(f"[i] Tailscale Serve target: http://127.0.0.1:{port}")
 
 
 def open_browser_delayed(ui_url: str, delay_seconds: float = 1.0) -> None:
@@ -382,8 +429,8 @@ def start_backend(python: str, *, host: str, port: int, reload_enabled: bool, ex
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch LocalGPT")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default=configured_host())
+    parser.add_argument("--port", type=int, default=configured_port())
     parser.add_argument(
         "--port-file",
         default="",
@@ -434,6 +481,7 @@ def main() -> None:
         port_file.parent.mkdir(parents=True, exist_ok=True)
         port_file.write_text(str(actual_port), encoding="utf-8")
     ui_url = build_ui_url(args.host, actual_port)
+    report_access_mode(args.host, actual_port)
     print(f"[i] UI URL: {ui_url}")
     if not args.no_browser:
         open_browser_delayed(ui_url)

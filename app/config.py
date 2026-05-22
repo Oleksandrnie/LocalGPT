@@ -21,6 +21,16 @@ PIPELINE_LOG_FILE = LOG_DIR / "pipeline.log"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
 RAG_SOURCE_DIR = PROJECT_ROOT / "rag_sources"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
+DEFAULT_CORS_ALLOW_ORIGIN_REGEX = (
+    r"^https?://("
+    r"localhost|127\.0\.0\.1|\[::1\]|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|"
+    r"100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}|"
+    r"[a-z0-9.-]+\.local"
+    r")(:[0-9]+)?$"
+)
 ALLOWED_WHISPER_MODELS = (
     "tiny",
     "base",
@@ -67,6 +77,13 @@ def _parse_args(name: str) -> tuple[str, ...]:
         return tuple(shlex.split(raw))
     except ValueError:
         return ()
+
+
+def _parse_csv(name: str) -> tuple[str, ...]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return ()
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
 def _parse_keep_alive(name: str, default: str) -> str:
@@ -195,6 +212,8 @@ class Settings:
     whisper_cpp_convert_audio: bool
     whisper_cpp_ffmpeg_binary: str
     whisper_cpp_download_coreml: bool
+    cors_allow_origins: tuple[str, ...]
+    cors_allow_origin_regex: str
 
 
 MODEL_CATALOG = [
@@ -451,6 +470,11 @@ def _load_settings() -> Settings:
         whisper_cpp_convert_audio=_parse_bool("WHISPER_CPP_CONVERT_AUDIO", True),
         whisper_cpp_ffmpeg_binary=(os.getenv("WHISPER_CPP_FFMPEG_BINARY", "ffmpeg") or "ffmpeg").strip(),
         whisper_cpp_download_coreml=_parse_bool("WHISPER_CPP_DOWNLOAD_COREML", True),
+        cors_allow_origins=_parse_csv("LOCALGPT_CORS_ALLOW_ORIGINS"),
+        cors_allow_origin_regex=(
+            os.getenv("LOCALGPT_CORS_ALLOW_ORIGIN_REGEX", DEFAULT_CORS_ALLOW_ORIGIN_REGEX)
+            or ""
+        ).strip(),
     )
 
 
@@ -575,4 +599,9 @@ def log_startup(logger: logging.Logger) -> None:
         SETTINGS.temperature,
         SETTINGS.mem_turns,
         SETTINGS.tts_default_provider,
+    )
+    logger.info(
+        "CORS: origins=%s regex=%s",
+        ",".join(SETTINGS.cors_allow_origins) or "none",
+        SETTINGS.cors_allow_origin_regex or "none",
     )
