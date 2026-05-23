@@ -123,6 +123,7 @@ const RESIDENCY_DEFAULTS = {
 };
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
+const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
 const MEDIA_FILE_EXTENSIONS = new Set([
   "mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus", "aiff", "aif", "wma",
@@ -950,7 +951,22 @@ function hasActiveDownload(modelName) {
 }
 
 function isMobileLayout() {
-  return window.matchMedia("(max-width: 980px)").matches;
+  return window.matchMedia(MOBILE_LAYOUT_QUERY).matches;
+}
+
+function isOverlayOpen(node) {
+  return Boolean(node && node.hidden === false);
+}
+
+function syncMobileScrollLock() {
+  const drawerOpen = els.sidebar?.classList.contains("sidebar--open") === true;
+  const modalOpen = [
+    els.settingsBackdrop,
+    els.ocrBackdrop,
+    els.ragBackdrop,
+    els.confirmBackdrop,
+  ].some(isOverlayOpen);
+  document.body.classList.toggle("mobile-scroll-locked", isMobileLayout() && (drawerOpen || modalOpen));
 }
 
 function syncMessageScrollState() {
@@ -978,6 +994,7 @@ function scrollMessagesToTop() {
 function applySidebarOpenState() {
   const open = state.sidebarOpen !== false;
   document.querySelector(".app-shell")?.classList.toggle("app-shell--sidebar-closed", !open);
+  els.toggleSidebarButton?.setAttribute("aria-expanded", els.sidebar?.classList.contains("sidebar--open") ? "true" : "false");
   if (els.sidebarCollapseButton) {
     els.sidebarCollapseButton.setAttribute("aria-expanded", open ? "true" : "false");
     els.sidebarCollapseButton.setAttribute("aria-label", open ? "Свернуть sidebar" : "Развернуть sidebar");
@@ -2027,7 +2044,7 @@ async function cancelCurrentChatGeneration() {
         method: "POST",
         body: {},
       });
-    } catch (error) {
+    } catch {
       if ((error?.status || 0) !== 404) {
         setFooter(`Не удалось остановить генерацию: ${error.message || error}`, "error");
         return;
@@ -2382,6 +2399,8 @@ function updateSendButtonState() {
   }
   els.sendButton.disabled = state.isSending ? false : (!hasText || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
+  els.sendButton.classList.toggle("send-button--stopping", state.isSending);
+  els.sendButton.setAttribute("aria-label", state.isSending ? "Остановить генерацию" : "Отправить сообщение");
 }
 
 function renderChatModelNotice() {
@@ -2492,6 +2511,7 @@ function showToast(message = "", tone = "info", { title = "Уведомлени�
 function resolveConfirmDialog(approved = false) {
   if (!els.confirmBackdrop) return Boolean(approved);
   els.confirmBackdrop.hidden = true;
+  syncMobileScrollLock();
   const resolver = state.confirmResolver;
   const returnFocus = state.confirmReturnFocus;
   state.confirmResolver = null;
@@ -2531,6 +2551,7 @@ function openConfirmDialog({
   }
   els.confirmApproveButton.textContent = confirmLabel;
   els.confirmBackdrop.hidden = false;
+  syncMobileScrollLock();
 
   return new Promise((resolve) => {
     state.confirmResolver = resolve;
@@ -4923,7 +4944,9 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
     }
     setInlineStatus(els.asrToolStatus, "Транскрипт загружен. Можно редактировать и отправить в чат.", "success");
     renderAsrTool();
-    requestAnimationFrame(() => els.asrToolOutput?.focus({ preventScroll: true }));
+    if (!isMobileLayout()) {
+      requestAnimationFrame(() => els.asrToolOutput?.focus({ preventScroll: true }));
+    }
   } catch (error) {
     if (!silent) {
       setInlineStatus(els.asrToolStatus, `Не удалось открыть транскрипт: ${error.message || error}`, "error");
@@ -4947,8 +4970,12 @@ async function openAsrTool({ focusText = false } = {}) {
   );
   renderAsrTool();
   await loadAsrToolHistory({ silent: true });
-  if (focusText) {
-    els.asrToolOutput?.focus();
+  if (focusText && !isMobileLayout()) {
+    try {
+      els.asrToolOutput?.focus({ preventScroll: true });
+    } catch {
+      els.asrToolOutput?.focus();
+    }
   }
   renderToolDock();
 }
@@ -5518,12 +5545,14 @@ function renderOcrEditor() {
 function openOcrEditor() {
   if (!els.ocrBackdrop) return;
   els.ocrBackdrop.hidden = false;
+  syncMobileScrollLock();
   renderOcrEditor();
 }
 
 function closeOcrEditor() {
   if (!els.ocrBackdrop) return;
   els.ocrBackdrop.hidden = true;
+  syncMobileScrollLock();
 }
 
 function clearOcrEditor() {
@@ -5769,8 +5798,12 @@ async function openTtsTool({ focusText = false } = {}) {
   renderTtsTool();
   await loadTtsHistory({ silent: true });
 
-  if (focusText) {
-    els.ttsToolText?.focus();
+  if (focusText && !isMobileLayout()) {
+    try {
+      els.ttsToolText?.focus({ preventScroll: true });
+    } catch {
+      els.ttsToolText?.focus();
+    }
   }
   renderToolDock();
 }
@@ -6347,17 +6380,31 @@ function openSidebar() {
   if (!isMobileLayout() || !els.sidebar || !els.sidebarBackdrop) return;
   els.sidebar.classList.add("sidebar--open");
   els.sidebarBackdrop.hidden = false;
+  els.toggleSidebarButton?.setAttribute("aria-expanded", "true");
+  syncMobileScrollLock();
 }
 
 function closeSidebar() {
   if (!els.sidebar || !els.sidebarBackdrop) return;
   els.sidebar.classList.remove("sidebar--open");
   els.sidebarBackdrop.hidden = true;
+  els.toggleSidebarButton?.setAttribute("aria-expanded", "false");
+  syncMobileScrollLock();
+}
+
+function toggleMobileSidebar() {
+  if (!isMobileLayout()) return;
+  if (els.sidebar?.classList.contains("sidebar--open")) {
+    closeSidebar();
+    return;
+  }
+  openSidebar();
 }
 
 function openSettings() {
   if (!els.settingsBackdrop) return;
   els.settingsBackdrop.hidden = false;
+  syncMobileScrollLock();
   renderSettings();
   void refreshModelSettings({ silent: true });
   void loadWhisperModels({ silent: true });
@@ -6378,6 +6425,7 @@ function openAsrPipelineSettings() {
 function closeSettings() {
   if (!els.settingsBackdrop) return;
   els.settingsBackdrop.hidden = true;
+  syncMobileScrollLock();
 }
 
 function activeProfileRagEnabled() {
@@ -6479,6 +6527,7 @@ async function openRagPanel() {
   if (!els.ragBackdrop) return;
   closeRagQuickMenu();
   els.ragBackdrop.hidden = false;
+  syncMobileScrollLock();
   renderRagPanel();
   await loadRagStatus({ silent: true });
 }
@@ -6486,6 +6535,7 @@ async function openRagPanel() {
 function closeRagPanel() {
   if (!els.ragBackdrop) return;
   els.ragBackdrop.hidden = true;
+  syncMobileScrollLock();
 }
 
 function openRagQuickMenu() {
@@ -8053,13 +8103,14 @@ async function resetDatabaseFully() {
 }
 
 function bindEvents() {
-  els.toggleSidebarButton?.addEventListener("click", () => openSidebar());
+  els.toggleSidebarButton?.addEventListener("click", () => toggleMobileSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());
   els.sidebarCollapseButton?.addEventListener("click", () => toggleSidebarCollapse());
   els.newChatButton?.addEventListener("click", async () => {
     state.currentSessionId = null;
     writeStored(STORAGE_KEYS.activeSessionId, "");
     await openSession(null);
+    closeSidebar();
   });
 
   els.sessionList?.addEventListener("click", async (event) => {
@@ -8077,6 +8128,7 @@ function bindEvents() {
     const sessionId = openButton?.dataset.sessionId || card?.dataset.sessionId;
     if (sessionId) {
       await openSession(sessionId);
+      closeSidebar();
     }
   });
   els.sessionList?.addEventListener("contextmenu", (event) => {

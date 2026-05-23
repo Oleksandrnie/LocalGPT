@@ -9,7 +9,7 @@
 </head>
 <body>
     <div class="app-shell">
-        <aside class="sidebar" id="sidebar">
+        <aside class="sidebar" id="sidebar" aria-label="Список диалогов">
             <div class="sidebar__header">
                 <div>
                     <p class="eyebrow">LocalGPT</p>
@@ -44,7 +44,7 @@
             <header class="topbar">
                 <div class="topbar__main">
                     <button class="icon-button" id="toggleSidebarButton" type="button"
-                        aria-label="Открыть список диалогов">
+                        aria-label="Открыть список диалогов" aria-controls="sidebar" aria-expanded="false">
                         <span></span>
                         <span></span>
                         <span></span>
@@ -96,10 +96,7 @@
                             <path d="M13.25 4.95v4h3.95"></path>
                             <path d="M9.6 11.25h3.35"></path>
                             <path d="M9.6 14.25h3.35"></path>
-                            <path d="M13.95 17.25l2.15-2.05 2.3 1.45"></path>
-                            <circle cx="13.95" cy="17.25" r="1.15"></circle>
-                            <circle cx="16.1" cy="15.2" r="1.15"></circle>
-                            <circle cx="18.4" cy="16.65" r="1.15"></circle>
+                            <path d="M9.6 17.25h2.75"></path>
                         </svg>
                         <span class="rag-status-button__dot" aria-hidden="true"></span>
                     </button>
@@ -308,8 +305,12 @@
                                 <button class="button button--ghost" id="asrToolCopyButton"
                                     type="button">Копировать</button>
                             </div>
-                            <textarea id="asrToolOutput" class="tool-textarea asr-transcript-textarea"
-                                placeholder="Результат транскрибации появится здесь..."></textarea>
+                            <label class="asr-transcript-editor">
+                                <span class="field__label">Текст транскрибации</span>
+                                <textarea id="asrToolOutput" class="tool-textarea asr-transcript-textarea"
+                                    rows="10"
+                                    placeholder="Результат транскрибации появится здесь..."></textarea>
+                            </label>
                         </section>
 
                         <section class="asr-tab-panel" data-asr-tab-panel="summary">
@@ -484,7 +485,7 @@
     </section>
 
     <div class="modal-backdrop" id="ocrBackdrop" hidden>
-        <section class="settings-panel settings-panel--compact" role="dialog" aria-modal="true"
+        <section class="settings-panel settings-panel--compact ocr-panel" role="dialog" aria-modal="true"
             aria-labelledby="ocrTitle">
             <header class="settings-panel__header">
                 <div>
@@ -494,14 +495,18 @@
                 <button class="button button--ghost" id="closeOcrButton" type="button">Закрыть</button>
             </header>
 
-            <div class="settings-panel__content">
+            <div class="settings-panel__content ocr-panel__content">
                 <p class="inline-status" id="ocrStatus">Выберите фото или изображение через меню <code>+</code> и
                     дождитесь OCR.</p>
                 <p class="subtle" id="ocrMeta">OCR по изображению: текст можно поправить и затем вставить в чат или
                     сразу отправить.</p>
-                <textarea id="ocrTextOutput" class="tool-textarea"
-                    placeholder="Здесь появится текст из изображения..."></textarea>
-                <div class="button-row">
+                <label class="ocr-editor">
+                    <span class="field__label">Текст OCR</span>
+                    <textarea id="ocrTextOutput" class="tool-textarea"
+                        rows="10"
+                        placeholder="Здесь появится текст из изображения..."></textarea>
+                </label>
+                <div class="button-row ocr-panel__actions">
                     <button class="button button--primary" id="ocrInsertPromptButton" type="button">Вставить в
                         промпт</button>
                     <button class="button button--ghost" id="ocrSendButton" type="button">Отправить в чат</button>
