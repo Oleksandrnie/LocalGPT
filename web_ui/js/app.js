@@ -966,7 +966,11 @@ function syncMobileScrollLock() {
     els.ragBackdrop,
     els.confirmBackdrop,
   ].some(isOverlayOpen);
-  document.body.classList.toggle("mobile-scroll-locked", isMobileLayout() && (drawerOpen || modalOpen));
+  const toolOpen = [
+    els.asrToolWindow,
+    els.ttsToolWindow,
+  ].some(isOverlayOpen);
+  document.body.classList.toggle("mobile-scroll-locked", isMobileLayout() && (drawerOpen || modalOpen || toolOpen));
 }
 
 function syncMessageScrollState() {
@@ -4960,6 +4964,7 @@ async function openAsrTool({ focusText = false } = {}) {
   state.asrToolIsOpen = true;
   state.asrToolIsMinimized = false;
   els.asrToolWindow.hidden = false;
+  syncMobileScrollLock();
   setAsrToolWindowBounds();
   setInlineStatus(
     els.asrToolStatus,
@@ -4989,6 +4994,7 @@ function closeAsrTool() {
   state.asrToolIsMinimized = false;
   els.asrToolWindow.hidden = true;
   els.asrToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   renderToolDock();
 }
 
@@ -5001,6 +5007,7 @@ function minimizeAsrTool() {
   state.asrToolIsMinimized = true;
   els.asrToolWindow.hidden = true;
   els.asrToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   renderToolDock();
 }
 
@@ -5785,6 +5792,7 @@ async function openTtsTool({ focusText = false } = {}) {
   state.ttsToolIsOpen = true;
   state.ttsToolIsMinimized = false;
   els.ttsToolWindow.hidden = false;
+  syncMobileScrollLock();
   syncTtsToolWindowMode();
   setTtsToolWindowBounds();
 
@@ -5816,6 +5824,7 @@ function closeTtsTool() {
   state.ttsToolIsMinimized = false;
   els.ttsToolWindow.hidden = true;
   els.ttsToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   stopTtsToolPlayer();
   renderToolDock();
 }
@@ -5828,6 +5837,7 @@ function minimizeTtsTool() {
   state.ttsToolIsMinimized = true;
   els.ttsToolWindow.hidden = true;
   els.ttsToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   stopTtsToolPlayer();
   renderToolDock();
 }
@@ -6138,6 +6148,15 @@ function renderPluginPills(items, emptyText = "none", extraClass = "") {
     .join("");
 }
 
+function pluginDocUrl(plugin, doc) {
+  const pluginId = String(plugin?.id || "").trim();
+  const path = String(doc?.path || "").trim();
+  if (!pluginId || !path) return "";
+  if (doc?.url) return String(doc.url);
+  const encodedPath = path.split("/").map((part) => encodeURIComponent(part)).join("/");
+  return `/plugins/${encodeURIComponent(pluginId)}/docs/${encodedPath}`;
+}
+
 function renderPluginDocs(plugin) {
   const docs = Array.isArray(plugin?.docs_status) ? plugin.docs_status : [];
   if (!docs.length) {
@@ -6148,7 +6167,12 @@ function renderPluginDocs(plugin) {
       const available = doc?.available === true;
       const className = available ? "plugin-pill" : "plugin-pill plugin-pill--muted";
       const suffix = available ? "" : " (missing)";
-      return `<span class="${className}">${escapeHtml(`${doc?.path || "doc"}${suffix}`)}</span>`;
+      const label = `${doc?.path || "doc"}${suffix}`;
+      const url = pluginDocUrl(plugin, doc);
+      if (available && url) {
+        return `<a class="${className} plugin-doc-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+      }
+      return `<span class="${className}">${escapeHtml(label)}</span>`;
     })
     .join("");
 }
@@ -6325,20 +6349,32 @@ function setSettingsTab(tabName, { persist = true, render = true } = {}) {
   }
   if (render) {
     renderSettingsTabs();
+    if (isMobileLayout() && isOverlayOpen(els.settingsBackdrop)) {
+      els.settingsBackdrop?.querySelector(".settings-panel__content")?.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    }
   }
 }
 
 function renderSettingsTabs() {
   const active = state.activeSettingsTab || "profile";
+  let activeButton = null;
   document.querySelectorAll("[data-settings-tab]").forEach((button) => {
     const selected = button.getAttribute("data-settings-tab") === active;
     button.classList.toggle("settings-tab--active", selected);
     button.setAttribute("aria-selected", selected ? "true" : "false");
     button.setAttribute("tabindex", selected ? "0" : "-1");
+    if (selected) {
+      activeButton = button;
+    }
   });
   document.querySelectorAll("[data-settings-tab-panel]").forEach((panel) => {
     panel.hidden = panel.getAttribute("data-settings-tab-panel") !== active;
   });
+  if (activeButton && isMobileLayout() && isOverlayOpen(els.settingsBackdrop)) {
+    requestAnimationFrame(() => {
+      activeButton.scrollIntoView({ block: "nearest", inline: "center" });
+    });
+  }
 }
 
 function renderSettings() {
@@ -9053,6 +9089,7 @@ function bindEvents() {
     autoResizePrompt();
     syncMessageScrollState();
     clearAllDropOverlays();
+    syncMobileScrollLock();
   });
 
   window.addEventListener("dragend", () => {

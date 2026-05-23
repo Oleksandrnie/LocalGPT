@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from app import config, db
 from backend.apps.plugins import tailscale
@@ -56,6 +57,14 @@ class PluginToggleError(ValueError):
         self.status_code = status_code
 
 
+class PluginDocError(ValueError):
+    def __init__(self, code: str, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
 def _load_enabled_state() -> dict[str, bool]:
     raw = db.get_app_setting(PLUGIN_STATE_KEY)
     if not raw:
@@ -87,14 +96,26 @@ def _public_plugin_dir(path: Path) -> str:
         return path.name
 
 
+def _manifest_doc_path(plugin_dir: Path, doc: str) -> Path | None:
+    if not doc or Path(doc).is_absolute():
+        return None
+    plugin_root = plugin_dir.resolve()
+    doc_path = (plugin_dir / doc).resolve()
+    if not doc_path.is_relative_to(plugin_root):
+        return None
+    return doc_path
+
+
 def _manifest_docs(plugin_dir: Path, docs: list[str]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for doc in docs:
-        doc_path = plugin_dir / doc
+        doc_path = _manifest_doc_path(plugin_dir, doc)
+        available = bool(doc_path and doc_path.is_file())
         items.append(
             {
                 "path": doc,
-                "available": doc_path.is_file(),
+                "available": available,
+                "url": f"/plugins/{quote(plugin_dir.name, safe='')}/docs/{quote(doc, safe='/')}" if available else "",
             }
         )
     return items
@@ -260,6 +281,46 @@ def set_plugin_enabled(plugin_id: str, enabled: bool) -> dict[str, Any]:
     state[requested_id] = bool(enabled)
     _save_enabled_state(state)
     return list_plugins()
+
+
+def get_plugin_doc(
+    plugin_id: str,
+    doc_path: str,
+    *,
+    plugins_dir: Path | None = None,
+) -> dict[str, str]:
+    requested_id = str(plugin_id or "").strip()
+    requested_doc = str(doc_path or "").strip().lstrip("/")
+    if not requested_id or not PLUGIN_ID_RE.match(requested_id) or not requested_doc:
+        raise PluginDocError("plugin_doc_not_found", "Plugin documentation was not found.", status_code=404)
+
+    root = plugins_dir or PLUGINS_DIR
+    scan = scan_plugins(plugins_dir=root)
+    plugin = next((item for item in scan.plugins if item.get("id") == requested_id), None)
+    if plugin is None or requested_doc not in set(plugin.get("docs") or []):
+        raise PluginDocError("plugin_doc_not_found", "Plugin documentation was not found.", status_code=404)
+
+    doc_file = _manifest_doc_path(root / requested_id, requested_doc)
+    if doc_file is None or not doc_file.is_file():
+        raise PluginDocError("plugin_doc_not_found", "Plugin documentation was not found.", status_code=404)
+
+    try:
+        content = doc_file.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise PluginDocError(
+            "plugin_doc_not_text",
+            "Plugin documentation must be a UTF-8 text file.",
+            status_code=415,
+        ) from exc
+    except OSError as exc:
+        raise PluginDocError("plugin_doc_unreadable", "Plugin documentation cannot be read.", status_code=500) from exc
+
+    return {
+        "plugin_id": requested_id,
+        "path": requested_doc,
+        "content": content,
+        "filename": doc_file.name,
+    }
 
 
 def list_network_addresses(

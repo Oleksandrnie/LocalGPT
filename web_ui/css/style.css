@@ -693,6 +693,20 @@ button.model-info-button:hover:not([disabled]) {
     box-shadow: none;
 }
 
+.settings-icon-button .topbar-icon-button__icon {
+    width: 22px;
+    height: 22px;
+    stroke-width: 1.6;
+}
+
+.settings-icon-button .settings-slider-knob {
+    fill: var(--bg);
+}
+
+body.theme-light .settings-icon-button .settings-slider-knob {
+    fill: #ffffff;
+}
+
 .settings-icon-button:hover,
 .topbar__actions .settings-icon-button:hover {
     border-color: rgba(148, 163, 184, 0.42);
@@ -2106,9 +2120,10 @@ button.model-info-button:hover:not([disabled]) {
     min-width: 190px;
     padding: 10px;
     border-radius: 18px;
-    background: rgba(18, 23, 29, 0.98);
+    background: #12171d;
     border: 1px solid var(--border);
     box-shadow: var(--shadow);
+    backdrop-filter: none;
 }
 
 .composer-menu__dropdown[hidden] {
@@ -2549,6 +2564,14 @@ button.model-info-button:hover:not([disabled]) {
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     min-height: 0;
     gap: 14px;
+}
+
+#ocrBackdrop .ocr-panel {
+    background: var(--tool-window-bg);
+}
+
+#ocrBackdrop .settings-panel__header {
+    background: var(--tool-window-header-bg);
 }
 
 .ocr-editor {
@@ -3234,6 +3257,19 @@ button.model-info-button:hover:not([disabled]) {
     background: rgba(215, 103, 103, 0.07);
 }
 
+.plugin-doc-link {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.plugin-doc-link:hover,
+.plugin-doc-link:focus-visible {
+    border-color: rgba(124, 92, 255, 0.34);
+    background: rgba(124, 92, 255, 0.1);
+    color: var(--text);
+    outline: none;
+}
+
 .plugin-warning {
     color: #f0b4b4;
     font-size: 12px;
@@ -3860,6 +3896,10 @@ button.model-info-button:hover:not([disabled]) {
     background: rgba(255, 255, 255, 0.08);
     color: inherit;
     font-weight: 750;
+}
+
+.asr-workflow__step > span:not(.asr-workflow__index) {
+    min-width: 0;
 }
 
 .asr-workflow__step[data-status="completed"] .asr-workflow__index {
@@ -4595,6 +4635,10 @@ body.theme-light .voice-model-menu__item--active {
     color: var(--accent-primary);
 }
 
+body.theme-light .composer-menu__dropdown {
+    background: #ffffff;
+}
+
 body.theme-light .app-select__help,
 body.theme-light .quick-model-picker__help,
 body.theme-light .chip-button__help,
@@ -5301,6 +5345,333 @@ body.theme-light .tool-window__resize::before {
         border-radius: 16px;
     }
 
+    #settingsBackdrop {
+        padding: 0;
+    }
+
+    #settingsBackdrop .settings-panel {
+        inset:
+            calc(8px + var(--safe-area-top))
+            calc(8px + var(--safe-area-right))
+            calc(8px + var(--safe-area-bottom))
+            calc(8px + var(--safe-area-left));
+        width: auto;
+        height: auto;
+        max-height: none;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        overflow: hidden;
+        border-radius: var(--mobile-panel-radius);
+        border-left: 1px solid var(--border);
+        border-right: 1px solid var(--border);
+        background: #0c1117;
+    }
+
+    body.theme-light #settingsBackdrop .settings-panel {
+        background: #fbfcff;
+    }
+
+    #settingsBackdrop .settings-panel__header {
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        padding:
+            14px
+            calc(14px + var(--safe-area-right))
+            12px
+            calc(14px + var(--safe-area-left));
+    }
+
+    #settingsBackdrop .settings-panel__header > div {
+        min-width: 0;
+    }
+
+    #settingsBackdrop .settings-panel__header h3 {
+        font-size: 18px;
+        line-height: 1.2;
+    }
+
+    #settingsBackdrop .settings-panel__header .button {
+        min-width: var(--mobile-touch-target);
+        min-height: var(--mobile-touch-target);
+        height: auto;
+        padding: 8px 12px;
+    }
+
+    #settingsBackdrop .settings-tabs {
+        gap: 8px;
+        padding:
+            10px
+            calc(14px + var(--safe-area-right))
+            10px
+            calc(14px + var(--safe-area-left));
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scroll-snap-type: x proximity;
+        scrollbar-width: none;
+    }
+
+    #settingsBackdrop .settings-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    #settingsBackdrop .settings-tab {
+        min-height: var(--mobile-touch-target);
+        scroll-snap-align: center;
+        border-radius: 14px;
+    }
+
+    #settingsBackdrop .settings-panel__content {
+        gap: 12px;
+        min-height: 0;
+        padding:
+            12px
+            calc(12px + var(--safe-area-right))
+            calc(14px + var(--safe-area-bottom))
+            calc(12px + var(--safe-area-left));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: auto;
+    }
+
+    #settingsBackdrop .settings-group {
+        gap: 12px;
+        min-width: 0;
+        padding: 14px;
+        border-radius: 14px;
+    }
+
+    #settingsBackdrop .settings-group__header {
+        align-items: flex-start;
+        gap: 10px;
+        margin: -14px -14px 0;
+        padding: 12px;
+    }
+
+    #settingsBackdrop .settings-group__header::before {
+        width: 28px;
+        height: 28px;
+    }
+
+    #settingsBackdrop .settings-group__header > .button,
+    #settingsBackdrop .settings-group__header .button {
+        min-height: var(--mobile-touch-target);
+        height: auto;
+        padding: 8px 12px;
+        white-space: normal;
+    }
+
+    #settingsBackdrop .settings-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+    }
+
+    #settingsBackdrop .inline-field,
+    #settingsBackdrop .button-row,
+    #settingsBackdrop .maintenance-panel__actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+        gap: 8px;
+    }
+
+    #settingsBackdrop .inline-field > .field,
+    #settingsBackdrop .button-row .button,
+    #settingsBackdrop .maintenance-panel__actions .button {
+        width: 100%;
+        min-width: 0;
+    }
+
+    #settingsBackdrop .button,
+    #settingsBackdrop .field__control,
+    #settingsBackdrop .app-select__button,
+    #settingsBackdrop .library-toggle,
+    #settingsBackdrop .pipeline-settings-toggle {
+        min-height: var(--mobile-touch-target);
+    }
+
+    #settingsBackdrop .model-info-button,
+    #settingsBackdrop .chip-button__help,
+    #settingsBackdrop .pipeline-settings-toggle {
+        width: var(--mobile-touch-target);
+        height: var(--mobile-touch-target);
+    }
+
+    #settingsBackdrop .field,
+    #settingsBackdrop .app-select,
+    #settingsBackdrop .field__control,
+    #settingsBackdrop .app-select__button {
+        min-width: 0;
+    }
+
+    #settingsBackdrop .field__control,
+    #settingsBackdrop .app-select__button {
+        border-radius: 12px;
+    }
+
+    #settingsBackdrop .pipeline-stage-row .field__control,
+    #settingsBackdrop .pipeline-stage-row .app-select__button {
+        min-height: var(--mobile-touch-target);
+    }
+
+    #settingsBackdrop .field__control--textarea {
+        min-height: 132px;
+    }
+
+    #settingsBackdrop .keep-alive-control {
+        grid-template-columns: minmax(0, 1fr) minmax(92px, 112px);
+        gap: 8px;
+    }
+
+    #settingsBackdrop .field--checkbox {
+        align-items: flex-start;
+        min-width: 0;
+        min-height: var(--mobile-touch-target);
+        padding: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.025);
+    }
+
+    #settingsBackdrop .field--checkbox input {
+        flex: 0 0 auto;
+        width: 22px;
+        height: 22px;
+        margin-top: 1px;
+    }
+
+    #settingsBackdrop .field__checkbox-copy {
+        min-width: 0;
+    }
+
+    #settingsBackdrop .library-panel {
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+    }
+
+    #settingsBackdrop .library-toggle {
+        align-items: flex-start;
+        padding: 12px;
+    }
+
+    #settingsBackdrop .model-card,
+    #settingsBackdrop .download-card {
+        gap: 10px;
+        padding: 12px;
+        border-radius: 14px;
+    }
+
+    #settingsBackdrop .model-card__head,
+    #settingsBackdrop .download-card__top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    #settingsBackdrop .model-card__badges {
+        justify-content: flex-start;
+    }
+
+    #settingsBackdrop .status-badge {
+        min-height: 30px;
+        white-space: normal;
+    }
+
+    #settingsBackdrop .plugins-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+        gap: 8px;
+    }
+
+    #settingsBackdrop .plugins-summary span {
+        min-width: 0;
+        min-height: 36px;
+        overflow-wrap: anywhere;
+    }
+
+    #settingsBackdrop .plugins-list {
+        gap: 10px;
+    }
+
+    #settingsBackdrop .plugin-card {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+        padding: 12px;
+        border-radius: 14px;
+    }
+
+    #settingsBackdrop .plugin-card__main {
+        min-width: 0;
+    }
+
+    #settingsBackdrop .plugin-card__main p,
+    #settingsBackdrop .plugin-note,
+    #settingsBackdrop .plugin-warning {
+        overflow-wrap: anywhere;
+    }
+
+    #settingsBackdrop .plugin-card__title-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+
+    #settingsBackdrop .plugin-card__title-row strong,
+    #settingsBackdrop .plugin-card__title-row span:not(.plugin-status) {
+        overflow-wrap: anywhere;
+    }
+
+    #settingsBackdrop .plugin-status {
+        justify-self: start;
+        min-height: 30px;
+        white-space: normal;
+    }
+
+    #settingsBackdrop .plugin-meta-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+    }
+
+    #settingsBackdrop .plugin-meta-row > span:last-child {
+        min-width: 0;
+    }
+
+    #settingsBackdrop .plugin-pill {
+        max-width: 100%;
+        min-height: 28px;
+        white-space: normal;
+        word-break: break-word;
+    }
+
+    #settingsBackdrop .plugin-doc-link {
+        min-height: var(--mobile-touch-target);
+        padding: 8px 12px;
+    }
+
+    #settingsBackdrop .plugin-runtime {
+        min-width: 0;
+        border-radius: 12px;
+    }
+
+    #settingsBackdrop .plugin-runtime__row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    #settingsBackdrop .plugin-runtime__row span,
+    #settingsBackdrop .plugin-runtime code {
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    #settingsBackdrop .plugin-toggle {
+        display: flex;
+        width: 100%;
+        min-width: 0;
+        min-height: var(--mobile-touch-target);
+        justify-content: flex-start;
+    }
+
     .composer-menu__item,
     .voice-model-menu__item,
     .network-address-menu__item {
@@ -5396,6 +5767,8 @@ body.theme-light .tool-window__resize::before {
     .tool-window {
         min-width: 0;
         min-height: 0;
+        max-width: none;
+        max-height: none;
         /* Override persisted desktop inline bounds while preserving mobile safe areas. */
         left: calc(10px + var(--safe-area-left)) !important;
         right: calc(10px + var(--safe-area-right)) !important;
@@ -6012,7 +6385,11 @@ body.theme-light .tool-window__resize::before {
 
 @media (max-width: 760px) {
     #settingsBackdrop .settings-panel {
-        inset: 10px;
+        inset:
+            calc(8px + var(--safe-area-top))
+            calc(8px + var(--safe-area-right))
+            calc(8px + var(--safe-area-bottom))
+            calc(8px + var(--safe-area-left));
         width: auto;
         height: auto;
         border-radius: 22px;
@@ -6023,7 +6400,11 @@ body.theme-light .tool-window__resize::before {
     #settingsBackdrop .settings-panel__content {
         grid-template-columns: 1fr;
         gap: 12px;
-        padding: 12px;
+        padding:
+            12px
+            calc(12px + var(--safe-area-right))
+            calc(14px + var(--safe-area-bottom))
+            calc(12px + var(--safe-area-left));
     }
 
     #settingsBackdrop .settings-group,
