@@ -82,6 +82,7 @@
 - [x] Stage 5 Settings pass: mobile Settings now uses a safe-area modal shell with one internal scroll region, touch-safe horizontal tabs, single-column mobile forms, responsive model/library controls, wrapped plugin cards/runtime metadata, full-width plugin toggles, and 44px controls including ASR pipeline settings.
 - [x] Post-Stage 5 plugin docs access fix: Settings plugin docs pills now open manifest-listed markdown files through a safe backend endpoint; missing docs remain muted, and mobile doc links keep 44px touch targets.
 - [x] Stage 7 Settings icon cleanup: replaced the crooked gear with a centered controls/sliders icon from the visual brief, using three continuous horizontal lines, hollow knobs, and a lighter 1.6px Settings-only stroke.
+- [x] Stage 7 RAG off-state icon cleanup: the disabled RAG status marker is now a hollow circle with white interior instead of a filled dark dot; enabled RAG keeps the accent-filled marker.
 
 ## In Progress
 - [~] Stage 7 QA + Cleanup: Settings icon is fixed and logged; next task is the broader final QA/static cleanup pass.
@@ -154,6 +155,7 @@
 - [x] Run final Stage 6 cleanup/theme pass before moving to Stage 5 Settings/plugin cards.
 - [x] Complete Stage 5 Settings/plugin cards and run scoped QA.
 - [x] Replace crooked Settings icon with centered sliders/controls icon.
+- [x] Replace filled disabled RAG marker with hollow white-centered circle.
 - [ ] Run final viewport QA and cleanup.
 - [ ] Delete `documentation/progress/mobile-ui-progress.md` after completion.
 
