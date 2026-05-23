@@ -150,6 +150,7 @@ const els = {
   quickModelMenu: document.getElementById("quickModelMenu"),
   quickModelSelect: document.getElementById("quickModelSelect"),
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
+  networkAddressMenu: document.getElementById("networkAddressMenu"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   openRagButton: document.getElementById("openRagButton"),
   themeToggleButton: document.getElementById("themeToggleButton"),
@@ -259,6 +260,8 @@ const els = {
   closeSettingsButton: document.getElementById("closeSettingsButton"),
   ragBackdrop: document.getElementById("ragBackdrop"),
   closeRagButton: document.getElementById("closeRagButton"),
+  ragQuickMenu: document.getElementById("ragQuickMenu"),
+  ragQuickEnabledToggle: document.getElementById("ragQuickEnabledToggle"),
   ragSourceDirValue: document.getElementById("ragSourceDirValue"),
   ragEnabledToggle: document.getElementById("ragEnabledToggle"),
   ragAddFilesButton: document.getElementById("ragAddFilesButton"),
@@ -353,6 +356,10 @@ const els = {
   ttsLibraryPanel: document.getElementById("ttsLibraryPanel"),
   ttsVoiceSearchInput: document.getElementById("ttsVoiceSearchInput"),
   ttsVoiceLibrary: document.getElementById("ttsVoiceLibrary"),
+  pluginsSummary: document.getElementById("pluginsSummary"),
+  pluginsList: document.getElementById("pluginsList"),
+  pluginsStatus: document.getElementById("pluginsStatus"),
+  refreshPluginsButton: document.getElementById("refreshPluginsButton"),
   modelsDirInput: document.getElementById("modelsDirInput"),
   applyModelsDirButton: document.getElementById("applyModelsDirButton"),
   moveModelsDirButton: document.getElementById("moveModelsDirButton"),
@@ -427,6 +434,7 @@ const state = {
   },
   asrPipelineSettingsExpanded: readStored(STORAGE_KEYS.asrPipelineSettingsOpen, "") === "1",
   voiceModelMenuPosition: null,
+  ragQuickMenuPosition: null,
   confirmResolver: null,
   confirmReturnFocus: null,
   toastTimer: null,
@@ -454,6 +462,16 @@ const state = {
   asrToolHistorySearch: "",
   ragStatus: null,
   ragBusy: false,
+  pluginsState: {
+    plugins: [],
+    invalid_plugins: [],
+    trusted_plugin_ids: [],
+    message: "",
+  },
+  pluginsLoading: false,
+  networkAddresses: [],
+  networkAddressesLoading: false,
+  networkAddressMenuPosition: null,
   activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
   appRuntimeBusy: false,
@@ -5970,17 +5988,275 @@ function renderDownloads() {
     .join("");
 }
 
+function normalizeNetworkAddressItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, index) => {
+      const rawUrl = String(item?.url || "").trim();
+      if (!rawUrl || rawUrl.includes("<") || rawUrl.includes(">")) return null;
+      try {
+        const parsed = new URL(rawUrl);
+        if (!["http:", "https:"].includes(parsed.protocol)) return null;
+      } catch {
+        return null;
+      }
+      return {
+        id: String(item?.id || item?.provider_id || `address-${index}`),
+        provider_id: String(item?.provider_id || item?.id || `address-${index}`),
+        label: String(item?.label || item?.provider_id || "Address"),
+        url: rawUrl,
+        detail: String(item?.detail || item?.security_note || ""),
+        copyable: item?.copyable !== false,
+        priority: Number.isFinite(Number(item?.priority)) ? Number(item.priority) : 100,
+      };
+    })
+    .filter((item) => item && item.copyable)
+    .sort((a, b) => (a.priority - b.priority) || a.label.localeCompare(b.label));
+}
+
+function availableNetworkAddresses() {
+  return Array.isArray(state.networkAddresses) ? state.networkAddresses : [];
+}
+
+function closeNetworkAddressMenu() {
+  if (!els.networkAddressMenu) return;
+  els.networkAddressMenu.hidden = true;
+  els.networkAddressMenu.style.left = "";
+  els.networkAddressMenu.style.top = "";
+  state.networkAddressMenuPosition = null;
+  els.copyLanUrlButton?.setAttribute("aria-expanded", "false");
+}
+
+function positionNetworkAddressMenu(clientX, clientY) {
+  if (!els.networkAddressMenu || els.networkAddressMenu.hidden) return;
+  const rect = els.networkAddressMenu.getBoundingClientRect();
+  const padding = 12;
+  const left = Math.max(padding, Math.min(clientX, window.innerWidth - rect.width - padding));
+  const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
+  els.networkAddressMenu.style.left = `${left}px`;
+  els.networkAddressMenu.style.top = `${top}px`;
+}
+
+function renderNetworkAddressMenu() {
+  if (!els.networkAddressMenu) return;
+  const items = availableNetworkAddresses();
+  els.networkAddressMenu.innerHTML = [
+    '<div class="network-address-menu__header">Адрес доступа</div>',
+    ...items.map((item, index) => `
+      <button class="network-address-menu__item" type="button" role="menuitem" data-network-address-index="${index}">
+        <span>
+          <strong>${escapeHtml(item.label)}</strong>
+          ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}
+        </span>
+        <code>${escapeHtml(item.url)}</code>
+      </button>
+    `),
+  ].join("");
+  if (!els.networkAddressMenu.hidden && state.networkAddressMenuPosition) {
+    positionNetworkAddressMenu(state.networkAddressMenuPosition.x, state.networkAddressMenuPosition.y);
+  }
+}
+
 function renderLanUrl() {
   const value = state.lanUrl || "Недоступно";
+  const addresses = availableNetworkAddresses();
+  const topbarDisabled = state.networkAddressesLoading || !addresses.length;
   if (els.lanUrlValue) {
     els.lanUrlValue.textContent = value;
   }
   if (els.copyLanUrlButton) {
-    els.copyLanUrlButton.disabled = !state.lanUrl;
+    els.copyLanUrlButton.disabled = topbarDisabled;
+    els.copyLanUrlButton.setAttribute("aria-expanded", els.networkAddressMenu?.hidden === false ? "true" : "false");
+    if (addresses.length > 1) {
+      els.copyLanUrlButton.title = "Выбрать адрес доступа";
+      els.copyLanUrlButton.setAttribute("aria-label", "Выбрать адрес доступа");
+    } else if (addresses.length === 1) {
+      els.copyLanUrlButton.title = `Скопировать ${addresses[0].label} URL`;
+      els.copyLanUrlButton.setAttribute("aria-label", `Скопировать ${addresses[0].label} URL`);
+    } else {
+      els.copyLanUrlButton.title = "Адрес доступа недоступен";
+      els.copyLanUrlButton.setAttribute("aria-label", "Адрес доступа недоступен");
+    }
   }
   if (els.copyLanUrlFromSettingsButton) {
     els.copyLanUrlFromSettingsButton.disabled = !state.lanUrl;
   }
+  renderNetworkAddressMenu();
+}
+
+function pluginStatusLabel(plugin) {
+  if (!plugin?.trusted) return "Detected, not trusted";
+  if (plugin?.enabled && plugin?.effective_enabled) return "Enabled";
+  return "Disabled";
+}
+
+function pluginStatusClass(plugin) {
+  if (!plugin?.trusted) return "plugin-status--untrusted";
+  if (plugin?.enabled && plugin?.effective_enabled) return "plugin-status--enabled";
+  return "plugin-status--disabled";
+}
+
+function renderPluginPills(items, emptyText = "none", extraClass = "") {
+  if (!Array.isArray(items) || !items.length) {
+    return `<span class="plugin-pill plugin-pill--muted">${escapeHtml(emptyText)}</span>`;
+  }
+  return items
+    .map((item) => `<span class="plugin-pill ${extraClass}">${escapeHtml(item)}</span>`)
+    .join("");
+}
+
+function renderPluginDocs(plugin) {
+  const docs = Array.isArray(plugin?.docs_status) ? plugin.docs_status : [];
+  if (!docs.length) {
+    return '<span class="plugin-pill plugin-pill--muted">no docs</span>';
+  }
+  return docs
+    .map((doc) => {
+      const available = doc?.available === true;
+      const className = available ? "plugin-pill" : "plugin-pill plugin-pill--muted";
+      const suffix = available ? "" : " (missing)";
+      return `<span class="${className}">${escapeHtml(`${doc?.path || "doc"}${suffix}`)}</span>`;
+    })
+    .join("");
+}
+
+function renderPluginSecurityWarnings(plugin) {
+  const warnings = Array.isArray(plugin?.security_warnings)
+    ? plugin.security_warnings
+    : Array.isArray(plugin?.handler_status?.security_warnings)
+      ? plugin.handler_status.security_warnings
+      : [];
+  if (!warnings.length) return "";
+  return `<div class="plugin-warning">Security warnings: ${renderPluginPills(warnings, "none", "plugin-pill--danger")}</div>`;
+}
+
+function renderPluginHandlerStatus(plugin) {
+  const handler = plugin?.handler_status;
+  if (!handler || typeof handler !== "object") return "";
+  const command = handler.manual_command || handler.manual_command_template || "";
+  const cliState = handler.cli_available ? "tailscale CLI found" : "tailscale CLI not found";
+  const serveState = handler.serve_localgpt_detected
+    ? "LocalGPT Serve active"
+    : handler.serve_active
+      ? "Serve active for another target"
+      : "Serve not detected";
+  const message = handler.message ? `<span>${escapeHtml(handler.message)}</span>` : "";
+  return `
+    <div class="plugin-runtime">
+      <div class="plugin-runtime__row">
+        <span>${escapeHtml(cliState)}</span>
+        <span>${escapeHtml(serveState)}</span>
+      </div>
+      ${command ? `<code>${escapeHtml(command)}</code>` : ""}
+      ${message}
+    </div>
+  `;
+}
+
+function renderPluginCard(plugin) {
+  const id = String(plugin?.id || "");
+  const trusted = plugin?.trusted === true;
+  const disabled = state.pluginsLoading || !trusted;
+  const checked = trusted && plugin?.enabled === true;
+  const dangerous = Array.isArray(plugin?.dangerous_permissions) ? plugin.dangerous_permissions : [];
+  const warning = dangerous.length
+    ? `<div class="plugin-warning">Dangerous permissions: ${renderPluginPills(dangerous, "none", "plugin-pill--danger")}</div>`
+    : "";
+  const trustNote = trusted
+    ? "Trusted backend handler available."
+    : "Detected, but not trusted. Execution unavailable.";
+  const securityWarnings = renderPluginSecurityWarnings(plugin);
+  const handlerStatus = trusted ? renderPluginHandlerStatus(plugin) : "";
+
+  return `
+    <article class="plugin-card" data-plugin-id="${escapeHtml(id)}">
+      <div class="plugin-card__main">
+        <div class="plugin-card__title-row">
+          <div>
+            <strong>${escapeHtml(plugin?.name || id || "Plugin")}</strong>
+            <span>${escapeHtml(plugin?.id || "unknown")} • ${escapeHtml(plugin?.type || "unknown")} • v${escapeHtml(plugin?.version || "0")}</span>
+          </div>
+          <span class="plugin-status ${pluginStatusClass(plugin)}">${escapeHtml(pluginStatusLabel(plugin))}</span>
+        </div>
+        <p>${escapeHtml(plugin?.description || "")}</p>
+        <div class="plugin-meta-row">
+          <span class="plugin-meta-row__label">Permissions</span>
+          <span>${renderPluginPills(plugin?.permissions, "none")}</span>
+        </div>
+        ${warning}
+        ${securityWarnings}
+        <div class="plugin-meta-row">
+          <span class="plugin-meta-row__label">Docs</span>
+          <span>${renderPluginDocs(plugin)}</span>
+        </div>
+        ${handlerStatus}
+        <p class="plugin-note">${escapeHtml(plugin?.security_note || trustNote)}</p>
+      </div>
+      <label class="field field--checkbox plugin-toggle">
+        <input type="checkbox" data-plugin-toggle="${escapeHtml(id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+        <span>${checked ? "Enabled" : "Disabled"}</span>
+      </label>
+    </article>
+  `;
+}
+
+function renderInvalidPluginCard(plugin) {
+  const errors = Array.isArray(plugin?.errors) ? plugin.errors : ["Invalid plugin manifest"];
+  return `
+    <article class="plugin-card plugin-card--invalid">
+      <div class="plugin-card__main">
+        <div class="plugin-card__title-row">
+          <div>
+            <strong>${escapeHtml(plugin?.plugin_dir || "Invalid plugin")}</strong>
+            <span>${escapeHtml(plugin?.manifest_path || "plugin.json")}</span>
+          </div>
+          <span class="plugin-status plugin-status--invalid">Invalid</span>
+        </div>
+        <div class="plugin-warning">${renderPluginPills(errors, "invalid", "plugin-pill--danger")}</div>
+      </div>
+    </article>
+  `;
+}
+
+function renderPlugins() {
+  const plugins = Array.isArray(state.pluginsState?.plugins) ? state.pluginsState.plugins : [];
+  const invalidPlugins = Array.isArray(state.pluginsState?.invalid_plugins) ? state.pluginsState.invalid_plugins : [];
+  const trustedIds = Array.isArray(state.pluginsState?.trusted_plugin_ids) ? state.pluginsState.trusted_plugin_ids : [];
+  const enabledCount = plugins.filter((plugin) => plugin?.effective_enabled).length;
+
+  if (els.refreshPluginsButton) {
+    els.refreshPluginsButton.disabled = state.pluginsLoading;
+    els.refreshPluginsButton.textContent = state.pluginsLoading ? "Обновление…" : "Обновить";
+  }
+
+  if (els.pluginsSummary) {
+    els.pluginsSummary.innerHTML = `
+      <span>Installed: <strong>${plugins.length}</strong></span>
+      <span>Enabled: <strong>${enabledCount}</strong></span>
+      <span>Trusted ids: <strong>${escapeHtml(trustedIds.join(", ") || "none")}</strong></span>
+    `;
+  }
+
+  if (!els.pluginsList) return;
+  if (state.pluginsLoading && !plugins.length && !invalidPlugins.length) {
+    els.pluginsList.innerHTML = '<p class="subtle">Загружаю plugins registry…</p>';
+    return;
+  }
+
+  if (!plugins.length && !invalidPlugins.length) {
+    els.pluginsList.innerHTML = `
+      <div class="plugins-empty">
+        <strong>No plugins installed.</strong>
+        <span>${escapeHtml(state.pluginsState?.message || "Add a plugin folder to plugins/ to make it appear here.")}</span>
+      </div>
+    `;
+    return;
+  }
+
+  els.pluginsList.innerHTML = [
+    ...plugins.map(renderPluginCard),
+    ...invalidPlugins.map(renderInvalidPluginCard),
+  ].join("");
 }
 
 function renderDatabaseMaintenance() {
@@ -6008,7 +6284,7 @@ function renderAppRuntimeMaintenance() {
 }
 
 function setSettingsTab(tabName, { persist = true, render = true } = {}) {
-  const allowed = new Set(["profile", "models", "asr", "tts", "system"]);
+  const allowed = new Set(["profile", "models", "asr", "tts", "plugins", "system"]);
   const next = allowed.has(tabName) ? tabName : "profile";
   state.activeSettingsTab = next;
   if (persist) {
@@ -6044,6 +6320,7 @@ function renderSettings() {
   renderTtsControls();
   renderDownloads();
   renderLanUrl();
+  renderPlugins();
   renderDatabaseMaintenance();
   renderAppRuntimeMaintenance();
 
@@ -6086,6 +6363,7 @@ function openSettings() {
   void loadWhisperModels({ silent: true });
   void loadTtsSettings({ silent: true });
   void loadTtsLibrary({ silent: true });
+  void loadPlugins({ silent: true });
 }
 
 function openAsrPipelineSettings() {
@@ -6104,7 +6382,11 @@ function closeSettings() {
 
 function activeProfileRagEnabled() {
   const preferences = getActiveProfilePreferences();
-  return Boolean(preferences?.settings?.rag_enabled);
+  const value = preferences?.settings?.rag_enabled;
+  if (typeof value === "string") {
+    return value.trim().toLowerCase() === "true";
+  }
+  return value === true || value === 1;
 }
 
 function renderRagButton() {
@@ -6114,6 +6396,34 @@ function renderRagButton() {
   els.openRagButton.setAttribute("aria-pressed", enabled ? "true" : "false");
   els.openRagButton.setAttribute("aria-label", enabled ? "Открыть RAG, включён" : "Открыть RAG, выключен");
   els.openRagButton.title = enabled ? "RAG включён для активного профиля" : "RAG выключен для активного профиля";
+}
+
+function closeRagQuickMenu() {
+  if (!els.ragQuickMenu) return;
+  els.ragQuickMenu.hidden = true;
+  els.ragQuickMenu.style.left = "";
+  els.ragQuickMenu.style.top = "";
+  state.ragQuickMenuPosition = null;
+}
+
+function positionRagQuickMenu(clientX, clientY) {
+  if (!els.ragQuickMenu || els.ragQuickMenu.hidden) return;
+  const rect = els.ragQuickMenu.getBoundingClientRect();
+  const padding = 12;
+  const left = Math.max(padding, Math.min(clientX, window.innerWidth - rect.width - padding));
+  const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
+  els.ragQuickMenu.style.left = `${left}px`;
+  els.ragQuickMenu.style.top = `${top}px`;
+}
+
+function renderRagQuickMenu() {
+  renderRagButton();
+  if (!els.ragQuickEnabledToggle) return;
+  els.ragQuickEnabledToggle.disabled = !state.activeProfileId;
+  els.ragQuickEnabledToggle.checked = activeProfileRagEnabled();
+  if (!els.ragQuickMenu?.hidden && state.ragQuickMenuPosition) {
+    positionRagQuickMenu(state.ragQuickMenuPosition.x, state.ragQuickMenuPosition.y);
+  }
 }
 
 function renderRagPanel() {
@@ -6167,6 +6477,7 @@ async function loadRagStatus({ silent = false } = {}) {
 
 async function openRagPanel() {
   if (!els.ragBackdrop) return;
+  closeRagQuickMenu();
   els.ragBackdrop.hidden = false;
   renderRagPanel();
   await loadRagStatus({ silent: true });
@@ -6175,6 +6486,24 @@ async function openRagPanel() {
 function closeRagPanel() {
   if (!els.ragBackdrop) return;
   els.ragBackdrop.hidden = true;
+}
+
+function openRagQuickMenu() {
+  if (!els.ragQuickMenu) return;
+  closeRagPanel();
+  closeNetworkAddressMenu();
+  closeQuickModelMenu();
+  closeVoiceModelMenu();
+  toggleComposerMenu(false);
+  const buttonRect = els.openRagButton?.getBoundingClientRect();
+  state.ragQuickMenuPosition = {
+    x: Math.round(buttonRect?.left || 12),
+    y: Math.round((buttonRect?.bottom || 0) + 10),
+  };
+  renderRagQuickMenu();
+  els.ragQuickMenu.hidden = false;
+  positionRagQuickMenu(state.ragQuickMenuPosition.x, state.ragQuickMenuPosition.y);
+  window.setTimeout(() => els.ragQuickEnabledToggle?.focus(), 0);
 }
 
 async function ingestRagSources(force = false) {
@@ -6273,18 +6602,22 @@ async function deleteRagFile(sourceId, returnFocus = null) {
   }
 }
 
-async function toggleRagForActiveProfile(enabled) {
+async function toggleRagForActiveProfile(enabled, { notify = true } = {}) {
   const updated = await saveActiveProfilePreferences({ settings: { rag_enabled: Boolean(enabled) } });
   if (updated) {
     renderRagPanel();
-    setFooter(
-      enabled
-        ? "RAG включён: локальный контекст будет подмешиваться в каждый chat prompt активного профиля."
-        : "RAG выключен: локальные документы не будут использоваться в chat prompt.",
-      "success",
-    );
+    renderRagQuickMenu();
+    if (notify) {
+      setFooter(
+        enabled
+          ? "RAG включён: локальный контекст будет подмешиваться в каждый chat prompt активного профиля."
+          : "RAG выключен: локальные документы не будут использоваться в chat prompt.",
+        "success",
+      );
+    }
   } else {
     renderRagPanel();
+    renderRagQuickMenu();
   }
 }
 
@@ -6307,14 +6640,94 @@ async function loadHealth({ silent = false } = {}) {
     setHealthBadge("Онлайн", "success");
     renderLanUrl();
     renderContextSummary();
+    await loadNetworkAddresses({ silent: true });
   } catch (error) {
     state.serverHealthy = false;
     state.lanUrl = fallbackLanUrl();
+    state.networkAddresses = [];
     setHealthBadge("Нет связи", "error");
     renderLanUrl();
     if (!silent) {
       setFooter(`Сервер недоступен: ${error.message || error}`, "error");
     }
+  }
+}
+
+async function loadNetworkAddresses({ silent = false } = {}) {
+  state.networkAddressesLoading = true;
+  renderLanUrl();
+  try {
+    const data = await request("/plugins/network-addresses");
+    state.networkAddresses = normalizeNetworkAddressItems(data?.items);
+    if (!state.networkAddresses.length) {
+      closeNetworkAddressMenu();
+    }
+  } catch (error) {
+    state.networkAddresses = [];
+    closeNetworkAddressMenu();
+    if (!silent) {
+      setFooter(`Не удалось загрузить адреса доступа: ${error.message || error}`, "error");
+    }
+  } finally {
+    state.networkAddressesLoading = false;
+    renderLanUrl();
+  }
+}
+
+async function loadPlugins({ silent = false } = {}) {
+  state.pluginsLoading = true;
+  renderPlugins();
+  try {
+    const data = await request("/plugins");
+    state.pluginsState = {
+      plugins: Array.isArray(data?.plugins) ? data.plugins : [],
+      invalid_plugins: Array.isArray(data?.invalid_plugins) ? data.invalid_plugins : [],
+      trusted_plugin_ids: Array.isArray(data?.trusted_plugin_ids) ? data.trusted_plugin_ids : [],
+      message: data?.message || "",
+    };
+    if (!silent) {
+      const count = state.pluginsState.plugins.length + state.pluginsState.invalid_plugins.length;
+      setInlineStatus(els.pluginsStatus, count ? "Plugins registry обновлён." : "Plugins не установлены.", "success");
+    }
+  } catch (error) {
+    if (!silent) {
+      setInlineStatus(els.pluginsStatus, `Не удалось загрузить plugins: ${error.message || error}`, "error");
+    }
+  } finally {
+    state.pluginsLoading = false;
+    renderPlugins();
+  }
+}
+
+async function setPluginEnabled(pluginId, enabled) {
+  const id = String(pluginId || "").trim();
+  if (!id || state.pluginsLoading) return;
+
+  state.pluginsLoading = true;
+  renderPlugins();
+  setInlineStatus(els.pluginsStatus, enabled ? "Включаю plugin…" : "Отключаю plugin…", "warning");
+
+  try {
+    const data = await request(`/plugins/${encodeURIComponent(id)}/enabled`, {
+      method: "POST",
+      body: { enabled: Boolean(enabled) },
+    });
+    state.pluginsState = {
+      plugins: Array.isArray(data?.plugins) ? data.plugins : [],
+      invalid_plugins: Array.isArray(data?.invalid_plugins) ? data.invalid_plugins : [],
+      trusted_plugin_ids: Array.isArray(data?.trusted_plugin_ids) ? data.trusted_plugin_ids : [],
+      message: data?.message || "",
+    };
+    setInlineStatus(els.pluginsStatus, enabled ? "Plugin включён." : "Plugin отключён.", "success");
+    setFooter(enabled ? "Plugin включён." : "Plugin отключён.", "success");
+    await loadNetworkAddresses({ silent: true });
+  } catch (error) {
+    setInlineStatus(els.pluginsStatus, `Не удалось изменить plugin: ${error.message || error}`, "error");
+    setFooter(`Plugin: ${error.message || error}`, "error");
+    await loadPlugins({ silent: true });
+  } finally {
+    state.pluginsLoading = false;
+    renderPlugins();
   }
 }
 
@@ -7364,7 +7777,7 @@ async function deleteCurrentContext() {
   }
 }
 
-async function copyLanUrl() {
+async function copyLanUrlOnly() {
   if (!state.lanUrl) {
     setFooter("LAN URL пока недоступен.", "warning");
     return;
@@ -7375,6 +7788,55 @@ async function copyLanUrl() {
   } catch {
     setFooter("Не удалось скопировать LAN URL.", "error");
   }
+}
+
+async function copyNetworkAddressItem(item) {
+  if (!item?.url) {
+    setFooter("Адрес доступа пока недоступен.", "warning");
+    return;
+  }
+  try {
+    await copyText(item.url);
+    setFooter(`${item.label || "Адрес"} URL скопирован.`, "success");
+  } catch {
+    setFooter("Не удалось скопировать адрес доступа.", "error");
+  }
+}
+
+function openNetworkAddressMenu() {
+  if (!els.networkAddressMenu || !els.copyLanUrlButton) return;
+  const items = availableNetworkAddresses();
+  if (items.length < 2) return;
+  closeRagQuickMenu();
+  closeQuickModelMenu();
+  closeVoiceModelMenu();
+  toggleComposerMenu(false);
+  const rect = els.copyLanUrlButton.getBoundingClientRect();
+  state.networkAddressMenuPosition = {
+    x: Math.round(rect.left),
+    y: Math.round(rect.bottom + 10),
+  };
+  renderNetworkAddressMenu();
+  els.networkAddressMenu.hidden = false;
+  els.copyLanUrlButton.setAttribute("aria-expanded", "true");
+  positionNetworkAddressMenu(state.networkAddressMenuPosition.x, state.networkAddressMenuPosition.y);
+  window.setTimeout(() => {
+    els.networkAddressMenu?.querySelector("[data-network-address-index]")?.focus();
+  }, 0);
+}
+
+async function copyNetworkAddress() {
+  await loadNetworkAddresses({ silent: true });
+  const items = availableNetworkAddresses();
+  if (!items.length) {
+    setFooter("Адрес доступа пока недоступен.", "warning");
+    return;
+  }
+  if (items.length === 1) {
+    await copyNetworkAddressItem(items[0]);
+    return;
+  }
+  openNetworkAddressMenu();
 }
 
 function isExpectedShutdownError(error) {
@@ -7783,8 +8245,19 @@ function bindEvents() {
     }
   });
 
+  const openRagQuickFromPointer = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openRagQuickMenu();
+  };
   els.openSettingsButton?.addEventListener("click", () => openSettings());
   els.openRagButton?.addEventListener("click", async () => openRagPanel());
+  els.openRagButton?.addEventListener("mousedown", (event) => {
+    if (event.button === 2) {
+      openRagQuickFromPointer(event);
+    }
+  });
+  els.openRagButton?.addEventListener("contextmenu", openRagQuickFromPointer);
   els.themeToggleButton?.addEventListener("click", () => toggleTheme());
   els.chatModelNoticeSettingsButton?.addEventListener("click", () => openSettings());
   els.closeSettingsButton?.addEventListener("click", () => closeSettings());
@@ -7803,6 +8276,9 @@ function bindEvents() {
     if (event.target === els.ragBackdrop) {
       closeRagPanel();
     }
+  });
+  els.ragQuickEnabledToggle?.addEventListener("change", async () => {
+    await toggleRagForActiveProfile(Boolean(els.ragQuickEnabledToggle.checked), { notify: false });
   });
   els.ragRefreshButton?.addEventListener("click", async () => {
     await loadRagStatus();
@@ -7843,9 +8319,23 @@ function bindEvents() {
     }
   });
 
-  els.copyLanUrlButton?.addEventListener("click", async () => copyLanUrl());
+  els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
-  els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrl());
+  els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrlOnly());
+  els.networkAddressMenu?.addEventListener("click", async (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-network-address-index]") : null;
+    if (!button) return;
+    const index = Number(button.getAttribute("data-network-address-index"));
+    const item = Number.isFinite(index) ? availableNetworkAddresses()[index] : null;
+    closeNetworkAddressMenu();
+    await copyNetworkAddressItem(item);
+  });
+  els.refreshPluginsButton?.addEventListener("click", async () => loadPlugins());
+  els.pluginsList?.addEventListener("change", async (event) => {
+    const input = event.target instanceof Element ? event.target.closest("[data-plugin-toggle]") : null;
+    if (!(input instanceof HTMLInputElement)) return;
+    await setPluginEnabled(input.getAttribute("data-plugin-toggle"), Boolean(input.checked));
+  });
   els.restartBackendButton?.addEventListener("click", async () => restartBackendRuntime());
   els.shutdownButton?.addEventListener("click", async () => shutdownRuntime());
   els.cleanupDatabaseButton?.addEventListener("click", async () => cleanupDatabaseGarbage());
@@ -8400,6 +8890,14 @@ function bindEvents() {
         resolveConfirmDialog(false);
         return;
       }
+      if (!els.ragQuickMenu?.hidden) {
+        closeRagQuickMenu();
+        return;
+      }
+      if (!els.networkAddressMenu?.hidden) {
+        closeNetworkAddressMenu();
+        return;
+      }
       closeSidebar();
       closeOcrEditor();
       closeSettings();
@@ -8421,6 +8919,8 @@ function bindEvents() {
     const insideComposerMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
+    const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
+    const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
@@ -8435,6 +8935,12 @@ function bindEvents() {
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
     }
+    if (!insideRagQuickMenu) {
+      closeRagQuickMenu();
+    }
+    if (!insideNetworkAddressMenu) {
+      closeNetworkAddressMenu();
+    }
     if (!insideAppSelect) {
       closeAppSelect();
     }
@@ -8444,6 +8950,8 @@ function bindEvents() {
     const target = event.target instanceof Element ? event.target : null;
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
+    const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
@@ -8454,6 +8962,12 @@ function bindEvents() {
     }
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
+    }
+    if (!insideRagQuickMenu) {
+      closeRagQuickMenu();
+    }
+    if (!insideNetworkAddressMenu) {
+      closeNetworkAddressMenu();
     }
     if (!insideAppSelect) {
       closeAppSelect();
@@ -8471,6 +8985,8 @@ function bindEvents() {
     toggleComposerMenu(false);
     closeQuickModelMenu();
     closeVoiceModelMenu();
+    closeRagQuickMenu();
+    closeNetworkAddressMenu();
     closeAppSelect();
     closeSessionContextMenu();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {

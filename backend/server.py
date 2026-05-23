@@ -15,6 +15,7 @@ from backend.apps.asr import routes as transcribe
 from backend.apps.asr import transcripts
 from backend.apps.chat import routes as chat
 from backend.apps.ocr import routes as ocr
+from backend.apps.plugins import routes as plugins
 from backend.apps.rag import routes as rag
 from backend.apps.tts import router as tts
 
@@ -51,6 +52,7 @@ app.include_router(rag.router)
 app.include_router(chat.router)
 app.include_router(storage.router)
 app.include_router(tts.router)
+app.include_router(plugins.router)
 
 app.mount("/ui", StaticFiles(directory=config.UI_DIR, html=True), name="ui")
 

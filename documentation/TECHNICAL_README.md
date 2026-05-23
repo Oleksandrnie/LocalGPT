@@ -428,7 +428,49 @@ LAN launcher стартует backend с предпочтением `127.0.0.1:<
 - UI использует same-origin API (`window.location.origin` / relative paths), поэтому polling `/chat/tasks` и остальные API работают за reverse proxy без отдельного CORS;
 - CORS default больше не `*`: backend разрешает local/private-origin regex (`localhost`, LAN RFC1918, Tailscale CGNAT `100.64.0.0/10`, `.local`), а дополнительные origins задаются через `LOCALGPT_CORS_ALLOW_ORIGINS`.
 
-## 12. Static UI system
+## 12. Plugin Registry and remote address providers
+
+Plugin Registry v0 живёт в `backend/apps/plugins/` и намеренно не является произвольным extension runtime.
+
+Current API:
+
+- `GET /plugins`;
+- `POST /plugins/{plugin_id}/enabled`;
+- `GET /plugins/network-addresses`.
+
+Trust model:
+
+- registry читает только `plugins/*/plugin.json`;
+- plugin folders являются metadata/docs-only;
+- код из `plugins/` не импортируется и не исполняется;
+- unknown plugin ids показываются как untrusted и не могут стать effectively enabled;
+- plugins disabled by default;
+- trusted behavior реализуется только backend-owned handlers под `backend/apps/plugins/`.
+
+Tailscale official/internal plugin:
+
+- metadata/docs: `plugins/tailscale/`;
+- trusted handler: `backend/apps/plugins/tailscale.py`;
+- handler делает только read-only checks: CLI presence, `tailscale status --json`, `tailscale serve status --json`;
+- handler отдаёт manual command text, но не запускает `tailscale serve`;
+- Funnel/public exposure/router ports не включаются.
+
+Network address provider contract:
+
+- core LAN provider отдаёт item из существующего LAN URL helper только когда адрес реально доступен;
+- trusted plugin handlers могут добавлять адреса только если plugin trusted/enabled и handler подтверждает availability;
+- frontend не синтезирует Tailscale URL, а копирует только backend-provided `items`;
+- topbar fast path: 0 адресов — disabled/warning, 1 адрес — left-click copy, 2+ адреса — left-click menu.
+
+Security statements for Tailscale mode:
+
+```text
+Do not expose LocalGPT directly to the public internet.
+Do not enable Tailscale Funnel unless you fully understand the risk.
+Preferred mode: Tailscale private tailnet only.
+```
+
+## 13. Static UI system
 
 Основной UI — `web_ui/gui_html.html` + `web_ui/js/app.js` + `web_ui/css/style.css`.
 
@@ -440,7 +482,8 @@ LAN launcher стартует backend с предпочтением `127.0.0.1:<
 - `Cmd+B` / `Ctrl+B` переключает sidebar;
 - toast-система отображает уведомления строго под topbar по центру;
 - нижняя composer-зона не содержит системных статусов;
-- `RAG` topbar button показывает состояние активного профиля через dot и glow;
+- icon-only RAG topbar button показывает состояние активного профиля: OFF без dot/glow, ON с фиолетовым dot и glow;
+- topbar network address button копирует один backend-provided address сразу или открывает меню выбора для LAN/Tailscale адресов;
 - soft message cards используют прозрачность, blur, внутренний свет и shadow-контур вместо жёсткого border;
 - единый `AppSelect` строится JS-слоем поверх скрытого native `<select>`.
 
@@ -460,7 +503,7 @@ UI component rules:
 - видимые native select запрещены;
 - новые кнопки/dropdowns/toasts должны использовать существующие UI-классы и состояния.
 
-## 13. Git/runtime hygiene
+## 14. Git/runtime hygiene
 
 В git не должны попадать:
 
@@ -473,7 +516,7 @@ UI component rules:
 
 В git оставляется только структура (`.gitkeep`) и документация (`rag_sources/README.md`).
 
-## 14. Test coverage
+## 15. Test coverage
 
 Текущие ключевые проверки:
 

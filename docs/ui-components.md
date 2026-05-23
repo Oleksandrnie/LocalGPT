@@ -31,7 +31,7 @@
 
 - `.button--primary` для основного действия;
 - `.button--ghost` для вторичных действий;
-- `.rag-status-button` для topbar-индикатора RAG с dot-состоянием.
+- `.rag-status-button` для icon-only topbar-индикатора RAG с dot-состоянием.
 
 Компактные topbar/composer-кнопки должны оставаться в диапазоне 36-44px по высоте. Новые действия не должны добавлять системные статусы в нижнюю область ввода.
 
@@ -87,10 +87,28 @@ Topbar-кнопки используют `.button.button--ghost`. Для кно�
 
 RAG:
 
-- текст всегда `RAG`;
-- OFF: серый dot, нейтральный border, без glow;
+- кнопка icon-only, без видимой текстовой подписи;
+- иконка: document + graph;
+- OFF: нейтральный border, без dot и glow;
 - ON: фиолетовый dot, фиолетовый border, мягкий glow;
 - состояние должно соответствовать `rag_enabled` активного профиля.
+- right-click открывает компактное popup-меню только для включения/отключения подмешивания RAG.
+
+Settings:
+
+- кнопка icon-only с классической шестерёнкой;
+- без status dot.
+
+Network address:
+
+- topbar-кнопка адреса использует `.button.button--ghost.lan-url-button`;
+- icon-only состояние должно оставаться 36-44px по высоте;
+- адреса берутся из backend `GET /plugins/network-addresses`, frontend не hardcode-ит Tailscale URL;
+- 0 адресов: кнопка disabled или warning при попытке copy;
+- 1 адрес: left-click сразу копирует;
+- 2+ адреса: left-click открывает `.network-address-menu`;
+- right-click-only выбор адреса запрещён;
+- menu items должны показывать provider label, detail и copyable URL без placeholder-значений.
 
 ThemeToggle:
 
@@ -100,6 +118,21 @@ ThemeToggle:
 - состояние хранится в `localStorage` через ключ `localgpt_simple_theme`;
 - светлая тема использует `body.theme-light`, тёмная тема использует `body.theme-dark`;
 - видимая иконка соответствует активной теме: солнце для light, луна для dark.
+
+## Plugins
+
+Settings -> Plugins использует существующие Settings group/card patterns.
+
+Правила:
+
+- plugin list рендерится карточками `.plugin-card`;
+- trusted/enabled/untrusted/invalid состояние показывается через `.plugin-status`;
+- permissions и docs показываются compact pills `.plugin-pill`;
+- dangerous permissions и security warnings выделяются `.plugin-pill--danger`;
+- trusted handler status показывается в `.plugin-runtime`;
+- enable/disable control использует обычный checkbox pattern `.field.field--checkbox`;
+- untrusted plugins не должны давать активный enable control;
+- UI не должен обещать, что plugin code исполняется из `plugins/`: manifest/docs являются metadata-only.
 
 ## Toast
 

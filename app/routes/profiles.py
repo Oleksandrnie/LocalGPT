@@ -185,6 +185,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 ) from exc
     for key in (
         "streaming_enabled",
+        "rag_enabled",
         "allow_light_with_heavy",
         "single_large_target_model",
         "preload_model_on_manual_select",

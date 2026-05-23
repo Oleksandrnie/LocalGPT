@@ -13,6 +13,7 @@ Most files here are copies of source documents that still live in their original
 ## Backend
 
 - [README.backend_structure.md](README.backend_structure.md) — backend package structure and runtime contracts, copied from `backend/README.md`.
+- [plugin-architecture.md](plugin-architecture.md) — current Plugin Registry v0 architecture, trust model, trusted handler rules, and network address provider contract.
 
 ## RAG
 
@@ -32,13 +33,13 @@ Most files here are copies of source documents that still live in their original
 ## Maintenance
 
 - [CLEANUP_REPORT.md](CLEANUP_REPORT.md) — cleanup and maintenance notes.
+- [backlog.md](backlog.md) — future plugin ideas and out-of-scope items, including Caddy and external plugin process API as backlog only.
 
 ## Remote Access
 
 - Current LAN runtime notes are documented in [README.project.md](README.project.md) and [TECHNICAL_README.md](TECHNICAL_README.md).
-- Tailscale-specific documents are planned for the next remote-access documentation stage:
-  - `remote-access-tailscale.md`
-  - `how-to-use-tailscale-mode.md`
+- [remote-access-tailscale.md](remote-access-tailscale.md) — technical Tailscale private-tailnet remote access reference.
+- [how-to-use-tailscale-mode.md](how-to-use-tailscale-mode.md) — user-facing Tailscale mode setup and daily-use checklist.
 
 ## File Mapping
 
@@ -54,3 +55,7 @@ Most files here are copies of source documents that still live in their original
 | `README.rag.md` | `rag_sources/README.md` |
 | `ui-components.md` | `docs/ui-components.md` |
 | `system_base.prompt.md` | `app/prompts/system_base.md` |
+| `plugin-architecture.md` | durable hub document |
+| `backlog.md` | durable hub document |
+| `remote-access-tailscale.md` | durable hub document |
+| `how-to-use-tailscale-mode.md` | durable hub document |
