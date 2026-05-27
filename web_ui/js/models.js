@@ -24,6 +24,32 @@ function modelTitle(model) {
   return String(model?.title || model?.label || modelId(model)).trim();
 }
 
+function modelRuntimeState(model) {
+  if (model?.downloading) return "downloading";
+  if (model?.active) return "active";
+  if (model?.runtime_installed || model?.installed) return "installed";
+  if (model?.partial) return "partial";
+  if (model?.configured) return "configured";
+  return "missing";
+}
+
+function modelStatusLabel(model) {
+  return model?.status_label || {
+    active: "Активна",
+    installed: "Установлена",
+    downloading: "Загружается",
+    partial: "Недокачана",
+    configured: "Не установлена",
+    missing: "Отсутствует",
+  }[modelRuntimeState(model)] || "Отсутствует";
+}
+
+function modelActionLabel(model) {
+  if (model?.runtime_installed || model?.installed) return "Выбрать";
+  if (model?.partial) return "Продолжить загрузку";
+  return "Скачать / докачать";
+}
+
 function isModelInstalled(name) {
   return state.modelState.installed.some((item) => item.name === name);
 }
@@ -48,7 +74,8 @@ function renderModelSelect(preselect) {
       const id = modelId(item);
       const title = modelTitle(item);
       const missing = !installedNames.has(id);
-      return `<option value="${id}">${title}${missing ? " (не загружена)" : ""}</option>`;
+      const suffix = missing ? ` (${modelStatusLabel(item).toLowerCase()})` : "";
+      return `<option value="${id}">${title}${suffix}</option>`;
     }),
   ];
   elements.llmModelSelect.innerHTML = options.join("") || '<option value="">Нет доступных моделей</option>';
@@ -65,9 +92,11 @@ function renderModelSuggestions() {
     .map((model) => {
       const id = modelId(model);
       const installed = installedNames.has(id);
-      return `<button class="model-chip${installed ? " is-installed" : ""}" data-model="${id}" data-installed="${installed ? "1" : "0"}" title="${model.description || ""}">${
-        modelTitle(model)
-      }</button>`;
+      const runtimeState = modelRuntimeState(model);
+      return `<button class="model-chip${installed ? " is-installed" : ""} is-${runtimeState}" data-model="${id}" data-installed="${installed ? "1" : "0"}" data-model-state="${runtimeState}" title="${model.description || ""}">
+        <strong>${modelTitle(model)}</strong>
+        <span class="model-chip__hint">${modelStatusLabel(model)} • ${modelActionLabel(model)}</span>
+      </button>`;
     })
     .join("");
   elements.modelSuggestions.innerHTML = chips;

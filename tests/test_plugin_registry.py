@@ -53,6 +53,33 @@ class PluginRegistryTests(unittest.TestCase):
         self.assertFalse(plugin["effective_enabled"])
         self.assertEqual(plugin["status"], "disabled")
 
+    def test_manifest_docs_include_open_url_for_available_docs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
+            (root / "tailscale" / "README.md").write_text("# Tailscale docs\n", encoding="utf-8")
+
+            result = registry.scan_plugins(plugins_dir=root, enabled_state={}).as_response()
+
+        docs = result["plugins"][0]["docs_status"]
+        self.assertEqual(docs[0]["path"], "README.md")
+        self.assertTrue(docs[0]["available"])
+        self.assertEqual(docs[0]["url"], "/plugins/tailscale/docs/README.md")
+
+    def test_get_plugin_doc_reads_manifest_doc_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
+            (root / "tailscale" / "README.md").write_text("# Tailscale docs\n", encoding="utf-8")
+
+            doc = registry.get_plugin_doc("tailscale", "README.md", plugins_dir=root)
+
+            with self.assertRaises(registry.PluginDocError):
+                registry.get_plugin_doc("tailscale", "../secret.txt", plugins_dir=root)
+
+        self.assertEqual(doc["content"], "# Tailscale docs\n")
+        self.assertEqual(doc["filename"], "README.md")
+
     def test_unknown_manifest_is_untrusted_and_has_no_effective_enable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

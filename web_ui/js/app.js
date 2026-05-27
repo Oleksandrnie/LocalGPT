@@ -123,6 +123,7 @@ const RESIDENCY_DEFAULTS = {
 };
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
+const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
 const MEDIA_FILE_EXTENSIONS = new Set([
   "mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus", "aiff", "aif", "wma",
@@ -388,6 +389,7 @@ const state = {
   recommendedModels: [],
   utilityModels: [],
   downloads: [],
+  modelDiagnostics: null,
   chatModelsError: null,
   selectedLlmModel: "",
   selectedChatWhisperModel: "medium",
@@ -555,6 +557,55 @@ function getCatalogModels() {
 function getUtilityModels() {
   return (Array.isArray(state.utilityModels) ? state.utilityModels : [])
     .filter((item) => getModelId(item));
+}
+
+function isRuntimeModelInstalled(item, installedByName = null) {
+  const id = getModelId(item);
+  return Boolean(item?.runtime_installed || item?.installed || (installedByName && installedByName.has(id)));
+}
+
+function getRuntimeModelState(item, installedByName = null) {
+  const id = getModelId(item);
+  const installed = isRuntimeModelInstalled(item, installedByName);
+  if (item?.downloading) return "downloading";
+  if (item?.active) return "active";
+  if (installed) return "installed";
+  if (item?.partial) return "partial";
+  if (item?.configured) return "configured";
+  return "missing";
+}
+
+function getRuntimeModelStatusLabel(item, installedByName = null) {
+  const stateName = getRuntimeModelState(item, installedByName);
+  return item?.status_label || {
+    active: "Активна",
+    installed: "Установлена",
+    downloading: "Загружается",
+    partial: "Недокачана",
+    configured: "Не установлена",
+    missing: "Отсутствует",
+  }[stateName] || stateName;
+}
+
+function getModelActionLabel(item, installedByName = null) {
+  if (isRuntimeModelInstalled(item, installedByName)) return "Выбрать";
+  if (item?.partial) return "Продолжить загрузку";
+  return "Скачать / докачать";
+}
+
+function getModelRuntimeNote(item, task = null, installedByName = null) {
+  if (task?.message) return task.message;
+  if (item?.active) return "Модель загружена в память Ollama и готова отвечать.";
+  if (isRuntimeModelInstalled(item, installedByName)) {
+    return item?.partial_blob_found
+      ? "Модель зарегистрирована в project-scoped Ollama runtime; отдельно найден partial blob в одном из storage."
+      : "Модель зарегистрирована в текущем Ollama runtime.";
+  }
+  if (item?.partial) return "Найден partial blob: загрузку нужно продолжить, пока модель не появится в ollama list.";
+  if (item?.storage?.storage_present) {
+    return "Файлы модели найдены в model storage, но текущий Ollama runtime не видит её через ollama list.";
+  }
+  return getModelDescription(item) || "Модель есть в каталоге, но отсутствует в текущем Ollama runtime.";
 }
 
 function getModelTooltip(item, { short = false } = {}) {
@@ -865,6 +916,8 @@ function renderLibraryPanels() {
   const utilityCatalog = getUtilityModels();
   const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
   const chatTotal = utilityCatalog.length + chatCatalog.length;
+  const ollamaHost = state.modelDiagnostics?.ollama_host || state.modelDiagnostics?.base_url || "";
+  const chatRuntimeLabel = ollamaHost ? ` • ${ollamaHost}` : "";
   const asrInstalled = state.asrModels.filter((item) => isWhisperItemReady(item)).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
@@ -878,7 +931,7 @@ function renderLibraryPanels() {
       toggle: els.chatLibraryToggle,
       panel: els.chatLibraryPanel,
       meta: els.chatLibraryMeta,
-      metaText: `${chatInstalled} локально • ${chatTotal} вариантов`,
+      metaText: `${chatInstalled} runtime • ${chatTotal} вариантов${chatRuntimeLabel}`,
     },
     {
       kind: "asr",
@@ -950,7 +1003,26 @@ function hasActiveDownload(modelName) {
 }
 
 function isMobileLayout() {
-  return window.matchMedia("(max-width: 980px)").matches;
+  return window.matchMedia(MOBILE_LAYOUT_QUERY).matches;
+}
+
+function isOverlayOpen(node) {
+  return Boolean(node && node.hidden === false);
+}
+
+function syncMobileScrollLock() {
+  const drawerOpen = els.sidebar?.classList.contains("sidebar--open") === true;
+  const modalOpen = [
+    els.settingsBackdrop,
+    els.ocrBackdrop,
+    els.ragBackdrop,
+    els.confirmBackdrop,
+  ].some(isOverlayOpen);
+  const toolOpen = [
+    els.asrToolWindow,
+    els.ttsToolWindow,
+  ].some(isOverlayOpen);
+  document.body.classList.toggle("mobile-scroll-locked", isMobileLayout() && (drawerOpen || modalOpen || toolOpen));
 }
 
 function syncMessageScrollState() {
@@ -978,6 +1050,7 @@ function scrollMessagesToTop() {
 function applySidebarOpenState() {
   const open = state.sidebarOpen !== false;
   document.querySelector(".app-shell")?.classList.toggle("app-shell--sidebar-closed", !open);
+  els.toggleSidebarButton?.setAttribute("aria-expanded", els.sidebar?.classList.contains("sidebar--open") ? "true" : "false");
   if (els.sidebarCollapseButton) {
     els.sidebarCollapseButton.setAttribute("aria-expanded", open ? "true" : "false");
     els.sidebarCollapseButton.setAttribute("aria-label", open ? "Свернуть sidebar" : "Развернуть sidebar");
@@ -2027,7 +2100,7 @@ async function cancelCurrentChatGeneration() {
         method: "POST",
         body: {},
       });
-    } catch (error) {
+    } catch {
       if ((error?.status || 0) !== 404) {
         setFooter(`Не удалось остановить генерацию: ${error.message || error}`, "error");
         return;
@@ -2382,6 +2455,8 @@ function updateSendButtonState() {
   }
   els.sendButton.disabled = state.isSending ? false : (!hasText || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
+  els.sendButton.classList.toggle("send-button--stopping", state.isSending);
+  els.sendButton.setAttribute("aria-label", state.isSending ? "Остановить генерацию" : "Отправить сообщение");
 }
 
 function renderChatModelNotice() {
@@ -2492,6 +2567,7 @@ function showToast(message = "", tone = "info", { title = "Уведомлени�
 function resolveConfirmDialog(approved = false) {
   if (!els.confirmBackdrop) return Boolean(approved);
   els.confirmBackdrop.hidden = true;
+  syncMobileScrollLock();
   const resolver = state.confirmResolver;
   const returnFocus = state.confirmReturnFocus;
   state.confirmResolver = null;
@@ -2531,6 +2607,7 @@ function openConfirmDialog({
   }
   els.confirmApproveButton.textContent = confirmLabel;
   els.confirmBackdrop.hidden = false;
+  syncMobileScrollLock();
 
   return new Promise((resolve) => {
     state.confirmResolver = resolve;
@@ -3137,13 +3214,14 @@ function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const installedNames = new Set(installedByName.keys());
   const catalogItems = getCatalogModels().length
     ? getCatalogModels()
     : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
   const utilityItems = getUtilityModels();
   const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
-  const installedCatalogIds = catalogIds.filter((name) => installedNames.has(name));
+  const installedCatalogIds = catalogItems
+    .filter((item) => isRuntimeModelInstalled(item, installedByName))
+    .map((item) => getModelId(item));
   const optionIds = new Set([AUTO_MODEL_ID, LOCAL_CALCULATOR_MODEL_ID, ...catalogIds]);
 
   const optionsMarkup = catalogItems.length
@@ -3155,7 +3233,9 @@ function renderModelControls() {
         const id = getModelId(item);
         const title = getModelTitle(item);
         const help = getModelTooltip(item, { short: true });
-        return `<option value="${escapeHtml(id)}" data-label="${escapeHtml(title)}" data-help="${escapeHtml(help)}" data-model-category="${escapeHtml(item.category || "")}" data-model-weight="${escapeHtml(item.weight || "")}">${escapeHtml(title)}</option>`;
+        const installed = isRuntimeModelInstalled(item, installedByName);
+        const suffix = installed ? "" : " (не загружена)";
+        return `<option value="${escapeHtml(id)}" data-label="${escapeHtml(title)}" data-help="${escapeHtml(help)}" data-model-category="${escapeHtml(item.category || "")}" data-model-weight="${escapeHtml(item.weight || "")}">${escapeHtml(title + suffix)}</option>`;
       }),
     ].join("")
     : '<option value="">Нет доступных моделей</option>';
@@ -3192,12 +3272,19 @@ function renderModelControls() {
   els.recommendedModels.innerHTML = [...utilityItems, ...catalogItems]
     .map((item) => {
       const id = getModelId(item);
-      const installed = installedNames.has(id);
-      const active = id === state.selectedLlmModel;
+      const installed = isRuntimeModelInstalled(item, installedByName);
+      const selected = id === state.selectedLlmModel;
       const utility = Boolean(item.utility);
-      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(id)}" data-utility-model="${utility ? "1" : "0"}">
+      const runtimeState = getRuntimeModelState(item, installedByName);
+      const stateClass = ` chip-button--${runtimeState}`;
+      const meta = [
+        getRuntimeModelStatusLabel(item, installedByName),
+        item.category,
+        item.weight,
+      ].filter(Boolean).join(" • ");
+      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${selected ? " chip-button--active" : ""}${stateClass}" type="button" data-recommended-model="${escapeHtml(id)}" data-utility-model="${utility ? "1" : "0"}" data-installed="${installed ? "1" : "0"}" data-model-state="${escapeHtml(runtimeState)}">
         <span class="chip-button__label">${escapeHtml(getModelTitle(item))}</span>
-        <span class="chip-button__meta">${escapeHtml([item.category, item.weight].filter(Boolean).join(" • "))}</span>
+        <span class="chip-button__meta">${escapeHtml(meta)}</span>
         ${renderModelInfoIcon(item, "chip-button__help")}
       </button>`;
     })
@@ -3274,38 +3361,57 @@ function renderChatModelLibrary() {
   els.chatModelLibrary.innerHTML = catalogItems
     .map((item) => {
       const name = getModelId(item);
-      const installed = installedByName.get(name);
-      const active = state.selectedLlmModel === name;
+      const runtimeInfo = installedByName.get(name) || item.runtime || null;
+      const runtimeInstalled = isRuntimeModelInstalled(item, installedByName);
+      const selected = state.selectedLlmModel === name;
+      const runtimeActive = Boolean(item.active || runtimeInfo?.active);
       const task = getActiveChatDownload(name);
       const utility = Boolean(item.utility);
-      const statusBadge = task
-        ? `<span class="status-badge status-badge--warning">${escapeHtml(task.state || "running")}</span>`
-        : installed
-          ? '<span class="status-badge status-badge--success">Установлена</span>'
-          : '<span class="status-badge">Не загружена</span>';
+      const runtimeState = task ? "downloading" : getRuntimeModelState(item, installedByName);
+      const statusTone = {
+        active: "active",
+        installed: "success",
+        downloading: "warning",
+        partial: "warning",
+        configured: "muted",
+        missing: "muted",
+      }[runtimeState] || "muted";
+      const statusLabel = task ? (task.state || "running") : getRuntimeModelStatusLabel(item, installedByName);
+      const statusBadge = `<span class="status-badge status-badge--${escapeHtml(statusTone)}">${escapeHtml(statusLabel)}</span>`;
       const meta = [
         `ID: ${name}`,
+        `Runtime: ${runtimeInstalled ? "installed" : "missing"}`,
         item.category ? `Категория: ${item.category}` : null,
         item.weight ? `Вес: ${item.weight}` : null,
-        installed?.size_gb ? `${installed.size_gb} GB` : null,
-        installed?.modified_at ? formatDateTime(installed.modified_at) : null,
+        runtimeInfo?.details?.quantization ? `Quant: ${runtimeInfo.details.quantization}` : null,
+        runtimeInfo?.size_gb ? `${runtimeInfo.size_gb} GB` : null,
+        item.storage?.storage_size_gb && !runtimeInstalled ? `Storage: ${item.storage.storage_size_gb} GB` : null,
+        runtimeInfo?.modified_at ? formatDateTime(runtimeInfo.modified_at) : null,
       ].filter(Boolean).join(" • ");
-      const note = task?.message || getModelDescription(item);
+      const note = getModelRuntimeNote(item, task, installedByName);
       return `
-        <article class="model-card${installed ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
+        <article class="model-card${runtimeInstalled ? " model-card--installed" : ""}${selected ? " model-card--active" : ""} model-card--${escapeHtml(runtimeState)}">
           <div class="model-card__head">
             <div>
               <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
               <p class="model-card__meta">${escapeHtml(meta || name)}</p>
             </div>
-            <div class="model-card__badges">${statusBadge}${active ? '<span class="status-badge status-badge--active">Активна</span>' : ""}${renderModelBadges(item)}</div>
+            <div class="model-card__badges">
+              ${statusBadge}
+              ${runtimeActive ? '<span class="status-badge status-badge--active">В памяти</span>' : ""}
+              ${selected ? '<span class="status-badge status-badge--selected">Выбрана</span>' : ""}
+              ${item.partial_blob_found && !item.partial ? '<span class="status-badge status-badge--warning">Partial blob</span>' : ""}
+              ${item.configured ? '<span class="status-badge status-badge--configured">Configured</span>' : ""}
+              ${item.missing ? '<span class="status-badge status-badge--missing">Missing</span>' : ""}
+              ${renderModelBadges(item)}
+            </div>
           </div>
-          <p class="model-card__note">${escapeHtml(note || (installed ? "Модель готова к использованию в чате." : "Сначала добавьте модель локально."))}</p>
+          <p class="model-card__note">${escapeHtml(note)}</p>
           <div class="button-row">
-            ${installed && !utility ? `<button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
-            ${installed ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">Добавить</button>`}
+            ${runtimeInstalled && !utility ? `<button class="button ${selected ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
+            ${runtimeInstalled ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${escapeHtml(getModelActionLabel(item, installedByName))}</button>`}
             <button class="button button--ghost" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>
-            ${installed ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
+            ${runtimeInstalled ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
             ${renderModelInfoButton(item)}
           </div>
         </article>
@@ -4923,7 +5029,9 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
     }
     setInlineStatus(els.asrToolStatus, "Транскрипт загружен. Можно редактировать и отправить в чат.", "success");
     renderAsrTool();
-    requestAnimationFrame(() => els.asrToolOutput?.focus({ preventScroll: true }));
+    if (!isMobileLayout()) {
+      requestAnimationFrame(() => els.asrToolOutput?.focus({ preventScroll: true }));
+    }
   } catch (error) {
     if (!silent) {
       setInlineStatus(els.asrToolStatus, `Не удалось открыть транскрипт: ${error.message || error}`, "error");
@@ -4937,6 +5045,7 @@ async function openAsrTool({ focusText = false } = {}) {
   state.asrToolIsOpen = true;
   state.asrToolIsMinimized = false;
   els.asrToolWindow.hidden = false;
+  syncMobileScrollLock();
   setAsrToolWindowBounds();
   setInlineStatus(
     els.asrToolStatus,
@@ -4947,8 +5056,12 @@ async function openAsrTool({ focusText = false } = {}) {
   );
   renderAsrTool();
   await loadAsrToolHistory({ silent: true });
-  if (focusText) {
-    els.asrToolOutput?.focus();
+  if (focusText && !isMobileLayout()) {
+    try {
+      els.asrToolOutput?.focus({ preventScroll: true });
+    } catch {
+      els.asrToolOutput?.focus();
+    }
   }
   renderToolDock();
 }
@@ -4962,6 +5075,7 @@ function closeAsrTool() {
   state.asrToolIsMinimized = false;
   els.asrToolWindow.hidden = true;
   els.asrToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   renderToolDock();
 }
 
@@ -4974,6 +5088,7 @@ function minimizeAsrTool() {
   state.asrToolIsMinimized = true;
   els.asrToolWindow.hidden = true;
   els.asrToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   renderToolDock();
 }
 
@@ -5518,12 +5633,14 @@ function renderOcrEditor() {
 function openOcrEditor() {
   if (!els.ocrBackdrop) return;
   els.ocrBackdrop.hidden = false;
+  syncMobileScrollLock();
   renderOcrEditor();
 }
 
 function closeOcrEditor() {
   if (!els.ocrBackdrop) return;
   els.ocrBackdrop.hidden = true;
+  syncMobileScrollLock();
 }
 
 function clearOcrEditor() {
@@ -5756,6 +5873,7 @@ async function openTtsTool({ focusText = false } = {}) {
   state.ttsToolIsOpen = true;
   state.ttsToolIsMinimized = false;
   els.ttsToolWindow.hidden = false;
+  syncMobileScrollLock();
   syncTtsToolWindowMode();
   setTtsToolWindowBounds();
 
@@ -5769,8 +5887,12 @@ async function openTtsTool({ focusText = false } = {}) {
   renderTtsTool();
   await loadTtsHistory({ silent: true });
 
-  if (focusText) {
-    els.ttsToolText?.focus();
+  if (focusText && !isMobileLayout()) {
+    try {
+      els.ttsToolText?.focus({ preventScroll: true });
+    } catch {
+      els.ttsToolText?.focus();
+    }
   }
   renderToolDock();
 }
@@ -5783,6 +5905,7 @@ function closeTtsTool() {
   state.ttsToolIsMinimized = false;
   els.ttsToolWindow.hidden = true;
   els.ttsToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   stopTtsToolPlayer();
   renderToolDock();
 }
@@ -5795,6 +5918,7 @@ function minimizeTtsTool() {
   state.ttsToolIsMinimized = true;
   els.ttsToolWindow.hidden = true;
   els.ttsToolWindow.classList.remove("tool-window--fullscreen");
+  syncMobileScrollLock();
   stopTtsToolPlayer();
   renderToolDock();
 }
@@ -6105,6 +6229,15 @@ function renderPluginPills(items, emptyText = "none", extraClass = "") {
     .join("");
 }
 
+function pluginDocUrl(plugin, doc) {
+  const pluginId = String(plugin?.id || "").trim();
+  const path = String(doc?.path || "").trim();
+  if (!pluginId || !path) return "";
+  if (doc?.url) return String(doc.url);
+  const encodedPath = path.split("/").map((part) => encodeURIComponent(part)).join("/");
+  return `/plugins/${encodeURIComponent(pluginId)}/docs/${encodedPath}`;
+}
+
 function renderPluginDocs(plugin) {
   const docs = Array.isArray(plugin?.docs_status) ? plugin.docs_status : [];
   if (!docs.length) {
@@ -6115,7 +6248,12 @@ function renderPluginDocs(plugin) {
       const available = doc?.available === true;
       const className = available ? "plugin-pill" : "plugin-pill plugin-pill--muted";
       const suffix = available ? "" : " (missing)";
-      return `<span class="${className}">${escapeHtml(`${doc?.path || "doc"}${suffix}`)}</span>`;
+      const label = `${doc?.path || "doc"}${suffix}`;
+      const url = pluginDocUrl(plugin, doc);
+      if (available && url) {
+        return `<a class="${className} plugin-doc-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+      }
+      return `<span class="${className}">${escapeHtml(label)}</span>`;
     })
     .join("");
 }
@@ -6292,20 +6430,32 @@ function setSettingsTab(tabName, { persist = true, render = true } = {}) {
   }
   if (render) {
     renderSettingsTabs();
+    if (isMobileLayout() && isOverlayOpen(els.settingsBackdrop)) {
+      els.settingsBackdrop?.querySelector(".settings-panel__content")?.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    }
   }
 }
 
 function renderSettingsTabs() {
   const active = state.activeSettingsTab || "profile";
+  let activeButton = null;
   document.querySelectorAll("[data-settings-tab]").forEach((button) => {
     const selected = button.getAttribute("data-settings-tab") === active;
     button.classList.toggle("settings-tab--active", selected);
     button.setAttribute("aria-selected", selected ? "true" : "false");
     button.setAttribute("tabindex", selected ? "0" : "-1");
+    if (selected) {
+      activeButton = button;
+    }
   });
   document.querySelectorAll("[data-settings-tab-panel]").forEach((panel) => {
     panel.hidden = panel.getAttribute("data-settings-tab-panel") !== active;
   });
+  if (activeButton && isMobileLayout() && isOverlayOpen(els.settingsBackdrop)) {
+    requestAnimationFrame(() => {
+      activeButton.scrollIntoView({ block: "nearest", inline: "center" });
+    });
+  }
 }
 
 function renderSettings() {
@@ -6347,17 +6497,31 @@ function openSidebar() {
   if (!isMobileLayout() || !els.sidebar || !els.sidebarBackdrop) return;
   els.sidebar.classList.add("sidebar--open");
   els.sidebarBackdrop.hidden = false;
+  els.toggleSidebarButton?.setAttribute("aria-expanded", "true");
+  syncMobileScrollLock();
 }
 
 function closeSidebar() {
   if (!els.sidebar || !els.sidebarBackdrop) return;
   els.sidebar.classList.remove("sidebar--open");
   els.sidebarBackdrop.hidden = true;
+  els.toggleSidebarButton?.setAttribute("aria-expanded", "false");
+  syncMobileScrollLock();
+}
+
+function toggleMobileSidebar() {
+  if (!isMobileLayout()) return;
+  if (els.sidebar?.classList.contains("sidebar--open")) {
+    closeSidebar();
+    return;
+  }
+  openSidebar();
 }
 
 function openSettings() {
   if (!els.settingsBackdrop) return;
   els.settingsBackdrop.hidden = false;
+  syncMobileScrollLock();
   renderSettings();
   void refreshModelSettings({ silent: true });
   void loadWhisperModels({ silent: true });
@@ -6378,6 +6542,7 @@ function openAsrPipelineSettings() {
 function closeSettings() {
   if (!els.settingsBackdrop) return;
   els.settingsBackdrop.hidden = true;
+  syncMobileScrollLock();
 }
 
 function activeProfileRagEnabled() {
@@ -6479,6 +6644,7 @@ async function openRagPanel() {
   if (!els.ragBackdrop) return;
   closeRagQuickMenu();
   els.ragBackdrop.hidden = false;
+  syncMobileScrollLock();
   renderRagPanel();
   await loadRagStatus({ silent: true });
 }
@@ -6486,6 +6652,7 @@ async function openRagPanel() {
 function closeRagPanel() {
   if (!els.ragBackdrop) return;
   els.ragBackdrop.hidden = true;
+  syncMobileScrollLock();
 }
 
 function openRagQuickMenu() {
@@ -6740,6 +6907,7 @@ async function loadModels({ silent = false } = {}) {
       : (Array.isArray(data?.recommended) ? data.recommended : []);
     state.utilityModels = Array.isArray(data?.utility) ? data.utility : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
+    state.modelDiagnostics = data?.diagnostics || null;
     state.chatModelsError = data?.error || null;
     const savedModel = readStored(STORAGE_KEYS.llmModel, "");
     const installedModelNames = new Set(state.installedModels.map((item) => item.name));
@@ -8053,13 +8221,14 @@ async function resetDatabaseFully() {
 }
 
 function bindEvents() {
-  els.toggleSidebarButton?.addEventListener("click", () => openSidebar());
+  els.toggleSidebarButton?.addEventListener("click", () => toggleMobileSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());
   els.sidebarCollapseButton?.addEventListener("click", () => toggleSidebarCollapse());
   els.newChatButton?.addEventListener("click", async () => {
     state.currentSessionId = null;
     writeStored(STORAGE_KEYS.activeSessionId, "");
     await openSession(null);
+    closeSidebar();
   });
 
   els.sessionList?.addEventListener("click", async (event) => {
@@ -8077,6 +8246,7 @@ function bindEvents() {
     const sessionId = openButton?.dataset.sessionId || card?.dataset.sessionId;
     if (sessionId) {
       await openSession(sessionId);
+      closeSidebar();
     }
   });
   els.sessionList?.addEventListener("contextmenu", (event) => {
@@ -9001,6 +9171,7 @@ function bindEvents() {
     autoResizePrompt();
     syncMessageScrollState();
     clearAllDropOverlays();
+    syncMobileScrollLock();
   });
 
   window.addEventListener("dragend", () => {
