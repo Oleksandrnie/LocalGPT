@@ -389,6 +389,7 @@ const state = {
   recommendedModels: [],
   utilityModels: [],
   downloads: [],
+  modelDiagnostics: null,
   chatModelsError: null,
   selectedLlmModel: "",
   selectedChatWhisperModel: "medium",
@@ -556,6 +557,55 @@ function getCatalogModels() {
 function getUtilityModels() {
   return (Array.isArray(state.utilityModels) ? state.utilityModels : [])
     .filter((item) => getModelId(item));
+}
+
+function isRuntimeModelInstalled(item, installedByName = null) {
+  const id = getModelId(item);
+  return Boolean(item?.runtime_installed || item?.installed || (installedByName && installedByName.has(id)));
+}
+
+function getRuntimeModelState(item, installedByName = null) {
+  const id = getModelId(item);
+  const installed = isRuntimeModelInstalled(item, installedByName);
+  if (item?.downloading) return "downloading";
+  if (item?.active) return "active";
+  if (installed) return "installed";
+  if (item?.partial) return "partial";
+  if (item?.configured) return "configured";
+  return "missing";
+}
+
+function getRuntimeModelStatusLabel(item, installedByName = null) {
+  const stateName = getRuntimeModelState(item, installedByName);
+  return item?.status_label || {
+    active: "Активна",
+    installed: "Установлена",
+    downloading: "Загружается",
+    partial: "Недокачана",
+    configured: "Не установлена",
+    missing: "Отсутствует",
+  }[stateName] || stateName;
+}
+
+function getModelActionLabel(item, installedByName = null) {
+  if (isRuntimeModelInstalled(item, installedByName)) return "Выбрать";
+  if (item?.partial) return "Продолжить загрузку";
+  return "Скачать / докачать";
+}
+
+function getModelRuntimeNote(item, task = null, installedByName = null) {
+  if (task?.message) return task.message;
+  if (item?.active) return "Модель загружена в память Ollama и готова отвечать.";
+  if (isRuntimeModelInstalled(item, installedByName)) {
+    return item?.partial_blob_found
+      ? "Модель зарегистрирована в project-scoped Ollama runtime; отдельно найден partial blob в одном из storage."
+      : "Модель зарегистрирована в текущем Ollama runtime.";
+  }
+  if (item?.partial) return "Найден partial blob: загрузку нужно продолжить, пока модель не появится в ollama list.";
+  if (item?.storage?.storage_present) {
+    return "Файлы модели найдены в model storage, но текущий Ollama runtime не видит её через ollama list.";
+  }
+  return getModelDescription(item) || "Модель есть в каталоге, но отсутствует в текущем Ollama runtime.";
 }
 
 function getModelTooltip(item, { short = false } = {}) {
@@ -866,6 +916,8 @@ function renderLibraryPanels() {
   const utilityCatalog = getUtilityModels();
   const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
   const chatTotal = utilityCatalog.length + chatCatalog.length;
+  const ollamaHost = state.modelDiagnostics?.ollama_host || state.modelDiagnostics?.base_url || "";
+  const chatRuntimeLabel = ollamaHost ? ` • ${ollamaHost}` : "";
   const asrInstalled = state.asrModels.filter((item) => isWhisperItemReady(item)).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
@@ -879,7 +931,7 @@ function renderLibraryPanels() {
       toggle: els.chatLibraryToggle,
       panel: els.chatLibraryPanel,
       meta: els.chatLibraryMeta,
-      metaText: `${chatInstalled} локально • ${chatTotal} вариантов`,
+      metaText: `${chatInstalled} runtime • ${chatTotal} вариантов${chatRuntimeLabel}`,
     },
     {
       kind: "asr",
@@ -3162,13 +3214,14 @@ function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const installedNames = new Set(installedByName.keys());
   const catalogItems = getCatalogModels().length
     ? getCatalogModels()
     : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
   const utilityItems = getUtilityModels();
   const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
-  const installedCatalogIds = catalogIds.filter((name) => installedNames.has(name));
+  const installedCatalogIds = catalogItems
+    .filter((item) => isRuntimeModelInstalled(item, installedByName))
+    .map((item) => getModelId(item));
   const optionIds = new Set([AUTO_MODEL_ID, LOCAL_CALCULATOR_MODEL_ID, ...catalogIds]);
 
   const optionsMarkup = catalogItems.length
@@ -3180,7 +3233,9 @@ function renderModelControls() {
         const id = getModelId(item);
         const title = getModelTitle(item);
         const help = getModelTooltip(item, { short: true });
-        return `<option value="${escapeHtml(id)}" data-label="${escapeHtml(title)}" data-help="${escapeHtml(help)}" data-model-category="${escapeHtml(item.category || "")}" data-model-weight="${escapeHtml(item.weight || "")}">${escapeHtml(title)}</option>`;
+        const installed = isRuntimeModelInstalled(item, installedByName);
+        const suffix = installed ? "" : " (не загружена)";
+        return `<option value="${escapeHtml(id)}" data-label="${escapeHtml(title)}" data-help="${escapeHtml(help)}" data-model-category="${escapeHtml(item.category || "")}" data-model-weight="${escapeHtml(item.weight || "")}">${escapeHtml(title + suffix)}</option>`;
       }),
     ].join("")
     : '<option value="">Нет доступных моделей</option>';
@@ -3217,12 +3272,19 @@ function renderModelControls() {
   els.recommendedModels.innerHTML = [...utilityItems, ...catalogItems]
     .map((item) => {
       const id = getModelId(item);
-      const installed = installedNames.has(id);
-      const active = id === state.selectedLlmModel;
+      const installed = isRuntimeModelInstalled(item, installedByName);
+      const selected = id === state.selectedLlmModel;
       const utility = Boolean(item.utility);
-      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${active ? " chip-button--active" : ""}" type="button" data-recommended-model="${escapeHtml(id)}" data-utility-model="${utility ? "1" : "0"}">
+      const runtimeState = getRuntimeModelState(item, installedByName);
+      const stateClass = ` chip-button--${runtimeState}`;
+      const meta = [
+        getRuntimeModelStatusLabel(item, installedByName),
+        item.category,
+        item.weight,
+      ].filter(Boolean).join(" • ");
+      return `<button class="chip-button${installed ? " chip-button--installed" : ""}${selected ? " chip-button--active" : ""}${stateClass}" type="button" data-recommended-model="${escapeHtml(id)}" data-utility-model="${utility ? "1" : "0"}" data-installed="${installed ? "1" : "0"}" data-model-state="${escapeHtml(runtimeState)}">
         <span class="chip-button__label">${escapeHtml(getModelTitle(item))}</span>
-        <span class="chip-button__meta">${escapeHtml([item.category, item.weight].filter(Boolean).join(" • "))}</span>
+        <span class="chip-button__meta">${escapeHtml(meta)}</span>
         ${renderModelInfoIcon(item, "chip-button__help")}
       </button>`;
     })
@@ -3299,38 +3361,57 @@ function renderChatModelLibrary() {
   els.chatModelLibrary.innerHTML = catalogItems
     .map((item) => {
       const name = getModelId(item);
-      const installed = installedByName.get(name);
-      const active = state.selectedLlmModel === name;
+      const runtimeInfo = installedByName.get(name) || item.runtime || null;
+      const runtimeInstalled = isRuntimeModelInstalled(item, installedByName);
+      const selected = state.selectedLlmModel === name;
+      const runtimeActive = Boolean(item.active || runtimeInfo?.active);
       const task = getActiveChatDownload(name);
       const utility = Boolean(item.utility);
-      const statusBadge = task
-        ? `<span class="status-badge status-badge--warning">${escapeHtml(task.state || "running")}</span>`
-        : installed
-          ? '<span class="status-badge status-badge--success">Установлена</span>'
-          : '<span class="status-badge">Не загружена</span>';
+      const runtimeState = task ? "downloading" : getRuntimeModelState(item, installedByName);
+      const statusTone = {
+        active: "active",
+        installed: "success",
+        downloading: "warning",
+        partial: "warning",
+        configured: "muted",
+        missing: "muted",
+      }[runtimeState] || "muted";
+      const statusLabel = task ? (task.state || "running") : getRuntimeModelStatusLabel(item, installedByName);
+      const statusBadge = `<span class="status-badge status-badge--${escapeHtml(statusTone)}">${escapeHtml(statusLabel)}</span>`;
       const meta = [
         `ID: ${name}`,
+        `Runtime: ${runtimeInstalled ? "installed" : "missing"}`,
         item.category ? `Категория: ${item.category}` : null,
         item.weight ? `Вес: ${item.weight}` : null,
-        installed?.size_gb ? `${installed.size_gb} GB` : null,
-        installed?.modified_at ? formatDateTime(installed.modified_at) : null,
+        runtimeInfo?.details?.quantization ? `Quant: ${runtimeInfo.details.quantization}` : null,
+        runtimeInfo?.size_gb ? `${runtimeInfo.size_gb} GB` : null,
+        item.storage?.storage_size_gb && !runtimeInstalled ? `Storage: ${item.storage.storage_size_gb} GB` : null,
+        runtimeInfo?.modified_at ? formatDateTime(runtimeInfo.modified_at) : null,
       ].filter(Boolean).join(" • ");
-      const note = task?.message || getModelDescription(item);
+      const note = getModelRuntimeNote(item, task, installedByName);
       return `
-        <article class="model-card${installed ? " model-card--installed" : ""}${active ? " model-card--active" : ""}">
+        <article class="model-card${runtimeInstalled ? " model-card--installed" : ""}${selected ? " model-card--active" : ""} model-card--${escapeHtml(runtimeState)}">
           <div class="model-card__head">
             <div>
               <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
               <p class="model-card__meta">${escapeHtml(meta || name)}</p>
             </div>
-            <div class="model-card__badges">${statusBadge}${active ? '<span class="status-badge status-badge--active">Активна</span>' : ""}${renderModelBadges(item)}</div>
+            <div class="model-card__badges">
+              ${statusBadge}
+              ${runtimeActive ? '<span class="status-badge status-badge--active">В памяти</span>' : ""}
+              ${selected ? '<span class="status-badge status-badge--selected">Выбрана</span>' : ""}
+              ${item.partial_blob_found && !item.partial ? '<span class="status-badge status-badge--warning">Partial blob</span>' : ""}
+              ${item.configured ? '<span class="status-badge status-badge--configured">Configured</span>' : ""}
+              ${item.missing ? '<span class="status-badge status-badge--missing">Missing</span>' : ""}
+              ${renderModelBadges(item)}
+            </div>
           </div>
-          <p class="model-card__note">${escapeHtml(note || (installed ? "Модель готова к использованию в чате." : "Сначала добавьте модель локально."))}</p>
+          <p class="model-card__note">${escapeHtml(note)}</p>
           <div class="button-row">
-            ${installed && !utility ? `<button class="button ${active ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
-            ${installed ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">Добавить</button>`}
+            ${runtimeInstalled && !utility ? `<button class="button ${selected ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
+            ${runtimeInstalled ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${escapeHtml(getModelActionLabel(item, installedByName))}</button>`}
             <button class="button button--ghost" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>
-            ${installed ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
+            ${runtimeInstalled ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
             ${renderModelInfoButton(item)}
           </div>
         </article>
@@ -6826,6 +6907,7 @@ async function loadModels({ silent = false } = {}) {
       : (Array.isArray(data?.recommended) ? data.recommended : []);
     state.utilityModels = Array.isArray(data?.utility) ? data.utility : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
+    state.modelDiagnostics = data?.diagnostics || null;
     state.chatModelsError = data?.error || null;
     const savedModel = readStored(STORAGE_KEYS.llmModel, "");
     const installedModelNames = new Set(state.installedModels.map((item) => item.name));

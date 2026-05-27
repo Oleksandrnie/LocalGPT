@@ -22,6 +22,8 @@
 - `LOCAL_MODEL` может быть пустым; пустое значение означает `Модель не загружена`.
 - Startup не запускает `ollama pull`, не скачивает `qwen2.5:3b` и не пишет fallback в `.env`.
 - `/models` только читает локальный список и текущие download task statuses.
+- Source of truth для LLM install state — тот Ollama runtime, который задан в `.env` (`OLLAMA_HOST`/`LOCAL_BASE_URL`) и его `OLLAMA_MODELS_DIR`, обычно project-scoped `models/ollama`. Plain shell `ollama list` без этих env может смотреть на другой daemon/store и не отражать состояние приложения.
+- `/models` возвращает раздельные признаки `configured`, `installed`/`runtime_installed`, `active`, `downloading`, `partial`, `missing`, а также diagnostics по scanned store dirs и `*-partial` blobs. Project storage manifests не считаются installed, если configured runtime не отдаёт модель через `ollama list`.
 - `/models/pull` запускается только после явного действия пользователя и подтверждения в UI; normal progress показывается в download-card без success/progress toast и без авто-выбора ещё не установленной модели.
 - Если локальных chat-моделей нет, UI оставляет input активным, но отключает отправку и показывает toast; backend-запрос к LLM не создаётся.
 
@@ -521,6 +523,7 @@ UI component rules:
 - empty Ollama model list не запускает auto-pull;
 - chat task без выбранной модели возвращает `chat_model_not_selected` и не создаёт session;
 - readable `chat_model_missing`;
+- LLM model-state reconciliation: runtime-installed model remains installed even if an orphan `*-partial` blob exists in another store; missing runtime model with matching partial is reported as `partial`;
 - ASR Studio default model `large-v3-turbo`;
 - profile create/update with optional system prompt;
 - summary memory before short history;

@@ -8,6 +8,8 @@ import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -20,6 +22,302 @@ MODEL_PULL_PROCS: dict[str, subprocess.Popen] = {}
 MODEL_PULL_LOCK = threading.Lock()
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 PULL_LOG_TAIL_LIMIT = 80
+
+
+def _size_gb(size: Any) -> float | None:
+    if not isinstance(size, (int, float)):
+        return None
+    return round(float(size) / (1024**3), 2)
+
+
+def _file_modified_at(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+    except OSError:
+        return None
+
+
+def _digest_blob_name(digest: str) -> str:
+    return str(digest or "").replace(":", "-")
+
+
+def _partial_blob_digest(filename: str) -> str | None:
+    base = str(filename or "").split("-partial", 1)[0]
+    if not base.startswith("sha256-"):
+        return None
+    return base.replace("sha256-", "sha256:", 1)
+
+
+def _ollama_store_dirs() -> list[Path]:
+    candidates = [
+        getattr(getattr(config, "MODEL_PATHS", None), "ollama", None),
+        config.OLLAMA_ENV.get("OLLAMA_MODELS") if isinstance(config.OLLAMA_ENV, dict) else None,
+        Path.home() / ".ollama" / "models",
+    ]
+    result: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser().resolve()
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _manifest_model_name(manifest_path: Path, store_dir: Path) -> str | None:
+    try:
+        rel = manifest_path.relative_to(store_dir / "manifests")
+    except ValueError:
+        return None
+    parts = rel.parts
+    if len(parts) < 4:
+        return None
+
+    namespace = parts[1]
+    model_parts = parts[2:-1]
+    tag = parts[-1]
+    if not model_parts or not tag:
+        return None
+    if namespace == "library":
+        return f"{'/'.join(model_parts)}:{tag}"
+    return f"{namespace}/{'/'.join(model_parts)}:{tag}"
+
+
+def _inspect_storage_manifests() -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
+    storage_by_model: dict[str, dict[str, Any]] = {}
+    digest_models: dict[str, set[str]] = {}
+
+    for store_dir in _ollama_store_dirs():
+        manifests_dir = store_dir / "manifests"
+        blobs_dir = store_dir / "blobs"
+        if not manifests_dir.exists():
+            continue
+        for manifest_path in manifests_dir.rglob("*"):
+            if not manifest_path.is_file() or manifest_path.name.startswith("."):
+                continue
+            model_name = _manifest_model_name(manifest_path, store_dir)
+            if not model_name:
+                continue
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+
+            blobs: list[dict[str, Any]] = []
+            missing_blobs: list[str] = []
+            total_size = 0
+            descriptors = []
+            config_descriptor = payload.get("config")
+            if isinstance(config_descriptor, dict):
+                descriptors.append(config_descriptor)
+            layers = payload.get("layers")
+            if isinstance(layers, list):
+                descriptors.extend(item for item in layers if isinstance(item, dict))
+
+            for descriptor in descriptors:
+                digest = str(descriptor.get("digest") or "").strip()
+                if not digest:
+                    continue
+                size = descriptor.get("size")
+                if isinstance(size, (int, float)):
+                    total_size += int(size)
+                blob_path = blobs_dir / _digest_blob_name(digest)
+                present = blob_path.exists()
+                if not present:
+                    missing_blobs.append(digest)
+                blobs.append(
+                    {
+                        "digest": digest,
+                        "size": size if isinstance(size, (int, float)) else None,
+                        "size_gb": _size_gb(size),
+                        "present": present,
+                    }
+                )
+                digest_models.setdefault(digest, set()).add(model_name)
+
+            complete = bool(blobs) and not missing_blobs
+            store_entry = {
+                "store_path": str(store_dir),
+                "manifest_path": str(manifest_path),
+                "complete": complete,
+                "missing_blobs": missing_blobs,
+                "size": total_size or None,
+                "size_gb": _size_gb(total_size) if total_size else None,
+                "modified_at": _file_modified_at(manifest_path),
+            }
+            current = storage_by_model.setdefault(
+                model_name,
+                {
+                    "model": model_name,
+                    "storage_present": False,
+                    "storage_size": None,
+                    "storage_size_gb": None,
+                    "stores": [],
+                },
+            )
+            current["stores"].append(store_entry)
+            if complete:
+                current["storage_present"] = True
+            if total_size and (not current.get("storage_size") or total_size > int(current.get("storage_size") or 0)):
+                current["storage_size"] = total_size
+                current["storage_size_gb"] = _size_gb(total_size)
+
+    return storage_by_model, digest_models
+
+
+def _list_partial_blobs(digest_models: dict[str, set[str]]) -> list[dict[str, Any]]:
+    partials: list[dict[str, Any]] = []
+    for store_dir in _ollama_store_dirs():
+        blobs_dir = store_dir / "blobs"
+        if not blobs_dir.exists():
+            continue
+        for path in blobs_dir.glob("*-partial*"):
+            if not path.is_file():
+                continue
+            digest = _partial_blob_digest(path.name)
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = None
+            partials.append(
+                {
+                    "path": str(path),
+                    "filename": path.name,
+                    "store_path": str(store_dir),
+                    "digest": digest,
+                    "size": size,
+                    "size_gb": _size_gb(size),
+                    "modified_at": _file_modified_at(path),
+                    "model_candidates": sorted(digest_models.get(digest or "", set())),
+                }
+            )
+    partials.sort(key=lambda item: int(item.get("size") or 0), reverse=True)
+    return partials
+
+
+def _partial_models_by_name(partials: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for partial in partials:
+        candidates = partial.get("model_candidates")
+        if not isinstance(candidates, list):
+            continue
+        for model_name in candidates:
+            target = str(model_name or "").strip()
+            if not target:
+                continue
+            entry = result.setdefault(
+                target,
+                {
+                    "model": target,
+                    "count": 0,
+                    "size": 0,
+                    "size_gb": 0,
+                    "largest_blob": None,
+                    "store_paths": [],
+                },
+            )
+            size = int(partial.get("size") or 0)
+            entry["count"] = int(entry.get("count") or 0) + 1
+            entry["size"] = int(entry.get("size") or 0) + size
+            entry["size_gb"] = _size_gb(entry["size"])
+            if size > int((entry.get("largest_blob") or {}).get("size") or 0):
+                entry["largest_blob"] = partial
+            store_path = partial.get("store_path")
+            if store_path and store_path not in entry["store_paths"]:
+                entry["store_paths"].append(store_path)
+    return result
+
+
+def _show_model_details(model_name: str) -> dict[str, Any]:
+    target = str(model_name or "").strip()
+    if not target:
+        return {}
+    try:
+        result = subprocess.run(
+            ["ollama", "show", target],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+            env=config.OLLAMA_ENV,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return {}
+    if result.returncode != 0:
+        return {}
+
+    details: dict[str, Any] = {}
+    for line in (result.stdout or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        key, _, value = stripped.partition(" ")
+        normalized_key = key.strip().lower().replace(" ", "_")
+        clean_value = value.strip()
+        if normalized_key in {"architecture", "parameters", "quantization"} and clean_value:
+            details[normalized_key] = clean_value
+        elif stripped.startswith("context length"):
+            details["context_length"] = stripped.removeprefix("context length").strip()
+        elif stripped.startswith("embedding length"):
+            details["embedding_length"] = stripped.removeprefix("embedding length").strip()
+    return details
+
+
+def _list_active_models() -> list[dict[str, Any]]:
+    try:
+        result = subprocess.run(
+            ["ollama", "ps"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+            env=config.OLLAMA_ENV,
+        )
+    except FileNotFoundError as exc:  # pragma: no cover - зависит от окружения
+        raise HTTPException(status_code=500, detail="Ollama не установлена или недоступна.") from exc
+    except subprocess.SubprocessError as exc:  # pragma: no cover - зависит от окружения
+        raise HTTPException(status_code=500, detail="Ошибка обращения к Ollama.") from exc
+
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout or "не удалось получить список активных моделей").strip()
+        raise HTTPException(status_code=500, detail={"code": "ollama_ps_failed", "message": msg})
+
+    active: list[dict[str, Any]] = []
+    for line in (result.stdout or "").splitlines():
+        raw = line.strip()
+        if not raw or raw.lower().startswith("name "):
+            continue
+        parts = raw.split()
+        if not parts:
+            continue
+        active.append(
+            {
+                "name": parts[0],
+                "id": parts[1] if len(parts) > 1 else None,
+                "size_label": " ".join(parts[2:4]) if len(parts) > 3 else None,
+                "processor": parts[4] if len(parts) > 4 else None,
+                "context": parts[5] if len(parts) > 5 else None,
+                "until": " ".join(parts[6:]) if len(parts) > 6 else None,
+            }
+        )
+    return active
+
+
+def _status_label(state: str) -> str:
+    return {
+        "active": "Активна",
+        "installed": "Установлена",
+        "downloading": "Загружается",
+        "partial": "Недокачана",
+        "configured": "Настроена, но не установлена",
+        "missing": "Отсутствует",
+    }.get(state, state)
 
 
 def _normalize_pull_error_message(candidate: Any) -> str:
@@ -166,6 +464,9 @@ def _list_local_models() -> list[dict[str, Any]]:
             name = (payload.get("model") or payload.get("name") or "").strip()
             size = payload.get("size")
             modified_at = payload.get("modified_at")
+            digest = payload.get("digest") or payload.get("id")
+            size_label = None
+            details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
         except json.JSONDecodeError:
             parts = raw.split()
             if not parts:
@@ -173,12 +474,27 @@ def _list_local_models() -> list[dict[str, Any]]:
             name = parts[0]
             size = None
             modified_at = None
+            digest = parts[1] if len(parts) > 1 else None
+            size_label = " ".join(parts[2:4]) if len(parts) > 3 else None
+            modified_at = " ".join(parts[4:]) if len(parts) > 4 else None
+            details = {}
+        if not name:
+            continue
+        runtime_details = _show_model_details(name)
+        if runtime_details:
+            details = {**details, **runtime_details}
         models.append(
             {
                 "name": name,
+                "id": digest,
+                "digest": digest,
                 "size": size,
-                "size_gb": round(size / (1024**3), 2) if isinstance(size, (int, float)) else None,
+                "size_gb": _size_gb(size),
+                "size_label": size_label,
                 "modified_at": modified_at,
+                "installed": True,
+                "runtime_installed": True,
+                "details": details,
             }
         )
     return models
@@ -396,35 +712,119 @@ def list_models() -> dict[str, Any]:
         installed = []
         error = exc.detail
         LOGGER.warning("Оllama list failed: %s", exc.detail)
+    active_error = None
+    try:
+        active = _list_active_models()
+    except HTTPException as exc:
+        active = []
+        active_error = exc.detail
+        LOGGER.warning("Оllama ps failed: %s", exc.detail)
+
     downloads = _pull_statuses()
-    installed_names = {item.get("name") for item in installed if item.get("name")}
-    catalog = [
-        {
+    storage_by_model, digest_models = _inspect_storage_manifests()
+    partial_blobs = _list_partial_blobs(digest_models)
+    partial_by_model = _partial_models_by_name(partial_blobs)
+
+    active_names = {item.get("name") for item in active if item.get("name")}
+    installed_by_name = {item.get("name"): item for item in installed if item.get("name")}
+    installed_names = set(installed_by_name)
+    configured_ids = {
+        item.get("id")
+        for item in [*config.MODEL_CATALOG, *getattr(config, "UTILITY_MODEL_CATALOG", [])]
+        if item.get("id")
+    }
+    download_by_model = {
+        item.get("model"): item
+        for item in downloads
+        if item.get("model") and item.get("state") in {"pending", "running", "paused"}
+    }
+
+    for item in installed:
+        name = item.get("name")
+        if not name:
+            continue
+        item["configured"] = name in configured_ids
+        item["active"] = name in active_names
+        item["downloading"] = name in download_by_model
+        item["partial"] = name in partial_by_model and name not in installed_names
+        item["partial_blob_found"] = name in partial_by_model
+        item["missing"] = False
+        item["not_installed"] = False
+        item["state"] = "active" if item["active"] else "installed"
+        item["status"] = item["state"]
+        item["status_label"] = _status_label(item["state"])
+        if storage_by_model.get(name):
+            item["storage"] = storage_by_model[name]
+
+    def _catalog_item(item: dict[str, Any]) -> dict[str, Any]:
+        model_id = str(item.get("id") or "").strip()
+        installed_info = installed_by_name.get(model_id)
+        download_info = download_by_model.get(model_id)
+        partial_info = partial_by_model.get(model_id)
+        storage_info = storage_by_model.get(model_id)
+        runtime_installed = bool(installed_info)
+        active_now = model_id in active_names
+        downloading_now = bool(download_info and download_info.get("state") in {"pending", "running", "paused"})
+        partial_now = bool(partial_info and not runtime_installed)
+
+        if downloading_now:
+            state = "downloading"
+        elif active_now:
+            state = "active"
+        elif runtime_installed:
+            state = "installed"
+        elif partial_now:
+            state = "partial"
+        else:
+            state = "configured"
+
+        return {
             **item,
-            "name": item.get("id"),
+            "name": model_id,
             "label": item.get("title"),
-            "installed": item.get("id") in installed_names,
+            "configured": True,
+            "installed": runtime_installed,
+            "runtime_installed": runtime_installed,
+            "active": active_now,
+            "downloading": downloading_now,
+            "partial": partial_now,
+            "partial_blob_found": bool(partial_info),
+            "missing": not runtime_installed,
+            "not_installed": not runtime_installed,
             "selected": False,
+            "state": state,
+            "status": state,
+            "status_label": _status_label(state),
+            "runtime": installed_info,
+            "download": download_info,
+            "partial_info": partial_info,
+            "storage": storage_info,
         }
-        for item in config.MODEL_CATALOG
-    ]
-    utility = [
-        {
-            **item,
-            "name": item.get("id"),
-            "label": item.get("title"),
-            "installed": item.get("id") in installed_names,
-            "selected": False,
-        }
-        for item in getattr(config, "UTILITY_MODEL_CATALOG", [])
-    ]
+
+    catalog = [_catalog_item(item) for item in config.MODEL_CATALOG]
+    utility = [_catalog_item(item) for item in getattr(config, "UTILITY_MODEL_CATALOG", [])]
     return {
         "installed": installed,
         "models": [item.get("name") for item in installed if item.get("name")],
+        "active": active,
         "catalog": catalog,
         "utility": utility,
         "recommended": catalog,
         "downloads": downloads,
+        "partial_blobs": partial_blobs,
+        "storage_models": list(storage_by_model.values()),
+        "diagnostics": {
+            "runtime_installed_models": sorted(installed_names),
+            "active_models": sorted(active_names),
+            "configured_models": sorted(configured_ids),
+            "configured_ollama_models_dir": str(config.MODEL_PATHS.ollama),
+            "ollama_host": config.OLLAMA_ENV.get("OLLAMA_HOST"),
+            "base_url": config.SETTINGS.base_url,
+            "scanned_ollama_store_dirs": [str(path) for path in _ollama_store_dirs()],
+            "partial_blob_count": len(partial_blobs),
+            "storage_model_count": len(storage_by_model),
+            "active_error": active_error,
+        },
         "error": error,
     }
 

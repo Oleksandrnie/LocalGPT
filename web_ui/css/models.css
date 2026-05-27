@@ -40,6 +40,19 @@
     background: rgba(16, 185, 129, 0.08);
 }
 
+.model-chip.is-partial,
+.model-chip.is-downloading {
+    border-color: rgba(211, 164, 88, 0.45);
+    color: #f2cb90;
+    background: rgba(211, 164, 88, 0.08);
+}
+
+.model-chip.is-missing,
+.model-chip.is-configured {
+    border-color: rgba(148, 163, 184, 0.28);
+    color: var(--color-text-muted);
+}
+
 .model-chip__hint {
     display: block;
     font-size: 11px;

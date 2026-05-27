@@ -34,6 +34,7 @@
 
 ## Последние изменения (по свежим коммитам)
 
+- **2026-05-26** — LLM model state reconciled with the configured project-scoped Ollama runtime: `/models` now separates `configured`, `installed`, `active`, `downloading`, `partial` and `missing`, shows the active `OLLAMA_HOST`/store in diagnostics, and does not treat orphan partial blobs in `~/.ollama` as installed app models.
 - **2026-05-22** — LAN runtime синхронизирован с `.env`: `LOCALGPT_PORT`/`LAN_HTTPS_PORT` теперь учитываются launcher-ами, CORS по умолчанию ограничен private/local-origin regex вместо `*`.
 - **2026-05-22** — добавлен Plugin Registry v0 и Tailscale private-tailnet remote access: plugins disabled by default, `plugins/` metadata-only, trusted handler для `tailscale`, меню копирования LAN/Tailscale адресов и security docs.
 - **2026-05-07** — chat UI получил typewriter-buffer для SSE `delta`: ответ модели отображается более плавно, а скорость печати регулируется константами `STREAM_TYPEWRITER_*` в `web_ui/js/app.js`.
@@ -478,6 +479,10 @@ LOCALGPT_CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1|\[::1\]|192\.
 ## LLM-модели и загрузка
 
 Приложение запускается без LLM-модели. Если локальных Ollama chat-моделей нет, UI показывает состояние `Нет доступных моделей` / `Модель не загружена`.
+
+Состояние LLM-моделей определяется по Ollama runtime из `.env`: `OLLAMA_HOST`/`LOCAL_BASE_URL` и `OLLAMA_MODELS_DIR`. Если приложение использует project-scoped `models/ollama` на отдельном host/port, обычный `ollama list` в терминале без этих переменных может показывать другой default-store (`~/.ollama`) и не совпадать с UI.
+
+`/models` различает `configured`, `installed`, `active`, `downloading`, `partial` и `missing`. Partial blobs в другом storage показываются как диагностика, но не отменяют `installed`, если configured runtime уже видит модель через `ollama list`.
 
 Поведение без модели:
 
