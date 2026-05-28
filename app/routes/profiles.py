@@ -272,6 +272,8 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
             updates.setdefault("asr", {})["beam_size"] = _normalize_asr_beam_size(req.asr.beam_size)
         if req.asr.threads is not None:
             updates.setdefault("asr", {})["threads"] = _normalize_asr_threads(req.asr.threads)
+        if req.asr.analysis_prompt is not None:
+            updates.setdefault("asr", {})["analysis_prompt"] = str(req.asr.analysis_prompt or "").strip()[:4000]
 
     if req.tts:
         if req.tts.provider is not None:

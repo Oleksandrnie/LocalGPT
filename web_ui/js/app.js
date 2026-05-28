@@ -7,6 +7,7 @@ const ASR_DEFAULT_BEAM_SIZE = 5;
 const ASR_DEFAULT_THREADS = 4;
 const ASR_PROMPT_PRESETS = ["auto", "ru", "en"];
 const ASR_FULL_ANALYSIS_WARNING = "Полный анализ запускает все стадии ASR pipeline и может заметно нагружать CPU/GPU, повышать температуру Mac и держать Ollama занятой несколько минут. Включайте и запускайте его только осознанно.";
+const ASR_PIPELINE_DISABLED_VALUE = "__disabled__";
 const CREATE_PROFILE_VALUE = "__create_profile__";
 const AUTO_MODEL_ID = "__auto_router__";
 const AUTO_MODEL_TITLE = "Auto / Smart Router";
@@ -335,6 +336,7 @@ const els = {
   promptPresetSelect: document.getElementById("promptPresetSelect"),
   asrBeamSizeInput: document.getElementById("asrBeamSizeInput"),
   asrThreadsInput: document.getElementById("asrThreadsInput"),
+  asrAnalysisPromptInput: document.getElementById("asrAnalysisPromptInput"),
   asrPipelineSettingsPanel: document.getElementById("asrPipelineSettingsPanel"),
   asrPipelineSettingsSummary: document.getElementById("asrPipelineSettingsSummary"),
   asrPipelineSettingsToggleButton: document.getElementById("asrPipelineSettingsToggleButton"),
@@ -3656,15 +3658,18 @@ function getAsrPipelineStageSettings(stageKey) {
   });
 }
 
-function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
+function pipelineModelOptionsHtml(selectedValue = "", stageKey = "", stageEnabled = true) {
   const selected = String(selectedValue || "").trim();
   const selectedLlm = String(state.selectedLlmModel || "").trim();
   const installedNames = new Set(state.installedModels.map((item) => String(item?.name || "").trim()).filter(Boolean));
   const stageRecommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey] || null;
   const fallbackLabel = selectedLlm ? `Текущая LLM (${selectedLlm})` : "Текущая LLM";
-  const options = [`<option value=""${selected ? "" : " selected"}>${escapeHtml(fallbackLabel)}</option>`];
+  const options = [
+    `<option value="${ASR_PIPELINE_DISABLED_VALUE}"${stageEnabled ? "" : " selected"}>Не использовать</option>`,
+    `<option value=""${stageEnabled && !selected ? " selected" : ""}>${escapeHtml(fallbackLabel)}</option>`,
+  ];
 
-  if (selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)) {
+  if (stageEnabled && selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)) {
     const legacyLabel = ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected)
       ? `${selected} (legacy, замените)`
       : `${selected} (вне каталога)`;
@@ -3687,7 +3692,7 @@ function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
     }
     const label = `${item.id}${markers.length ? ` (${markers.join(", ")})` : ""}`;
     options.push(
-      `<option value="${escapeHtml(item.id)}"${item.id === selected ? " selected" : ""}>${escapeHtml(label)}</option>`,
+      `<option value="${escapeHtml(item.id)}"${stageEnabled && item.id === selected ? " selected" : ""}>${escapeHtml(label)}</option>`,
     );
   });
 
@@ -3697,6 +3702,14 @@ function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
 function pipelineStageRecommendationHtml(stageKey, selectedModel = "") {
   const recommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey];
   if (!recommendation) return "";
+  const stageSettings = getAsrPipelineStageSettings(stageKey);
+  if (stageSettings.enabled === false) {
+    return `
+      <p class="pipeline-stage-row__recommendation">
+        <strong>Стадия выключена.</strong> Она не будет использоваться, пока в поле модели выбран пункт «Не использовать».
+      </p>
+    `;
+  }
   const selected = String(selectedModel || "").trim();
   const altText = recommendation.alternatives
     .map((modelId) => modelId)
@@ -3758,12 +3771,17 @@ function renderAsrPipelineSettings() {
     els.asrFullAnalysisEnabledToggle.disabled = !profile;
     els.asrFullAnalysisEnabledToggle.checked = asrFullAnalysisEnabled();
   }
+  if (els.asrAnalysisPromptInput && document.activeElement !== els.asrAnalysisPromptInput) {
+    els.asrAnalysisPromptInput.disabled = !profile;
+    els.asrAnalysisPromptInput.value = String(getActiveProfilePreferences()?.asr?.analysis_prompt || "");
+  }
   if (!els.asrPipelineSettingsGrid) return;
 
   clearEnhancedSelectsIn(els.asrPipelineSettingsGrid);
   els.asrPipelineSettingsGrid.innerHTML = ASR_PIPELINE_STAGES
     .map((stage) => {
       const settings = getAsrPipelineStageSettings(stage.key);
+      const stageDisabled = settings.enabled === false;
       return `
         <article class="pipeline-stage-row">
           <div class="pipeline-stage-row__title">
@@ -3773,16 +3791,16 @@ function renderAsrPipelineSettings() {
           <label class="field">
             <span class="field__label">Модель</span>
             <select class="field__control" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="model"${disabled ? " disabled" : ""}>
-              ${pipelineModelOptionsHtml(settings.model, stage.key)}
+              ${pipelineModelOptionsHtml(settings.model, stage.key, !stageDisabled)}
             </select>
           </label>
           <label class="field">
             <span class="field__label">Temp</span>
-            <input class="field__control" type="number" min="0" max="2" step="0.05" value="${escapeHtml(String(settings.temperature))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="temperature"${disabled ? " disabled" : ""} />
+            <input class="field__control" type="number" min="0" max="2" step="0.05" value="${escapeHtml(String(settings.temperature))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="temperature"${disabled || stageDisabled ? " disabled" : ""} />
           </label>
           <label class="field">
             <span class="field__label">Max tokens</span>
-            <input class="field__control" type="number" min="1" step="1" value="${escapeHtml(String(settings.max_tokens))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="max_tokens"${disabled ? " disabled" : ""} />
+            <input class="field__control" type="number" min="1" step="1" value="${escapeHtml(String(settings.max_tokens))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="max_tokens"${disabled || stageDisabled ? " disabled" : ""} />
           </label>
           ${pipelineStageRecommendationHtml(stage.key, settings.model)}
         </article>
@@ -3819,9 +3837,11 @@ function collectAsrPipelineSettingsFromControls() {
     const maxTokensControl = getAsrPipelineControl(stage.key, "max_tokens");
     const temperature = parseOptionalNumber(temperatureControl?.value, "float");
     const maxTokens = parseOptionalNumber(maxTokensControl?.value, "int");
+    const selectedModel = String(modelControl?.value ?? current.model ?? "").trim();
+    const stageEnabled = selectedModel !== ASR_PIPELINE_DISABLED_VALUE;
     acc[stage.key] = {
-      enabled: current.enabled !== false,
-      model: String(modelControl?.value ?? current.model ?? "").trim(),
+      enabled: stageEnabled,
+      model: stageEnabled ? selectedModel : String(current.model || ASR_PIPELINE_DEFAULTS[stage.key]?.model || "").trim(),
       temperature: temperature ?? current.temperature,
       max_tokens: maxTokens ?? current.max_tokens,
     };
@@ -3860,6 +3880,9 @@ function renderWhisperControls() {
   }
   if (els.asrThreadsInput) {
     els.asrThreadsInput.value = String(normalizeAsrThreads(state.selectedAsrThreads));
+  }
+  if (els.asrAnalysisPromptInput && document.activeElement !== els.asrAnalysisPromptInput) {
+    els.asrAnalysisPromptInput.value = String(getActiveProfilePreferences()?.asr?.analysis_prompt || "");
   }
 
   if (els.asrSettingsStatus) {
@@ -8675,6 +8698,15 @@ function bindEvents() {
   els.asrPipelineSettingsToggleButton?.addEventListener("click", () => {
     setAsrPipelineSettingsExpanded(!state.asrPipelineSettingsExpanded);
   });
+  els.asrPipelineSettingsGrid?.addEventListener("change", (event) => {
+    const control = event.target instanceof Element ? event.target.closest("[data-asr-pipeline-field='model']") : null;
+    if (!(control instanceof HTMLSelectElement)) return;
+    const row = control.closest(".pipeline-stage-row");
+    const disabledStage = control.value === ASR_PIPELINE_DISABLED_VALUE;
+    row?.querySelectorAll("[data-asr-pipeline-field='temperature'], [data-asr-pipeline-field='max_tokens']").forEach((input) => {
+      input.disabled = disabledStage;
+    });
+  });
 
   els.llmModelSelect?.addEventListener("change", async () => {
     await applySelectedLlmModel(els.llmModelSelect.value || "");
@@ -8734,6 +8766,14 @@ function bindEvents() {
     const updated = await saveActiveProfilePreferences({ asr: { threads } });
     if (!updated) return;
     setFooter(`Профиль обновлён: ASR threads ${threads}`, "success");
+  });
+
+  els.asrAnalysisPromptInput?.addEventListener("change", async () => {
+    const analysisPrompt = String(els.asrAnalysisPromptInput.value || "").trim();
+    els.asrAnalysisPromptInput.value = analysisPrompt;
+    const updated = await saveActiveProfilePreferences({ asr: { analysis_prompt: analysisPrompt } });
+    if (!updated) return;
+    setFooter(analysisPrompt ? "Профиль обновлён: ASR контекст анализа сохранён." : "Профиль обновлён: ASR контекст анализа очищен.", "success");
   });
 
   els.ttsVoiceSelect?.addEventListener("change", async () => {

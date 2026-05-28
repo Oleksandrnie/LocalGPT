@@ -121,6 +121,7 @@ def _default_profile_preferences() -> dict[str, Any]:
             "prompt_preset": "ru",
             "beam_size": config.SETTINGS.whisper_beam_size,
             "threads": config.SETTINGS.whisper_cpp_threads,
+            "analysis_prompt": "",
         },
         "tts": {
             "provider": config.SETTINGS.tts_default_provider,

@@ -901,10 +901,17 @@ def _log_pipeline_event(payload: dict[str, Any]) -> None:
         LOGGER.warning("Failed to write pipeline log: %s", exc)
 
 
+def _asr_analysis_context(settings: dict[str, Any]) -> str:
+    return str((settings or {}).get("_asr_analysis_prompt") or "").strip()
+
+
 def _resolve_settings(profile_id: int, model_name: str | None = None) -> dict[str, Any]:
     model = model_name or config.SETTINGS.model
     settings = db.effective_settings(profile_id, model, config.DEFAULT_SETTINGS).get("effective") or {}
+    profile = db.get_profile(profile_id) or {}
+    asr_preferences = ((profile.get("preferences") or {}).get("asr") or {}) if isinstance(profile, dict) else {}
     settings["_fallback_model"] = model
+    settings["_asr_analysis_prompt"] = str(asr_preferences.get("analysis_prompt") or "").strip()[:4000]
     return settings
 
 
@@ -973,6 +980,8 @@ def run_transcript_pipeline(
     structured_chunks: list[dict[str, Any]] = []
     structured: dict[str, Any] | list[Any] | None = None
     summary: str | None = None
+    analysis_context = _asr_analysis_context(settings)
+    analysis_context_block = f"Контекст анализа профиля:\n{analysis_context}\n\n" if analysis_context else ""
 
     if stage_enabled["cleaner"]:
         stage_cfg = _stage_settings(settings, "cleaner")
@@ -1107,6 +1116,7 @@ def run_transcript_pipeline(
                         "Return only one valid JSON object. All field values must be in Russian. Do not add facts. "
                         "Separate confirmed decisions, proposals, agreements, tasks, risks, open questions, and next steps. "
                         "If the discussion compares current and target architecture/process/state, extract both explicitly. "
+                        "If the same topic, constraint or action is repeated in different words, treat the repetition as an importance signal. "
                         f"{ASR_SUMMARY_GUARDRAILS_RU}"
                     ),
                 },
@@ -1133,8 +1143,10 @@ def run_transcript_pipeline(
                         "Поле tasks должно быть пригодно для постановки задачи: короткое действие + отдельный контекст/основание. "
                         "Если есть противопоставление 'сейчас' и 'цель', не смешивай их: заполни current_state и target_state. "
                         "Не помещай в decisions то, что было только предложено, обсуждалось как гипотеза или требует подтверждения. "
+                        "Если важный пункт повторяется разными словами, сохрани его как значимую тему/задачу/уточнение, а не удаляй как шум. "
                         "Если данных нет, пиши 'не указано', 'не зафиксировано' или 'требует уточнения'. "
                         "Не переводись на английский, даже если модель обычно отвечает на английском.\n\n"
+                        f"{analysis_context_block}"
                         f"{json.dumps(chunk_mapping, ensure_ascii=False)}"
                     ),
                 },
@@ -1481,6 +1493,9 @@ def generate_summary(
         settings=settings,
         chunk_count=chunk_count,
     )
+    analysis_context = _asr_analysis_context(settings)
+    analysis_context_block = f"Контекст анализа профиля:\n{analysis_context}\n\n" if analysis_context else ""
+    retry_analysis_context_block = f"profile_analysis_context:\n{analysis_context}\n\n" if analysis_context else ""
     prompt = [
         {
             "role": "system",
@@ -1490,6 +1505,7 @@ def generate_summary(
                 "Do not label proposals as decisions. If source_mode is chunked_merge, treat structured and "
                 "coverage_topics as merged evidence from the full transcript, including the end of the meeting. "
                 "When evidence has current_state and target_state, describe both and do not collapse one into the other. "
+                "If the same topic, constraint or action is repeated in different words, treat the repetition as an importance signal. "
                 f"{ASR_SUMMARY_GUARDRAILS_RU}"
             ),
         },
@@ -1505,8 +1521,10 @@ def generate_summary(
                 "Но если в structured есть decisions или agreements, не пиши, что решения не зафиксированы. "
                 "Покрой все крупные темы из coverage_topics; не ограничивайся началом transcript. "
                 "Если structured содержит current_state/target_state, явно отдели текущее состояние от целевого. "
+                "Если важный пункт повторяется разными словами, отрази его как значимую тему/задачу/уточнение. "
                 "Если технический термин выглядит как ошибка ASR или смешение понятий, вынеси его в вопросы для уточнения. "
                 "Не назначай ответственных, если они не подтверждены явно.\n\n"
+                f"{analysis_context_block}"
                 f"{json.dumps(summary_input, ensure_ascii=False)}"
             ),
         },
@@ -1543,6 +1561,7 @@ def generate_summary(
                 "Regenerate the Russian transcript summary. Keep the same markdown sections. Do not add facts. "
                 "You must explain every missing topic from the user message in the appropriate section, not merely mention one keyword. "
                 "Keep proposals separate from confirmed decisions. "
+                "Repeated source points are importance signals and must not be dropped as cleanup noise. "
                 "If a technical term looks ambiguous in ASR evidence, mark it as requiring clarification instead of inventing a normalized term. "
                 f"{ASR_SUMMARY_GUARDRAILS_RU}"
             ),
@@ -1554,6 +1573,7 @@ def generate_summary(
                 "Сгенерируй полную финальную версию summary, обязательно раскрыв missing_topics смыслом, а не одним словом.\n\n"
                 f"missing_topics:\n{json.dumps(missing_topics, ensure_ascii=False, indent=2)}\n\n"
                 f"previous_summary:\n{checked_summary}\n\n"
+                f"{retry_analysis_context_block}"
                 f"merged_evidence:\n{json.dumps(summary_input, ensure_ascii=False)}"
             ),
         },

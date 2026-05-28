@@ -831,6 +831,13 @@
                             <input id="asrThreadsInput" class="field__control" type="number" min="0" max="32" step="1" />
                             <span class="field__description">Потоки CPU для whisper.cpp. 4 — базовый стабильный вариант; 0 оставляет авто/настройку окружения.</span>
                         </label>
+
+                        <label class="field">
+                            <span class="field__label">Контекст анализа</span>
+                            <textarea id="asrAnalysisPromptInput" class="field__control" rows="4"
+                                placeholder="Например: я IT-специалист; повторы в речи часто означают важные задачи или уточнения; различай текущее состояние, цель, гипотезы и решения."></textarea>
+                            <span class="field__description">Профильный system prompt для ASR summary/structure. Не влияет на Whisper-транскрибацию.</span>
+                        </label>
                     </div>
 
                     <section class="pipeline-settings-panel" id="asrPipelineSettingsPanel">
