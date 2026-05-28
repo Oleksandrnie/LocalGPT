@@ -55,17 +55,33 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
     def test_default_pipeline_uses_current_catalog_and_token_budget(self):
         expected = {
-            "cleaner": ("qwen2.5:3b-instruct", 6000),
-            "segmenter": ("qwen2.5:3b-instruct", 6000),
-            "speaker_resolver": ("qwen2.5:7b-instruct", 4000),
-            "structurer": ("qwen3:8b", 3500),
-            "summary": ("mistral-nemo:12b", 3000),
+            "cleaner": ("qwen2.5:7b-instruct", 0, 9000),
+            "segmenter": ("qwen2.5:7b-instruct", 0.05, 8000),
+            "speaker_resolver": ("qwen2.5:7b-instruct", 0.1, 4000),
+            "structurer": ("qwen3:8b", 0.1, 8000),
+            "summary": ("mistral-nemo:12b", 0.1, 8000),
         }
 
-        for stage, (model, max_tokens) in expected.items():
+        for stage, (model, temperature, max_tokens) in expected.items():
             with self.subTest(stage=stage):
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["model"], model)
+                self.assertEqual(config.DEFAULT_PIPELINE[stage]["temperature"], temperature)
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["max_tokens"], max_tokens)
+
+    def test_custom_pipeline_settings_override_updated_defaults(self):
+        db.upsert_model_settings(
+            self.profile_id,
+            "qwen2.5:7b-instruct",
+            pipeline={"cleaner": {"model": "qwen2.5:3b-instruct", "temperature": 0.2, "max_tokens": 1234}},
+        )
+
+        settings = db.effective_settings(self.profile_id, "qwen2.5:7b-instruct", config.DEFAULT_SETTINGS)
+        pipeline_settings = settings["effective"]["pipeline"]
+
+        self.assertEqual(pipeline_settings["cleaner"]["model"], "qwen2.5:3b-instruct")
+        self.assertEqual(pipeline_settings["cleaner"]["max_tokens"], 1234)
+        self.assertEqual(pipeline_settings["segmenter"]["model"], "qwen2.5:7b-instruct")
+        self.assertEqual(pipeline_settings["segmenter"]["max_tokens"], 8000)
 
     def test_profile_create_and_update_accept_system_prompt(self):
         profile = profile_routes.create_profile(
@@ -800,6 +816,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertFalse(any("beta_unique_profile_fact" in item["content"] for item in results))
 
     def test_pipeline_summary_uses_cleaned_text_and_sanitizes_speakers(self):
+        db.update_profile_preferences(self.profile_id, {"settings": {"asr_full_analysis_enabled": True}})
         transcript = db.create_transcript(
             profile_id=self.profile_id,
             name="Call",
@@ -841,12 +858,92 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(saved_transcript["structured_json"]["topic"], "demo")
         self.assertTrue(saved_transcript["name"])
 
+    def test_incomplete_summary_section_lists_remaining_coverage_topics(self):
+        topic_a = "tokena tokenb tokenc"
+        topic_b = "tokend tokene tokenf"
+        structured = {
+            "topic": "demo",
+            "coverage_topics": [topic_a, topic_b],
+            "chunk_count": 2,
+            "decisions": [],
+            "tasks": [],
+        }
+
+        missing = pipeline._missing_coverage_topics("tokena", structured, chunk_count=2)
+        summary = pipeline._append_incomplete_summary_section("## test", missing)
+
+        self.assertEqual(missing, [topic_a, topic_b])
+        self.assertIn("## Неполное summary: не удалось покрыть следующие темы", summary)
+        self.assertIn(topic_a, summary)
+        self.assertIn(topic_b, summary)
+
+    def test_segment_digest_preserves_start_and_end_when_compacted(self):
+        mapping = [
+            {
+                "segment_id": index,
+                "chunk_id": index // 3,
+                "speaker": "Unknown speaker",
+                "text": f"segment_{index:02d} " + ("neutral words " * 12),
+            }
+            for index in range(30)
+        ]
+
+        digest = pipeline._segment_digest_for_summary(mapping, max_chars=1300)
+        digest_text = json.dumps(digest, ensure_ascii=False)
+
+        self.assertIn("segment_00", digest_text)
+        self.assertIn("segment_29", digest_text)
+        self.assertIn("middle_segments_omitted_from_digest", digest_text)
+
+    def test_topic_coverage_requires_more_than_single_keyword_for_multiword_topic(self):
+        topic = "tokena tokenb tokenc tokend tokene"
+
+        self.assertFalse(pipeline._topic_is_covered(topic, "tokena"))
+        self.assertFalse(pipeline._topic_is_covered(topic, "tokena tokenb"))
+        self.assertTrue(pipeline._topic_is_covered(topic, "tokena tokenb tokenc tokend tokene"))
+
+    def test_summary_demotes_unconfirmed_decisions_to_proposals(self):
+        warnings: list[str] = []
+        summary = (
+            "## Ключевые решения\n"
+            "- проверить tokena\n"
+            "- решили tokenb\n"
+            "## Предложения / варианты дальнейших действий\n"
+            "- не зафиксировано"
+        )
+
+        summary = pipeline._demote_unconfirmed_decisions_section(summary, warnings)
+
+        self.assertTrue(any(item.startswith("summary_decisions_demoted:1") for item in warnings))
+        decisions = summary.split("## Ключевые решения", 1)[1].split("##", 1)[0]
+        proposals = summary.split("## Предложения / варианты дальнейших действий", 1)[1].split("##", 1)[0]
+        self.assertNotIn("проверить tokena", decisions)
+        self.assertIn("решили tokenb", decisions)
+        self.assertIn("проверить tokena", proposals)
+
+    def test_structured_normalization_keeps_current_and_target_state_generic(self):
+        warnings: list[str] = []
+        normalized = pipeline._normalize_structured_output(
+            {
+                "topic": "demo",
+                "current": "statea stateb statec",
+                "target": "statex statey statez",
+            },
+            warnings,
+        )
+        merged = pipeline._merge_structured_outputs([normalized])
+
+        self.assertEqual(normalized["current_state"], "statea stateb statec")
+        self.assertEqual(normalized["target_state"], "statex statey statez")
+        self.assertIn("statea stateb statec", merged["coverage_topics"])
+        self.assertIn("statex statey statez", merged["coverage_topics"])
+
     def test_pipeline_tasks_are_normalized_for_transcript_record(self):
         transcript = db.create_transcript(profile_id=self.profile_id, name="Call", content="raw call")
         responses = [
             "clean call",
             '[{"segment_id": 1, "text": "clean call"}]',
-            '{"theme": "Website pricing", "summary": "Нужно уточнить цены.", "tasks": [{"title": "Уточнить источник цены", "details": "В разговоре неясно, откуда берется старая цена.", "owner": "не указано", "status": "open"}], "solutions": ["Провести диагностику"], "responsible": "Unknown speaker", "schedules": "not specified"}',
+            '{"theme": "marker_topic", "summary": "marker_summary", "tasks": [{"title": "marker_task", "details": "marker_context", "owner": "не указано", "status": "open"}], "solutions": ["marker_solution"], "responsible": "Unknown speaker", "schedules": "not specified"}',
         ]
 
         with (
@@ -861,11 +958,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
             run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="balanced", action="tasks")
 
         task = run["structured_json"]["tasks"][0]
-        self.assertEqual(task["task"], "Уточнить источник цены")
-        self.assertIn("старая цена", task["context"])
+        self.assertEqual(task["task"], "marker_task")
+        self.assertIn("marker_context", task["context"])
         saved_transcript = db.get_transcript(transcript["id"])
-        self.assertEqual(saved_transcript["summary"], "Нужно уточнить цены.")
-        self.assertEqual(saved_transcript["structured_json"]["tasks"][0]["task"], "Уточнить источник цены")
+        self.assertEqual(saved_transcript["summary"], "marker_summary")
+        self.assertEqual(saved_transcript["structured_json"]["tasks"][0]["task"], "marker_task")
 
     def test_speaker_overrides_are_saved_and_summary_regenerates(self):
         transcript = db.create_transcript(profile_id=self.profile_id, name="Call", content="hello")

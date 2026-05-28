@@ -13,7 +13,7 @@ export const MODEL_CATALOG = [
     weight: "light",
     recommended: true,
     experimental: false,
-    description: "Быстрый слой: RAG, короткие ответы, быстрые уточнения, pipeline cleaner/segmenter. Использовать, когда важна скорость, а не глубокий анализ.",
+    description: "Быстрый слой: RAG, короткие ответы и быстрые уточнения. Для ASR pipeline это fallback, когда важна скорость, а не качество длинной встречи.",
   },
   {
     id: "qwen2.5:7b-instruct",

@@ -4,8 +4,9 @@ const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
 const ASR_STUDIO_DEFAULT_PROMPT_PRESET = "ru";
 const ASR_DEFAULT_BEAM_SIZE = 5;
-const ASR_DEFAULT_THREADS = 0;
+const ASR_DEFAULT_THREADS = 4;
 const ASR_PROMPT_PRESETS = ["auto", "ru", "en"];
+const ASR_FULL_ANALYSIS_WARNING = "Полный анализ запускает все стадии ASR pipeline и может заметно нагружать CPU/GPU, повышать температуру Mac и держать Ollama занятой несколько минут. Включайте и запускайте его только осознанно.";
 const CREATE_PROFILE_VALUE = "__create_profile__";
 const AUTO_MODEL_ID = "__auto_router__";
 const AUTO_MODEL_TITLE = "Auto / Smart Router";
@@ -50,10 +51,10 @@ const ASR_PIPELINE_STAGES = [
   { key: "summary", label: "Саммари" },
 ];
 const ASR_PIPELINE_MODEL_CATALOG = [
-  { id: "qwen2.5:3b-instruct", title: "Qwen 2.5 3B Instruct", note: "быстрый слой для очистки и сегментов" },
-  { id: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B Instruct", note: "сбалансированное качество для ролей и medium-summary" },
+  { id: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B Instruct", note: "базовое качество для cleaner, segmenter и ролей" },
+  { id: "qwen2.5:3b-instruct", title: "Qwen 2.5 3B Instruct", note: "быстрый fallback, когда важнее скорость" },
   { id: "qwen3:8b", title: "Qwen 3 8B", note: "reasoning для структуры, решений, задач и рисков" },
-  { id: "mistral-nemo:12b", title: "Mistral Nemo 12B", note: "heavy summary и structuring длинных транскриптов" },
+  { id: "mistral-nemo:12b", title: "Mistral Nemo 12B", note: "heavy summary для длинных транскриптов" },
   { id: "qwen3:4b", title: "Qwen 3 4B", note: "experimental fallback для быстрых проверок" },
   { id: "qwen2.5-coder:7b", title: "Qwen 2.5 Coder 7B", note: "только для технических транскриптов с кодом" },
   { id: "deepseek-coder:6.7b", title: "DeepSeek Coder 6.7B", note: "code-alt для технических транскриптов" },
@@ -62,14 +63,14 @@ const ASR_PIPELINE_MODEL_IDS = ASR_PIPELINE_MODEL_CATALOG.map((item) => item.id)
 const ASR_PIPELINE_LEGACY_MODEL_IDS = new Set(["qwen2.5:3b", "mistral:7b", "mistral"]);
 const ASR_PIPELINE_RECOMMENDATIONS = {
   cleaner: {
-    primary: "qwen2.5:3b-instruct",
-    alternatives: ["qwen2.5:7b-instruct"],
-    text: "быстро чистит шум, повторы и мусор ASR без тяжёлого reasoning.",
+    primary: "qwen2.5:7b-instruct",
+    alternatives: ["qwen2.5:3b-instruct"],
+    text: "базовый качественный вариант для очистки длинных встреч; 3B используй только как быстрый fallback.",
   },
   segmenter: {
-    primary: "qwen2.5:3b-instruct",
-    alternatives: ["qwen2.5:7b-instruct"],
-    text: "лучший быстрый вариант для разбиения transcript на смысловые сегменты.",
+    primary: "qwen2.5:7b-instruct",
+    alternatives: ["qwen2.5:3b-instruct"],
+    text: "базовый качественный вариант для разбиения transcript на смысловые сегменты; 3B оставь только для скорости.",
   },
   speaker_resolver: {
     primary: "qwen2.5:7b-instruct",
@@ -88,11 +89,11 @@ const ASR_PIPELINE_RECOMMENDATIONS = {
   },
 };
 const ASR_PIPELINE_DEFAULTS = {
-  cleaner: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.2, max_tokens: 6000 },
-  segmenter: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.1, max_tokens: 6000 },
+  cleaner: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0, max_tokens: 9000 },
+  segmenter: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.05, max_tokens: 8000 },
   speaker_resolver: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.1, max_tokens: 4000 },
-  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.3, max_tokens: 3500 },
-  summary: { enabled: true, model: "mistral-nemo:12b", temperature: 0.3, max_tokens: 3000 },
+  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.1, max_tokens: 8000 },
+  summary: { enabled: true, model: "mistral-nemo:12b", temperature: 0.1, max_tokens: 8000 },
 };
 const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
@@ -193,6 +194,7 @@ const els = {
   asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
   asrToolPipelineSettingsButton: document.getElementById("asrToolPipelineSettingsButton"),
   asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
+  asrToolStopButton: document.getElementById("asrToolStopButton"),
   asrToolFileInput: document.getElementById("asrToolFileInput"),
   asrToolFileCard: document.getElementById("asrToolFileCard"),
   asrToolFileTitle: document.getElementById("asrToolFileTitle"),
@@ -337,6 +339,7 @@ const els = {
   asrPipelineSettingsSummary: document.getElementById("asrPipelineSettingsSummary"),
   asrPipelineSettingsToggleButton: document.getElementById("asrPipelineSettingsToggleButton"),
   asrPipelineSettingsBody: document.getElementById("asrPipelineSettingsBody"),
+  asrFullAnalysisEnabledToggle: document.getElementById("asrFullAnalysisEnabledToggle"),
   asrPipelineSettingsGrid: document.getElementById("asrPipelineSettingsGrid"),
   saveAsrPipelineSettingsButton: document.getElementById("saveAsrPipelineSettingsButton"),
   resetAsrPipelineSettingsButton: document.getElementById("resetAsrPipelineSettingsButton"),
@@ -459,6 +462,7 @@ const state = {
   asrToolPipelineBusy: false,
   asrToolPipelineAction: "",
   asrToolPipelinePreset: "",
+  asrToolStopping: false,
   asrToolActiveTab: "text",
   asrToolTextSearch: "",
   asrToolHistorySearch: "",
@@ -484,6 +488,7 @@ const state = {
   asrToolResizeSession: null,
   asrToolTaskId: null,
   asrToolStartController: null,
+  asrToolPipelineController: null,
   asrToolIsTranscribing: false,
   asrToolLastFile: null,
   ttsToolSelectedRecordId: null,
@@ -2811,6 +2816,11 @@ function activeProfileStreamingEnabled() {
   return value === undefined || value === null ? true : Boolean(value);
 }
 
+function asrFullAnalysisEnabled() {
+  const preferences = getActiveProfilePreferences();
+  return Boolean(preferences?.settings?.asr_full_analysis_enabled);
+}
+
 function applyActiveProfilePreferences() {
   const preferences = getActiveProfilePreferences();
   const whisperFallback = state.asrModels[0]?.name || "medium";
@@ -3743,6 +3753,10 @@ function renderAsrPipelineSettings() {
   }
   if (els.resetAsrPipelineSettingsButton) {
     els.resetAsrPipelineSettingsButton.disabled = disabled;
+  }
+  if (els.asrFullAnalysisEnabledToggle) {
+    els.asrFullAnalysisEnabledToggle.disabled = !profile;
+    els.asrFullAnalysisEnabledToggle.checked = asrFullAnalysisEnabled();
   }
   if (!els.asrPipelineSettingsGrid) return;
 
@@ -4908,20 +4922,39 @@ function renderAsrTool() {
   }
 
   if (els.asrToolChooseFileButton) {
-    els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
+    els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || state.asrToolStopping || !state.activeProfileId;
     els.asrToolChooseFileButton.textContent = state.asrToolIsTranscribing ? "Транскрибация…" : "Выбрать файл";
   }
   if (els.asrToolPipelineSettingsButton) {
     els.asrToolPipelineSettingsButton.disabled = !state.activeProfileId;
   }
   if (els.asrToolRefreshHistoryButton) {
-    els.asrToolRefreshHistoryButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
+    els.asrToolRefreshHistoryButton.disabled = state.asrToolIsTranscribing || state.asrToolStopping || !state.activeProfileId;
+  }
+  if (els.asrToolStopButton) {
+    const canStop = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolTaskId || state.asrToolStartController || state.asrToolPipelineController;
+    els.asrToolStopButton.disabled = !canStop || state.asrToolStopping;
+    els.asrToolStopButton.textContent = state.asrToolStopping ? "Останавливаю…" : "Остановить";
   }
   if (els.asrToolInsertPromptButton) {
     els.asrToolInsertPromptButton.disabled = !selectedContent;
   }
   if (els.asrToolSendButton) {
     els.asrToolSendButton.disabled = !formatAsrPipelineRun(state.asrToolPipelineRun) || state.isSending;
+  }
+  if (els.asrToolFullAnalysisButton) {
+    const fullEnabled = asrFullAnalysisEnabled();
+    els.asrToolFullAnalysisButton.hidden = !fullEnabled;
+    els.asrToolFullAnalysisButton.title = fullEnabled
+      ? "Запускает все стадии pipeline и может заметно нагревать Mac."
+      : "Полный анализ отключён в настройках ASR.";
+  }
+  if (els.asrToolRolesButton) {
+    const rolesAvailable = asrFullAnalysisEnabled() || Boolean(state.asrToolPipelineRun?.speaker_mapping?.length);
+    els.asrToolRolesButton.hidden = !rolesAvailable;
+    els.asrToolRolesButton.title = rolesAvailable
+      ? "Открыть роли участников."
+      : "Роли требуют полного анализа; включите его в настройках ASR.";
   }
   [
     els.asrToolCleanButton,
@@ -4930,7 +4963,7 @@ function renderAsrTool() {
     els.asrToolRolesButton,
     els.asrToolFullAnalysisButton,
   ].filter(Boolean).forEach((button) => {
-    button.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolPipelineBusy;
+    button.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolStopping;
   });
   if (els.asrToolOpenAnalysisButton) {
     els.asrToolOpenAnalysisButton.disabled = !hasOutput && !state.asrToolPipelineRun;
@@ -4939,7 +4972,7 @@ function renderAsrTool() {
     els.asrToolDownloadButton.disabled = !selectedContent && !hasOutput;
   }
   if (els.asrToolRetranscribeButton) {
-    els.asrToolRetranscribeButton.disabled = !state.asrToolLastFile || state.asrToolIsTranscribing;
+    els.asrToolRetranscribeButton.disabled = !state.asrToolLastFile || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolSaveContextButton) {
     els.asrToolSaveContextButton.disabled = !state.asrToolPipelineRun || !state.activeProfileId;
@@ -4948,22 +4981,22 @@ function renderAsrTool() {
     els.asrToolCopyButton.disabled = !selectedContent && !hasOutput;
   }
   if (els.asrToolSaveSpeakersButton) {
-    els.asrToolSaveSpeakersButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy;
+    els.asrToolSaveSpeakersButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy || state.asrToolStopping;
   }
   if (els.asrToolRegenerateSummaryButton) {
-    els.asrToolRegenerateSummaryButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy;
+    els.asrToolRegenerateSummaryButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy || state.asrToolStopping;
   }
   if (els.asrToolSaveButton) {
-    els.asrToolSaveButton.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing;
+    els.asrToolSaveButton.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolClearButton) {
     els.asrToolClearButton.disabled = !hasOutput && !hasSelectedTranscript;
   }
   if (els.asrToolDeleteButton) {
-    els.asrToolDeleteButton.disabled = !hasSelectedTranscript || state.asrToolIsTranscribing;
+    els.asrToolDeleteButton.disabled = !hasSelectedTranscript || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolClearHistoryButton) {
-    els.asrToolClearHistoryButton.disabled = !historyCount || state.asrToolIsTranscribing;
+    els.asrToolClearHistoryButton.disabled = !historyCount || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolFullscreenButton) {
     els.asrToolFullscreenButton.setAttribute(
@@ -5173,6 +5206,51 @@ async function runAsrToolTranscription(file) {
     if (els.asrToolFileInput) {
       els.asrToolFileInput.value = "";
     }
+  }
+}
+
+async function stopAsrToolProcessing() {
+  if (state.asrToolStopping) return;
+  const hasLocalWork = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolTaskId || state.asrToolStartController || state.asrToolPipelineController;
+  if (!hasLocalWork) {
+    setInlineStatus(els.asrToolStatus, "Активных процессов ASR Studio нет.", "warning");
+    return;
+  }
+
+  state.asrToolStopping = true;
+  renderAsrTool();
+  setInlineStatus(els.asrToolStatus, "Останавливаю ASR Studio…", "warning");
+  setFooter("Останавливаю ASR Studio…", "warning");
+
+  try {
+    state.asrToolStartController?.abort();
+    state.asrToolPipelineController?.abort();
+    if (state.asrToolTaskId) {
+      try {
+        await request(`/transcribe/tasks/${encodeURIComponent(state.asrToolTaskId)}/cancel`, {
+          method: "POST",
+          body: {},
+        });
+      } catch (error) {
+        if ((error?.status || 0) !== 404) throw error;
+      }
+    }
+    await request("/asr/stop", { method: "POST", body: {} });
+    state.asrToolTaskId = null;
+    state.asrToolStartController = null;
+    state.asrToolPipelineController = null;
+    state.asrToolIsTranscribing = false;
+    state.asrToolPipelineBusy = false;
+    state.asrToolPipelineAction = "";
+    state.asrToolPipelinePreset = "";
+    setInlineStatus(els.asrToolStatus, "ASR Studio остановлена. Если модель уже была внутри текущего LLM-вызова, дождитесь освобождения Ollama.", "warning");
+    setFooter("ASR Studio остановлена.", "warning");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось остановить ASR Studio: ${error.message || error}`, "error");
+    setFooter(`Не удалось остановить ASR Studio: ${error.message || error}`, "error");
+  } finally {
+    state.asrToolStopping = false;
+    renderAsrTool();
   }
 }
 
@@ -5468,6 +5546,15 @@ async function ensureAsrToolTranscriptSaved() {
 
 async function runAsrPipelineAction(action, preset = "balanced") {
   if (state.asrToolPipelineBusy) return;
+  if (action === "full" && !asrFullAnalysisEnabled()) {
+    setInlineStatus(
+      els.asrToolStatus,
+      "Полный анализ отключён. Его можно включить в настройках ASR после предупреждения о нагрузке.",
+      "warning",
+    );
+    openAsrPipelineSettings();
+    return;
+  }
   const content = String(els.asrToolOutput?.value || "").trim();
   if (!content) {
     setInlineStatus(els.asrToolStatus, "Нет текста для обработки.", "warning");
@@ -5482,12 +5569,15 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   state.asrToolPipelineBusy = true;
   state.asrToolPipelineAction = action;
   state.asrToolPipelinePreset = preset;
+  const controller = new AbortController();
+  state.asrToolPipelineController = controller;
   renderAsrTool();
   setInlineStatus(els.asrToolStatus, "Идёт обработка транскрипта…", "warning");
   try {
     const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
       method: "POST",
       body: { action, preset, model_name: modelName },
+      signal: controller.signal,
     });
     state.asrToolPipelineRun = run;
     if (action === "clean" && run?.cleaned_transcript && els.asrToolOutput) {
@@ -5503,12 +5593,24 @@ async function runAsrPipelineAction(action, preset = "balanced") {
     setInlineStatus(els.asrToolStatus, "Обработка готова.", "success");
     setFooter("ASR обработка готова.", "success");
   } catch (error) {
-    setInlineStatus(els.asrToolStatus, `Ошибка обработки: ${error.message || error}`, "error");
-    setFooter(`Ошибка ASR обработки: ${error.message || error}`, "error");
+    if (isAbortError(error)) {
+      setInlineStatus(els.asrToolStatus, "ASR обработка остановлена.", "warning");
+      setFooter("ASR обработка остановлена.", "warning");
+    } else if (error?.code === "asr_full_analysis_disabled") {
+      setInlineStatus(els.asrToolStatus, "Полный анализ отключён в настройках ASR.", "warning");
+      setFooter("Полный анализ ASR отключён.", "warning");
+      openAsrPipelineSettings();
+    } else {
+      setInlineStatus(els.asrToolStatus, `Ошибка обработки: ${error.message || error}`, "error");
+      setFooter(`Ошибка ASR обработки: ${error.message || error}`, "error");
+    }
   } finally {
     state.asrToolPipelineBusy = false;
     state.asrToolPipelineAction = "";
     state.asrToolPipelinePreset = "";
+    if (state.asrToolPipelineController === controller) {
+      state.asrToolPipelineController = null;
+    }
     renderAsrTool();
   }
 }
@@ -5585,11 +5687,13 @@ async function regenerateAsrSummary() {
   state.asrToolPipelineBusy = true;
   state.asrToolPipelineAction = "summary";
   state.asrToolPipelinePreset = run.preset || "balanced";
+  const controller = new AbortController();
+  state.asrToolPipelineController = controller;
   renderAsrTool();
   try {
     const updated = await request(
       `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/summary`,
-      { method: "POST", body: { save_memory: true } },
+      { method: "POST", body: { save_memory: true }, signal: controller.signal },
     );
     state.asrToolPipelineRun = updated;
     try {
@@ -5600,11 +5704,18 @@ async function regenerateAsrSummary() {
     }
     setInlineStatus(els.asrToolStatus, "Саммари пересобрано с учётом ролей.", "success");
   } catch (error) {
-    setInlineStatus(els.asrToolStatus, `Не удалось пересобрать саммари: ${error.message || error}`, "error");
+    if (isAbortError(error)) {
+      setInlineStatus(els.asrToolStatus, "Пересборка саммари остановлена.", "warning");
+    } else {
+      setInlineStatus(els.asrToolStatus, `Не удалось пересобрать саммари: ${error.message || error}`, "error");
+    }
   } finally {
     state.asrToolPipelineBusy = false;
     state.asrToolPipelineAction = "";
     state.asrToolPipelinePreset = "";
+    if (state.asrToolPipelineController === controller) {
+      state.asrToolPipelineController = null;
+    }
     renderAsrTool();
   }
 }
@@ -7328,6 +7439,48 @@ async function resetAsrPipelineSettingsFlow() {
   }
 }
 
+function confirmAsrFullAnalysisRisk() {
+  return window.confirm(`${ASR_FULL_ANALYSIS_WARNING}\n\nПродолжить?`);
+}
+
+async function saveAsrFullAnalysisPreferenceFlow() {
+  if (!els.asrFullAnalysisEnabledToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.asrFullAnalysisEnabledToggle.checked);
+  const previous = asrFullAnalysisEnabled();
+
+  if (checked && !previous && !confirmAsrFullAnalysisRisk()) {
+    els.asrFullAnalysisEnabledToggle.checked = false;
+    return;
+  }
+
+  patchActiveProfileSettingsLocal({ asr_full_analysis_enabled: checked });
+  els.asrFullAnalysisEnabledToggle.disabled = true;
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked ? "Включаю полный анализ ASR…" : "Отключаю полный анализ ASR…",
+    "warning",
+  );
+
+  const updatedProfile = await saveActiveProfilePreferences({ settings: { asr_full_analysis_enabled: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileSettingsLocal({ asr_full_analysis_enabled: previous });
+    setInlineStatus(els.asrPipelineSettingsStatus, "Не удалось сохранить настройку полного анализа.", "error");
+    renderAsrPipelineSettings();
+    renderAsrTool();
+    return;
+  }
+
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked
+      ? "Полный анализ включён для этого профиля. Используйте осторожно: он запускает все стадии."
+      : "Полный анализ отключён. Саммари работает в облегчённом режиме.",
+    "success",
+  );
+  renderAsrPipelineSettings();
+  renderAsrTool();
+}
+
 async function resetModelSettingsFlow() {
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
   if (!state.activeProfileId || !modelName) {
@@ -8518,6 +8671,7 @@ function bindEvents() {
   els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
   els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
+  els.asrFullAnalysisEnabledToggle?.addEventListener("change", async () => saveAsrFullAnalysisPreferenceFlow());
   els.asrPipelineSettingsToggleButton?.addEventListener("click", () => {
     setAsrPipelineSettingsExpanded(!state.asrPipelineSettingsExpanded);
   });
@@ -8662,6 +8816,9 @@ function bindEvents() {
     els.asrToolFileInput?.click();
   });
   els.asrToolPipelineSettingsButton?.addEventListener("click", () => openAsrPipelineSettings());
+  els.asrToolStopButton?.addEventListener("click", async () => {
+    await stopAsrToolProcessing();
+  });
   els.asrToolFileInput?.addEventListener("change", async () => {
     const file = els.asrToolFileInput.files?.[0];
     if (file) {
@@ -8690,11 +8847,22 @@ function bindEvents() {
   els.asrToolRolesButton?.addEventListener("click", async () => {
     setAsrToolTab("roles");
     if (!state.asrToolPipelineRun?.speaker_mapping?.length) {
+      if (!asrFullAnalysisEnabled()) {
+        setInlineStatus(
+          els.asrToolStatus,
+          "Определение ролей требует полного анализа. Включите его в настройках ASR, если готовы к повышенной нагрузке.",
+          "warning",
+        );
+        openAsrPipelineSettings();
+        return;
+      }
+      if (!confirmAsrFullAnalysisRisk()) return;
       await runAsrPipelineAction("full", "balanced");
     }
   });
   els.asrToolFullAnalysisButton?.addEventListener("click", async () => {
     setAsrToolTab("summary");
+    if (!confirmAsrFullAnalysisRisk()) return;
     await runAsrPipelineAction("full", "balanced");
   });
   els.asrToolInsertPromptButton?.addEventListener("click", () => {

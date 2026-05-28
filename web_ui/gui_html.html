@@ -267,6 +267,7 @@
                             type="button">Настройки анализа</button>
                         <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
                             список</button>
+                        <button class="button button--danger" id="asrToolStopButton" type="button">Остановить</button>
                     </div>
                     <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
                 </div>
@@ -828,7 +829,7 @@
                         <label class="field">
                             <span class="field__label">Threads</span>
                             <input id="asrThreadsInput" class="field__control" type="number" min="0" max="32" step="1" />
-                            <span class="field__description">Потоки CPU для whisper.cpp. 0 значит авто/настройка окружения; 4 часто стабильно на MacBook.</span>
+                            <span class="field__description">Потоки CPU для whisper.cpp. 4 — базовый стабильный вариант; 0 оставляет авто/настройку окружения.</span>
                         </label>
                     </div>
 
@@ -849,6 +850,13 @@
                                 <span class="info-card__label">LLM для pipeline</span>
                                 <strong id="asrPipelineSettingsSummary">Профиль и модель не выбраны</strong>
                             </div>
+                            <label class="field field--checkbox">
+                                <input id="asrFullAnalysisEnabledToggle" type="checkbox" />
+                                <span class="field__checkbox-copy">
+                                    <strong>Разрешить полный анализ</strong>
+                                    <small>Запускает все стадии pipeline и может сильно нагревать Mac. Включайте только осознанно.</small>
+                                </span>
+                            </label>
                             <div class="pipeline-stage-settings" id="asrPipelineSettingsGrid"></div>
                             <div class="button-row">
                                 <button class="button button--primary" id="saveAsrPipelineSettingsButton"

@@ -137,6 +137,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "mem_turns",
         "streaming_enabled",
         "pipeline_enabled",
+        "asr_full_analysis_enabled",
         "summary_memory_enabled",
         "rag_enabled",
         "default_pipeline_preset",
@@ -185,6 +186,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 ) from exc
     for key in (
         "streaming_enabled",
+        "asr_full_analysis_enabled",
         "rag_enabled",
         "allow_light_with_heavy",
         "single_large_target_model",

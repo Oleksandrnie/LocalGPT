@@ -18,6 +18,7 @@ LOG_DIR = PROJECT_ROOT / "tmp_logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 CHAT_LOG_FILE = LOG_DIR / "chat.log"
 PIPELINE_LOG_FILE = LOG_DIR / "pipeline.log"
+TRANSCRIBE_LOG_FILE = LOG_DIR / "transcribe.log"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
 RAG_SOURCE_DIR = PROJECT_ROOT / "rag_sources"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
@@ -225,8 +226,8 @@ MODEL_CATALOG = [
         "recommended": True,
         "experimental": False,
         "description": (
-            "Быстрый слой: RAG, короткие ответы, быстрые уточнения, pipeline cleaner/segmenter. "
-            "Использовать, когда важна скорость, а не глубокий анализ."
+            "Быстрый слой: RAG, короткие ответы и быстрые уточнения. Для ASR pipeline использовать "
+            "как fallback, когда важна скорость, а не качество длинной встречи."
         ),
     },
     {
@@ -325,15 +326,15 @@ MODEL_RECOMMENDATIONS = MODEL_CATALOG
 DEFAULT_PIPELINE = {
     "cleaner": {
         "enabled": True,
-        "model": "qwen2.5:3b-instruct",
-        "temperature": 0.2,
-        "max_tokens": 6000,
+        "model": "qwen2.5:7b-instruct",
+        "temperature": 0,
+        "max_tokens": 9000,
     },
     "segmenter": {
         "enabled": True,
-        "model": "qwen2.5:3b-instruct",
-        "temperature": 0.1,
-        "max_tokens": 6000,
+        "model": "qwen2.5:7b-instruct",
+        "temperature": 0.05,
+        "max_tokens": 8000,
     },
     "speaker_resolver": {
         "enabled": True,
@@ -344,20 +345,21 @@ DEFAULT_PIPELINE = {
     "structurer": {
         "enabled": True,
         "model": "qwen3:8b",
-        "temperature": 0.3,
-        "max_tokens": 3500,
+        "temperature": 0.1,
+        "max_tokens": 8000,
     },
     "summary": {
         "enabled": True,
         "model": "mistral-nemo:12b",
-        "temperature": 0.3,
-        "max_tokens": 3000,
+        "temperature": 0.1,
+        "max_tokens": 8000,
     },
 }
 
 DEFAULT_RUNTIME_SETTINGS = {
     "streaming_enabled": True,
     "pipeline_enabled": True,
+    "asr_full_analysis_enabled": False,
     "summary_memory_enabled": True,
     "rag_enabled": False,
     "default_pipeline_preset": "balanced",
@@ -465,7 +467,7 @@ def _load_settings() -> Settings:
         ).strip(),
         whisper_cpp_models_dir=MODEL_PATHS.whisper_cpp,
         whisper_cpp_model_path=(os.getenv("WHISPER_CPP_MODEL_PATH", "") or "").strip(),
-        whisper_cpp_threads=max(0, _parse_int("WHISPER_CPP_THREADS", 0)),
+        whisper_cpp_threads=max(0, _parse_int("WHISPER_CPP_THREADS", 4)),
         whisper_cpp_extra_args=_parse_args("WHISPER_CPP_EXTRA_ARGS"),
         whisper_cpp_convert_audio=_parse_bool("WHISPER_CPP_CONVERT_AUDIO", True),
         whisper_cpp_ffmpeg_binary=(os.getenv("WHISPER_CPP_FFMPEG_BINARY", "ffmpeg") or "ffmpeg").strip(),

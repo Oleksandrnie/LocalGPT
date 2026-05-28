@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import config
-from backend.apps.asr import downloads, whisper
+from backend.apps.asr import downloads, whisper, whisper_cpp
 from backend.apps.asr.whisper_cpp import transcribe_with_whisper_cpp, whisper_cpp_model_path, whisper_cpp_runtime_status
 
 
@@ -23,6 +24,7 @@ class WhisperCppBackendTestCase(unittest.TestCase):
             "whisper_cpp_threads": config.SETTINGS.whisper_cpp_threads,
             "whisper_cpp_extra_args": config.SETTINGS.whisper_cpp_extra_args,
             "whisper_cpp_download_coreml": config.SETTINGS.whisper_cpp_download_coreml,
+            "transcribe_log_file": config.TRANSCRIBE_LOG_FILE,
         }
         config.SETTINGS.whisper_backend = "whisper_cpp"
         config.SETTINGS.whisper_cpp_binary = "/bin/echo"
@@ -32,13 +34,17 @@ class WhisperCppBackendTestCase(unittest.TestCase):
         config.SETTINGS.whisper_cpp_threads = 0
         config.SETTINGS.whisper_cpp_extra_args = ()
         config.SETTINGS.whisper_cpp_download_coreml = False
+        config.TRANSCRIBE_LOG_FILE = self.tmp / "transcribe.log"
         config.SETTINGS.whisper_cpp_models_dir.mkdir(parents=True, exist_ok=True)
         downloads._TASKS.clear()
         downloads._ACTIVE_BY_MODEL.clear()
 
     def tearDown(self):
         for key, value in self.original.items():
-            setattr(config.SETTINGS, key, value)
+            if key == "transcribe_log_file":
+                config.TRANSCRIBE_LOG_FILE = value
+            else:
+                setattr(config.SETTINGS, key, value)
         downloads._TASKS.clear()
         downloads._ACTIVE_BY_MODEL.clear()
         self.tmpdir.cleanup()
@@ -59,6 +65,7 @@ class WhisperCppBackendTestCase(unittest.TestCase):
             self.assertIn("--output-json", command)
             self.assertEqual(command[command.index("--language") + 1], "ru")
             self.assertEqual(command[command.index("--threads") + 1], "4")
+            self.assertEqual(command[command.index("--prompt") + 1], "secret prompt")
             output_prefix = Path(command[command.index("--output-file") + 1])
             output_prefix.with_suffix(".json").write_text(
                 json.dumps(
@@ -78,7 +85,7 @@ class WhisperCppBackendTestCase(unittest.TestCase):
             result = transcribe_with_whisper_cpp(
                 audio_path=audio_path,
                 model_name="small",
-                prompt=None,
+                prompt="secret prompt",
                 language="ru",
                 beam_size=3,
                 threads=4,
@@ -88,6 +95,20 @@ class WhisperCppBackendTestCase(unittest.TestCase):
         self.assertEqual(result["language"], "ru")
         self.assertEqual(result["segments"][0]["start"], 1.0)
         self.assertEqual(result["segments"][1]["end"], 4.1)
+        self.assertEqual(result["runtime"]["backend"], "whisper_cpp")
+        self.assertEqual(result["runtime"]["model"], "small")
+        self.assertEqual(result["runtime"]["language"], "ru")
+        self.assertEqual(result["runtime"]["beam_size"], 3)
+        self.assertEqual(result["runtime"]["threads"], 4)
+        self.assertTrue(result["runtime"]["prompt_present"])
+        self.assertIn("<prompt chars=13>", result["runtime"]["command"])
+
+        log_lines = config.TRANSCRIBE_LOG_FILE.read_text(encoding="utf-8").splitlines()
+        events = [json.loads(line) for line in log_lines]
+        self.assertEqual(events[0]["event"], "whisper_cpp_start")
+        self.assertEqual(events[-1]["event"], "whisper_cpp_done")
+        self.assertIn("<prompt chars=13>", events[0]["runtime"]["command"])
+        self.assertNotIn("secret prompt", config.TRANSCRIBE_LOG_FILE.read_text(encoding="utf-8"))
 
     def test_whisper_cpp_runner_collapses_long_repeated_segments(self):
         self._write_model("small")
@@ -145,6 +166,7 @@ class WhisperCppBackendTestCase(unittest.TestCase):
         self._write_model("small")
         audio_path = self.tmp / "audio.wav"
         audio_path.write_bytes(b"wav")
+        (self.tmp / "whisper_prompt.txt").write_text("local prompt marker", encoding="utf-8")
 
         with patch("backend.apps.asr.whisper_cpp.transcribe_with_whisper_cpp") as transcribe:
             transcribe.return_value = {
@@ -159,6 +181,21 @@ class WhisperCppBackendTestCase(unittest.TestCase):
         transcribe.assert_called_once()
         self.assertEqual(transcribe.call_args.kwargs["language"], "ru")
         self.assertIn("пунктуация", transcribe.call_args.kwargs["prompt"])
+        self.assertIn("local prompt marker", transcribe.call_args.kwargs["prompt"])
+        self.assertEqual(result["runtime"]["prompt_preset"], "ru")
+        self.assertEqual(result["runtime"]["effective_language"], "ru")
+        self.assertTrue(result["runtime"]["preset_prompt_used"])
+        self.assertTrue(result["runtime"]["local_prompt_used"])
+
+    def test_transcribe_log_rotates_by_size(self):
+        config.TRANSCRIBE_LOG_FILE.write_text("x" * 20, encoding="utf-8")
+
+        with patch.dict(os.environ, {"TRANSCRIBE_LOG_MAX_BYTES": "10"}):
+            whisper_cpp._log_transcription_event({"event": "next"})
+
+        backup_path = config.TRANSCRIBE_LOG_FILE.with_name(f"{config.TRANSCRIBE_LOG_FILE.name}.1")
+        self.assertEqual(backup_path.read_text(encoding="utf-8"), "x" * 20)
+        self.assertIn('"event": "next"', config.TRANSCRIBE_LOG_FILE.read_text(encoding="utf-8"))
 
     def test_model_prepare_listing_uses_ggml_path_in_whisper_cpp_mode(self):
         model_path = self._write_model("medium")

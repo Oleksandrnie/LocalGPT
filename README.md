@@ -371,7 +371,28 @@ UI component guide:
 - удаление записи;
 - очистка всей истории;
 - вставка processed context в prompt;
-- отправка processed context прямо в чат.
+- отправка processed context прямо в чат;
+- остановка активной ASR Studio обработки из интерфейса.
+
+Базовые настройки ASR Studio рассчитаны на длинные русскоязычные встречи: Whisper `large-v3-turbo`, русский prompt, `beam_size=5`, `threads=4`. Pipeline по умолчанию использует:
+
+- cleaner: `qwen2.5:7b-instruct`, `temperature=0`, `max_tokens=9000`;
+- segmenter: `qwen2.5:7b-instruct`, `temperature=0.05`, `max_tokens=8000`;
+- speaker resolver: `qwen2.5:7b-instruct`, `temperature=0.1`, `max_tokens=4000`;
+- structurer: `qwen3:8b`, `temperature=0.1`, `max_tokens=8000`;
+- summary: `mistral-nemo:12b`, `temperature=0.1`, `max_tokens=8000`.
+
+`qwen2.5:3b-instruct` больше не основной качественный вариант для cleaner/segmenter; он оставлен как быстрый fallback, когда важнее скорость. Сохранённые custom-настройки профиля или модели остаются приоритетнее default preset.
+
+`Сделать summary` работает как облегчённый режим: cleaner + summary без принудительного speaker/structurer merge. Для длинных transcript compact digest сохраняет начало и конец сегментов, чтобы summary не смотрело только в prefix. `Полный анализ` скрыт и запрещён по умолчанию; его нужно отдельно включить в настройках ASR, подтвердив предупреждение о высокой нагрузке. Определение ролей не запускает полный pipeline автоматически, пока этот флаг выключен.
+
+Длинные transcript не обрезаются перед summary: `max_transcript_chars` используется как размер chunk. В полном анализе chunks проходят cleaner/segmenter/speaker resolver/structurer, затем structured outputs merge-ятся и final summary строится по merged structure. Warning `raw_transcript_chunked:<N>` означает штатную chunked-обработку полной встречи. `summary_topic_coverage_missing:<N>` запускает повторную генерацию summary с пропущенными темами и merged evidence; retry считается успешным только если темы раскрыты смыслово, а не упомянуты одним ключевым словом. Если retry не закрыл покрытие, итог явно получает блок `Неполное summary: не удалось покрыть следующие темы`. Старый `raw_transcript_truncated` теперь должен считаться диагностикой неполной обработки, а не нормальным режимом качественного summary.
+
+Structurer и summary дополнительно разделяют `current_state` и `target_state`, чтобы не смешивать текущее устройство процесса/архитектуры с целевой схемой. Подозрительные ASR-термины технических артефактов не исправляются словарём; summary prompt требует выносить спорные термины в вопросы для уточнения. Неподтверждённые действия не должны попадать в `Ключевые решения`: без явных маркеров подтверждения они переносятся в предложения/варианты.
+
+Для длинных встреч локальный pipeline может делать больше последовательных model calls: chunks проходят несколько стадий, а coverage QA может добавить один summary retry на `mistral-nemo:12b`. При ручных тестах на ноутбуке стоит закрыть лишние LLM/ASR процессы и смотреть `warnings`/`stage_timings`, если машина уходит в перегрев.
+
+Кнопка `Остановить` в ASR Studio отменяет активные transcription task processes, просит pipeline остановиться перед следующей LLM-стадией и выгружает активные pipeline-модели из Ollama. Если модель уже выполняет текущий LLM-вызов, остановка может стать видимой после возврата/ошибки этого вызова; следующая стадия не должна стартовать.
 
 Быстрый voice-to-input при этом остаётся отдельным UX и не смешивается с `ASR Studio`.
 
@@ -509,9 +530,13 @@ WHISPER_MODEL_SIZE=large-v3-turbo
 WHISPER_CPP_BINARY=models/whisper_cpp/bin/whisper-cli
 WHISPER_CPP_MODELS_DIR=models/whisper_cpp
 WHISPER_CPP_MODEL_PATH=models/whisper_cpp/ggml-{model}.bin
+WHISPER_BEAM_SIZE=5
+WHISPER_CPP_THREADS=4
+TRANSCRIBE_LOG_MAX_BYTES=2097152
 ```
 
 Для этого нужен отдельный `whisper-cli`, собранный с Metal/CoreML, и GGML-модель в `models/whisper_cpp`.
+Фактический запуск ASR пишется в `tmp_logs/transcribe.log`; лог ротируется по `TRANSCRIBE_LOG_MAX_BYTES` и держит один backup `transcribe.log.1`. Значение `0` отключает запись.
 
 Для macOS есть проектный setup-скрипт:
 
@@ -638,6 +663,7 @@ curl -s 'http://127.0.0.1:8000/chat/debug/pipeline?run_id=<id>'
 - `ollama.log`
 - `tmp_logs/chat.log`
 - `tmp_logs/pipeline.log`
+- `tmp_logs/transcribe.log`
 - runtime-логи launcher в `${TMPDIR}/LocalGPT-<uid>/`
 
 ## Текущее ограничение

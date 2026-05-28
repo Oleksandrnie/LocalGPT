@@ -2,6 +2,20 @@
 
 This document lists future ideas that are intentionally not implemented in the current Tailscale Plugin + Secure Remote Access work.
 
+## Future: Settings Log Cleanup Button
+
+Status: future idea, not implemented.
+
+Add a settings action that lets the user delete runtime logs from the UI.
+
+Initial scope:
+
+- clear `tmp_logs/chat.log`;
+- clear `tmp_logs/pipeline.log`;
+- clear `tmp_logs/transcribe.log` and `tmp_logs/transcribe.log.1`;
+- show a confirmation dialog before deletion;
+- keep automatic log rotation as the default background safeguard.
+
 ## Future: Caddy Official/Internal Plugin
 
 Status: future stage, not implemented.
