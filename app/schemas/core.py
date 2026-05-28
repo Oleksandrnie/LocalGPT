@@ -57,6 +57,7 @@ class AsrPreferencesUpdate(BaseModel):
     prompt_preset: str | None = None
     beam_size: int | None = None
     threads: int | None = None
+    analysis_language: str | None = None
     analysis_prompt: str | None = None
 
 

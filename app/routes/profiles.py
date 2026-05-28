@@ -56,6 +56,18 @@ def _normalize_prompt_preset(value: str) -> str:
     return normalized
 
 
+def _normalize_analysis_language(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized or normalized == "none":
+        normalized = "auto"
+    if normalized not in {"auto", "ru", "en"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_analysis_language", "message": "Допустимый язык анализа ASR: auto, ru, en."},
+        )
+    return normalized
+
+
 def _normalize_asr_beam_size(value: int | None) -> int:
     try:
         parsed = int(value)
@@ -272,6 +284,8 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
             updates.setdefault("asr", {})["beam_size"] = _normalize_asr_beam_size(req.asr.beam_size)
         if req.asr.threads is not None:
             updates.setdefault("asr", {})["threads"] = _normalize_asr_threads(req.asr.threads)
+        if req.asr.analysis_language is not None:
+            updates.setdefault("asr", {})["analysis_language"] = _normalize_analysis_language(req.asr.analysis_language)
         if req.asr.analysis_prompt is not None:
             updates.setdefault("asr", {})["analysis_prompt"] = str(req.asr.analysis_prompt or "").strip()[:4000]
 

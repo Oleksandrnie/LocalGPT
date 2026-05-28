@@ -260,11 +260,19 @@
                             <option value="en">Английский</option>
                         </select>
                     </label>
+                    <label class="field">
+                        <span class="field__label">Язык результата</span>
+                        <select id="asrToolAnalysisLanguageSelect" class="field__control">
+                            <option value="auto">Авто</option>
+                            <option value="ru">Русский</option>
+                            <option value="en">English</option>
+                        </select>
+                    </label>
                     <div class="button-row">
                         <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
                             файл</button>
                         <button class="button button--ghost" id="asrToolPipelineSettingsButton"
-                            type="button">Настройки анализа</button>
+                            type="button">Настройки</button>
                         <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
                             список</button>
                         <button class="button button--danger" id="asrToolStopButton" type="button">Остановить</button>
@@ -351,24 +359,20 @@
                     </div>
 
                     <aside class="asr-next-panel">
-                        <h4>Что дальше?</h4>
-                        <p class="subtle">Выберите действие для анализа транскрипции</p>
-                        <button class="asr-next-action" id="asrToolSummaryButton" type="button" data-asr-open-tab="summary">
-                            <span class="asr-next-action__icon">☷</span>
-                            <span><strong>Саммари</strong><small>Получить краткое резюме разговора</small></span>
-                        </button>
-                        <button class="asr-next-action" id="asrToolTasksButton" type="button" data-asr-open-tab="tasks">
-                            <span class="asr-next-action__icon asr-next-action__icon--success">✓</span>
-                            <span><strong>Разобрать по задачам</strong><small>Выделить задачи и договорённости</small></span>
-                        </button>
-                        <button class="asr-next-action" id="asrToolRolesButton" type="button" data-asr-open-tab="roles">
-                            <span class="asr-next-action__icon asr-next-action__icon--blue">♙</span>
-                            <span><strong>Определить роли</strong><small>Кто говорил и о чём</small></span>
-                        </button>
-                        <button class="asr-next-action" id="asrToolFullAnalysisButton" type="button"
-                            data-asr-open-tab="summary">
-                            <span class="asr-next-action__icon">✧</span>
-                            <span><strong>Полный анализ</strong><small>Саммари + задачи + роли</small></span>
+                        <h4>Анализ</h4>
+                        <p class="subtle" id="asrToolAnalysisModeDescription">Выберите режим анализа транскрипции.</p>
+                        <div class="asr-analysis-mode" id="asrToolAnalysisModeControl">
+                            <button class="asr-analysis-mode__button" id="asrToolAnalysisModeButton" type="button"
+                                aria-haspopup="menu" aria-expanded="false" aria-controls="asrToolAnalysisModeMenu">
+                                <span id="asrToolAnalysisModeLabel">Режим анализа: Умное саммари</span>
+                                <span class="asr-analysis-mode__chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div class="asr-analysis-mode__menu" id="asrToolAnalysisModeMenu" role="menu" hidden></div>
+                        </div>
+                        <button class="asr-next-action asr-next-action--primary" id="asrToolRunAnalysisButton"
+                            type="button" data-asr-open-tab="summary">
+                            <span class="asr-next-action__icon asr-next-action__icon--success">▶</span>
+                            <span><strong>Запустить анализ</strong><small>Использовать выбранный режим</small></span>
                         </button>
                     </aside>
                 </div>

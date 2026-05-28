@@ -3,9 +3,11 @@ import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
 const ASR_STUDIO_DEFAULT_PROMPT_PRESET = "ru";
+const ASR_ANALYSIS_LANGUAGE_DEFAULT = "auto";
 const ASR_DEFAULT_BEAM_SIZE = 5;
 const ASR_DEFAULT_THREADS = 4;
 const ASR_PROMPT_PRESETS = ["auto", "ru", "en"];
+const ASR_ANALYSIS_LANGUAGES = ["auto", "ru", "en"];
 const ASR_FULL_ANALYSIS_WARNING = "Полный анализ запускает все стадии ASR pipeline и может заметно нагружать CPU/GPU, повышать температуру Mac и держать Ollama занятой несколько минут. Включайте и запускайте его только осознанно.";
 const ASR_PIPELINE_DISABLED_VALUE = "__disabled__";
 const CREATE_PROFILE_VALUE = "__create_profile__";
@@ -36,6 +38,7 @@ const STORAGE_KEYS = {
   chatLibraryOpen: "localgpt_simple_chat_library_open",
   asrLibraryOpen: "localgpt_simple_asr_library_open",
   asrPipelineSettingsOpen: "localgpt_simple_asr_pipeline_settings_open",
+  asrAnalysisMode: "localgpt_simple_asr_analysis_mode",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
   settingsTab: "localgpt_simple_settings_tab",
 };
@@ -96,6 +99,34 @@ const ASR_PIPELINE_DEFAULTS = {
   structurer: { enabled: true, model: "qwen3:8b", temperature: 0.1, max_tokens: 8000 },
   summary: { enabled: true, model: "mistral-nemo:12b", temperature: 0.1, max_tokens: 8000 },
 };
+const ASR_ANALYSIS_MODE_DEFAULT = "smart_summary";
+const ASR_ANALYSIS_MODES = [
+  {
+    id: "summary",
+    label: "Быстрое саммари",
+    action: "summary",
+    preset: "fast",
+    tab: "summary",
+    description: "Минимальная нагрузка: raw transcript -> summary.",
+  },
+  {
+    id: "smart_summary",
+    label: "Умное саммари",
+    action: "smart_summary",
+    preset: "balanced",
+    tab: "summary",
+    description: "Рекомендуемый режим: raw transcript/chunks -> structurer -> summary, без cleaner и ролей.",
+  },
+  {
+    id: "full",
+    label: "Полный анализ",
+    action: "full",
+    preset: "balanced",
+    tab: "summary",
+    requiresFullAnalysis: true,
+    description: "Тяжёлый режим: segmenter -> speaker resolver -> structurer -> summary; доступен только после явного разрешения.",
+  },
+];
 const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
   "max_tokens",
@@ -192,6 +223,7 @@ const els = {
   asrToolCloseButton: document.getElementById("asrToolCloseButton"),
   asrToolModelSelect: document.getElementById("asrToolModelSelect"),
   asrToolPromptPresetSelect: document.getElementById("asrToolPromptPresetSelect"),
+  asrToolAnalysisLanguageSelect: document.getElementById("asrToolAnalysisLanguageSelect"),
   asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
   asrToolPipelineSettingsButton: document.getElementById("asrToolPipelineSettingsButton"),
   asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
@@ -208,6 +240,12 @@ const els = {
   asrToolMeta: document.getElementById("asrToolMeta"),
   asrToolOutput: document.getElementById("asrToolOutput"),
   asrToolCleanButton: document.getElementById("asrToolCleanButton"),
+  asrToolAnalysisModeControl: document.getElementById("asrToolAnalysisModeControl"),
+  asrToolAnalysisModeButton: document.getElementById("asrToolAnalysisModeButton"),
+  asrToolAnalysisModeLabel: document.getElementById("asrToolAnalysisModeLabel"),
+  asrToolAnalysisModeMenu: document.getElementById("asrToolAnalysisModeMenu"),
+  asrToolAnalysisModeDescription: document.getElementById("asrToolAnalysisModeDescription"),
+  asrToolRunAnalysisButton: document.getElementById("asrToolRunAnalysisButton"),
   asrToolSummaryButton: document.getElementById("asrToolSummaryButton"),
   asrToolTasksButton: document.getElementById("asrToolTasksButton"),
   asrToolInsertPromptButton: document.getElementById("asrToolInsertPromptButton"),
@@ -465,6 +503,8 @@ const state = {
   asrToolPipelineAction: "",
   asrToolPipelinePreset: "",
   asrToolStopping: false,
+  asrToolAnalysisMode: readStored(STORAGE_KEYS.asrAnalysisMode, ASR_ANALYSIS_MODE_DEFAULT),
+  asrToolAnalysisModeMenuOpen: false,
   asrToolActiveTab: "text",
   asrToolTextSearch: "",
   asrToolHistorySearch: "",
@@ -1406,6 +1446,14 @@ function normalizePromptPreset(promptPreset) {
     return "auto";
   }
   return ASR_PROMPT_PRESETS.includes(preset) ? preset : ASR_STUDIO_DEFAULT_PROMPT_PRESET;
+}
+
+function normalizeAsrAnalysisLanguage(value) {
+  const language = String(value || "").trim().toLowerCase();
+  if (language === "none") {
+    return ASR_ANALYSIS_LANGUAGE_DEFAULT;
+  }
+  return ASR_ANALYSIS_LANGUAGES.includes(language) ? language : ASR_ANALYSIS_LANGUAGE_DEFAULT;
 }
 
 function languageForPromptPreset(promptPreset) {
@@ -2823,6 +2871,42 @@ function asrFullAnalysisEnabled() {
   return Boolean(preferences?.settings?.asr_full_analysis_enabled);
 }
 
+function getAsrAnalysisModeConfig(modeId) {
+  return ASR_ANALYSIS_MODES.find((mode) => mode.id === modeId) || ASR_ANALYSIS_MODES.find((mode) => mode.id === ASR_ANALYSIS_MODE_DEFAULT);
+}
+
+function normalizeAsrAnalysisMode(modeId) {
+  const mode = getAsrAnalysisModeConfig(modeId);
+  if (!mode) return ASR_ANALYSIS_MODE_DEFAULT;
+  if (mode.requiresFullAnalysis && !asrFullAnalysisEnabled()) {
+    return ASR_ANALYSIS_MODE_DEFAULT;
+  }
+  return mode.id;
+}
+
+function setAsrAnalysisModeMenuOpen(open) {
+  state.asrToolAnalysisModeMenuOpen = Boolean(open);
+  renderAsrAnalysisModeControl();
+}
+
+function setAsrAnalysisMode(modeId) {
+  const mode = getAsrAnalysisModeConfig(modeId);
+  if (!mode) return;
+  if (mode.requiresFullAnalysis && !asrFullAnalysisEnabled()) {
+    setInlineStatus(
+      els.asrToolStatus,
+      "Полный анализ отключён. Его можно включить в настройках ASR после предупреждения о нагрузке.",
+      "warning",
+    );
+    openAsrPipelineSettings();
+    return;
+  }
+  state.asrToolAnalysisMode = mode.id;
+  state.asrToolAnalysisModeMenuOpen = false;
+  writeStored(STORAGE_KEYS.asrAnalysisMode, mode.id);
+  renderAsrAnalysisModeControl();
+}
+
 function applyActiveProfilePreferences() {
   const preferences = getActiveProfilePreferences();
   const whisperFallback = state.asrModels[0]?.name || "medium";
@@ -3890,7 +3974,8 @@ function renderWhisperControls() {
     const isInstalled = Boolean(selectedItem?.installed);
     const isReady = isWhisperItemReady(selectedItem);
     const warning = getWhisperItemWarnings(selectedItem)[0] || "";
-    const asrProfileSummary = `язык/prompt ${normalizePromptPreset(state.selectedPromptPreset)}, beam ${normalizeAsrBeamSize(state.selectedAsrBeamSize)}, threads ${normalizeAsrThreads(state.selectedAsrThreads)}`;
+    const analysisLanguage = normalizeAsrAnalysisLanguage(getActiveProfilePreferences()?.asr?.analysis_language);
+    const asrProfileSummary = `язык/prompt ${normalizePromptPreset(state.selectedPromptPreset)}, язык анализа ${analysisLanguage}, beam ${normalizeAsrBeamSize(state.selectedAsrBeamSize)}, threads ${normalizeAsrThreads(state.selectedAsrThreads)}`;
     setInlineStatus(
       els.asrSettingsStatus,
       isReady
@@ -4578,10 +4663,98 @@ function renderAsrToolHistory() {
 function getAsrActionLabel(action) {
   return {
     clean: "очистка",
-    summary: "саммари",
+    summary: "быстрое саммари",
+    smart_summary: "умное саммари",
     tasks: "задачи",
     full: "полный анализ",
   }[action] || "обработка";
+}
+
+function getAsrActionStageKeys(action) {
+  return {
+    clean: ["cleaner"],
+    summary: ["summary"],
+    smart_summary: ["structurer", "summary"],
+    tasks: ["segmenter", "structurer"],
+    full: ["segmenter", "speaker_resolver", "structurer", "summary"],
+  }[action] || ASR_PIPELINE_STAGES.map((stage) => stage.key);
+}
+
+function asrRunStageEnabled(run, stageKey) {
+  const pipelineSettings = run?.used_settings?.pipeline;
+  if (!pipelineSettings || typeof pipelineSettings !== "object") return true;
+  const stageSettings = pipelineSettings[stageKey];
+  return !stageSettings || stageSettings.enabled !== false;
+}
+
+function getAsrPipelineStagesForDisplay(run, activeAction) {
+  const action = activeAction || run?.action || "";
+  const routeStageKeys = new Set(getAsrActionStageKeys(action));
+  const timings = run?.stage_timings && typeof run.stage_timings === "object" ? run.stage_timings : {};
+  const warningText = Array.isArray(run?.warnings) ? run.warnings.join("\n") : "";
+  return ASR_PIPELINE_STAGES.filter((stage) => {
+    const belongsToRoute = routeStageKeys.has(stage.key);
+    const hasResult = Boolean(timings[stage.key]) || warningText.includes(`${stage.key}_failed`);
+    if (!belongsToRoute && !hasResult) return false;
+    if (run && belongsToRoute && !asrRunStageEnabled(run, stage.key) && !hasResult) return false;
+    if (!run && activeAction && belongsToRoute && getAsrPipelineStageSettings(stage.key).enabled === false) return false;
+    return true;
+  });
+}
+
+function renderAsrAnalysisModeControl() {
+  const selectedId = normalizeAsrAnalysisMode(state.asrToolAnalysisMode);
+  if (selectedId !== state.asrToolAnalysisMode) {
+    state.asrToolAnalysisMode = selectedId;
+    writeStored(STORAGE_KEYS.asrAnalysisMode, selectedId);
+  }
+  const selectedMode = getAsrAnalysisModeConfig(selectedId);
+  const menuOpen = Boolean(state.asrToolAnalysisModeMenuOpen);
+
+  if (els.asrToolAnalysisModeLabel) {
+    els.asrToolAnalysisModeLabel.textContent = `Режим анализа: ${selectedMode?.label || "Умное саммари"}`;
+  }
+  if (els.asrToolAnalysisModeDescription) {
+    els.asrToolAnalysisModeDescription.textContent = selectedMode?.description || "Выберите режим анализа транскрипции.";
+  }
+  if (els.asrToolAnalysisModeButton) {
+    const disabled = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolStopping || !state.activeProfileId;
+    els.asrToolAnalysisModeButton.disabled = disabled;
+    els.asrToolAnalysisModeButton.setAttribute("aria-expanded", menuOpen ? "true" : "false");
+  }
+  if (els.asrToolAnalysisModeMenu) {
+    els.asrToolAnalysisModeMenu.hidden = !menuOpen;
+    els.asrToolAnalysisModeMenu.innerHTML = ASR_ANALYSIS_MODES.map((mode) => {
+      const active = mode.id === selectedId;
+      const disabled = Boolean(mode.requiresFullAnalysis && !asrFullAnalysisEnabled());
+      const description = disabled
+        ? "Отключён в настройках ASR; включается только после предупреждения о нагрузке."
+        : mode.description;
+      return `
+        <button class="asr-analysis-mode__option" type="button" role="menuitemradio"
+          data-asr-analysis-mode="${escapeHtml(mode.id)}" aria-checked="${active ? "true" : "false"}"
+          aria-disabled="${disabled ? "true" : "false"}"${disabled ? " tabindex=\"-1\"" : ""}>
+          <span class="asr-analysis-mode__check" aria-hidden="true">${active ? "✓" : ""}</span>
+          <span class="asr-analysis-mode__option-copy">
+            <strong>${escapeHtml(mode.label)}</strong>
+            <small>${escapeHtml(description)}</small>
+          </span>
+        </button>
+      `;
+    }).join("");
+  }
+  if (els.asrToolRunAnalysisButton) {
+    const content = String(els.asrToolOutput?.value || "").trim();
+    els.asrToolRunAnalysisButton.disabled = !content
+      || !state.activeProfileId
+      || state.asrToolIsTranscribing
+      || state.asrToolPipelineBusy
+      || state.asrToolStopping;
+    const small = els.asrToolRunAnalysisButton.querySelector("small");
+    if (small) {
+      small.textContent = selectedMode ? selectedMode.label : "Использовать выбранный режим";
+    }
+  }
 }
 
 function getAsrStageStatus(stageKey, run) {
@@ -4597,7 +4770,8 @@ function renderAsrPipelineSteps(run) {
   const activeAction = state.asrToolPipelineBusy ? state.asrToolPipelineAction : "";
   const activePreset = state.asrToolPipelineBusy ? state.asrToolPipelinePreset : "";
   let hasActiveStage = false;
-  const html = ASR_PIPELINE_STAGES.map((stage) => {
+  const stages = getAsrPipelineStagesForDisplay(run, activeAction);
+  const html = stages.map((stage) => {
     let status = getAsrStageStatus(stage.key, run);
     if (status === "pending" && activeAction && !hasActiveStage) {
       status = "active";
@@ -4612,7 +4786,7 @@ function renderAsrPipelineSteps(run) {
     `;
   }).join("");
   els.asrToolPipelineSteps.innerHTML = html;
-  els.asrToolPipelineSteps.hidden = !run && !activeAction && !activePreset;
+  els.asrToolPipelineSteps.hidden = (!run && !activeAction && !activePreset) || !stages.length;
 }
 
 function getAsrTranscriptTitle(transcript) {
@@ -4943,6 +5117,12 @@ function renderAsrTool() {
   if (els.asrToolPromptPresetSelect) {
     els.asrToolPromptPresetSelect.value = normalizePromptPreset(state.selectedPromptPreset);
   }
+  if (els.asrToolAnalysisLanguageSelect) {
+    els.asrToolAnalysisLanguageSelect.value = normalizeAsrAnalysisLanguage(getActiveProfilePreferences()?.asr?.analysis_language);
+    els.asrToolAnalysisLanguageSelect.disabled = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolStopping || !state.activeProfileId;
+  }
+
+  renderAsrAnalysisModeControl();
 
   if (els.asrToolChooseFileButton) {
     els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || state.asrToolStopping || !state.activeProfileId;
@@ -5567,6 +5747,14 @@ async function ensureAsrToolTranscriptSaved() {
   return saveAsrToolTranscript();
 }
 
+async function runSelectedAsrAnalysisMode() {
+  const mode = getAsrAnalysisModeConfig(normalizeAsrAnalysisMode(state.asrToolAnalysisMode));
+  if (!mode) return;
+  if (mode.requiresFullAnalysis && !confirmAsrFullAnalysisRisk()) return;
+  setAsrToolTab(mode.tab || "summary");
+  await runAsrPipelineAction(mode.action, mode.preset);
+}
+
 async function runAsrPipelineAction(action, preset = "balanced") {
   if (state.asrToolPipelineBusy) return;
   if (action === "full" && !asrFullAnalysisEnabled()) {
@@ -5622,6 +5810,10 @@ async function runAsrPipelineAction(action, preset = "balanced") {
     } else if (error?.code === "asr_full_analysis_disabled") {
       setInlineStatus(els.asrToolStatus, "Полный анализ отключён в настройках ASR.", "warning");
       setFooter("Полный анализ ASR отключён.", "warning");
+      openAsrPipelineSettings();
+    } else if (error?.code === "asr_summary_stage_disabled") {
+      setInlineStatus(els.asrToolStatus, "Стадия саммари выключена в настройках ASR. Включите её или выберите другой маршрут.", "warning");
+      setFooter("ASR summary выключено в настройках стадий.", "warning");
       openAsrPipelineSettings();
     } else {
       setInlineStatus(els.asrToolStatus, `Ошибка обработки: ${error.message || error}`, "error");
@@ -8823,6 +9015,14 @@ function bindEvents() {
     if (!updated) return;
     setFooter(`Профиль обновлён: ASR язык/prompt ${promptPreset}`, "success");
   });
+  els.asrToolAnalysisLanguageSelect?.addEventListener("change", async () => {
+    const analysisLanguage = normalizeAsrAnalysisLanguage(els.asrToolAnalysisLanguageSelect.value);
+    els.asrToolAnalysisLanguageSelect.value = analysisLanguage;
+    const updated = await saveActiveProfilePreferences({ asr: { analysis_language: analysisLanguage } });
+    if (!updated) return;
+    const label = analysisLanguage === "auto" ? "авто" : analysisLanguage;
+    setFooter(`Профиль обновлён: язык summary ${label}`, "success");
+  });
   els.asrToolOutput?.addEventListener("input", () => {
     state.asrToolPipelineRun = null;
     renderAsrTool();
@@ -8871,6 +9071,23 @@ function bindEvents() {
       setInlineStatus(els.asrToolStatus, "История ASR Studio обновлена.", "success");
       setFooter("История ASR обновлена.", "success");
     }
+  });
+  els.asrToolAnalysisModeButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    setAsrAnalysisModeMenuOpen(!state.asrToolAnalysisModeMenuOpen);
+  });
+  els.asrToolAnalysisModeMenu?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-asr-analysis-mode]") : null;
+    if (!button) return;
+    event.preventDefault();
+    if (button.getAttribute("aria-disabled") === "true") {
+      setAsrAnalysisMode(button.dataset.asrAnalysisMode);
+      return;
+    }
+    setAsrAnalysisMode(button.dataset.asrAnalysisMode);
+  });
+  els.asrToolRunAnalysisButton?.addEventListener("click", async () => {
+    await runSelectedAsrAnalysisMode();
   });
   els.asrToolCleanButton?.addEventListener("click", async () => {
     setAsrToolTab("text");
@@ -9258,6 +9475,10 @@ function bindEvents() {
     }
     if (event.key === "Escape") {
       hideTooltip();
+      if (state.asrToolAnalysisModeMenuOpen) {
+        setAsrAnalysisModeMenuOpen(false);
+        return;
+      }
       const appSelectOpen = Array.from(state.appSelects.values()).some((entry) => entry.wrapper.classList.contains("app-select--open"));
       if (appSelectOpen) {
         closeAppSelect();
@@ -9301,6 +9522,7 @@ function bindEvents() {
     const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
     const insideAppSelect = target?.closest(".app-select");
+    const insideAsrAnalysisMode = target?.closest("#asrToolAnalysisModeControl");
     if (!insideSessionContextMenu) {
       closeSessionContextMenu();
     }
@@ -9321,6 +9543,9 @@ function bindEvents() {
     }
     if (!insideAppSelect) {
       closeAppSelect();
+    }
+    if (!insideAsrAnalysisMode && state.asrToolAnalysisModeMenuOpen) {
+      setAsrAnalysisModeMenuOpen(false);
     }
   });
 

@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,6 +52,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         profile = db.get_profile(self.profile_id)
 
         self.assertEqual(profile["preferences"]["asr"]["studio_model"], "large-v3-turbo")
+        self.assertEqual(profile["preferences"]["asr"]["analysis_language"], "auto")
         self.assertEqual(profile["preferences"]["chat"]["dictation_model"], config.SETTINGS.whisper_default_model)
 
     def test_default_pipeline_uses_current_catalog_and_token_budget(self):
@@ -82,6 +84,28 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(pipeline_settings["cleaner"]["max_tokens"], 1234)
         self.assertEqual(pipeline_settings["segmenter"]["model"], "qwen2.5:7b-instruct")
         self.assertEqual(pipeline_settings["segmenter"]["max_tokens"], 8000)
+
+    def test_asr_analysis_actions_map_to_generic_stages(self):
+        pipeline_cfg = deepcopy(config.DEFAULT_PIPELINE)
+
+        self.assertFalse(pipeline._stage_enabled("cleaner", "summary", "balanced", pipeline_cfg))
+        self.assertTrue(pipeline._stage_enabled("summary", "summary", "balanced", pipeline_cfg))
+
+        self.assertFalse(pipeline._stage_enabled("cleaner", "smart_summary", "balanced", pipeline_cfg))
+        self.assertFalse(pipeline._stage_enabled("speaker_resolver", "smart_summary", "balanced", pipeline_cfg))
+        self.assertTrue(pipeline._stage_enabled("structurer", "smart_summary", "balanced", pipeline_cfg))
+        self.assertTrue(pipeline._stage_enabled("summary", "smart_summary", "balanced", pipeline_cfg))
+
+        self.assertFalse(pipeline._stage_enabled("cleaner", "full", "balanced", pipeline_cfg))
+        self.assertTrue(pipeline._stage_enabled("segmenter", "full", "balanced", pipeline_cfg))
+        self.assertTrue(pipeline._stage_enabled("speaker_resolver", "full", "balanced", pipeline_cfg))
+        self.assertTrue(pipeline._stage_enabled("structurer", "full", "balanced", pipeline_cfg))
+        self.assertTrue(pipeline._stage_enabled("summary", "full", "balanced", pipeline_cfg))
+
+        pipeline_cfg["structurer"]["enabled"] = False
+        pipeline_cfg["summary"]["enabled"] = False
+        self.assertFalse(pipeline._stage_enabled("structurer", "smart_summary", "balanced", pipeline_cfg))
+        self.assertFalse(pipeline._stage_enabled("summary", "smart_summary", "balanced", pipeline_cfg))
 
     def test_profile_create_and_update_accept_system_prompt(self):
         profile = profile_routes.create_profile(
@@ -815,20 +839,19 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         results = rag_service.search(self.profile_id, "beta_unique_profile_fact", top_k=3)
         self.assertFalse(any("beta_unique_profile_fact" in item["content"] for item in results))
 
-    def test_pipeline_summary_uses_cleaned_text_and_sanitizes_speakers(self):
+    def test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers(self):
         db.update_profile_preferences(self.profile_id, {"settings": {"asr_full_analysis_enabled": True}})
         transcript = db.create_transcript(
             profile_id=self.profile_id,
             name="Call",
-            content="raw noise phrase raw noise phrase",
+            content="raw repeated phrase raw repeated phrase",
             labels={"origin": "asr_tool"},
         )
         responses = [
-            "clean phrase",
-            '[{"segment_id": 1, "text": "clean phrase"}]',
-            '[{"segment_id": 1, "speaker": "Alice", "confidence": 0.95, "text": "clean phrase"}]',
+            '[{"segment_id": 1, "text": "raw repeated phrase"}]',
+            '[{"segment_id": 1, "speaker": "Alice", "confidence": 0.95, "text": "raw repeated phrase"}]',
             '{"topic": "demo", "tasks": [], "decisions": [], "risks": [], "open_questions": []}',
-            "## Краткое резюме\nclean summary",
+            "## Brief Summary\nraw repeated phrase summary",
         ]
 
         with (
@@ -842,21 +865,241 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         ):
             run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="balanced", action="full")
 
-        self.assertEqual(run["cleaned_transcript"], "clean phrase")
+        self.assertEqual(run["cleaned_transcript"], "raw repeated phrase raw repeated phrase")
+        self.assertNotIn("cleaner", run["stage_timings"])
         self.assertEqual(run["speaker_mapping"][0]["speaker"], "Unknown speaker")
-        self.assertIn("clean summary", run["summary"])
+        self.assertIn("raw repeated phrase summary", run["summary"])
         summary_messages = chat_mock.call_args_list[-1].args[2]
         summary_payload = summary_messages[-1]["content"]
         first_stage_settings = chat_mock.call_args_list[0].kwargs["settings"]
         self.assertEqual(first_stage_settings["ollama_num_gpu"], 0)
         self.assertEqual(first_stage_settings["ollama_keep_alive_effective"], "0")
-        self.assertIn("clean phrase", summary_payload)
-        self.assertNotIn("raw noise phrase raw noise phrase", summary_payload)
+        self.assertIn("raw repeated phrase", summary_payload)
         saved_transcript = db.get_transcript(transcript["id"])
         self.assertEqual(saved_transcript["latest_pipeline_run_id"], run["id"])
-        self.assertIn("clean summary", saved_transcript["summary"])
+        self.assertIn("raw repeated phrase summary", saved_transcript["summary"])
         self.assertEqual(saved_transcript["structured_json"]["topic"], "demo")
         self.assertTrue(saved_transcript["name"])
+
+    def test_smart_summary_runs_structurer_and_summary_without_cleaner_or_roles(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="generic planning point repeated in another way",
+            labels={"origin": "asr_tool"},
+        )
+        responses = [
+            '{"topic": "generic planning", "summary": "generic structure", "tasks": [], "decisions": [], "risks": [], "open_questions": []}',
+            "## Brief Summary\ngeneric planning point repeated summary",
+        ]
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                side_effect=lambda self, model, messages, *, settings: responses.pop(0),
+            ),
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="balanced", action="smart_summary")
+
+        self.assertEqual(run["action"], "smart_summary")
+        self.assertEqual(run["cleaned_transcript"], "generic planning point repeated in another way")
+        self.assertIn("structurer", run["stage_timings"])
+        self.assertIn("summary", run["stage_timings"])
+        self.assertNotIn("cleaner", run["stage_timings"])
+        self.assertNotIn("speaker_resolver", run["stage_timings"])
+        self.assertIn("generic planning point repeated summary", run["summary"])
+
+    def test_smart_summary_respects_disabled_structurer_and_falls_back_to_summary(self):
+        model_name = "qwen2.5:7b-instruct"
+        db.upsert_model_settings(
+            self.profile_id,
+            model_name,
+            pipeline={"structurer": {"enabled": False}},
+        )
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="generic raw note",
+            labels={"origin": "asr_tool"},
+        )
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                return_value="## Brief Summary\ngeneric raw note fallback summary",
+            ),
+        ):
+            run = pipeline.run_transcript_pipeline(
+                transcript_id=transcript["id"],
+                preset="balanced",
+                action="smart_summary",
+                model_name=model_name,
+            )
+
+        self.assertIn("summary", run["stage_timings"])
+        self.assertNotIn("structurer", run["stage_timings"])
+        self.assertIn("smart_summary_structurer_disabled_fallback_summary", run["warnings"])
+        self.assertIn("generic raw note fallback summary", run["summary"])
+
+    def test_summary_stage_disabled_returns_clear_error(self):
+        model_name = "qwen2.5:7b-instruct"
+        db.upsert_model_settings(
+            self.profile_id,
+            model_name,
+            pipeline={"summary": {"enabled": False}},
+        )
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="generic raw note",
+            labels={"origin": "asr_tool"},
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            pipeline.run_transcript_pipeline(
+                transcript_id=transcript["id"],
+                preset="balanced",
+                action="summary",
+                model_name=model_name,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "asr_summary_stage_disabled")
+
+    def test_summary_language_auto_uses_russian_for_cyrillic_transcript(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="обсуждение задачи и повторный акцент на важной задаче",
+            labels={"origin": "asr_tool"},
+        )
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                return_value="## Краткое резюме\nОбсуждали задачу и повторно подчеркнули важный пункт.",
+            ) as chat_mock,
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        self.assertEqual(run["used_settings"]["_asr_output_language"], "ru")
+        messages = chat_mock.call_args.args[2]
+        self.assertIn("Output language: Russian", messages[0]["content"])
+        self.assertIn("## Краткое резюме", messages[1]["content"])
+
+    def test_summary_language_manual_english_overrides_transcript_language(self):
+        db.update_profile_preferences(self.profile_id, {"asr": {"analysis_language": "en"}})
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="обсуждение задачи и повторный акцент на важной задаче",
+            labels={"origin": "asr_tool"},
+        )
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                return_value="## Brief Summary\nresult",
+            ) as chat_mock,
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        self.assertEqual(run["used_settings"]["_asr_output_language"], "en")
+        messages = chat_mock.call_args.args[2]
+        self.assertIn("Output language: English", messages[0]["content"])
+        self.assertIn("## Brief Summary", messages[1]["content"])
+        self.assertNotIn("## Краткое резюме", messages[1]["content"])
+
+    def test_summary_grounding_retry_replaces_instruction_echo(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="обсуждение задачи и повторный акцент на важной задаче",
+            labels={"origin": "asr_tool"},
+        )
+        responses = [
+            (
+                "The task is to summarize the following conversation in English:\n\n"
+                "**Speaker 1:** Hello! How are you?\n\n"
+                "**Speaker 2:** I'm fine, thank you. And you?"
+            ),
+            "## Краткое резюме\nОбсуждали задачу и повторно подчеркнули важный пункт.",
+        ]
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                side_effect=lambda self, model, messages, *, settings: responses.pop(0),
+            ) as chat_mock,
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        self.assertIn("Обсуждали задачу", run["summary"])
+        self.assertTrue(any(item.startswith("summary_grounding_validation_failed:") for item in run["warnings"]))
+        self.assertIn("summary_grounding_retry_succeeded", run["warnings"])
+        self.assertEqual(chat_mock.call_count, 2)
+        retry_messages = chat_mock.call_args_list[-1].args[2]
+        self.assertIn("EVIDENCE_JSON", retry_messages[-1]["content"])
+        self.assertIn("Не создавай примеры", retry_messages[0]["content"])
+
+    def test_summary_grounding_failure_does_not_save_fabricated_summary(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="обсуждение задачи и повторный акцент на важной задаче",
+            labels={"origin": "asr_tool"},
+        )
+        fabricated = (
+            "The task is to summarize the following conversation in English:\n\n"
+            "**Speaker 1:** Hello! How are you?\n\n"
+            "**Speaker 2:** I'm fine, thank you. And you?"
+        )
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                return_value=fabricated,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(raised.exception.detail["code"], "asr_summary_grounding_failed")
+        saved_transcript = db.get_transcript(transcript["id"])
+        self.assertFalse(saved_transcript.get("summary"))
+
+    def test_full_analysis_is_blocked_until_profile_setting_allows_it(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="generic raw note",
+            labels={"origin": "asr_tool"},
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="balanced", action="full")
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "asr_full_analysis_disabled")
 
     def test_incomplete_summary_section_lists_remaining_coverage_topics(self):
         topic_a = "tokena tokenb tokenc"
@@ -941,8 +1184,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
     def test_pipeline_tasks_are_normalized_for_transcript_record(self):
         transcript = db.create_transcript(profile_id=self.profile_id, name="Call", content="raw call")
         responses = [
-            "clean call",
-            '[{"segment_id": 1, "text": "clean call"}]',
+            '[{"segment_id": 1, "text": "raw call"}]',
             '{"theme": "marker_topic", "summary": "marker_summary", "tasks": [{"title": "marker_task", "details": "marker_context", "owner": "не указано", "status": "open"}], "solutions": ["marker_solution"], "responsible": "Unknown speaker", "schedules": "not specified"}',
         ]
 

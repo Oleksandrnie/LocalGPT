@@ -4196,6 +4196,113 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     margin: 0;
 }
 
+.asr-analysis-mode {
+    position: relative;
+    min-width: 0;
+}
+
+.asr-analysis-mode__button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.045);
+    color: var(--text);
+    text-align: left;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
+}
+
+.asr-analysis-mode__button:hover,
+.asr-analysis-mode__button:focus-visible {
+    background: rgba(124, 92, 255, 0.08);
+    box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.22);
+    outline: 0;
+}
+
+.asr-analysis-mode__button:disabled {
+    cursor: not-allowed;
+    opacity: 0.52;
+}
+
+.asr-analysis-mode__chevron {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    transition: transform 160ms ease;
+}
+
+.asr-analysis-mode__button[aria-expanded="true"] .asr-analysis-mode__chevron {
+    transform: rotate(180deg);
+}
+
+.asr-analysis-mode__menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    display: grid;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 12px;
+    background: rgba(14, 18, 23, 0.98);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.asr-analysis-mode__menu[hidden] {
+    display: none;
+}
+
+.asr-analysis-mode__option {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 8px;
+    width: 100%;
+    padding: 9px 8px;
+    border-radius: 9px;
+    color: var(--text);
+    text-align: left;
+}
+
+.asr-analysis-mode__option:hover,
+.asr-analysis-mode__option:focus-visible {
+    background: rgba(124, 92, 255, 0.12);
+    outline: 0;
+}
+
+.asr-analysis-mode__option[aria-disabled="true"] {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.asr-analysis-mode__option[aria-disabled="true"]:hover,
+.asr-analysis-mode__option[aria-disabled="true"]:focus-visible {
+    background: transparent;
+}
+
+.asr-analysis-mode__check {
+    color: #a3dfbf;
+}
+
+.asr-analysis-mode__option-copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.asr-analysis-mode__option-copy strong {
+    font-size: 13px;
+}
+
+.asr-analysis-mode__option-copy small {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
 .asr-next-action {
     display: flex;
     align-items: center;
@@ -4219,6 +4326,11 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 .asr-next-action:disabled {
     cursor: not-allowed;
     opacity: 0.52;
+}
+
+.asr-next-action--primary {
+    background: rgba(76, 175, 131, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(76, 175, 131, 0.2);
 }
 
 .asr-next-action__icon {
@@ -4964,9 +5076,15 @@ body.theme-light .pipeline-output pre,
 body.theme-light .speaker-editor__row,
 body.theme-light .asr-tasks-output,
 body.theme-light .asr-next-action,
+body.theme-light .asr-analysis-mode__button,
 body.theme-light .asr-search {
     background: rgba(246, 247, 251, 0.56);
     box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.045);
+}
+
+body.theme-light .asr-analysis-mode__menu {
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 18px 48px rgba(31, 41, 55, 0.12), inset 0 0 0 1px rgba(31, 41, 55, 0.08);
 }
 
 body.theme-light .asr-bottom-bar {
@@ -4976,6 +5094,10 @@ body.theme-light .asr-bottom-bar {
 
 body.theme-light .speaker-editor__row:hover,
 body.theme-light .asr-next-action:hover,
+body.theme-light .asr-analysis-mode__button:hover,
+body.theme-light .asr-analysis-mode__button:focus-visible,
+body.theme-light .asr-analysis-mode__option:hover,
+body.theme-light .asr-analysis-mode__option:focus-visible,
 body.theme-light .asr-file-card:hover,
 body.theme-light .asr-file-card:focus-visible {
     background: rgba(124, 92, 255, 0.055);
@@ -6066,6 +6188,10 @@ body.theme-light .tool-window__resize::before {
     }
 
     #asrToolWindow .asr-next-action {
+        min-height: var(--mobile-touch-target);
+    }
+
+    #asrToolWindow .asr-analysis-mode__button {
         min-height: var(--mobile-touch-target);
     }
 

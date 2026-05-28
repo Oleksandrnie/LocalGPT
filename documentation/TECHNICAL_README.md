@@ -222,13 +222,11 @@ Pipeline:
 ```text
 raw ASR transcript
 -> chunking by max_transcript_chars for long inputs
--> cleaner
--> segmenter
--> speaker resolver
--> structurer
--> merge structured chunks
--> summary
--> coverage QA
+-> selected action route
+   clean: cleaner
+   summary: summary
+   smart_summary: structurer -> merge structured chunks -> summary -> coverage QA
+   full: segmenter -> speaker resolver -> structurer -> merge structured chunks -> summary -> coverage QA
 -> DB
 -> optional chat context / memory
 ```
@@ -269,13 +267,29 @@ Default preset для длинных русскоязычных встреч:
 
 Whisper defaults для ASR Studio: `large-v3-turbo`, русский prompt/language, `beam_size=5`, `threads=4`. `qwen2.5:3b-instruct` больше не основной качественный вариант для cleaner/segmenter; он остаётся быстрым fallback. User/model overrides из `model_settings.pipeline_json` merge-ятся поверх default pipeline и имеют приоритет.
 
+ASR Studio analysis actions:
+
+| UI mode | Backend action | Route |
+| --- | --- | --- |
+| `Быстрое саммари` | `summary` | raw transcript -> summary |
+| `Умное саммари` | `smart_summary` | raw transcript/chunks -> structurer -> summary |
+| `Полный анализ` | `full` | raw transcript/chunks -> segmenter -> speaker resolver -> structurer -> summary |
+| manual `Очистить` | `clean` | raw transcript -> cleaner |
+
+Cleaner is optional and is not part of the default summary/smart/full routes. It remains available as a manual stage because repeated speech can be useful evidence rather than noise.
+
+Stage settings have priority over mode routes. If a stage is saved as `enabled=false` via UI `Не использовать`, backend `_stage_enabled` skips it in every action. `smart_summary` falls back to direct summary when `structurer` is disabled and records `smart_summary_structurer_disabled_fallback_summary`; summary-producing actions return `asr_summary_stage_disabled` when `summary` is disabled instead of silently re-enabling it.
+
+`asr.analysis_language` controls ASR analysis output language: `auto` follows the transcript language, while `ru` and `en` force Russian or English. `asr.analysis_prompt` is profile-level context for structurer/summary/retry prompts. These settings do not affect Whisper transcription.
+
 Long transcript handling:
 
 - `max_transcript_chars` в ASR pipeline используется как размер chunk, а не как лимит полного transcript;
-- действие `summary` намеренно лёгкое: cleaner + summary, без принудительного speaker/structurer merge;
+- действие `summary` намеренно лёгкое: raw transcript -> summary, без cleaner/speaker/structurer;
+- действие `smart_summary` использует chunked structurer merge перед final summary и coverage QA;
 - compact segment digest для длинного summary сохраняет начало и конец встречи, а не только prefix;
-- полный анализ закрыт profile setting `asr_full_analysis_enabled=false` по умолчанию; UI скрывает `Полный анализ` и не запускает roles/full pipeline без явного включения и warning confirmation;
-- в полном анализе каждый chunk проходит cleaner/segmenter/speaker resolver/structurer;
+- полный анализ закрыт profile setting `asr_full_analysis_enabled=false` по умолчанию; UI не даёт запустить `Полный анализ` без явного включения и warning confirmation;
+- в полном анализе каждый chunk проходит segmenter/speaker resolver/structurer, если эти stages не выключены пользователем;
 - structured outputs merge-ятся в единый `structured_json` с `coverage_topics`, `chunk_summaries` и `chunk_count`;
 - summary получает `source_mode=chunked_merge`, merged structure, coverage topics и compact segment digest, а не обрезанный raw transcript prefix;
 - warning `raw_transcript_chunked:<N>` означает штатную полную chunked-обработку;
@@ -288,7 +302,7 @@ Long transcript handling:
 - подозрительные ASR-термины технических артефактов не исправляются словарём; summary prompt требует выносить спорные термины в вопросы для уточнения;
 - неподтверждённые action-like bullets из `Ключевые решения` переносятся в proposals, если нет явного confirmation marker.
 
-Runtime note: full long chunked runs can perform multiple sequential local LLM calls across cleaner/segmenter/speaker resolver/structurer plus one summary retry on `mistral-nemo:12b`. This is expected quality work, but it can be thermally expensive on a laptop. Keep full analysis disabled for routine summary-only work, use `stage_timings`, warnings and process checks during manual QA, and do not run repeated live long-meeting tests in parallel with other local LLM/ASR workloads.
+Runtime note: full long chunked runs can perform multiple sequential local LLM calls across segmenter/speaker resolver/structurer plus one summary retry on `mistral-nemo:12b`. This is expected quality work, but it can be thermally expensive on a laptop. Keep full analysis disabled for routine summary-only work, use `stage_timings`, warnings and process checks during manual QA, and do not run repeated live long-meeting tests in parallel with other local LLM/ASR workloads.
 
 ASR stop behavior:
 

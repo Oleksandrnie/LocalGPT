@@ -50,7 +50,8 @@ PIPELINE_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
-VALID_ACTIONS = {"clean", "summary", "tasks", "full"}
+VALID_ACTIONS = {"clean", "summary", "smart_summary", "tasks", "full"}
+SUMMARY_ACTIONS = {"summary", "smart_summary", "full"}
 SPEAKER_RE = re.compile(r"^Speaker_\d+$")
 MIN_TRANSCRIPT_CHUNK_CHARS = 500
 DEFAULT_TRANSCRIPT_CHUNK_CHARS = 24000
@@ -63,11 +64,18 @@ ASR_SUMMARY_GUARDRAILS_RU = (
     "спорный пункт в вопросы для уточнения. Не повышай варианты и гипотезы до подтверждённых решений. "
     "Не назначай ответственных, если они явно не подтверждены."
 )
+ASR_SUMMARY_GUARDRAILS_EN = (
+    "Preserve distinctions and source terms from evidence. Do not replace architecture, system names, integrations, "
+    "owners or task statuses with assumptions. If evidence conflicts, put the disputed item into Questions to Clarify. "
+    "Do not upgrade options or hypotheses into confirmed decisions. Do not assign owners unless they are explicitly confirmed."
+)
 NO_DECISIONS_RE = re.compile(
     r"(?:не\s+(?:зафиксировано|выявлено|обнаружено)|нет\s+(?:решени[йя]|договор[её]нност))",
     re.IGNORECASE,
 )
 TOKEN_RE = re.compile(r"[a-zа-яё0-9][a-zа-яё0-9_-]{2,}", re.IGNORECASE)
+CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
+LATIN_RE = re.compile(r"[a-z]", re.IGNORECASE)
 TOPIC_STOPWORDS = {
     "это",
     "как",
@@ -124,6 +132,14 @@ TOPIC_STOPWORDS = {
     "task",
     "topic",
 }
+SUMMARY_INVALID_PATTERNS = (
+    re.compile(r"\bthe\s+task\s+is\s+to\s+summari[sz]e\b", re.IGNORECASE),
+    re.compile(r"\bthe\s+provided\s+text\s+appears\s+to\s+be\b", re.IGNORECASE),
+    re.compile(r"\bfollowing\s+conversation\s+in\s+english\b", re.IGNORECASE),
+    re.compile(r"\bcreate\s+the\s+summary\s+strictly\s+in\s+this\s+markdown\s+format\b", re.IGNORECASE),
+    re.compile(r"\boutput\s+language:\s*(?:english|russian)\b", re.IGNORECASE),
+    re.compile(r"\bevidence_json\b", re.IGNORECASE),
+)
 
 
 def _json_clone(value: Any) -> Any:
@@ -180,7 +196,7 @@ def _normalize_action(value: str | None) -> str:
     if action not in VALID_ACTIONS:
         raise HTTPException(
             status_code=422,
-            detail={"code": "invalid_pipeline_action", "message": "Pipeline action must be clean, summary, tasks or full."},
+            detail={"code": "invalid_pipeline_action", "message": "Pipeline action must be clean, summary, smart_summary, tasks or full."},
         )
     return action
 
@@ -190,9 +206,13 @@ def _stage_enabled(stage: str, action: str, preset: str, pipeline: dict[str, Any
     if action == "clean":
         desired = stage == "cleaner"
     elif action == "summary":
-        desired = stage in {"cleaner", "summary"}
+        desired = stage == "summary"
+    elif action == "smart_summary":
+        desired = stage in {"structurer", "summary"}
     elif action == "tasks":
-        desired = stage in {"cleaner", "segmenter", "structurer"}
+        desired = stage in {"segmenter", "structurer"}
+    elif action == "full":
+        desired = stage in {"segmenter", "speaker_resolver", "structurer", "summary"}
     else:
         desired = bool(preset_cfg.get(stage))
     stage_cfg = pipeline.get(stage) or {}
@@ -905,6 +925,177 @@ def _asr_analysis_context(settings: dict[str, Any]) -> str:
     return str((settings or {}).get("_asr_analysis_prompt") or "").strip()
 
 
+def _normalize_asr_analysis_language(value: Any) -> str:
+    normalized = str(value or "auto").strip().lower()
+    if normalized in {"", "none"}:
+        return "auto"
+    return normalized if normalized in {"auto", "ru", "en"} else "auto"
+
+
+def _language_from_transcript_metadata(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized.startswith("ru"):
+        return "ru"
+    if normalized.startswith("en"):
+        return "en"
+    return None
+
+
+def _detect_transcript_language(text: str) -> str | None:
+    raw = str(text or "")
+    cyrillic_count = len(CYRILLIC_RE.findall(raw))
+    latin_count = len(LATIN_RE.findall(raw))
+    if cyrillic_count >= 20 and cyrillic_count >= latin_count * 0.35:
+        return "ru"
+    if latin_count >= 20 and latin_count > cyrillic_count * 2:
+        return "en"
+    if cyrillic_count and not latin_count:
+        return "ru"
+    if latin_count and not cyrillic_count:
+        return "en"
+    return None
+
+
+def _language_counts(text: str) -> tuple[int, int]:
+    raw = str(text or "")
+    return len(CYRILLIC_RE.findall(raw)), len(LATIN_RE.findall(raw))
+
+
+def _resolve_asr_output_language(settings: dict[str, Any], transcript: dict[str, Any], raw_text: str) -> str:
+    preferred = _normalize_asr_analysis_language(settings.get("_asr_analysis_language"))
+    if preferred in {"ru", "en"}:
+        return preferred
+    return (
+        _detect_transcript_language(raw_text)
+        or _language_from_transcript_metadata(transcript.get("language"))
+        or "ru"
+    )
+
+
+def _asr_output_language(settings: dict[str, Any]) -> str:
+    language = _normalize_asr_analysis_language(settings.get("_asr_output_language")) if settings else "ru"
+    return language if language in {"ru", "en"} else "ru"
+
+
+def _language_name(language: str) -> str:
+    return "English" if language == "en" else "Russian"
+
+
+def _summary_guardrails(language: str) -> str:
+    return ASR_SUMMARY_GUARDRAILS_EN if language == "en" else ASR_SUMMARY_GUARDRAILS_RU
+
+
+def _summary_grounding_rules(language: str) -> str:
+    if language == "en":
+        return (
+            "Use only EVIDENCE_JSON. Do not restate this task. Do not create examples. "
+            "Do not invent sample speakers, greetings, places, plans, meetings, or dialogue. "
+            "If evidence is insufficient, write that evidence is insufficient instead of fabricating content."
+        )
+    return (
+        "Используй только EVIDENCE_JSON. Не пересказывай инструкцию. Не создавай примеры. "
+        "Не придумывай учебных спикеров, приветствия, места, планы, встречи или диалог. "
+        "Если evidence недостаточно, напиши, что данных недостаточно, а не выдумывай содержание."
+    )
+
+
+def _json_language_instruction(language: str) -> str:
+    if language == "en":
+        return (
+            "Output language: English. Keep JSON keys exactly as requested, but write all human-readable JSON values "
+            "in English. Keep product names, domains, IDs, commands and quoted source terms unchanged."
+        )
+    return (
+        "Output language: Russian. Keep JSON keys exactly as requested, but write all human-readable JSON values "
+        "in Russian. Keep product names, domains, IDs, commands and quoted source terms unchanged."
+    )
+
+
+def _summary_format_instruction(language: str) -> str:
+    if language == "en":
+        return (
+            "Create the summary strictly in this markdown format:\n"
+            "## Brief Summary\n...\n## Key Decisions\n- ...\n## Tasks\n- ...\n"
+            "## Proposals / Options\n- ...\n"
+            "## Risks\n- ...\n## Questions to Clarify\n- ...\n## Next Steps\n- ...\n\n"
+            "Put only confirmed decisions in 'Key Decisions'. If there were only options, leave decisions empty or write 'not recorded'. "
+            "If structured contains decisions or agreements, do not say that decisions were not recorded. "
+            "Cover all major topics from coverage_topics; do not limit the summary to the start of the transcript. "
+            "If structured contains current_state/target_state, clearly separate current state from target state. "
+            "If an important point is repeated in different words, reflect it as a significant topic/task/question. "
+            "If a technical term looks like an ASR error or a concept mix-up, put it into Questions to Clarify. "
+            "Do not assign owners unless explicitly confirmed. "
+            "Return only the requested markdown summary, with no preamble."
+        )
+    return (
+        "Сформируй summary строго в формате:\n"
+        "## Краткое резюме\n...\n## Ключевые решения\n- ...\n## Задачи\n- ...\n"
+        "## Предложения / варианты дальнейших действий\n- ...\n"
+        "## Риски\n- ...\n## Вопросы для уточнения\n- ...\n## Следующие действия\n- ...\n\n"
+        "В 'Ключевые решения' помещай только подтверждённые решения. "
+        "Если были только варианты, оставь решения пустыми или напиши 'не зафиксировано'. "
+        "Но если в structured есть decisions или agreements, не пиши, что решения не зафиксированы. "
+        "Покрой все крупные темы из coverage_topics; не ограничивайся началом transcript. "
+        "Если structured содержит current_state/target_state, явно отдели текущее состояние от целевого. "
+        "Если важный пункт повторяется разными словами, отрази его как значимую тему/задачу/уточнение. "
+        "Если технический термин выглядит как ошибка ASR или смешение понятий, вынеси его в вопросы для уточнения. "
+        "Не назначай ответственных, если они не подтверждены явно. "
+        "Верни только markdown summary без вводного пояснения."
+    )
+
+
+def _structurer_task_instruction(language: str, chunk_id: int, chunk_count: int) -> str:
+    if language == "en":
+        return (
+            f"Analyze transcript chunk {chunk_id}/{chunk_count} for task planning.\n"
+            "Return exactly this JSON schema:\n"
+            "{\n"
+            '  "topic": "short topic",\n'
+            '  "summary": "1-2 sentences with the point",\n'
+            '  "current_state": "current state/how it works now, if discussed",\n'
+            '  "target_state": "target state/where they want to get, if discussed",\n'
+            '  "decisions": ["confirmed decisions only"],\n'
+            '  "proposals": ["what was proposed or discussed as an option"],\n'
+            '  "agreements": ["recorded agreements only"],\n'
+            '  "tasks": [{"task":"what to do","context":"context/why this is a task from the conversation","responsible":"not specified|name/role if explicit","status":"open|proposed|agreed|blocked"}],\n'
+            '  "risks": ["consequences of uncertainty, not questions"],\n'
+            '  "open_questions": ["questions to clarify"],\n'
+            '  "next_steps": ["next actions"],\n'
+            '  "owners": ["owners, if explicitly stated"],\n'
+            '  "deadlines": ["deadlines, if explicitly stated"]\n'
+            "}\n"
+            "Tasks must be actionable: short action plus separate context/reason. "
+            "If there is a contrast between 'now' and 'target', do not mix them: fill current_state and target_state. "
+            "Do not put proposals, hypotheses or items requiring confirmation into decisions. "
+            "If an important point is repeated in different words, keep it as a significant topic/task/question rather than removing it as noise. "
+            "If data is missing, write 'not specified', 'not recorded' or 'requires clarification'."
+        )
+    return (
+        f"Разбери transcript chunk {chunk_id}/{chunk_count} для постановки задачи.\n"
+        "Верни строго такую JSON-схему:\n"
+        "{\n"
+        '  "topic": "краткая тема",\n'
+        '  "summary": "1-2 предложения о сути",\n'
+        '  "current_state": "текущее состояние/как устроено сейчас, если обсуждалось",\n'
+        '  "target_state": "целевое состояние/к чему хотят прийти, если обсуждалось",\n'
+        '  "decisions": ["только подтверждённые решения"],\n'
+        '  "proposals": ["то, что было предложено или обсуждалось как вариант"],\n'
+        '  "agreements": ["только зафиксированные договорённости"],\n'
+        '  "tasks": [{"task":"что сделать","context":"контекст/почему это задача из разговора","responsible":"не указано|имя/роль если явно указано","status":"open|proposed|agreed|blocked"}],\n'
+        '  "risks": ["последствия неопределённости, не вопросы"],\n'
+        '  "open_questions": ["вопросы, которые нужно уточнить"],\n'
+        '  "next_steps": ["следующие действия"],\n'
+        '  "owners": ["ответственные, если явно указаны"],\n'
+        '  "deadlines": ["сроки, если явно указаны"]\n'
+        "}\n"
+        "Поле tasks должно быть пригодно для постановки задачи: короткое действие + отдельный контекст/основание. "
+        "Если есть противопоставление 'сейчас' и 'цель', не смешивай их: заполни current_state и target_state. "
+        "Не помещай в decisions то, что было только предложено, обсуждалось как гипотеза или требует подтверждения. "
+        "Если важный пункт повторяется разными словами, сохрани его как значимую тему/задачу/уточнение, а не удаляй как шум. "
+        "Если данных нет, пиши 'не указано', 'не зафиксировано' или 'требует уточнения'."
+    )
+
+
 def _resolve_settings(profile_id: int, model_name: str | None = None) -> dict[str, Any]:
     model = model_name or config.SETTINGS.model
     settings = db.effective_settings(profile_id, model, config.DEFAULT_SETTINGS).get("effective") or {}
@@ -912,6 +1103,7 @@ def _resolve_settings(profile_id: int, model_name: str | None = None) -> dict[st
     asr_preferences = ((profile.get("preferences") or {}).get("asr") or {}) if isinstance(profile, dict) else {}
     settings["_fallback_model"] = model
     settings["_asr_analysis_prompt"] = str(asr_preferences.get("analysis_prompt") or "").strip()[:4000]
+    settings["_asr_analysis_language"] = _normalize_asr_analysis_language(asr_preferences.get("analysis_language"))
     return settings
 
 
@@ -942,6 +1134,8 @@ def run_transcript_pipeline(
         )
     pipeline_cfg = _json_clone(settings.get("pipeline") or config.DEFAULT_PIPELINE)
     raw = str(transcript.get("content") or "")
+    output_language = _resolve_asr_output_language(settings, transcript, raw)
+    settings["_asr_output_language"] = output_language
     max_chars = _transcript_chunk_chars(settings)
     raw_chunks = _split_text_chunks(raw, max_chars)
     warnings: list[str] = []
@@ -963,6 +1157,16 @@ def run_transcript_pipeline(
         stage: _stage_enabled(stage, action_value, preset_value, pipeline_cfg)
         for stage in ("cleaner", "segmenter", "speaker_resolver", "structurer", "summary")
     }
+    if action_value in SUMMARY_ACTIONS and not stage_enabled["summary"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "asr_summary_stage_disabled",
+                "message": "Summary stage is disabled in ASR pipeline settings.",
+            },
+        )
+    if action_value == "smart_summary" and not stage_enabled["structurer"]:
+        _append_warning_once(warnings, "smart_summary_structurer_disabled_fallback_summary")
     if len(raw_chunks) > 1 and stage_enabled["summary"] and action_value == "full":
         forced = False
         for stage in ("segmenter", "structurer"):
@@ -1010,7 +1214,7 @@ def run_transcript_pipeline(
             ).strip() or _clean_text_fallback(raw_chunk)
             cleaned_chunks.append(cleaned_chunk)
     else:
-        cleaned_chunks = [_clean_text_fallback(item) for item in raw_chunks]
+        cleaned_chunks = [str(item or "").strip() for item in raw_chunks]
     cleaned = "\n\n".join(item for item in cleaned_chunks if item).strip()
 
     if stage_enabled["segmenter"]:
@@ -1113,39 +1317,19 @@ def run_transcript_pipeline(
                 {
                     "role": "system",
                     "content": (
-                        "Return only one valid JSON object. All field values must be in Russian. Do not add facts. "
+                        "Return only one valid JSON object. Do not add facts. "
+                        f"{_json_language_instruction(output_language)} "
                         "Separate confirmed decisions, proposals, agreements, tasks, risks, open questions, and next steps. "
                         "If the discussion compares current and target architecture/process/state, extract both explicitly. "
                         "If the same topic, constraint or action is repeated in different words, treat the repetition as an importance signal. "
-                        f"{ASR_SUMMARY_GUARDRAILS_RU}"
+                        f"{_summary_guardrails(output_language)}"
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Разбери transcript chunk {chunk_id}/{len(cleaned_chunks)} для постановки задачи.\n"
-                        "Верни строго такую JSON-схему:\n"
-                        "{\n"
-                        '  "topic": "краткая тема",\n'
-                        '  "summary": "1-2 предложения о сути",\n'
-                        '  "current_state": "текущее состояние/как устроено сейчас, если обсуждалось",\n'
-                        '  "target_state": "целевое состояние/к чему хотят прийти, если обсуждалось",\n'
-                        '  "decisions": ["только подтверждённые решения"],\n'
-                        '  "proposals": ["то, что было предложено или обсуждалось как вариант"],\n'
-                        '  "agreements": ["только зафиксированные договорённости"],\n'
-                        '  "tasks": [{"task":"что сделать","context":"контекст/почему это задача из разговора","responsible":"не указано|имя/роль если явно указано","status":"open|proposed|agreed|blocked"}],\n'
-                        '  "risks": ["последствия неопределённости, не вопросы"],\n'
-                        '  "open_questions": ["вопросы, которые нужно уточнить"],\n'
-                        '  "next_steps": ["следующие действия"],\n'
-                        '  "owners": ["ответственные, если явно указаны"],\n'
-                        '  "deadlines": ["сроки, если явно указаны"]\n'
-                        "}\n"
-                        "Поле tasks должно быть пригодно для постановки задачи: короткое действие + отдельный контекст/основание. "
-                        "Если есть противопоставление 'сейчас' и 'цель', не смешивай их: заполни current_state и target_state. "
-                        "Не помещай в decisions то, что было только предложено, обсуждалось как гипотеза или требует подтверждения. "
-                        "Если важный пункт повторяется разными словами, сохрани его как значимую тему/задачу/уточнение, а не удаляй как шум. "
-                        "Если данных нет, пиши 'не указано', 'не зафиксировано' или 'требует уточнения'. "
-                        "Не переводись на английский, даже если модель обычно отвечает на английском.\n\n"
+                        f"{_structurer_task_instruction(output_language, chunk_id, len(cleaned_chunks))}\n"
+                        f"Do not switch away from {_language_name(output_language)} for human-readable values.\n\n"
                         f"{analysis_context_block}"
                         f"{json.dumps(chunk_mapping, ensure_ascii=False)}"
                     ),
@@ -1168,7 +1352,7 @@ def run_transcript_pipeline(
             chunk_structured["chunk_id"] = chunk_id
             structured_chunks.append(chunk_structured)
         structured = _merge_structured_outputs(structured_chunks)
-    elif action_value in {"tasks", "full"} or (len(raw_chunks) > 1 and stage_enabled["summary"]):
+    elif action_value in {"tasks", "smart_summary", "full"} or (len(raw_chunks) > 1 and stage_enabled["summary"]):
         structured = _empty_structure()
 
     if stage_enabled["summary"]:
@@ -1204,7 +1388,7 @@ def run_transcript_pipeline(
     )
     _sync_transcript_pipeline_fields(int(transcript["id"]), run)
 
-    if summary and (PIPELINE_PRESETS[preset_value].get("memory_save") or action_value == "summary"):
+    if summary and (PIPELINE_PRESETS[preset_value].get("memory_save") or action_value in {"summary", "smart_summary"}):
         db.create_session_summary(
             profile_id=profile_id,
             session_id=transcript.get("session_id"),
@@ -1340,6 +1524,14 @@ def _significant_tokens(text: str) -> list[str]:
     return tokens
 
 
+def _token_grounding_keys(token: str) -> set[str]:
+    raw = str(token or "").lower()
+    keys = {raw}
+    if len(raw) >= 5:
+        keys.add(raw[:5])
+    return {item for item in keys if item}
+
+
 def _topic_is_covered(topic: str, summary: str) -> bool:
     tokens = _significant_tokens(topic)
     if not tokens:
@@ -1355,6 +1547,47 @@ def _topic_is_covered(topic: str, summary: str) -> bool:
         return hits == 2
     required = max(3, int(len(tokens) * 0.65 + 0.999))
     return hits >= min(len(tokens), required)
+
+
+def _summary_grounding_reasons(
+    summary: str,
+    *,
+    evidence_text: str,
+    output_language: str,
+) -> list[str]:
+    text = str(summary or "").strip()
+    if not text:
+        return ["empty_summary"]
+
+    lowered = text.lower()
+    reasons: list[str] = []
+    for pattern in SUMMARY_INVALID_PATTERNS:
+        if pattern.search(text):
+            reasons.append("instruction_or_example_output")
+            break
+
+    cyrillic_count, latin_count = _language_counts(text)
+    if output_language == "ru" and len(text) >= 120:
+        if cyrillic_count < 20 or cyrillic_count < max(10, int(latin_count * 0.18)):
+            reasons.append("summary_language_mismatch")
+    elif output_language == "en" and len(text) >= 120:
+        if cyrillic_count > 40 and cyrillic_count > latin_count * 0.6:
+            reasons.append("summary_language_mismatch")
+
+    evidence_language = _detect_transcript_language(evidence_text)
+    if evidence_language == output_language:
+        evidence_tokens = _significant_tokens(evidence_text)
+        summary_tokens: set[str] = set()
+        for token in _significant_tokens(text):
+            summary_tokens.update(_token_grounding_keys(token))
+        if len(evidence_tokens) >= 8 and len(summary_tokens) >= 4:
+            evidence_sample = evidence_tokens[:80]
+            hits = sum(1 for token in evidence_sample if _token_grounding_keys(token) & summary_tokens)
+            required_hits = 2 if len(evidence_sample) < 20 else 3
+            if hits < required_hits and "insufficient" not in lowered and "недостаточно" not in lowered:
+                reasons.append("summary_not_grounded_in_evidence")
+
+    return _dedupe_strings(reasons)
 
 
 def _structured_decision_items(structured: Any) -> list[str]:
@@ -1496,36 +1729,30 @@ def generate_summary(
     analysis_context = _asr_analysis_context(settings)
     analysis_context_block = f"Контекст анализа профиля:\n{analysis_context}\n\n" if analysis_context else ""
     retry_analysis_context_block = f"profile_analysis_context:\n{analysis_context}\n\n" if analysis_context else ""
+    output_language = _asr_output_language(settings)
+    summary_input["output_language"] = output_language
     prompt = [
         {
             "role": "system",
             "content": (
-                "Generate concise transcript summary in Russian. Do not add facts. "
+                f"Generate concise transcript summary in {_language_name(output_language)}. Do not add facts. "
+                f"{_json_language_instruction(output_language)} "
                 "If speaker attribution is uncertain, do not base conclusions on it. "
                 "Do not label proposals as decisions. If source_mode is chunked_merge, treat structured and "
                 "coverage_topics as merged evidence from the full transcript, including the end of the meeting. "
                 "When evidence has current_state and target_state, describe both and do not collapse one into the other. "
                 "If the same topic, constraint or action is repeated in different words, treat the repetition as an importance signal. "
-                f"{ASR_SUMMARY_GUARDRAILS_RU}"
+                "Return only the requested markdown summary, with no preamble. "
+                f"{_summary_grounding_rules(output_language)} "
+                f"{_summary_guardrails(output_language)}"
             ),
         },
         {
             "role": "user",
             "content": (
-                "Сформируй summary строго в формате:\n"
-                "## Краткое резюме\n...\n## Ключевые решения\n- ...\n## Задачи\n- ...\n"
-                "## Предложения / варианты дальнейших действий\n- ...\n"
-                "## Риски\n- ...\n## Вопросы для уточнения\n- ...\n## Следующие действия\n- ...\n\n"
-                "В 'Ключевые решения' помещай только подтверждённые решения. "
-                "Если были только варианты, оставь решения пустыми или напиши 'не зафиксировано'. "
-                "Но если в structured есть decisions или agreements, не пиши, что решения не зафиксированы. "
-                "Покрой все крупные темы из coverage_topics; не ограничивайся началом transcript. "
-                "Если structured содержит current_state/target_state, явно отдели текущее состояние от целевого. "
-                "Если важный пункт повторяется разными словами, отрази его как значимую тему/задачу/уточнение. "
-                "Если технический термин выглядит как ошибка ASR или смешение понятий, вынеси его в вопросы для уточнения. "
-                "Не назначай ответственных, если они не подтверждены явно.\n\n"
+                f"{_summary_format_instruction(output_language)}\n\n"
                 f"{analysis_context_block}"
-                f"{json.dumps(summary_input, ensure_ascii=False)}"
+                f"EVIDENCE_JSON:\n{json.dumps(summary_input, ensure_ascii=False)}"
             ),
         },
     ]
@@ -1550,31 +1777,110 @@ def generate_summary(
         warnings=warnings,
         debug=debug,
     )
+    evidence_text = json.dumps(summary_input, ensure_ascii=False)
+    grounding_reasons = _summary_grounding_reasons(
+        checked_summary,
+        evidence_text=evidence_text,
+        output_language=output_language,
+    )
+    if grounding_reasons:
+        _append_warning_once(warnings, f"summary_grounding_validation_failed:{','.join(grounding_reasons)}")
+        grounding_prompt = [
+            {
+                "role": "system",
+                "content": (
+                    f"Repair the transcript summary in {_language_name(output_language)}. Do not add facts. "
+                    f"{_json_language_instruction(output_language)} "
+                    f"{_summary_grounding_rules(output_language)} "
+                    "The previous output failed validation because it looked ungrounded, was in the wrong language, "
+                    "or resembled an instruction/example conversation. Return only the corrected markdown summary. "
+                    f"{_summary_guardrails(output_language)}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{_summary_format_instruction(output_language)}\n\n"
+                    f"validation_failures:\n{json.dumps(grounding_reasons, ensure_ascii=False)}\n\n"
+                    f"invalid_previous_summary:\n{checked_summary}\n\n"
+                    f"{analysis_context_block}"
+                    f"EVIDENCE_JSON:\n{evidence_text}"
+                ),
+            },
+        ]
+        if debug:
+            debug.setdefault("stage_inputs", {})["summary_grounding_retry"] = grounding_prompt
+        grounding_retry = _call_stage(
+            service=runner,
+            stage="summary",
+            model=stage_cfg["model"],
+            temperature=float(stage_cfg["temperature"]),
+            max_tokens=int(stage_cfg["max_tokens"]),
+            messages=grounding_prompt,
+            timings=timings,
+            warnings=warnings,
+            runtime_settings=settings,
+        ).strip()
+        checked_summary, missing_topics = _qa_summary_output(
+            grounding_retry,
+            structured_json=structured_json,
+            chunk_count=chunk_count,
+            warnings=warnings,
+            debug=debug,
+        )
+        remaining_grounding_reasons = _summary_grounding_reasons(
+            checked_summary,
+            evidence_text=evidence_text,
+            output_language=output_language,
+        )
+        if remaining_grounding_reasons:
+            _append_warning_once(warnings, f"summary_grounding_retry_failed:{','.join(remaining_grounding_reasons)}")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "asr_summary_grounding_failed",
+                    "message": "Summary output was not grounded in transcript evidence.",
+                    "reasons": remaining_grounding_reasons,
+                },
+            )
+        _append_warning_once(warnings, "summary_grounding_retry_succeeded")
     if not missing_topics:
         return checked_summary
 
     _append_warning_once(warnings, f"summary_topic_coverage_missing:{len(missing_topics)}")
+    if output_language == "en":
+        retry_intro = (
+            "The previous summary missed major topics from the transcript.\n"
+            "Generate a complete final summary, explaining missing_topics meaningfully rather than with a single keyword.\n\n"
+        )
+    else:
+        retry_intro = (
+            "Предыдущее summary не покрыло все крупные темы встречи.\n"
+            "Сгенерируй полную финальную версию summary, обязательно раскрыв missing_topics смыслом, а не одним словом.\n\n"
+        )
     retry_prompt = [
         {
             "role": "system",
             "content": (
-                "Regenerate the Russian transcript summary. Keep the same markdown sections. Do not add facts. "
+                f"Regenerate the transcript summary in {_language_name(output_language)}. Keep the same markdown sections. Do not add facts. "
+                f"{_json_language_instruction(output_language)} "
                 "You must explain every missing topic from the user message in the appropriate section, not merely mention one keyword. "
                 "Keep proposals separate from confirmed decisions. "
                 "Repeated source points are importance signals and must not be dropped as cleanup noise. "
                 "If a technical term looks ambiguous in ASR evidence, mark it as requiring clarification instead of inventing a normalized term. "
-                f"{ASR_SUMMARY_GUARDRAILS_RU}"
+                "Return only the requested markdown summary, with no preamble. "
+                f"{_summary_grounding_rules(output_language)} "
+                f"{_summary_guardrails(output_language)}"
             ),
         },
         {
             "role": "user",
             "content": (
-                "Предыдущее summary не покрыло все крупные темы встречи.\n"
-                "Сгенерируй полную финальную версию summary, обязательно раскрыв missing_topics смыслом, а не одним словом.\n\n"
+                retry_intro +
                 f"missing_topics:\n{json.dumps(missing_topics, ensure_ascii=False, indent=2)}\n\n"
                 f"previous_summary:\n{checked_summary}\n\n"
                 f"{retry_analysis_context_block}"
-                f"merged_evidence:\n{json.dumps(summary_input, ensure_ascii=False)}"
+                f"EVIDENCE_JSON:\n{json.dumps(summary_input, ensure_ascii=False)}"
             ),
         },
     ]
@@ -1598,6 +1904,14 @@ def generate_summary(
         warnings=warnings,
         debug=debug,
     )
+    retry_grounding_reasons = _summary_grounding_reasons(
+        checked_retry,
+        evidence_text=evidence_text,
+        output_language=output_language,
+    )
+    if retry_grounding_reasons:
+        _append_warning_once(warnings, f"summary_topic_coverage_retry_invalid_grounding:{','.join(retry_grounding_reasons)}")
+        return _append_incomplete_summary_section(checked_summary, missing_topics)
     if not remaining_topics:
         _append_warning_once(warnings, "summary_topic_coverage_retry_succeeded")
         return checked_retry

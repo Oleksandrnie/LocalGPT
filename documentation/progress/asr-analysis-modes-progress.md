@@ -28,6 +28,7 @@ Current uncommitted work started after that checkpoint:
 - wired `Контекст анализа` through UI save/render and backend ASR pipeline settings;
 - added the generic repeated-emphasis rule to structurer/summary/retry prompts;
 - exposed stage-level `Не использовать` in pipeline model dropdowns.
+- started implementation of the ASR Studio `Режим анализа` selector and backend `smart_summary` action.
 
 ## Architecture Scope
 
@@ -106,7 +107,25 @@ Pending:
 - keep `Полный анализ` hidden/blocked unless `asr_full_analysis_enabled=true`;
 - keep current `Остановить` behavior.
 
-Status: pending for the next implementation pass. Do not start this until the current checkpoint is committed and the user explicitly continues with this stage.
+Implemented in this pass:
+
+- added backend action `smart_summary`;
+- mapped `summary` to fast raw-transcript summary without cleaner;
+- mapped `smart_summary` to structurer -> summary without cleaner and without speaker resolver;
+- mapped `full` to segmenter -> speaker resolver -> structurer -> summary, still gated by `asr_full_analysis_enabled`;
+- added one ASR Studio `Режим анализа` selector and one `Запустить анализ` button;
+- kept manual `Очистить` separate from the normal analysis modes;
+- kept `Остановить` behavior unchanged.
+
+Status: implemented; safe checks and docs still pending.
+
+Current implementation note:
+
+- selector implementation is now starting in this pass;
+- `Умное саммари` must route raw transcript/chunks through structurer -> summary when those stages are enabled;
+- `Умное саммари` must not run cleaner or speaker resolver by default;
+- `Полный анализ` remains gated by `asr_full_analysis_enabled`;
+- stage `enabled=false` from user settings has absolute priority over every analysis mode.
 
 ### Stage 4 — Repeated Speech / Importance Signal
 
@@ -154,18 +173,39 @@ Pending:
 - Wired ASR analysis context through UI, API, profile preferences, and ASR pipeline prompts.
 - Added generic repeated-emphasis handling to structurer/summary/retry prompts.
 - Added UI support for selecting `Не использовать` for pipeline stages.
+- Implemented `Режим анализа` selector and run button in ASR Studio.
+- Implemented backend `smart_summary`.
+- Mapped `summary` to fast raw -> summary and kept `full` gated.
+- Added generic regression tests for action routing, disabled summary/structurer stages, smart summary routing, and full-analysis gating.
+- Updated README/technical/backend docs for ASR analysis modes, `Не использовать`, optional cleaner, full-analysis gating, and ASR analysis context.
+- Passed safe checks: `py_compile`, `node --check`, `git diff --check`, and selected mocked ASR pipeline unit tests.
+- Added profile-level `asr.analysis_language` with `auto`, `ru`, `en`.
+- Added top-toolbar ASR Studio `Язык summary` selector after `Язык / prompt`.
+- Changed ASR Studio `Настройки анализа` button text to `Настройки`.
+- Updated structurer/summary/retry prompts to use the selected or auto-detected output language.
+- Added generic mocked tests for auto Russian detection and manual English override.
+- Re-ran safe checks for language changes: `py_compile`, `node --check`, `git diff --check`, and 10 selected mocked ASR pipeline tests.
+- Added a generic summary grounding guard for instruction echoes, service markers, language mismatch, and outputs that are not connected to transcript/structured evidence.
+- Added a grounding retry before saving summary results; if the retry still fails validation, the pipeline returns a clear `asr_summary_grounding_failed` error instead of saving fabricated summary text.
+- Added generic mocked tests for grounding retry success and grounding failure without meeting-specific transcript content.
+- Re-ran safe checks for grounding changes: `py_compile`, `node --check`, `git diff --check`, and 12 selected mocked ASR pipeline tests.
 
 ## In Progress Tasks
 
-- Preparing a checkpoint commit for the current partial implementation.
+- Waiting for user-side manual ASR/LLM validation of the new language and grounding behavior before closing the task.
 
 ## Pending Tasks
 
-- Implement `Режим анализа` dropdown and run button.
-- Implement `smart_summary` backend action.
-- Decide how current `summary`, `tasks`, and `full` actions should map to the new modes.
-- Exclude cleaner from default analysis modes only after mode routing is explicit.
-- Update docs/tests.
+- Ensure selected output language applies to the whole ASR result, including structured fallback blocks and UI diagnostics, so English summary is not mixed with Russian `## Тема`/`Предупреждения` blocks.
+- Next stage: improve ASR result rendering without changing pipeline behavior yet.
+- Render ASR summary output as formatted Markdown instead of raw markdown text with visible `**bold**`, headings and bullets.
+- Keep copy/download behavior as plain text or markdown so the source content is not lost.
+- Separate pipeline diagnostics/warnings from the summary body in UI.
+- Convert technical warnings such as `raw_transcript_chunked:2` into human-readable UI text like `Transcript обработан в 2 чанка`.
+- Consider a later lightweight `Перевести summary` action that translates the already generated summary without rerunning ASR/structurer/full pipeline.
+- If translation is added, make it a separate explicit LLM call and store/display it as a language-specific summary variant.
+- Keep live ASR/LLM tests user-side because of thermal risk.
+- Manual user-side ASR/LLM quality testing, if needed.
 - Remove this progress file after completion.
 
 ## Architecture Decisions
@@ -174,6 +214,7 @@ Pending:
 - Cleaner is not a default analysis stage.
 - Cleaner remains a manual operation and can be disabled/enabled through stage settings.
 - Stage disabling is generic: select `Не использовать` instead of adding stage-specific flags.
+- User stage settings have absolute priority: an analysis mode may recommend a route, but must not override `enabled=false`.
 - ASR analysis context is profile-level user configuration, not hardcoded runtime behavior.
 - `Умное саммари` should improve semantic extraction without role resolution.
 - No meeting-specific dictionaries or transcript-specific hardcoding.
@@ -182,10 +223,18 @@ Pending:
 
 Currently changed in this task:
 
+- `README.md`
+- `TECHNICAL_README.md`
+- `backend/README.md`
 - `app/db.py`
 - `app/routes/profiles.py`
 - `app/schemas/core.py`
 - `backend/apps/asr/pipeline.py`
+- `documentation/README.backend_structure.md`
+- `documentation/README.project.md`
+- `documentation/TECHNICAL_README.md`
+- `tests/test_pipeline_memory.py`
+- `web_ui/css/style.css`
 - `web_ui/gui_html.html`
 - `web_ui/js/app.js`
 - `documentation/progress/asr-analysis-modes-progress.md`
@@ -195,17 +244,17 @@ Currently changed in this task:
 - Lightweight summary reduced thermal load, but quality can miss repeated emphasis and technical role context.
 - Cleaner can remove exactly the repetitions that the user intentionally uses as importance signals.
 - Separate action buttons are becoming confusing; user needs one explicit analysis mode selector.
+- Manual test produced an English summary from a Russian transcript despite Russian-oriented prompts; ASR summary language needs an explicit auto/manual setting.
+- Manual test produced a fabricated English toy conversation (`Speaker 1: Hello! How are you?`) instead of summarizing the provided transcript. Added generic grounding validation/retry so this class of output is rejected before saving.
 
 ## Technical Debt
 
 - Existing action naming (`summary`, `tasks`, `full`) does not fully express UX intent.
-- Pipeline settings have stage enable flags internally, but UI did not expose a clear `Не использовать` model choice.
-- Profile ASR prompt was missing; chat system prompt is not enough for ASR analysis.
+- Legacy action names remain supported, but UI now presents a single explicit mode selector.
 
 ## Next Steps
 
-1. Finish checkpoint commit for current work.
-2. Add `Режим анализа` dropdown and run button in the next pass.
-3. Implement backend `smart_summary` action in the next pass.
-4. Keep live ASR/LLM tests user-side because of thermal risk.
-5. Update docs/tests once the mode behavior is stable.
+1. Next implementation pass should focus on ASR result rendering/diagnostics separation.
+2. Keep live ASR/LLM tests user-side because of thermal risk.
+3. Review manual ASR Studio behavior on a real transcript when the user is ready.
+4. Remove this progress file only after the user confirms the task can be closed.
