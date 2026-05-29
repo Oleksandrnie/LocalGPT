@@ -31,6 +31,35 @@ class ModelRouterTestCase(unittest.TestCase):
             "45s",
         )
 
+    def test_force_unload_models_terminates_stuck_runner_after_unload(self):
+        with (
+            patch.object(ollama_runtime, "unload_model", return_value=True) as unload_model,
+            patch.object(ollama_runtime, "loaded_model_names", return_value={"qwen3:8b"}),
+            patch.object(ollama_runtime, "_ollama_runner_pids", return_value=[12345]),
+            patch.object(ollama_runtime.os, "kill") as kill,
+        ):
+            result = ollama_runtime.force_unload_models({"qwen3:8b"}, wait_timeout=0)
+
+        self.assertEqual(result["unloaded_models"], ["qwen3:8b"])
+        self.assertEqual(result["stuck_models"], ["qwen3:8b"])
+        self.assertEqual(result["terminated_runner_pids"], [12345])
+        unload_model.assert_called_once_with("qwen3:8b", timeout=1.0)
+        kill.assert_called_once_with(12345, ollama_runtime.signal.SIGTERM)
+
+    def test_force_unload_models_does_not_terminate_when_model_disappears(self):
+        with (
+            patch.object(ollama_runtime, "unload_model", return_value=True),
+            patch.object(ollama_runtime, "loaded_model_names", return_value=set()),
+            patch.object(ollama_runtime, "_ollama_runner_pids") as runner_pids,
+            patch.object(ollama_runtime.os, "kill") as kill,
+        ):
+            result = ollama_runtime.force_unload_models({"qwen3:8b"}, wait_timeout=0)
+
+        self.assertEqual(result["stuck_models"], [])
+        self.assertEqual(result["terminated_runner_pids"], [])
+        runner_pids.assert_not_called()
+        kill.assert_not_called()
+
     def test_residency_limit_evicts_oldest_target_model(self):
         model_residency.reset_state()
         settings = {"max_resident_target_models": 2, "single_large_target_model": False}
@@ -129,6 +158,27 @@ class ModelRouterTestCase(unittest.TestCase):
             keep_alive="45s",
         )
 
+    def test_chat_completion_passes_think_setting_to_native_ollama_request(self):
+        service = ChatService()
+        messages = [{"role": "user", "content": "hello"}]
+
+        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+            reply = service.chat_completion(
+                "qwen3:8b",
+                messages,
+                settings={"temperature": 0.1, "max_tokens": 5, "ollama_think": "off"},
+            )
+
+        self.assertEqual(reply, "ok")
+        native_chat.assert_called_once_with(
+            "qwen3:8b",
+            messages=messages,
+            temperature=0.1,
+            max_tokens=5,
+            keep_alive="4m",
+            think=False,
+        )
+
     def test_chat_completion_stream_passes_keep_alive_to_native_ollama_request(self):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
@@ -184,6 +234,23 @@ class ModelRouterTestCase(unittest.TestCase):
         self.assertEqual(payload["options"]["num_predict"], 5)
         self.assertEqual(payload["keep_alive"], "45s")
 
+    def test_ollama_chat_passes_think_false_to_native_chat_payload(self):
+        messages = [{"role": "user", "content": "hello"}]
+
+        with patch.object(ollama_runtime, "_post_json", return_value={"message": {"content": "ok"}}) as post_json:
+            reply = ollama_runtime.chat_completion(
+                "qwen3:8b",
+                messages=messages,
+                temperature=0.1,
+                max_tokens=5,
+                think=False,
+            )
+
+        self.assertEqual(reply, "ok")
+        payload = post_json.call_args.args[1]
+        self.assertIs(payload["think"], False)
+        self.assertEqual(payload["model"], "qwen3:8b")
+
     def test_ollama_chat_retries_metal_failure_with_cpu_fallback(self):
         messages = [{"role": "user", "content": "hello"}]
         metal_error = RuntimeError(
@@ -215,6 +282,32 @@ class ModelRouterTestCase(unittest.TestCase):
         self.assertEqual(cpu_payload["keep_alive"], 0)
         self.assertEqual(unload_model.call_count, 2)
         unload_model.assert_called_with("qwen2.5:7b-instruct", timeout=1.5)
+
+    def test_ollama_chat_can_disable_cpu_fallback(self):
+        messages = [{"role": "user", "content": "hello"}]
+        metal_error = RuntimeError(
+            "Ollama API error 500: ggml_metal_init: error: failed to initialize the Metal library; "
+            "llama_init_from_model: failed to initialize Metal backend"
+        )
+
+        with (
+            patch.object(ollama_runtime, "_post_json", side_effect=[metal_error, metal_error]) as post_json,
+            patch.object(ollama_runtime, "unload_model", return_value=True) as unload_model,
+            patch.object(ollama_runtime.time, "sleep"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                ollama_runtime.chat_completion(
+                    "qwen2.5:7b-instruct",
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=5,
+                    keep_alive="45s",
+                    allow_cpu_fallback=False,
+                )
+
+        self.assertIn("CPU fallback is disabled", str(ctx.exception))
+        self.assertEqual(post_json.call_count, 2)
+        unload_model.assert_called_once_with("qwen2.5:7b-instruct", timeout=1.5)
 
     def test_ollama_chat_stream_retries_metal_failure_with_cpu_fallback(self):
         messages = [{"role": "user", "content": "hello"}]

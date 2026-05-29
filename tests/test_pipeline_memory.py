@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import config, db
 from app.routes import profiles as profile_routes
-from app.schemas import ChatRequest, ProfileCreate, ProfilePreferencesUpdate, ProfileUpdate
+from app.schemas import AsrPreferencesUpdate, ChatRequest, ProfileCreate, ProfilePreferencesUpdate, ProfileUpdate
 from app.services import models as model_service
 from backend.apps.chat import routes as chat_routes
 from backend.apps.asr import pipeline
@@ -26,7 +26,9 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         db.DB_PATH = Path(self.tmpdir.name) / "localgpt-test.db"
         self.original_rag_source_dir = config.RAG_SOURCE_DIR
+        self.original_asr_diagnostics_dir = config.ASR_DIAGNOSTICS_DIR
         config.RAG_SOURCE_DIR = Path(self.tmpdir.name) / "rag_sources"
+        config.ASR_DIAGNOSTICS_DIR = Path(self.tmpdir.name) / "asr_diagnostics"
         db.init_db()
         self.profile_id = db.ensure_default_profile()
 
@@ -34,6 +36,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         with chat_tasks._LOCK:
             chat_tasks._TASKS.clear()
         config.RAG_SOURCE_DIR = self.original_rag_source_dir
+        config.ASR_DIAGNOSTICS_DIR = self.original_asr_diagnostics_dir
         self.tmpdir.cleanup()
 
     def test_model_list_does_not_auto_pull_when_empty(self):
@@ -61,7 +64,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
             "segmenter": ("qwen2.5:7b-instruct", 0.05, 8000),
             "speaker_resolver": ("qwen2.5:7b-instruct", 0.1, 4000),
             "structurer": ("qwen3:8b", 0.1, 8000),
-            "summary": ("mistral-nemo:12b", 0.1, 8000),
+            "summary": ("qwen3:8b", 0.1, 8000),
         }
 
         for stage, (model, temperature, max_tokens) in expected.items():
@@ -69,6 +72,57 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["model"], model)
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["temperature"], temperature)
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["max_tokens"], max_tokens)
+
+    def test_asr_pipeline_gpu_setting_defaults_to_configured_pipeline_value(self):
+        self.assertEqual(pipeline._pipeline_num_gpu({}), config.SETTINGS.ollama_pipeline_num_gpu)
+        self.assertIsNone(pipeline._pipeline_num_gpu({"pipeline_num_gpu": "auto"}))
+        self.assertEqual(pipeline._pipeline_num_gpu({"pipeline_num_gpu": 0}), 0)
+
+    def test_asr_pipeline_stop_terminates_stuck_ollama_runner(self):
+        with patch.object(
+            pipeline.ollama_runtime,
+            "force_unload_models",
+            return_value={
+                "unloaded_models": ["qwen3:8b"],
+                "unload_failed": [],
+                "stuck_models": ["qwen3:8b"],
+                "terminated_runner_pids": [12345],
+                "terminate_failed_pids": [],
+            },
+        ) as force_unload:
+            result = pipeline.request_pipeline_stop()
+
+        self.assertTrue(result["pipeline_stop_requested"])
+        self.assertIn("qwen3:8b", result["active_models"])
+        self.assertEqual(result["stuck_models"], ["qwen3:8b"])
+        self.assertEqual(result["terminated_runner_pids"], [12345])
+        force_unload.assert_called_once()
+        self.assertTrue(force_unload.call_args.kwargs["terminate_stuck_runners"])
+
+    def test_legacy_profile_pipeline_summary_default_migrates_to_qwen3(self):
+        old_summary_default = {
+            "enabled": True,
+            "model": "mistral-nemo:12b",
+            "temperature": 0.1,
+            "max_tokens": 8000,
+        }
+        db.update_profile_preferences(
+            self.profile_id,
+            {"settings": {"pipeline": {"summary": old_summary_default}}},
+        )
+        conn = db._connect()
+        try:
+            conn.execute("DELETE FROM app_settings WHERE key = ?", ("migration_asr_pipeline_summary_default_qwen3",))
+            db._migrate_asr_pipeline_summary_default_qwen3(conn)
+            conn.commit()
+        finally:
+            conn.close()
+
+        profile = db.get_profile(self.profile_id)
+        summary_cfg = profile["preferences"]["settings"]["pipeline"]["summary"]
+
+        self.assertEqual(summary_cfg["model"], "qwen3:8b")
+        self.assertEqual(summary_cfg["max_tokens"], 8000)
 
     def test_custom_pipeline_settings_override_updated_defaults(self):
         db.upsert_model_settings(
@@ -872,7 +926,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         summary_messages = chat_mock.call_args_list[-1].args[2]
         summary_payload = summary_messages[-1]["content"]
         first_stage_settings = chat_mock.call_args_list[0].kwargs["settings"]
-        self.assertEqual(first_stage_settings["ollama_num_gpu"], 0)
+        if config.SETTINGS.ollama_pipeline_num_gpu is None:
+            self.assertNotIn("ollama_num_gpu", first_stage_settings)
+        else:
+            self.assertEqual(first_stage_settings["ollama_num_gpu"], config.SETTINGS.ollama_pipeline_num_gpu)
+        self.assertFalse(first_stage_settings["ollama_allow_cpu_fallback"])
         self.assertEqual(first_stage_settings["ollama_keep_alive_effective"], "0")
         self.assertIn("raw repeated phrase", summary_payload)
         saved_transcript = db.get_transcript(transcript["id"])
@@ -972,6 +1030,96 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(raised.exception.detail["code"], "asr_summary_stage_disabled")
 
+    def test_asr_pipeline_uses_dedicated_settings_without_chat_model_name(self):
+        db.upsert_model_settings(
+            self.profile_id,
+            pipeline.ASR_PIPELINE_SETTINGS_MODEL_ID,
+            pipeline={"summary": {"enabled": False}},
+        )
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="generic raw note",
+            labels={"origin": "asr_tool"},
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="balanced", action="summary")
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "asr_summary_stage_disabled")
+
+    def test_asr_pipeline_defaults_disable_ollama_thinking(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="generic raw note",
+            labels={"origin": "asr_tool"},
+        )
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                return_value="## Brief Summary\ngeneric raw note summary",
+            ) as chat_mock,
+        ):
+            pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        stage_settings = chat_mock.call_args.kwargs["settings"]
+        self.assertIs(stage_settings["ollama_think"], False)
+        self.assertFalse(stage_settings["ollama_allow_cpu_fallback"])
+
+    def test_asr_diagnostics_preference_controls_profile_log_dir(self):
+        path = config.ASR_DIAGNOSTICS_DIR / f"profile_{self.profile_id}"
+
+        updated = profile_routes.update_profile_preferences(
+            self.profile_id,
+            ProfilePreferencesUpdate(asr=AsrPreferencesUpdate(diagnostics_enabled=True)),
+        )
+
+        self.assertTrue(updated["preferences"]["asr"]["diagnostics_enabled"])
+        self.assertTrue(path.is_dir())
+
+        updated = profile_routes.update_profile_preferences(
+            self.profile_id,
+            ProfilePreferencesUpdate(asr=AsrPreferencesUpdate(diagnostics_enabled=False)),
+        )
+
+        self.assertFalse(updated["preferences"]["asr"]["diagnostics_enabled"])
+        self.assertFalse(path.exists())
+
+    def test_asr_diagnostics_log_written_when_enabled(self):
+        profile_routes.update_profile_preferences(
+            self.profile_id,
+            ProfilePreferencesUpdate(asr=AsrPreferencesUpdate(diagnostics_enabled=True)),
+        )
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="generic raw note",
+            labels={"origin": "asr_tool"},
+        )
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                return_value="## Brief Summary\ngeneric raw note summary",
+            ),
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        path = config.ASR_DIAGNOSTICS_DIR / f"profile_{self.profile_id}" / "pipeline_runs.jsonl"
+        payloads = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(payloads[-1]["event"], "pipeline_completed")
+        self.assertEqual(payloads[-1]["run_id"], run["id"])
+
     def test_summary_language_auto_uses_russian_for_cyrillic_transcript(self):
         transcript = db.create_transcript(
             profile_id=self.profile_id,
@@ -1056,6 +1204,122 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         retry_messages = chat_mock.call_args_list[-1].args[2]
         self.assertIn("EVIDENCE_JSON", retry_messages[-1]["content"])
         self.assertIn("Не создавай примеры", retry_messages[0]["content"])
+
+    def test_summary_missing_heading_is_repaired_without_retry(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="обсуждали задачу запуска и повторно уточнили риск по сроку",
+            labels={"origin": "asr_tool"},
+        )
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                return_value="Обсуждали задачу запуска и повторно уточнили риск по сроку.",
+            ) as chat_mock,
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        self.assertTrue(run["summary"].startswith("## Краткое резюме\n"))
+        self.assertIn("summary_required_heading_added", run["warnings"])
+        self.assertEqual(chat_mock.call_count, 1)
+
+    def test_summary_quality_retry_replaces_generic_dialogue_overview(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="обсуждали задачу запуска и повторно уточнили риск по сроку",
+            labels={"origin": "asr_tool"},
+        )
+        responses = [
+            (
+                "Вот краткий обзор диалога:\n\n"
+                "1. **Участники:** Неidentified ( Speaker 1 ) и Unknown ( Speaker 2 )\n"
+                "2. **Темы:**\n- задача запуска\n- риск по сроку\n"
+                "3. **Язык:** Русский\n\n"
+                "Примечание: из-за отсутствия контекста я не могу предоставить более подробный обзор."
+            ),
+            (
+                "## Краткое резюме\n"
+                "Обсуждали задачу запуска и повторно уточнили риск по сроку.\n\n"
+                "## Ключевые решения\n- не зафиксировано\n\n"
+                "## Задачи\n- задача запуска\n\n"
+                "## Риски\n- риск по сроку"
+            ),
+        ]
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                side_effect=lambda self, model, messages, *, settings: responses.pop(0),
+            ) as chat_mock,
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="fast", action="summary")
+
+        self.assertIn("## Краткое резюме", run["summary"])
+        self.assertNotIn("Speaker 1", run["summary"])
+        self.assertNotIn("краткий обзор диалога", run["summary"])
+        self.assertTrue(any(item.startswith("summary_grounding_validation_failed:") for item in run["warnings"]))
+        self.assertIn("summary_grounding_retry_succeeded", run["warnings"])
+        self.assertEqual(chat_mock.call_count, 2)
+        retry_messages = chat_mock.call_args_list[-1].args[2]
+        self.assertIn("generic_dialogue_overview_output", retry_messages[-1]["content"])
+
+    def test_smart_summary_uses_structured_fallback_when_summary_validation_fails(self):
+        transcript = db.create_transcript(
+            profile_id=self.profile_id,
+            name="Call",
+            content="обсуждали задачу запуска и повторно уточнили риск по сроку",
+            labels={"origin": "asr_tool"},
+        )
+        responses = [
+            json.dumps(
+                {
+                    "topic": "задача запуска",
+                    "summary": "Обсудили задачу запуска и риск по сроку.",
+                    "tasks": [{"task": "подготовить запуск", "context": "повторно уточнили срок", "status": "open"}],
+                    "risks": ["риск по сроку"],
+                    "open_questions": ["уточнить срок запуска"],
+                    "decisions": [],
+                    "proposals": [],
+                    "next_steps": ["проверить готовность запуска"],
+                },
+                ensure_ascii=False,
+            ),
+            (
+                "Вот краткий обзор диалога:\n\n"
+                "1. **Участники:** Unknown ( Speaker 1 ) и Unknown ( Speaker 2 )\n"
+                "2. **Темы:** задача запуска\n"
+                "3. **Язык:** Русский"
+            ),
+        ]
+
+        with (
+            patch.object(pipeline.model_service, "is_model_installed", return_value=True),
+            patch.object(
+                pipeline.ChatService,
+                "chat_completion",
+                autospec=True,
+                side_effect=lambda self, model, messages, *, settings: responses.pop(0),
+            ) as chat_mock,
+        ):
+            run = pipeline.run_transcript_pipeline(transcript_id=transcript["id"], preset="balanced", action="smart_summary")
+
+        self.assertEqual(chat_mock.call_count, 2)
+        self.assertIn("## Краткое резюме", run["summary"])
+        self.assertIn("задача запуска", run["summary"])
+        self.assertIn("подготовить запуск", run["summary"])
+        self.assertNotIn("Speaker 1", run["summary"])
+        self.assertTrue(any(item.startswith("summary_grounding_validation_failed:") for item in run["warnings"]))
+        self.assertTrue(any(item.startswith("summary_safe_structured_fallback_used:") for item in run["warnings"]))
+        self.assertNotIn("summary_grounding_retry_succeeded", run["warnings"])
 
     def test_summary_grounding_failure_does_not_save_fabricated_summary(self):
         transcript = db.create_transcript(

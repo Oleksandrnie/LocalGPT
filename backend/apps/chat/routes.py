@@ -370,6 +370,8 @@ def _apply_auto_router(prepared: dict) -> dict:
     )
     if target_overrides.get("ollama_keep_alive"):
         target_settings["ollama_keep_alive"] = target_overrides["ollama_keep_alive"]
+    if target_overrides.get("ollama_think"):
+        target_settings["ollama_think"] = target_overrides["ollama_think"]
     prepared["effective_settings"] = model_residency.apply_target_settings(
         decision.target_model,
         target_settings,

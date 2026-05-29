@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import shlex
 import shutil
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 CHAT_LOG_FILE = LOG_DIR / "chat.log"
 PIPELINE_LOG_FILE = LOG_DIR / "pipeline.log"
 TRANSCRIBE_LOG_FILE = LOG_DIR / "transcribe.log"
+ASR_DIAGNOSTICS_DIR = LOG_DIR / "asr_diagnostics"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
 RAG_SOURCE_DIR = PROJECT_ROOT / "rag_sources"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
@@ -41,6 +43,7 @@ ALLOWED_WHISPER_MODELS = (
     "large-v3-turbo",
 )
 ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo"
+APPLE_SILICON_PIPELINE_NUM_GPU = 999
 
 
 def _parse_bool(name: str, default: bool) -> bool:
@@ -68,6 +71,27 @@ def _parse_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _parse_optional_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if not value or value in {"auto", "default", "none", "null"}:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _default_pipeline_num_gpu() -> int | None:
+    if os.getenv("OLLAMA_PIPELINE_NUM_GPU") is not None:
+        return _parse_optional_int("OLLAMA_PIPELINE_NUM_GPU")
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        return APPLE_SILICON_PIPELINE_NUM_GPU
+    return None
 
 
 def _parse_args(name: str) -> tuple[str, ...]:
@@ -188,7 +212,7 @@ class Settings:
     ollama_router_keep_alive: str
     ollama_heavy_keep_alive: str
     ollama_pipeline_keep_alive: str
-    ollama_pipeline_num_gpu: int
+    ollama_pipeline_num_gpu: int | None
     max_resident_target_models: int
     allow_light_with_heavy: bool
     single_large_target_model: bool
@@ -350,7 +374,7 @@ DEFAULT_PIPELINE = {
     },
     "summary": {
         "enabled": True,
-        "model": "mistral-nemo:12b",
+        "model": "qwen3:8b",
         "temperature": 0.1,
         "max_tokens": 8000,
     },
@@ -368,6 +392,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "summary_memory_limit": 5,
     "rag_top_k": 5,
     "rag_max_context_chars": 6000,
+    "ollama_think": "auto",
     "pipeline": DEFAULT_PIPELINE,
 }
 
@@ -444,7 +469,7 @@ def _load_settings() -> Settings:
         ollama_router_keep_alive=_parse_keep_alive("OLLAMA_ROUTER_KEEP_ALIVE", "2m"),
         ollama_heavy_keep_alive=_parse_keep_alive("OLLAMA_HEAVY_KEEP_ALIVE", "60s"),
         ollama_pipeline_keep_alive=_parse_keep_alive("OLLAMA_PIPELINE_KEEP_ALIVE", "0"),
-        ollama_pipeline_num_gpu=_parse_int("OLLAMA_PIPELINE_NUM_GPU", 0),
+        ollama_pipeline_num_gpu=_default_pipeline_num_gpu(),
         max_resident_target_models=_parse_int("MAX_RESIDENT_TARGET_MODELS", 2),
         allow_light_with_heavy=_parse_bool("ALLOW_LIGHT_WITH_HEAVY", False),
         single_large_target_model=_parse_bool("SINGLE_LARGE_TARGET_MODEL", True),

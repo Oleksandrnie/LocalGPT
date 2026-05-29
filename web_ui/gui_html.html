@@ -54,6 +54,15 @@
                         <div class="topbar__row">
                             <h2 id="chatTitle">Новый чат</h2>
                             <span class="status-pill" id="healthStatus">Проверка…</span>
+                            <div class="thinking-mode-control" id="quickThinkingControl">
+                                <button class="thinking-mode-control__button" id="quickThinkingButton" type="button"
+                                    aria-label="Режим thinking текущей LLM" aria-haspopup="menu"
+                                    aria-expanded="false">Thinking</button>
+                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden>
+                                    <button type="button" role="menuitemradio" data-thinking-mode="on">Включено</button>
+                                    <button type="button" role="menuitemradio" data-thinking-mode="off">Выключено</button>
+                                </div>
+                            </div>
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
                                 <select id="quickModelSelect" class="field__control quick-model-switch__control"
@@ -858,8 +867,8 @@
                         </div>
                         <div class="pipeline-settings-body" id="asrPipelineSettingsBody" hidden>
                             <div class="info-card">
-                                <span class="info-card__label">LLM для pipeline</span>
-                                <strong id="asrPipelineSettingsSummary">Профиль и модель не выбраны</strong>
+                                <span class="info-card__label">Настройки</span>
+                                <strong id="asrPipelineSettingsSummary">Профиль не выбран</strong>
                             </div>
                             <label class="field field--checkbox">
                                 <input id="asrFullAnalysisEnabledToggle" type="checkbox" />
@@ -867,6 +876,21 @@
                                     <strong>Разрешить полный анализ</strong>
                                     <small>Запускает все стадии pipeline и может сильно нагревать Mac. Включайте только осознанно.</small>
                                 </span>
+                            </label>
+                            <label class="field field--checkbox">
+                                <input id="asrDiagnosticsEnabledToggle" type="checkbox" />
+                                <span class="field__checkbox-copy">
+                                    <strong>Вести ASR-логи</strong>
+                                    <small>При включении создаётся папка diagnostics для ASR pipeline. При выключении папка удаляется.</small>
+                                </span>
+                            </label>
+                            <label class="field">
+                                <span class="field__label">Thinking LLM стадий</span>
+                                <select id="asrPipelineThinkSelect" class="field__control">
+                                    <option value="off">Выключено</option>
+                                    <option value="on">Включено</option>
+                                    <option value="auto">Авто Ollama</option>
+                                </select>
                             </label>
                             <div class="pipeline-stage-settings" id="asrPipelineSettingsGrid"></div>
                             <div class="button-row">

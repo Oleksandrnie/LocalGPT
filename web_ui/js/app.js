@@ -17,6 +17,7 @@ const AUTO_MODEL_HELP = "Автоматически классифицирует
 const LOCAL_CALCULATOR_MODEL_ID = "__local_calculator__";
 const LOCAL_CALCULATOR_TITLE = "Local Calculator";
 const LOCAL_CALCULATOR_HELP = "Детерминированный локальный калькулятор для явной арифметики: суммы, вычитание, проценты, часы/минуты и ставка × часы. Не использует LLM и не отвечает на обычные вопросы.";
+const ASR_PIPELINE_SETTINGS_MODEL_ID = "__asr_pipeline__";
 const STREAM_TYPEWRITER_INTERVAL_MS = 28;
 const STREAM_TYPEWRITER_MIN_CHARS = 1;
 const STREAM_TYPEWRITER_MAX_CHARS = 8;
@@ -87,9 +88,9 @@ const ASR_PIPELINE_RECOMMENDATIONS = {
     text: "лучше подходит для решений, задач, рисков и open questions.",
   },
   summary: {
-    primary: "mistral-nemo:12b",
-    alternatives: ["qwen3:8b", "qwen2.5:7b-instruct"],
-    text: "heavy-модель для длинного summary; если медленно, используй Qwen 3 8B или Qwen 2.5 7B.",
+    primary: "qwen3:8b",
+    alternatives: ["mistral-nemo:12b", "qwen2.5:7b-instruct"],
+    text: "основной вариант для summary; меньше переключений моделей в умном саммари. Mistral оставь как ручной heavy-режим.",
   },
 };
 const ASR_PIPELINE_DEFAULTS = {
@@ -97,7 +98,7 @@ const ASR_PIPELINE_DEFAULTS = {
   segmenter: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.05, max_tokens: 8000 },
   speaker_resolver: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.1, max_tokens: 4000 },
   structurer: { enabled: true, model: "qwen3:8b", temperature: 0.1, max_tokens: 8000 },
-  summary: { enabled: true, model: "mistral-nemo:12b", temperature: 0.1, max_tokens: 8000 },
+  summary: { enabled: true, model: "qwen3:8b", temperature: 0.1, max_tokens: 8000 },
 };
 const ASR_ANALYSIS_MODE_DEFAULT = "smart_summary";
 const ASR_ANALYSIS_MODES = [
@@ -132,6 +133,7 @@ const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "max_tokens",
   "num_ctx",
   "ollama_keep_alive",
+  "ollama_think",
   "pipeline_enabled",
   "summary_memory_enabled",
   "rag_enabled",
@@ -154,6 +156,7 @@ const RESIDENCY_DEFAULTS = {
   heavy_model_keep_alive: "60s",
   router_keep_alive: "2m",
 };
+const THINKING_MODEL_PATTERNS = [/^qwen3\b/i, /^deepseek-r1\b/i, /^gpt-oss\b/i, /^deepseek-v3\.1\b/i];
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
@@ -346,6 +349,9 @@ const els = {
   deleteProfileButton: document.getElementById("deleteProfileButton"),
   profileStatus: document.getElementById("profileStatus"),
   modelSettingsSummary: document.getElementById("modelSettingsSummary"),
+  quickThinkingControl: document.getElementById("quickThinkingControl"),
+  quickThinkingButton: document.getElementById("quickThinkingButton"),
+  quickThinkingMenu: document.getElementById("quickThinkingMenu"),
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
@@ -380,6 +386,8 @@ const els = {
   asrPipelineSettingsToggleButton: document.getElementById("asrPipelineSettingsToggleButton"),
   asrPipelineSettingsBody: document.getElementById("asrPipelineSettingsBody"),
   asrFullAnalysisEnabledToggle: document.getElementById("asrFullAnalysisEnabledToggle"),
+  asrDiagnosticsEnabledToggle: document.getElementById("asrDiagnosticsEnabledToggle"),
+  asrPipelineThinkSelect: document.getElementById("asrPipelineThinkSelect"),
   asrPipelineSettingsGrid: document.getElementById("asrPipelineSettingsGrid"),
   saveAsrPipelineSettingsButton: document.getElementById("saveAsrPipelineSettingsButton"),
   resetAsrPipelineSettingsButton: document.getElementById("resetAsrPipelineSettingsButton"),
@@ -548,6 +556,11 @@ const state = {
     overrides: {},
     defaults: {},
   },
+  asrPipelineSettingsState: {
+    effective: {},
+    overrides: {},
+    defaults: {},
+  },
 };
 
 let downloadsPollTimer = null;
@@ -604,6 +617,32 @@ function getCatalogModels() {
 function getUtilityModels() {
   return (Array.isArray(state.utilityModels) ? state.utilityModels : [])
     .filter((item) => getModelId(item));
+}
+
+function getCatalogItemById(modelName) {
+  const target = String(modelName || "").trim();
+  return [...getCatalogModels(), ...getUtilityModels()].find((item) => getModelId(item) === target) || null;
+}
+
+function modelSupportsThinking(modelName) {
+  const target = String(modelName || "").trim();
+  if (!target) return false;
+  if (target === AUTO_MODEL_ID) return true;
+  const item = getCatalogItemById(target);
+  const category = String(item?.category || "").toLowerCase();
+  const description = String(item?.description || "").toLowerCase();
+  if (category.includes("thinking") || description.includes("thinking") || description.includes("reasoning")) {
+    return true;
+  }
+  return THINKING_MODEL_PATTERNS.some((pattern) => pattern.test(target));
+}
+
+function normalizeOllamaThink(value, fallback = "auto") {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "auto") return "auto";
+  if (["on", "true", "1", "yes", "think"].includes(normalized)) return "on";
+  if (["off", "false", "0", "no", "nothink"].includes(normalized)) return "off";
+  return fallback;
 }
 
 function isRuntimeModelInstalled(item, installedByName = null) {
@@ -1373,6 +1412,22 @@ function toggleQuickModelMenu(forceState) {
     : els.quickModelMenu.hidden;
   els.quickModelMenu.hidden = !nextState;
   els.quickModelButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+}
+
+function closeQuickThinkingMenu() {
+  if (!els.quickThinkingMenu || !els.quickThinkingButton) return;
+  els.quickThinkingMenu.hidden = true;
+  els.quickThinkingButton.setAttribute("aria-expanded", "false");
+}
+
+function toggleQuickThinkingMenu(forceState) {
+  if (!els.quickThinkingMenu || !els.quickThinkingButton) return;
+  if (els.quickThinkingButton.disabled) return;
+  const nextState = typeof forceState === "boolean"
+    ? forceState
+    : els.quickThinkingMenu.hidden;
+  els.quickThinkingMenu.hidden = !nextState;
+  els.quickThinkingButton.setAttribute("aria-expanded", nextState ? "true" : "false");
 }
 
 function renderQuickModelPicker() {
@@ -2871,6 +2926,11 @@ function asrFullAnalysisEnabled() {
   return Boolean(preferences?.settings?.asr_full_analysis_enabled);
 }
 
+function asrDiagnosticsEnabled() {
+  const preferences = getActiveProfilePreferences();
+  return Boolean(preferences?.asr?.diagnostics_enabled);
+}
+
 function getAsrAnalysisModeConfig(modeId) {
   return ASR_ANALYSIS_MODES.find((mode) => mode.id === modeId) || ASR_ANALYSIS_MODES.find((mode) => mode.id === ASR_ANALYSIS_MODE_DEFAULT);
 }
@@ -2951,6 +3011,26 @@ function patchActiveProfileSettingsLocal(settingsPatch) {
   replaceProfileState(nextProfile);
   applyActiveProfilePreferences();
   renderModelSettings();
+  return nextProfile;
+}
+
+function patchActiveProfileAsrLocal(asrPatch) {
+  const profile = getActiveProfile();
+  if (!profile || !asrPatch || typeof asrPatch !== "object") return null;
+  const preferences = profile.preferences || {};
+  const nextProfile = {
+    ...profile,
+    preferences: {
+      ...preferences,
+      asr: {
+        ...(preferences.asr || {}),
+        ...asrPatch,
+      },
+    },
+  };
+  replaceProfileState(nextProfile);
+  applyActiveProfilePreferences();
+  renderAsrPipelineSettings();
   return nextProfile;
 }
 
@@ -3389,6 +3469,7 @@ function renderModelControls() {
   renderLibraryPanels();
   renderChatModelLibrary();
   renderChatModelNotice();
+  renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
   updateSendButtonState();
   queueSyncAppSelects();
 }
@@ -3535,6 +3616,7 @@ function renderModelSettings() {
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
     streaming_enabled: activeProfileStreamingEnabled(),
     ollama_keep_alive: overrides.ollama_keep_alive ?? effective.ollama_keep_alive ?? defaultKeepAliveForModel(modelName),
+    ollama_think: overrides.ollama_think ?? effective.ollama_think ?? "auto",
     max_resident_target_models: overrides.max_resident_target_models ?? effective.max_resident_target_models ?? RESIDENCY_DEFAULTS.max_resident_target_models,
     allow_light_with_heavy: overrides.allow_light_with_heavy ?? effective.allow_light_with_heavy ?? RESIDENCY_DEFAULTS.allow_light_with_heavy,
     single_large_target_model: overrides.single_large_target_model ?? effective.single_large_target_model ?? RESIDENCY_DEFAULTS.single_large_target_model,
@@ -3545,6 +3627,7 @@ function renderModelSettings() {
     heavy_model_keep_alive: overrides.heavy_model_keep_alive ?? effective.heavy_model_keep_alive ?? RESIDENCY_DEFAULTS.heavy_model_keep_alive,
     router_keep_alive: overrides.router_keep_alive ?? effective.router_keep_alive ?? RESIDENCY_DEFAULTS.router_keep_alive,
   };
+  renderQuickThinkingControl(values.ollama_think);
 
   if (els.temperatureInput) {
     els.temperatureInput.disabled = disabled;
@@ -3645,6 +3728,31 @@ function renderModelSettings() {
   renderAsrPipelineSettings();
 }
 
+function renderQuickThinkingControl(rawValue = null) {
+  if (!els.quickThinkingControl || !els.quickThinkingButton || !els.quickThinkingMenu) return;
+  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
+  const supported = modelSupportsThinking(modelName);
+  const normalized = normalizeOllamaThink(rawValue, "auto");
+  const visibleValue = normalized === "off" ? "off" : "on";
+  els.quickThinkingControl.dataset.thinkingMode = visibleValue;
+  els.quickThinkingButton.disabled = !supported || !state.activeProfileId || !modelName;
+  els.quickThinkingButton.textContent = "Thinking";
+  els.quickThinkingControl.hidden = !modelName;
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
+  els.quickThinkingControl.title = supported
+    ? "Thinking влияет на скорость, CPU и полноту рассуждения для моделей, которые поддерживают этот режим."
+    : "Выбранная модель не объявлена как thinking-capable; параметр не отправляется.";
+  els.quickThinkingMenu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
+    const active = button.getAttribute("data-thinking-mode") === visibleValue;
+    button.classList.toggle("thinking-mode-menu__item--active", active);
+    button.setAttribute("aria-checked", active ? "true" : "false");
+  });
+  if (!supported || !state.activeProfileId || !modelName) {
+    closeQuickThinkingMenu();
+  }
+}
+
 function defaultKeepAliveForModel(modelName = "") {
   const target = String(modelName || "").trim();
   if (target === "qwen3:0.6b") return RESIDENCY_DEFAULTS.router_keep_alive;
@@ -3731,9 +3839,9 @@ function normalizeAsrPipelineStage(stageKey, value = {}) {
 }
 
 function getAsrPipelineStageSettings(stageKey) {
-  const defaults = asrPipelineSourceObject(state.modelSettingsState?.defaults?.pipeline);
-  const effective = asrPipelineSourceObject(state.modelSettingsState?.effective?.pipeline);
-  const overrides = asrPipelineSourceObject(state.modelSettingsState?.overrides?.pipeline);
+  const defaults = asrPipelineSourceObject(state.asrPipelineSettingsState?.defaults?.pipeline);
+  const effective = asrPipelineSourceObject(state.asrPipelineSettingsState?.effective?.pipeline);
+  const overrides = asrPipelineSourceObject(state.asrPipelineSettingsState?.overrides?.pipeline);
   return normalizeAsrPipelineStage(stageKey, {
     ...(ASR_PIPELINE_DEFAULTS[stageKey] || {}),
     ...asrPipelineSourceObject(defaults[stageKey]),
@@ -3744,10 +3852,11 @@ function getAsrPipelineStageSettings(stageKey) {
 
 function pipelineModelOptionsHtml(selectedValue = "", stageKey = "", stageEnabled = true) {
   const selected = String(selectedValue || "").trim();
-  const selectedLlm = String(state.selectedLlmModel || "").trim();
   const installedNames = new Set(state.installedModels.map((item) => String(item?.name || "").trim()).filter(Boolean));
   const stageRecommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey] || null;
-  const fallbackLabel = selectedLlm ? `Текущая LLM (${selectedLlm})` : "Текущая LLM";
+  const fallbackLabel = stageRecommendation?.primary
+    ? `Рекомендованная модель (${stageRecommendation.primary})`
+    : "Модель по умолчанию";
   const options = [
     `<option value="${ASR_PIPELINE_DISABLED_VALUE}"${stageEnabled ? "" : " selected"}>Не использовать</option>`,
     `<option value=""${stageEnabled && !selected ? " selected" : ""}>${escapeHtml(fallbackLabel)}</option>`,
@@ -3822,8 +3931,7 @@ function clearEnhancedSelectsIn(container) {
 
 function renderAsrPipelineSettings() {
   const profile = getActiveProfile();
-  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
-  const disabled = !profile || !modelName;
+  const disabled = !profile;
   const expanded = Boolean(state.asrPipelineSettingsExpanded);
 
   if (els.asrPipelineSettingsPanel) {
@@ -3841,9 +3949,9 @@ function renderAsrPipelineSettings() {
     );
   }
   if (els.asrPipelineSettingsSummary) {
-    els.asrPipelineSettingsSummary.textContent = profile && modelName
-      ? `${profile.name} • ${modelName}`
-      : "Профиль и LLM-модель не выбраны";
+    els.asrPipelineSettingsSummary.textContent = profile
+      ? `${profile.name} • ASR pipeline`
+      : "Профиль не выбран";
   }
   if (els.saveAsrPipelineSettingsButton) {
     els.saveAsrPipelineSettingsButton.disabled = disabled;
@@ -3854,6 +3962,17 @@ function renderAsrPipelineSettings() {
   if (els.asrFullAnalysisEnabledToggle) {
     els.asrFullAnalysisEnabledToggle.disabled = !profile;
     els.asrFullAnalysisEnabledToggle.checked = asrFullAnalysisEnabled();
+  }
+  if (els.asrDiagnosticsEnabledToggle) {
+    els.asrDiagnosticsEnabledToggle.disabled = !profile;
+    els.asrDiagnosticsEnabledToggle.checked = asrDiagnosticsEnabled();
+  }
+  if (els.asrPipelineThinkSelect) {
+    const { effective = {}, overrides = {} } = state.asrPipelineSettingsState || {};
+    const rawThink = overrides.ollama_think ?? effective.ollama_think ?? "off";
+    els.asrPipelineThinkSelect.disabled = !profile;
+    els.asrPipelineThinkSelect.value = normalizeOllamaThink(rawThink, "off");
+    queueSyncAppSelects();
   }
   if (els.asrAnalysisPromptInput && document.activeElement !== els.asrAnalysisPromptInput) {
     els.asrAnalysisPromptInput.disabled = !profile;
@@ -5773,9 +5892,6 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   }
   const transcript = await ensureAsrToolTranscriptSaved();
   if (!transcript?.id) return;
-  const modelName = String(state.selectedLlmModel || "").trim();
-  const modelAvailable = await ensureModelInstalled(modelName);
-  if (!modelAvailable) return;
 
   state.asrToolPipelineBusy = true;
   state.asrToolPipelineAction = action;
@@ -5787,7 +5903,7 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   try {
     const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
       method: "POST",
-      body: { action, preset, model_name: modelName },
+      body: { action, preset, model_name: ASR_PIPELINE_SETTINGS_MODEL_ID },
       signal: controller.signal,
     });
     state.asrToolPipelineRun = run;
@@ -6817,6 +6933,7 @@ function applyCurrentSessionMeta() {
   renderContextSummary();
   renderSettings();
   void refreshModelSettings({ silent: true });
+  void refreshAsrPipelineSettings({ silent: true });
 }
 
 function openSidebar() {
@@ -6850,6 +6967,7 @@ function openSettings() {
   syncMobileScrollLock();
   renderSettings();
   void refreshModelSettings({ silent: true });
+  void refreshAsrPipelineSettings({ silent: true });
   void loadWhisperModels({ silent: true });
   void loadTtsSettings({ silent: true });
   void loadTtsLibrary({ silent: true });
@@ -7390,6 +7508,30 @@ async function refreshModelSettings({ silent = false } = {}) {
   }
 }
 
+async function refreshAsrPipelineSettings({ silent = false } = {}) {
+  if (!state.activeProfileId) {
+    state.asrPipelineSettingsState = { effective: {}, overrides: {}, defaults: {} };
+    renderAsrPipelineSettings();
+    if (!silent) {
+      setInlineStatus(els.asrPipelineSettingsStatus, "Выберите профиль.", "warning");
+    }
+    return;
+  }
+
+  try {
+    const data = await request(`/model_settings?profile_id=${encodeURIComponent(state.activeProfileId)}&model_name=${encodeURIComponent(ASR_PIPELINE_SETTINGS_MODEL_ID)}`);
+    state.asrPipelineSettingsState = data || { effective: {}, overrides: {}, defaults: {} };
+    renderAsrPipelineSettings();
+    if (!silent) {
+      setInlineStatus(els.asrPipelineSettingsStatus, "Настройки анализа загружены.", "success");
+    }
+  } catch (error) {
+    if (!silent) {
+      setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось загрузить настройки анализа: ${error.message || error}`, "error");
+    }
+  }
+}
+
 async function openSession(sessionId) {
   state.currentSessionId = sessionId || null;
   writeStored(STORAGE_KEYS.activeSessionId, state.currentSessionId || "");
@@ -7476,6 +7618,7 @@ async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   await loadAsrToolHistory({ silent: true });
   await loadRagStatus({ silent: true });
   await refreshModelSettings({ silent: true });
+  await refreshAsrPipelineSettings({ silent: true });
 }
 
 async function loadProfiles() {
@@ -7555,6 +7698,9 @@ async function saveModelSettingsFlow() {
         max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         ollama_keep_alive: collectKeepAliveValue(),
+        ollama_think: modelSupportsThinking(modelName)
+          ? normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on")
+          : null,
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
@@ -7610,22 +7756,45 @@ async function saveStreamingPreferenceFlow() {
   renderModelSettings();
 }
 
-async function saveAsrPipelineSettingsFlow() {
+async function saveQuickThinkingModeFlow() {
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
-  if (!state.activeProfileId || !modelName) {
-    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля или LLM-модели.", "warning");
+  if (!state.activeProfileId || !modelName || !modelSupportsThinking(modelName)) {
+    renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
+    return;
+  }
+  const nextMode = normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on");
+  try {
+    const data = await request("/model_settings", {
+      method: "POST",
+      body: buildModelSettingsPayload({ ollama_think: nextMode }),
+    });
+    state.modelSettingsState = data || state.modelSettingsState;
+    renderModelSettings();
+    setFooter(`Thinking ${nextMode === "off" ? "выключен" : "включён"} для текущей модели.`, "success");
+  } catch (error) {
+    renderModelSettings();
+    setFooter(`Не удалось сохранить Thinking: ${error.message || error}`, "error");
+  }
+}
+
+async function saveAsrPipelineSettingsFlow() {
+  if (!state.activeProfileId) {
+    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля.", "warning");
     return;
   }
 
   try {
     const data = await request("/model_settings", {
       method: "POST",
-      body: buildModelSettingsPayload({
+      body: {
+        profile_id: state.activeProfileId,
+        model_name: ASR_PIPELINE_SETTINGS_MODEL_ID,
+        ollama_think: normalizeOllamaThink(els.asrPipelineThinkSelect?.value, "off"),
         pipeline: collectAsrPipelineSettingsFromControls(),
-      }),
+      },
     });
-    state.modelSettingsState = data || state.modelSettingsState;
-    renderModelSettings();
+    state.asrPipelineSettingsState = data || state.asrPipelineSettingsState;
+    renderAsrPipelineSettings();
     setInlineStatus(els.asrPipelineSettingsStatus, "Настройки анализа сохранены.", "success");
   } catch (error) {
     setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сохранить анализ: ${error.message || error}`, "error");
@@ -7633,21 +7802,21 @@ async function saveAsrPipelineSettingsFlow() {
 }
 
 async function resetAsrPipelineSettingsFlow() {
-  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
-  if (!state.activeProfileId || !modelName) {
-    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля или LLM-модели.", "warning");
+  if (!state.activeProfileId) {
+    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля.", "warning");
     return;
   }
 
   try {
-    const data = await request("/model_settings", {
+    const data = await request("/model_settings/reset_to_defaults", {
       method: "POST",
-      body: buildModelSettingsPayload({
-        pipeline: ASR_PIPELINE_DEFAULTS,
-      }),
+      body: {
+        profile_id: state.activeProfileId,
+        model_name: ASR_PIPELINE_SETTINGS_MODEL_ID,
+      },
     });
-    state.modelSettingsState = data || state.modelSettingsState;
-    renderModelSettings();
+    state.asrPipelineSettingsState = data || state.asrPipelineSettingsState;
+    renderAsrPipelineSettings();
     setInlineStatus(els.asrPipelineSettingsStatus, "Настройки стадий сброшены к рекомендациям.", "success");
   } catch (error) {
     setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сбросить стадии: ${error.message || error}`, "error");
@@ -7694,6 +7863,37 @@ async function saveAsrFullAnalysisPreferenceFlow() {
   );
   renderAsrPipelineSettings();
   renderAsrTool();
+}
+
+async function saveAsrDiagnosticsPreferenceFlow() {
+  if (!els.asrDiagnosticsEnabledToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.asrDiagnosticsEnabledToggle.checked);
+  const previous = asrDiagnosticsEnabled();
+
+  patchActiveProfileAsrLocal({ diagnostics_enabled: checked });
+  els.asrDiagnosticsEnabledToggle.disabled = true;
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked ? "Включаю ASR-логи…" : "Выключаю ASR-логи и удаляю папку diagnostics…",
+    "warning",
+  );
+
+  const updatedProfile = await saveActiveProfilePreferences({ asr: { diagnostics_enabled: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileAsrLocal({ diagnostics_enabled: previous });
+    setInlineStatus(els.asrPipelineSettingsStatus, "Не удалось сохранить настройку ASR-логов.", "error");
+    renderAsrPipelineSettings();
+    return;
+  }
+
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked
+      ? "ASR-логи включены. Диагностика pipeline будет записываться в папку профиля."
+      : "ASR-логи выключены. Папка diagnostics для профиля удалена.",
+    "success",
+  );
+  renderAsrPipelineSettings();
 }
 
 async function resetModelSettingsFlow() {
@@ -8884,9 +9084,25 @@ function bindEvents() {
   els.saveModelSettingsButton?.addEventListener("click", async () => saveModelSettingsFlow());
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
   els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
+  els.quickThinkingButton?.addEventListener("click", () => {
+    closeQuickModelMenu();
+    closeVoiceModelMenu();
+    toggleQuickThinkingMenu();
+  });
+  els.quickThinkingMenu?.addEventListener("click", async (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-thinking-mode]") : null;
+    if (!(button instanceof HTMLElement)) return;
+    const nextMode = normalizeOllamaThink(button.dataset.thinkingMode, "on");
+    if (!els.quickThinkingControl) return;
+    closeQuickThinkingMenu();
+    els.quickThinkingControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+    renderQuickThinkingControl(nextMode);
+    await saveQuickThinkingModeFlow();
+  });
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
   els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
   els.asrFullAnalysisEnabledToggle?.addEventListener("change", async () => saveAsrFullAnalysisPreferenceFlow());
+  els.asrDiagnosticsEnabledToggle?.addEventListener("change", async () => saveAsrDiagnosticsPreferenceFlow());
   els.asrPipelineSettingsToggleButton?.addEventListener("click", () => {
     setAsrPipelineSettingsExpanded(!state.asrPipelineSettingsExpanded);
   });
@@ -8906,6 +9122,7 @@ function bindEvents() {
 
   els.quickModelButton?.addEventListener("click", () => {
     toggleComposerMenu(false);
+    closeQuickThinkingMenu();
     closeVoiceModelMenu();
     toggleQuickModelMenu();
   });
@@ -9508,6 +9725,7 @@ function bindEvents() {
       closeTtsTool();
       toggleComposerMenu(false);
       closeQuickModelMenu();
+      closeQuickThinkingMenu();
       closeVoiceModelMenu();
       closeAppSelect();
     }
@@ -9517,6 +9735,7 @@ function bindEvents() {
     const target = event.target instanceof Element ? event.target : null;
     const insideComposerMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
     const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideQuickThinkingMenu = target?.closest("#quickThinkingMenu") || target?.closest("#quickThinkingButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
     const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
@@ -9531,6 +9750,9 @@ function bindEvents() {
     }
     if (!insideQuickModelMenu) {
       closeQuickModelMenu();
+    }
+    if (!insideQuickThinkingMenu) {
+      closeQuickThinkingMenu();
     }
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();

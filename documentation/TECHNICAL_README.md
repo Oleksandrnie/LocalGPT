@@ -159,6 +159,8 @@ Metal-to-CPU recovery:
 
 - если native Ollama request падает на Metal backend до выдачи текста, runtime выгружает модель и повторяет запрос;
 - если повтор тоже падает на Metal backend, runtime ещё раз выгружает модель перед CPU fallback payload (`num_gpu=0`, `keep_alive=0`);
+- callers can disable CPU fallback per request; ASR pipeline disables it so failed Metal does not silently become a CPU-heavy summary run;
+- model settings can pass native Ollama top-level `think`; ASR disables it by default for pipeline LLM stages because structured ASR output does not need reasoning traces;
 - для streaming path fallback разрешён только до первого text chunk, чтобы не смешивать два разных ответа в одном assistant-message.
 
 ### 3.2. Message lifecycle storage
@@ -263,9 +265,9 @@ Default preset для длинных русскоязычных встреч:
 | segmenter | `qwen2.5:7b-instruct` | `0.05` | `8000` |
 | speaker resolver | `qwen2.5:7b-instruct` | `0.1` | `4000` |
 | structurer | `qwen3:8b` | `0.1` | `8000` |
-| summary | `mistral-nemo:12b` | `0.1` | `8000` |
+| summary | `qwen3:8b` | `0.1` | `8000` |
 
-Whisper defaults для ASR Studio: `large-v3-turbo`, русский prompt/language, `beam_size=5`, `threads=4`. `qwen2.5:3b-instruct` больше не основной качественный вариант для cleaner/segmenter; он остаётся быстрым fallback. User/model overrides из `model_settings.pipeline_json` merge-ятся поверх default pipeline и имеют приоритет.
+Whisper defaults для ASR Studio: `large-v3-turbo`, русский prompt/language, `beam_size=5`, `threads=4`. `qwen2.5:3b-instruct` больше не основной качественный вариант для cleaner/segmenter; он остаётся быстрым fallback. ASR pipeline settings хранятся отдельно от chat model settings под служебным model name `__asr_pipeline__`; user ASR overrides из `model_settings.pipeline_json` merge-ятся поверх default pipeline и имеют приоритет.
 
 ASR Studio analysis actions:
 
@@ -281,6 +283,12 @@ Cleaner is optional and is not part of the default summary/smart/full routes. It
 Stage settings have priority over mode routes. If a stage is saved as `enabled=false` via UI `Не использовать`, backend `_stage_enabled` skips it in every action. `smart_summary` falls back to direct summary when `structurer` is disabled and records `smart_summary_structurer_disabled_fallback_summary`; summary-producing actions return `asr_summary_stage_disabled` when `summary` is disabled instead of silently re-enabling it.
 
 `asr.analysis_language` controls ASR analysis output language: `auto` follows the transcript language, while `ru` and `en` force Russian or English. `asr.analysis_prompt` is profile-level context for structurer/summary/retry prompts. These settings do not affect Whisper transcription.
+
+`asr.diagnostics_enabled` controls extended ASR pipeline diagnostics. When enabled, the profile folder under `tmp_logs/asr_diagnostics/profile_<id>/` is created and JSONL pipeline events are written there. When disabled through the profile preference API/UI, that profile folder is removed.
+
+`OLLAMA_PIPELINE_NUM_GPU` is optional. On Apple Silicon, the default ASR pipeline value is a high layer count so Ollama fully offloads LLM stages to Metal when possible. Set `OLLAMA_PIPELINE_NUM_GPU=auto` to omit `ollama_num_gpu` and use Ollama's own default behavior. Set `OLLAMA_PIPELINE_NUM_GPU=0` only when a deliberate CPU-only pipeline is needed.
+
+ASR pipeline settings also include `ollama_think`. Default effective behavior for `__asr_pipeline__` is `off`, so `_call_stage` sends `think:false` to native Ollama chat calls. Users may override it to `on` or `auto` from ASR settings, but mode routing never flips it implicitly. Chat model settings use the same persisted field and the topbar `Thinking` control for supported models.
 
 Long transcript handling:
 
@@ -298,11 +306,12 @@ Long transcript handling:
 - если final summary не покрывает крупные темы, warning `summary_topic_coverage_missing:<N>` запускает retry с `missing_topics`, предыдущим summary и merged evidence;
 - успешный retry добавляет диагностический warning `summary_topic_coverage_retry_succeeded`, но только если missing topics раскрыты смыслово, а не упомянуты одним ключевым словом;
 - если retry всё ещё пропускает темы, добавляется `summary_topic_coverage_retry_failed:<N>`, а результат явно получает блок `Неполное summary: не удалось покрыть следующие темы`;
+- если summary validation падает после успешного structurer, `smart_summary`/`full` могут собрать безопасный markdown summary из structured evidence вместо ещё одного дорогого LLM retry;
 - structurer выделяет generic `current_state` и `target_state`, чтобы summary не смешивало текущее устройство процесса/архитектуры с целевой схемой;
 - подозрительные ASR-термины технических артефактов не исправляются словарём; summary prompt требует выносить спорные термины в вопросы для уточнения;
 - неподтверждённые action-like bullets из `Ключевые решения` переносятся в proposals, если нет явного confirmation marker.
 
-Runtime note: full long chunked runs can perform multiple sequential local LLM calls across segmenter/speaker resolver/structurer plus one summary retry on `mistral-nemo:12b`. This is expected quality work, but it can be thermally expensive on a laptop. Keep full analysis disabled for routine summary-only work, use `stage_timings`, warnings and process checks during manual QA, and do not run repeated live long-meeting tests in parallel with other local LLM/ASR workloads.
+Runtime note: full long chunked runs can perform multiple sequential local LLM calls across segmenter/speaker resolver/structurer plus one summary retry. Smart summary defaults to `qwen3:8b` for both structurer and summary to avoid loading two large models for the common route. This is still thermally expensive on a laptop. Missing required summary headings are repaired locally before grounding validation so a usable summary body does not trigger a second LLM call only for format. Keep full analysis disabled for routine summary-only work, use `stage_timings`, warnings and process checks during manual QA, and do not run repeated live long-meeting tests in parallel with other local LLM/ASR workloads.
 
 ASR stop behavior:
 

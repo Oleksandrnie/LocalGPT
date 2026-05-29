@@ -19,6 +19,7 @@ LOGGER = logging.getLogger(__name__)
 _PIPELINE_STOP_EVENT = threading.Event()
 _ACTIVE_PIPELINE_MODELS_LOCK = threading.Lock()
 _ACTIVE_PIPELINE_MODELS: set[str] = set()
+ASR_PIPELINE_SETTINGS_MODEL_ID = "__asr_pipeline__"
 
 PIPELINE_PRESETS: dict[str, dict[str, Any]] = {
     "fast": {
@@ -140,6 +141,17 @@ SUMMARY_INVALID_PATTERNS = (
     re.compile(r"\boutput\s+language:\s*(?:english|russian)\b", re.IGNORECASE),
     re.compile(r"\bevidence_json\b", re.IGNORECASE),
 )
+SUMMARY_OVERVIEW_ARTIFACT_PATTERNS = (
+    re.compile(r"\bSpeaker[_\s-]*\d+\b", re.IGNORECASE),
+    re.compile(r"(?im)^\s*(?:\d+\.\s*)?\*\*?\s*(?:участники|participants)\s*[:：]"),
+    re.compile(r"(?im)^\s*(?:\d+\.\s*)?\*\*?\s*(?:язык|language)\s*[:：]\s*(?:русский|english|английский|russian)\b"),
+    re.compile(r"\bкратк(?:ий|ого)\s+обзор(?:а)?\s+диалога\b", re.IGNORECASE),
+    re.compile(r"\bbrief\s+overview\s+of\s+(?:the\s+)?(?:dialogue|conversation)\b", re.IGNORECASE),
+    re.compile(r"\bиз-за\s+отсутствия\s+контекста\b", re.IGNORECASE),
+    re.compile(r"\bне\s+могу\s+предоставить\s+более\s+подробн", re.IGNORECASE),
+    re.compile(r"\bdue\s+to\s+(?:the\s+)?lack\s+of\s+context\b", re.IGNORECASE),
+    re.compile(r"\bi\s+cannot\s+provide\s+(?:a\s+)?more\s+detailed\b", re.IGNORECASE),
+)
 
 
 def _json_clone(value: Any) -> Any:
@@ -221,8 +233,11 @@ def _stage_enabled(stage: str, action: str, preset: str, pipeline: dict[str, Any
 
 def _stage_settings(settings: dict[str, Any], stage: str) -> dict[str, Any]:
     stage_cfg = ((settings.get("pipeline") or {}).get(stage) or {}).copy()
-    fallback_model = settings.get("_fallback_model")
-    model = stage_cfg.get("model") or fallback_model or config.SETTINGS.model
+    default_stage_model = ((config.DEFAULT_PIPELINE.get(stage) or {}).get("model") or "").strip()
+    fallback_model = str(settings.get("_fallback_model") or "").strip()
+    if fallback_model == ASR_PIPELINE_SETTINGS_MODEL_ID:
+        fallback_model = default_stage_model or config.SETTINGS.model
+    model = str(stage_cfg.get("model") or fallback_model or default_stage_model or config.SETTINGS.model).strip()
     if fallback_model and fallback_model != model:
         try:
             if not model_service.is_model_installed(model) and model_service.is_model_installed(fallback_model):
@@ -244,11 +259,24 @@ def _pipeline_keep_alive(settings: dict[str, Any] | None) -> str | None:
 
 def _pipeline_num_gpu(settings: dict[str, Any] | None) -> int | None:
     value = (settings or {}).get("pipeline_num_gpu", config.SETTINGS.ollama_pipeline_num_gpu)
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"", "auto", "default", "none", "null"}:
+        return None
     try:
         parsed = int(value)
     except (TypeError, ValueError):
         return None
     return parsed if parsed >= 0 else None
+
+
+def _pipeline_ollama_think(settings: dict[str, Any] | None) -> bool | None:
+    value = str((settings or {}).get("ollama_think") or "auto").strip().lower()
+    if value in {"on", "true", "1", "yes", "think"}:
+        return True
+    if value in {"off", "false", "0", "no", "nothink"}:
+        return False
+    return None
 
 
 def _clean_text_fallback(text: str) -> str:
@@ -310,18 +338,16 @@ def request_pipeline_stop() -> dict[str, Any]:
         models = set(_ACTIVE_PIPELINE_MODELS)
     models.update(_configured_pipeline_models())
 
-    unloaded: list[str] = []
-    unload_failed: list[str] = []
-    for model in sorted(models):
-        if ollama_runtime.unload_model(model, timeout=1.0):
-            unloaded.append(model)
-        else:
-            unload_failed.append(model)
+    unload_result = ollama_runtime.force_unload_models(
+        models,
+        unload_timeout=1.0,
+        wait_timeout=1.5,
+        terminate_stuck_runners=True,
+    )
     return {
         "pipeline_stop_requested": True,
         "active_models": sorted(models),
-        "unloaded_models": unloaded,
-        "unload_failed": unload_failed,
+        **unload_result,
     }
 
 
@@ -865,7 +891,14 @@ def _call_stage(
                     "message": f"Pipeline model {model} is not installed.",
                 },
             )
-        request_settings: dict[str, Any] = {"temperature": temperature, "max_tokens": max_tokens}
+        request_settings: dict[str, Any] = {
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "ollama_allow_cpu_fallback": False,
+        }
+        think = _pipeline_ollama_think(runtime_settings)
+        if think is not None:
+            request_settings["ollama_think"] = think
         try:
             residency_settings = model_residency.apply_target_settings(model, runtime_settings or {}, mode="manual")
             keep_alive = residency_settings.get("ollama_keep_alive_effective")
@@ -919,6 +952,26 @@ def _log_pipeline_event(payload: dict[str, Any]) -> None:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception as exc:  # pragma: no cover
         LOGGER.warning("Failed to write pipeline log: %s", exc)
+
+
+def _asr_diagnostics_enabled(settings: dict[str, Any] | None) -> bool:
+    return bool((settings or {}).get("_asr_diagnostics_enabled"))
+
+
+def _log_asr_diagnostic_event(settings: dict[str, Any], profile_id: int, payload: dict[str, Any]) -> None:
+    if not _asr_diagnostics_enabled(settings):
+        return
+    try:
+        path = config.ASR_DIAGNOSTICS_DIR / f"profile_{int(profile_id)}"
+        path.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": int(time.time()),
+            **payload,
+        }
+        with (path / "pipeline_runs.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except Exception as exc:  # pragma: no cover
+        LOGGER.warning("Failed to write ASR diagnostics log: %s", exc)
 
 
 def _asr_analysis_context(settings: dict[str, Any]) -> str:
@@ -990,11 +1043,15 @@ def _summary_grounding_rules(language: str) -> str:
         return (
             "Use only EVIDENCE_JSON. Do not restate this task. Do not create examples. "
             "Do not invent sample speakers, greetings, places, plans, meetings, or dialogue. "
+            "Do not write a generic overview of the dialogue, participant metadata, language metadata, or limitation disclaimer. "
+            "Do not use Speaker 1, Speaker 2, Unknown speaker, or similar placeholder participants as factual identities. "
             "If evidence is insufficient, write that evidence is insufficient instead of fabricating content."
         )
     return (
         "Используй только EVIDENCE_JSON. Не пересказывай инструкцию. Не создавай примеры. "
         "Не придумывай учебных спикеров, приветствия, места, планы, встречи или диалог. "
+        "Не пиши общий обзор диалога, метаданные участников, метаданные языка или дисклеймер об ограниченном контексте. "
+        "Не используй Speaker 1, Speaker 2, Unknown speaker и похожие placeholder-участники как фактические личности. "
         "Если evidence недостаточно, напиши, что данных недостаточно, а не выдумывай содержание."
     )
 
@@ -1025,7 +1082,7 @@ def _summary_format_instruction(language: str) -> str:
             "If an important point is repeated in different words, reflect it as a significant topic/task/question. "
             "If a technical term looks like an ASR error or a concept mix-up, put it into Questions to Clarify. "
             "Do not assign owners unless explicitly confirmed. "
-            "Return only the requested markdown summary, with no preamble."
+            "Start with '## Brief Summary'. Do not add a preamble, participants/language metadata, or limitation note."
         )
     return (
         "Сформируй summary строго в формате:\n"
@@ -1040,7 +1097,7 @@ def _summary_format_instruction(language: str) -> str:
         "Если важный пункт повторяется разными словами, отрази его как значимую тему/задачу/уточнение. "
         "Если технический термин выглядит как ошибка ASR или смешение понятий, вынеси его в вопросы для уточнения. "
         "Не назначай ответственных, если они не подтверждены явно. "
-        "Верни только markdown summary без вводного пояснения."
+        "Начни с '## Краткое резюме'. Не добавляй вводную фразу, метаданные участников/языка или примечание об ограниченном контексте."
     )
 
 
@@ -1097,13 +1154,19 @@ def _structurer_task_instruction(language: str, chunk_id: int, chunk_count: int)
 
 
 def _resolve_settings(profile_id: int, model_name: str | None = None) -> dict[str, Any]:
-    model = model_name or config.SETTINGS.model
-    settings = db.effective_settings(profile_id, model, config.DEFAULT_SETTINGS).get("effective") or {}
+    model = model_name or ASR_PIPELINE_SETTINGS_MODEL_ID
+    settings_bundle = db.effective_settings(profile_id, model, config.DEFAULT_SETTINGS)
+    settings = settings_bundle.get("effective") or {}
+    overrides = settings_bundle.get("overrides") or {}
+    if model == ASR_PIPELINE_SETTINGS_MODEL_ID and overrides.get("ollama_think") is None:
+        settings["ollama_think"] = "off"
     profile = db.get_profile(profile_id) or {}
     asr_preferences = ((profile.get("preferences") or {}).get("asr") or {}) if isinstance(profile, dict) else {}
+    settings["_settings_model"] = model
     settings["_fallback_model"] = model
     settings["_asr_analysis_prompt"] = str(asr_preferences.get("analysis_prompt") or "").strip()[:4000]
     settings["_asr_analysis_language"] = _normalize_asr_analysis_language(asr_preferences.get("analysis_language"))
+    settings["_asr_diagnostics_enabled"] = bool(asr_preferences.get("diagnostics_enabled"))
     return settings
 
 
@@ -1356,17 +1419,35 @@ def run_transcript_pipeline(
         structured = _empty_structure()
 
     if stage_enabled["summary"]:
-        summary = generate_summary(
-            cleaned_transcript=cleaned,
-            speaker_mapping=speaker_mapping,
-            structured_json=structured,
-            settings=settings,
-            timings=timings,
-            warnings=warnings,
-            debug=debug,
-            service=service,
-            chunk_count=len(raw_chunks),
-        )
+        try:
+            summary = generate_summary(
+                cleaned_transcript=cleaned,
+                speaker_mapping=speaker_mapping,
+                structured_json=structured,
+                settings=settings,
+                timings=timings,
+                warnings=warnings,
+                debug=debug,
+                service=service,
+                chunk_count=len(raw_chunks),
+            )
+        except HTTPException as exc:
+            _log_asr_diagnostic_event(
+                settings,
+                profile_id,
+                {
+                    "event": "summary_failed",
+                    "transcript_id": transcript.get("id"),
+                    "action": action_value,
+                    "preset": preset_value,
+                    "detail": exc.detail,
+                    "warnings": warnings,
+                    "stage_timings": timings,
+                    "chunks": len(raw_chunks),
+                    "structured_available": bool(structured),
+                },
+            )
+            raise
 
     run = db.create_pipeline_run(
         transcript_id=int(transcript["id"]),
@@ -1412,6 +1493,21 @@ def run_transcript_pipeline(
             "chunks": len(raw_chunks),
             "used_settings": settings,
         }
+    )
+    _log_asr_diagnostic_event(
+        settings,
+        profile_id,
+        {
+            "event": "pipeline_completed",
+            "run_id": run.get("id"),
+            "transcript_id": transcript.get("id"),
+            "action": action_value,
+            "preset": preset_value,
+            "warnings": warnings,
+            "stage_timings": timings,
+            "chunks": len(raw_chunks),
+            "used_settings_model": settings.get("_settings_model"),
+        },
     )
     return run
 
@@ -1549,6 +1645,20 @@ def _topic_is_covered(topic: str, summary: str) -> bool:
     return hits >= min(len(tokens), required)
 
 
+def _summary_has_required_heading(summary: str, output_language: str) -> bool:
+    heading = "Brief Summary" if output_language == "en" else "Краткое резюме"
+    return bool(re.search(rf"(?im)^\s*##\s*{re.escape(heading)}\s*$", str(summary or "")))
+
+
+def _ensure_required_summary_heading(summary: str, output_language: str, warnings: list[str]) -> str:
+    text = str(summary or "").strip()
+    if not text or _summary_has_required_heading(text, output_language):
+        return text
+    heading = "Brief Summary" if output_language == "en" else "Краткое резюме"
+    _append_warning_once(warnings, "summary_required_heading_added")
+    return f"## {heading}\n{text}"
+
+
 def _summary_grounding_reasons(
     summary: str,
     *,
@@ -1564,6 +1674,14 @@ def _summary_grounding_reasons(
     for pattern in SUMMARY_INVALID_PATTERNS:
         if pattern.search(text):
             reasons.append("instruction_or_example_output")
+            break
+
+    if not _summary_has_required_heading(text, output_language):
+        reasons.append("summary_missing_required_heading")
+
+    for pattern in SUMMARY_OVERVIEW_ARTIFACT_PATTERNS:
+        if pattern.search(text):
+            reasons.append("generic_dialogue_overview_output")
             break
 
     cyrillic_count, latin_count = _language_counts(text)
@@ -1680,17 +1798,157 @@ def _append_incomplete_summary_section(summary: str, missing_topics: list[str]) 
     return summary.rstrip() + f"\n\n{INCOMPLETE_SUMMARY_HEADING}\n" + bullets
 
 
+def _summary_labels(language: str) -> dict[str, str]:
+    if language == "en":
+        return {
+            "brief": "Brief Summary",
+            "decisions": "Key Decisions",
+            "tasks": "Tasks",
+            "proposals": "Proposals / Options",
+            "risks": "Risks",
+            "questions": "Questions to Clarify",
+            "next_steps": "Next Steps",
+            "current": "Current state",
+            "target": "Target state",
+            "topic": "Topic",
+            "context": "Context",
+            "responsible": "Responsible",
+            "status": "Status",
+            "empty": "not recorded",
+            "fallback_note": "The LLM summary failed validation, so this safe version was assembled from structured evidence.",
+        }
+    return {
+        "brief": "Краткое резюме",
+        "decisions": "Ключевые решения",
+        "tasks": "Задачи",
+        "proposals": "Предложения / варианты дальнейших действий",
+        "risks": "Риски",
+        "questions": "Вопросы для уточнения",
+        "next_steps": "Следующие действия",
+        "current": "Текущее состояние",
+        "target": "Целевое состояние",
+        "topic": "Тема",
+        "context": "Контекст",
+        "responsible": "Ответственный",
+        "status": "Статус",
+        "empty": "не зафиксировано",
+        "fallback_note": "LLM-summary не прошло проверку, поэтому эта безопасная версия собрана из структурированных данных анализа.",
+    }
+
+
+def _structured_summary_text(value: Any) -> list[str]:
+    lines: list[str] = []
+    for item in _as_list(value):
+        text = _normalize_pipeline_text(item)
+        text = re.sub(r"(?im)^chunk\s+\d+\s*:\s*", "", text).strip()
+        if not _is_empty_marker(text):
+            lines.append(text)
+    return _dedupe_strings(lines, limit=8)
+
+
+def _structured_bullets(value: Any, *, limit: int = 10) -> list[str]:
+    items: list[str] = []
+    for item in _as_list(value):
+        if isinstance(item, dict):
+            text = _normalize_pipeline_text(item.get("task") or item.get("title") or item.get("name") or item.get("text") or item.get("value"))
+        else:
+            text = _normalize_pipeline_text(item)
+        if not _is_empty_marker(text):
+            items.append(text)
+    return _dedupe_strings(items, limit=limit)
+
+
+def _structured_task_bullets(value: Any, labels: dict[str, str], *, limit: int = 10) -> list[str]:
+    items: list[str] = []
+    for item in _as_list(value):
+        if isinstance(item, dict):
+            task = _normalize_pipeline_text(item.get("task") or item.get("title") or item.get("name") or item.get("text") or "")
+            if _is_empty_marker(task):
+                continue
+            details: list[str] = []
+            context = _normalize_pipeline_text(item.get("context") or item.get("details") or item.get("description") or item.get("evidence") or "")
+            if not _is_empty_marker(context):
+                details.append(f"{labels['context']}: {context}")
+            responsible = _normalize_responsible(item.get("responsible") or item.get("owner") or "")
+            if not _is_empty_marker(responsible):
+                details.append(f"{labels['responsible']}: {responsible}")
+            status = _normalize_pipeline_text(item.get("status") or "")
+            if not _is_empty_marker(status):
+                details.append(f"{labels['status']}: {status}")
+            items.append(task if not details else f"{task} ({'; '.join(details)})")
+        else:
+            text = _normalize_pipeline_text(item)
+            if not _is_empty_marker(text):
+                items.append(text)
+    return _dedupe_strings(items, limit=limit)
+
+
+def _markdown_section(title: str, items: list[str], *, empty: str) -> str:
+    bullets = items or [empty]
+    return f"## {title}\n" + "\n".join(f"- {item}" for item in bullets)
+
+
+def _safe_summary_from_structured(structured: Any, output_language: str) -> str | None:
+    if not isinstance(structured, dict):
+        return None
+    labels = _summary_labels(output_language)
+    topic = _normalize_pipeline_text(structured.get("topic") or "")
+    brief_lines = _structured_summary_text(structured.get("summary"))
+    if not _is_empty_marker(topic):
+        brief_lines.insert(0, f"{labels['topic']}: {topic}")
+    current_state = _normalize_pipeline_text(structured.get("current_state") or "")
+    target_state = _normalize_pipeline_text(structured.get("target_state") or "")
+    if not _is_empty_marker(current_state):
+        brief_lines.append(f"{labels['current']}: {current_state}")
+    if not _is_empty_marker(target_state):
+        brief_lines.append(f"{labels['target']}: {target_state}")
+
+    sections = {
+        "decisions": _structured_bullets([*_as_list(structured.get("decisions")), *_as_list(structured.get("agreements"))]),
+        "tasks": _structured_task_bullets(structured.get("tasks"), labels),
+        "proposals": _structured_bullets(structured.get("proposals")),
+        "risks": _structured_bullets(structured.get("risks")),
+        "questions": _structured_bullets(structured.get("open_questions")),
+        "next_steps": _structured_bullets(structured.get("next_steps")),
+    }
+    has_content = bool(brief_lines) or any(sections.values())
+    if not has_content:
+        return None
+
+    parts = [
+        f"## {labels['brief']}",
+        *[f"- {line}" for line in _dedupe_strings(brief_lines, limit=10)],
+        "",
+        _markdown_section(labels["decisions"], sections["decisions"], empty=labels["empty"]),
+        "",
+        _markdown_section(labels["tasks"], sections["tasks"], empty=labels["empty"]),
+        "",
+        _markdown_section(labels["proposals"], sections["proposals"], empty=labels["empty"]),
+        "",
+        _markdown_section(labels["risks"], sections["risks"], empty=labels["empty"]),
+        "",
+        _markdown_section(labels["questions"], sections["questions"], empty=labels["empty"]),
+        "",
+        _markdown_section(labels["next_steps"], sections["next_steps"], empty=labels["empty"]),
+        "",
+        f"Note: {labels['fallback_note']}" if output_language == "en" else f"Примечание: {labels['fallback_note']}",
+    ]
+    return "\n".join(parts).strip()
+
+
 def _qa_summary_output(
     summary: str,
     *,
     structured_json: dict[str, Any] | list[Any] | None,
     chunk_count: int,
+    output_language: str,
     warnings: list[str],
     debug: dict[str, Any] | None,
 ) -> tuple[str, list[str]]:
     checked = _repair_empty_decisions_section(summary, structured_json, warnings)
     checked = _normalize_summary_markdown(checked, structured_json, warnings)
     checked = _demote_unconfirmed_decisions_section(checked, warnings)
+    checked = _ensure_required_summary_heading(checked, output_language, warnings)
     missing_topics = _missing_coverage_topics(checked, structured_json, chunk_count=chunk_count)
     if debug:
         debug["summary_coverage"] = {
@@ -1774,6 +2032,7 @@ def generate_summary(
         summary,
         structured_json=structured_json,
         chunk_count=chunk_count,
+        output_language=output_language,
         warnings=warnings,
         debug=debug,
     )
@@ -1785,6 +2044,21 @@ def generate_summary(
     )
     if grounding_reasons:
         _append_warning_once(warnings, f"summary_grounding_validation_failed:{','.join(grounding_reasons)}")
+        structured_fallback = _safe_summary_from_structured(structured_json, output_language)
+        if structured_fallback:
+            _append_warning_once(warnings, f"summary_safe_structured_fallback_used:{','.join(grounding_reasons)}")
+            checked_summary, missing_topics = _qa_summary_output(
+                structured_fallback,
+                structured_json=structured_json,
+                chunk_count=chunk_count,
+                output_language=output_language,
+                warnings=warnings,
+                debug=debug,
+            )
+            if missing_topics:
+                _append_warning_once(warnings, f"summary_safe_structured_fallback_missing_topics:{len(missing_topics)}")
+                return _append_incomplete_summary_section(checked_summary, missing_topics)
+            return checked_summary
         grounding_prompt = [
             {
                 "role": "system",
@@ -1793,6 +2067,7 @@ def generate_summary(
                     f"{_json_language_instruction(output_language)} "
                     f"{_summary_grounding_rules(output_language)} "
                     "The previous output failed validation because it looked ungrounded, was in the wrong language, "
+                    "missed the required markdown structure, included placeholder speaker artifacts, generic dialogue overview, "
                     "or resembled an instruction/example conversation. Return only the corrected markdown summary. "
                     f"{_summary_guardrails(output_language)}"
                 ),
@@ -1825,6 +2100,7 @@ def generate_summary(
             grounding_retry,
             structured_json=structured_json,
             chunk_count=chunk_count,
+            output_language=output_language,
             warnings=warnings,
             debug=debug,
         )
@@ -1835,11 +2111,26 @@ def generate_summary(
         )
         if remaining_grounding_reasons:
             _append_warning_once(warnings, f"summary_grounding_retry_failed:{','.join(remaining_grounding_reasons)}")
+            structured_fallback = _safe_summary_from_structured(structured_json, output_language)
+            if structured_fallback:
+                _append_warning_once(warnings, f"summary_safe_structured_fallback_used:{','.join(remaining_grounding_reasons)}")
+                checked_summary, missing_topics = _qa_summary_output(
+                    structured_fallback,
+                    structured_json=structured_json,
+                    chunk_count=chunk_count,
+                    output_language=output_language,
+                    warnings=warnings,
+                    debug=debug,
+                )
+                if missing_topics:
+                    _append_warning_once(warnings, f"summary_safe_structured_fallback_missing_topics:{len(missing_topics)}")
+                    return _append_incomplete_summary_section(checked_summary, missing_topics)
+                return checked_summary
             raise HTTPException(
                 status_code=502,
                 detail={
                     "code": "asr_summary_grounding_failed",
-                    "message": "Summary output was not grounded in transcript evidence.",
+                    "message": "Summary output failed validation against transcript evidence and required ASR summary format.",
                     "reasons": remaining_grounding_reasons,
                 },
             )
@@ -1901,6 +2192,7 @@ def generate_summary(
         retry_summary,
         structured_json=structured_json,
         chunk_count=chunk_count,
+        output_language=output_language,
         warnings=warnings,
         debug=debug,
     )

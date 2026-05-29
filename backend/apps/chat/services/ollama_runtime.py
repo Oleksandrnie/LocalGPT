@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import signal
+import subprocess
 import time
 from typing import Any, Iterator
 from urllib import error, request
@@ -126,12 +129,38 @@ def _post_json(path: str, payload: dict[str, Any], *, timeout: float | None = No
     return parsed
 
 
+def _get_json(path: str, *, timeout: float | None = None) -> dict[str, Any]:
+    url = f"{native_ollama_base_url()}{path}"
+    req = request.Request(url, method="GET")
+    try:
+        kwargs = {} if timeout is None else {"timeout": timeout}
+        with request.urlopen(req, **kwargs) as response:
+            raw = response.read().decode("utf-8")
+    except error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8")
+        except OSError:
+            body = str(exc)
+        raise RuntimeError(f"Ollama API error {exc.code}: {body}") from exc
+    except (OSError, error.URLError) as exc:
+        raise RuntimeError(f"Ollama API request failed: {exc}") from exc
+
+    try:
+        parsed = json.loads(raw or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Ollama API returned invalid JSON: {raw[:500]}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Ollama API returned a non-object response")
+    return parsed
+
+
 def _post_json_with_metal_recovery(
     path: str,
     payload: dict[str, Any],
     *,
     model_name: str,
     timeout: float | None = None,
+    allow_cpu_fallback: bool = True,
 ) -> dict[str, Any]:
     try:
         return _post_json(path, payload, timeout=timeout)
@@ -148,6 +177,11 @@ def _post_json_with_metal_recovery(
     except RuntimeError as exc:
         if not is_metal_backend_error(exc):
             raise
+        if not allow_cpu_fallback:
+            LOGGER.warning("Ollama Metal backend still unavailable for %s; CPU fallback is disabled.", model_name)
+            raise RuntimeError(
+                f"Ollama Metal backend failed for {model_name}; CPU fallback is disabled for this request."
+            ) from exc
         LOGGER.warning("Ollama Metal backend still unavailable for %s; retrying with CPU fallback.", model_name)
         unload_model(model_name, timeout=1.5)
         time.sleep(0.75)
@@ -192,6 +226,8 @@ def chat_completion(
     max_tokens: int | None = None,
     keep_alive: str | None = None,
     num_gpu: int | None = None,
+    allow_cpu_fallback: bool = True,
+    think: bool | None = None,
 ) -> str:
     options: dict[str, Any] = {}
     if temperature is not None:
@@ -206,6 +242,8 @@ def chat_completion(
         "messages": messages,
         "stream": False,
     }
+    if think is not None:
+        payload["think"] = bool(think)
     if options:
         payload["options"] = options
     if keep_alive is not None:
@@ -214,7 +252,12 @@ def chat_completion(
     if num_gpu == 0:
         unload_model(model_name, timeout=1.5)
 
-    response = _post_json_with_metal_recovery("/api/chat", payload, model_name=model_name)
+    response = _post_json_with_metal_recovery(
+        "/api/chat",
+        payload,
+        model_name=model_name,
+        allow_cpu_fallback=allow_cpu_fallback,
+    )
     message = response.get("message") if isinstance(response.get("message"), dict) else {}
     return str(message.get("content") or response.get("response") or "")
 
@@ -227,6 +270,8 @@ def chat_completion_stream(
     max_tokens: int | None = None,
     keep_alive: str | None = None,
     num_gpu: int | None = None,
+    allow_cpu_fallback: bool = True,
+    think: bool | None = None,
 ) -> Iterator[str]:
     options: dict[str, Any] = {}
     if temperature is not None:
@@ -241,6 +286,8 @@ def chat_completion_stream(
         "messages": messages,
         "stream": True,
     }
+    if think is not None:
+        payload["think"] = bool(think)
     if options:
         payload["options"] = options
     if keep_alive is not None:
@@ -249,7 +296,9 @@ def chat_completion_stream(
     if num_gpu == 0:
         unload_model(model_name, timeout=1.5)
 
-    attempts = [payload, payload, _cpu_fallback_payload(payload)]
+    attempts = [payload, payload]
+    if allow_cpu_fallback:
+        attempts.append(_cpu_fallback_payload(payload))
     for attempt_index, current_payload in enumerate(attempts):
         yielded = False
         try:
@@ -294,3 +343,91 @@ def unload_model(model_name: str, *, timeout: float = 3.0) -> bool:
     except RuntimeError as exc:
         LOGGER.debug("Failed to unload Ollama model %s: %s", model, exc)
         return False
+
+
+def loaded_model_names(*, timeout: float = 1.0) -> set[str]:
+    try:
+        payload = _get_json("/api/ps", timeout=timeout)
+    except RuntimeError as exc:
+        LOGGER.debug("Failed to list Ollama loaded models: %s", exc)
+        return set()
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return set()
+    names: set[str] = set()
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        for key in ("name", "model"):
+            name = str(item.get(key) or "").strip()
+            if name:
+                names.add(name)
+    return names
+
+
+def _ollama_runner_pids() -> list[int]:
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "ollama.*runner"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        LOGGER.debug("Failed to list Ollama runner processes: %s", exc)
+        return []
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid > 0 and pid != os.getpid():
+            pids.append(pid)
+    return sorted(set(pids))
+
+
+def force_unload_models(
+    model_names: set[str] | list[str] | tuple[str, ...],
+    *,
+    unload_timeout: float = 1.0,
+    wait_timeout: float = 1.5,
+    terminate_stuck_runners: bool = True,
+) -> dict[str, Any]:
+    models = sorted({str(model or "").strip() for model in model_names if str(model or "").strip()})
+    unloaded: list[str] = []
+    unload_failed: list[str] = []
+    for model in models:
+        if unload_model(model, timeout=unload_timeout):
+            unloaded.append(model)
+        else:
+            unload_failed.append(model)
+
+    stuck_models: list[str] = []
+    if models:
+        deadline = time.monotonic() + max(0.0, wait_timeout)
+        while True:
+            loaded = loaded_model_names(timeout=0.75)
+            stuck_models = [model for model in models if model in loaded]
+            if not stuck_models or time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+
+    terminated_runner_pids: list[int] = []
+    terminate_failed_pids: list[int] = []
+    if stuck_models and terminate_stuck_runners:
+        for pid in _ollama_runner_pids():
+            try:
+                os.kill(pid, signal.SIGTERM)
+                terminated_runner_pids.append(pid)
+            except OSError:
+                terminate_failed_pids.append(pid)
+
+    return {
+        "unloaded_models": unloaded,
+        "unload_failed": unload_failed,
+        "stuck_models": stuck_models,
+        "terminated_runner_pids": terminated_runner_pids,
+        "terminate_failed_pids": terminate_failed_pids,
+    }

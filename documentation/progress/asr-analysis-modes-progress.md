@@ -189,10 +189,72 @@ Pending:
 - Added a grounding retry before saving summary results; if the retry still fails validation, the pipeline returns a clear `asr_summary_grounding_failed` error instead of saving fabricated summary text.
 - Added generic mocked tests for grounding retry success and grounding failure without meeting-specific transcript content.
 - Re-ran safe checks for grounding changes: `py_compile`, `node --check`, `git diff --check`, and 12 selected mocked ASR pipeline tests.
+- Manual ASR/LLM validation showed a weaker but still bad summary class: generic dialogue overview with `Speaker 1/2` artifacts, a self-limiting disclaimer, and no required ASR summary markdown sections.
+- Added generic summary format/quality validation: required `## Краткое резюме` / `## Brief Summary` heading, rejection of placeholder speaker identities, generic dialogue-overview output, participant/language metadata blocks, and limitation disclaimers.
+- Added a mocked regression test for this generic overview failure and re-ran safe checks plus 13 selected mocked ASR pipeline tests.
+- Manual ASR/LLM validation then showed the stricter guard could end with a slow `asr_summary_grounding_failed` error after retry.
+- Added a safe structured-evidence fallback for `smart_summary`/`full`: when structurer evidence exists and summary validation fails, backend assembles a markdown summary from structured data without another LLM retry and without saving fabricated text.
+- Added a mocked regression test for structured fallback and re-ran safe checks plus 14 selected mocked ASR pipeline tests.
+- Found that ASR pipeline requests were still tied to the selected chat model in UI and defaulted to `pipeline_num_gpu=0`, forcing Ollama CPU-only for ASR LLM stages.
+- Started ASR runtime isolation/load-control implementation:
+  - ASR pipeline settings now use dedicated model settings key `__asr_pipeline__` instead of the selected chat model;
+  - default ASR pipeline no longer sends `ollama_num_gpu=0`; Ollama keeps its normal auto/GPU behavior unless `OLLAMA_PIPELINE_NUM_GPU` is explicitly set;
+  - default summary model changed from `mistral-nemo:12b` to `qwen3:8b` to avoid loading two large models for common smart summary;
+  - added a narrow profile-preferences migration for old default `mistral-nemo:12b` summary settings so existing profiles pick up the new ASR default unless they use explicit model_settings overrides;
+  - added profile-level ASR diagnostics logging toggle with profile log-folder creation/removal;
+  - added mocked tests for the dedicated ASR settings slot, auto GPU default and diagnostics folder/log behavior.
+- Safe verification passed after this pass:
+  - `venv/bin/python -m py_compile app/config.py app/db.py app/routes/profiles.py app/schemas/core.py backend/apps/asr/pipeline.py tests/test_pipeline_memory.py`;
+  - `node --check web_ui/js/app.js`;
+  - 16 selected mocked ASR pipeline/unit tests;
+  - `git diff --check`.
+- Manual stop validation showed Ollama can leave `qwen3:8b` in `Stopping...` while its runner keeps consuming CPU after UI/backend stop.
+- Added emergency ASR stop fallback:
+  - `/asr/stop` now calls a bounded `force_unload_models` helper;
+  - helper unloads target ASR pipeline models, waits briefly, checks loaded Ollama models, and sends `SIGTERM` to stuck `ollama runner` processes when target models remain loaded;
+  - stop response now includes `stuck_models`, `terminated_runner_pids`, and `terminate_failed_pids` for clear diagnostics;
+  - added mocked tests for stuck-runner termination and no-kill clean unload path.
+- Manual stop validation after a new `qwen3:8b` stuck run:
+  - before stop: `ollama ps` showed `qwen3:8b` at `100% CPU`, `Stopping...`, runner PID `24867`;
+  - `/asr/stop` returned `stuck_models:["qwen3:8b"]` and `terminated_runner_pids:[24867]`;
+  - after stop: `ollama ps` was empty and PID `24867` no longer existed.
+- Manual ASR test showed `qwen3:8b` still consumed high CPU and a long `smart_summary` run failed only because summary validation reported `summary_missing_required_heading`.
+- Added explicit Ollama thinking controls:
+  - chat topbar now has a compact `Thinking` dropdown for thinking-capable models, with `Включено`/`Выключено` choices and a stable purple visual style;
+  - model settings persist `ollama_think`;
+  - ChatService passes top-level `think` to native Ollama `/api/chat`;
+  - ASR pipeline settings expose `Thinking LLM стадий`;
+  - ASR LLM stages default to `think:false` unless the user explicitly overrides the ASR setting.
+- Reduced avoidable ASR retry/load:
+  - summary QA now repairs a missing required `## Краткое резюме` / `## Brief Summary` heading locally when the summary body is otherwise usable;
+  - missing heading alone no longer causes a second summary LLM call or a 502 validation failure.
+- Added generic mocked tests for native `think:false` payloads, ASR default thinking-off behavior, and missing-heading repair without retry.
+- Safe verification passed for the thinking/heading pass:
+  - `venv/bin/python -m py_compile app/config.py app/db.py app/routes/profiles.py app/schemas/core.py backend/apps/chat/service.py backend/apps/chat/routes.py backend/apps/chat/services/ollama_runtime.py backend/apps/asr/pipeline.py tests/test_model_router.py tests/test_pipeline_memory.py`;
+  - `node --check web_ui/js/app.js`;
+  - `git diff --check`;
+  - `venv/bin/python -m unittest tests.test_model_router tests.test_pipeline_memory` passed 111 mocked/unit tests.
+- User-side validation found that `Режим анализа: Умное саммари` still drives Ollama as CPU-heavy even after removing the old explicit `pipeline_num_gpu=0`.
+- Root cause under investigation/fix: ASR pipeline `auto` GPU mode currently omits `num_gpu`, which does not guarantee full Metal offload on Apple Silicon, and shared Ollama Metal recovery can silently fall back to a CPU payload.
+- Completed a runtime fix:
+  - ASR pipeline should prefer explicit Apple Silicon Metal offload by default;
+  - ASR pipeline should not silently use CPU fallback when Metal fails;
+  - chat/runtime CPU fallback can remain available for normal chat unless explicitly disabled.
+- Implementation details:
+  - Apple Silicon default `OLLAMA_PIPELINE_NUM_GPU` is now `999` when the env var is unset;
+  - `OLLAMA_PIPELINE_NUM_GPU=auto` still omits `ollama_num_gpu` for Ollama-native auto behavior;
+  - ASR pipeline passes `ollama_allow_cpu_fallback=false` for LLM stages;
+  - shared Ollama runtime supports per-request CPU fallback disabling while preserving chat fallback defaults.
+- Safe verification completed:
+  - `py_compile` for changed Python files;
+  - `node --check web_ui/js/app.js`;
+  - selected mocked runtime/ASR tests;
+  - `git diff --check`.
 
 ## In Progress Tasks
 
-- Waiting for user-side manual ASR/LLM validation of the new language and grounding behavior before closing the task.
+- Await user-side manual ASR/summary validation after runtime isolation and emergency stop fallback.
+- Await user-side manual ASR validation that `Умное саммари` no longer starts a CPU-only Ollama runner.
 
 ## Pending Tasks
 
@@ -224,17 +286,13 @@ Pending:
 Currently changed in this task:
 
 - `README.md`
-- `TECHNICAL_README.md`
-- `backend/README.md`
+- `app/config.py`
 - `app/db.py`
 - `app/routes/profiles.py`
 - `app/schemas/core.py`
 - `backend/apps/asr/pipeline.py`
-- `documentation/README.backend_structure.md`
-- `documentation/README.project.md`
 - `documentation/TECHNICAL_README.md`
 - `tests/test_pipeline_memory.py`
-- `web_ui/css/style.css`
 - `web_ui/gui_html.html`
 - `web_ui/js/app.js`
 - `documentation/progress/asr-analysis-modes-progress.md`
@@ -246,6 +304,7 @@ Currently changed in this task:
 - Separate action buttons are becoming confusing; user needs one explicit analysis mode selector.
 - Manual test produced an English summary from a Russian transcript despite Russian-oriented prompts; ASR summary language needs an explicit auto/manual setting.
 - Manual test produced a fabricated English toy conversation (`Speaker 1: Hello! How are you?`) instead of summarizing the provided transcript. Added generic grounding validation/retry so this class of output is rejected before saving.
+- Manual test then produced a grounded but low-quality generic dialogue overview with `Speaker 1/2` participant artifacts and a disclaimer. Added generic summary format/quality validation and retry for this class.
 
 ## Technical Debt
 
