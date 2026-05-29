@@ -1010,15 +1010,15 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     background: rgba(215, 103, 103, 0.18);
 }
 
-.pipeline-output pre {
+.asr-markdown-output {
     flex: 0 0 auto;
     min-height: 120px;
     max-height: min(56vh, 620px);
     margin: 0;
-    padding: 10px;
+    padding: 14px;
     overflow: auto;
-    resize: vertical;
-    white-space: pre-wrap;
+    resize: none;
+    white-space: normal;
     overflow-wrap: anywhere;
     border: 0;
     border-radius: 10px;
@@ -1026,6 +1026,30 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
     color: var(--text);
     font: inherit;
+}
+
+.asr-markdown-output .message-md-paragraph,
+.asr-markdown-output .message-md-heading,
+.asr-markdown-output .message-md-list {
+    margin: 0 0 10px;
+}
+
+.asr-markdown-output .message-md-heading--1,
+.asr-markdown-output .message-md-heading--2 {
+    font-size: 21px;
+}
+
+.asr-markdown-output .message-md-heading--3 {
+    font-size: 18px;
+}
+
+.asr-markdown-output .message-md-heading--4 {
+    font-size: 16px;
+}
+
+.asr-markdown-output .message-md-list {
+    gap: 6px;
+    padding-left: 1.35em;
 }
 
 .speaker-editor-panel {
@@ -3984,8 +4008,7 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 }
 
 .tool-window__body--asr {
-    grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 31vw);
     gap: 0;
 }
 
@@ -4074,14 +4097,56 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 }
 
 .asr-studio-main {
-    gap: 12px;
+    gap: 0;
     overflow: hidden;
     border-right: 1px solid var(--border);
-    padding-bottom: 18px;
+    padding: 14px;
+}
+
+.asr-layout-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+    gap: 14px;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+}
+
+.asr-result-column,
+.asr-control-column {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.asr-result-column {
+    gap: 10px;
+}
+
+.asr-control-column {
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.018);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
 }
 
 .asr-studio-toolbar {
+    display: grid;
     flex: 0 0 auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    align-items: stretch;
+}
+
+.asr-studio-toolbar .field,
+.asr-studio-toolbar .app-select,
+.asr-studio-toolbar .app-select__button,
+.asr-studio-toolbar .button {
+    width: 100%;
+    min-width: 0;
 }
 
 .asr-file-card {
@@ -4181,8 +4246,7 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 
 .asr-content-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr);
     min-height: 0;
     flex: 1 1 auto;
     overflow: hidden;
@@ -4211,14 +4275,6 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     overflow: hidden;
 }
 
-.asr-tab-toolbar {
-    display: flex;
-    flex: 0 0 auto;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-}
-
 .asr-search {
     display: flex;
     align-items: center;
@@ -4241,8 +4297,10 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     outline: 0;
 }
 
-.asr-tab-toolbar .asr-search {
-    flex: 1 1 220px;
+.asr-search--primary {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 38px;
 }
 
 .asr-transcript-editor {
@@ -4271,7 +4329,7 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     resize: none;
 }
 
-.asr-tab-panel[data-asr-tab-panel="summary"] .pipeline-output pre,
+.asr-tab-panel[data-asr-tab-panel="summary"] .asr-markdown-output,
 .asr-tab-panel[data-asr-tab-panel="roles"] .speaker-editor {
     flex: 1 1 auto;
     min-height: 0;
@@ -4478,20 +4536,23 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     backdrop-filter: blur(12px);
 }
 
+.asr-pipeline-route {
+    min-width: 0;
+    padding: 8px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.025);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+}
+
+.asr-pipeline-route .pipeline-steps:empty::before {
+    content: "Путь pipeline появится после запуска анализа";
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
 .asr-tasks-output {
     flex: 1 1 auto;
     min-height: 0;
-    margin: 0;
-    padding: 12px;
-    overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    border: 0;
-    border-radius: 12px;
-    background: rgba(0, 0, 0, 0.12);
-    color: var(--text);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
-    font: inherit;
 }
 
 .asr-history-sidebar .tool-sidebar__head {
@@ -4540,16 +4601,30 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 }
 
 .tool-history__item {
+    position: relative;
     display: grid;
     gap: 6px;
     min-width: 0;
-    padding: 10px 12px;
+    padding: 0;
     border: 0;
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.03);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
     text-align: left;
     transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.tool-history__content {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    width: 100%;
+    padding: 10px 42px 10px 12px;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: inherit;
+    text-align: left;
 }
 
 .tool-history__item:hover {
@@ -4583,6 +4658,30 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     -webkit-line-clamp: 3;
 }
 
+.tool-history__delete {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    border: 1px solid rgba(215, 103, 103, 0.24);
+    background: rgba(215, 103, 103, 0.08);
+    color: #f0b4b4;
+    font-size: 18px;
+    line-height: 1;
+    opacity: 0.72;
+}
+
+.tool-history__delete:hover,
+.tool-history__delete:focus-visible {
+    opacity: 1;
+    background: rgba(215, 103, 103, 0.16);
+    outline: 0;
+}
+
 .tool-player {
     width: 100%;
 }
@@ -4613,16 +4712,23 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     min-width: 180px;
 }
 
-.pipeline-output pre {
+#asrToolWindow .asr-studio-toolbar .field,
+#asrToolWindow .asr-studio-toolbar .app-select,
+#asrToolWindow .asr-studio-toolbar .app-select__button {
+    width: 100%;
+    min-width: 0;
+}
+
+.asr-markdown-output {
     max-width: 100%;
     min-width: 0;
     overflow: auto;
-    resize: vertical;
-    white-space: pre-wrap;
+    resize: none;
+    white-space: normal;
     overflow-wrap: anywhere;
 }
 
-.pipeline-output pre:focus,
+.asr-markdown-output:focus,
 .speaker-editor-panel:focus-within {
     border-color: rgba(124, 92, 255, 0.36);
 }
@@ -5212,17 +5318,18 @@ body.theme-light .tool-history__item:hover {
 body.theme-light .pipeline-output,
 body.theme-light .speaker-editor-panel,
 body.theme-light .asr-next-panel,
+body.theme-light .asr-control-column,
 body.theme-light .asr-file-card {
     background: rgba(255, 255, 255, 0.52);
     box-shadow: 0 16px 42px rgba(31, 41, 55, 0.08), inset 0 0 0 1px rgba(31, 41, 55, 0.045);
 }
 
-body.theme-light .pipeline-output pre,
+body.theme-light .asr-markdown-output,
 body.theme-light .speaker-editor__row,
-body.theme-light .asr-tasks-output,
 body.theme-light .asr-next-action,
 body.theme-light .asr-analysis-mode__button,
-body.theme-light .asr-search {
+body.theme-light .asr-search,
+body.theme-light .asr-pipeline-route {
     background: rgba(246, 247, 251, 0.56);
     box-shadow: inset 0 0 0 1px rgba(31, 41, 55, 0.045);
 }
@@ -6188,6 +6295,22 @@ body.theme-light .tool-window__resize::before {
         grid-template-columns: 1fr;
     }
 
+    .asr-layout-grid {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+
+    .asr-control-column {
+        order: 2;
+        padding: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+    .asr-result-column {
+        order: 1;
+    }
+
     #asrToolWindow .tool-window__body {
         display: flex;
         flex-direction: column;
@@ -6211,8 +6334,7 @@ body.theme-light .tool-window__resize::before {
         scrollbar-gutter: auto;
     }
 
-    #asrToolWindow .asr-studio-toolbar,
-    #asrToolWindow .asr-tab-toolbar {
+    #asrToolWindow .asr-studio-toolbar {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
         gap: 10px;

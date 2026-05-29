@@ -1,319 +1,328 @@
 # ASR Analysis Modes Progress
 
-## Original Goal
-
-Improve ASR Studio summary quality after the lightweight-summary thermal fix without returning to heavy default processing.
-
-The next iteration must:
-
-- keep Mac load predictable during ordinary summary tests;
-- preserve repeated spoken emphasis instead of treating repeats as cleanup noise;
-- let the user provide profile-level ASR analysis context/system prompt;
-- add a clear UI analysis-mode selector instead of multiple confusing summary buttons;
-- let every ASR pipeline stage be disabled from settings by choosing `Не использовать`;
-- avoid meeting-specific hardcoded dictionaries, terms, or business rules.
-
-## Current Status
+## Status
 
 In progress.
 
-The previous checkpoint was committed as:
+Last committed checkpoint:
 
-- `dcd43ec Stabilize ASR Studio pipeline defaults`
+- `fe154d1 Improve ASR analysis controls and thinking defaults`
 
-Current uncommitted work started after that checkpoint:
+Current uncommitted work after `fe154d1`:
 
-- added profile storage/API surface for `asr.analysis_prompt`;
-- added ASR settings textarea markup for `Контекст анализа`;
-- wired `Контекст анализа` through UI save/render and backend ASR pipeline settings;
-- added the generic repeated-emphasis rule to structurer/summary/retry prompts;
-- exposed stage-level `Не использовать` in pipeline model dropdowns.
-- started implementation of the ASR Studio `Режим анализа` selector and backend `smart_summary` action.
+- ASR Studio UI/result-output pass:
+  - result-first ASR Studio layout;
+  - formatted Markdown rendering for ASR summary/tasks output;
+  - per-record delete button in ASR history;
+  - progress file refresh.
 
-## Architecture Scope
+Current dirty files:
 
-Relevant areas:
-
-- `backend/apps/asr/pipeline.py` — action routing, stage enabling, summary/structurer prompts, full-analysis gating;
-- `app/db.py` — default profile ASR preferences;
-- `app/schemas/core.py` and `app/routes/profiles.py` — ASR preference update contract;
-- `web_ui/gui_html.html` and `web_ui/js/app.js` — ASR settings UI, analysis-mode selector, stage disabling;
-- docs/tests after behavior settles.
-
-## Implementation Stages
-
-### Stage 1 — Persist Profile ASR Analysis Prompt
-
-Goal: add a profile-level ASR prompt/context field, editable in Settings -> ASR.
-
-Completed:
-
-- added `analysis_prompt` to default ASR profile preferences in `app/db.py`;
-- added `analysis_prompt` to `AsrPreferencesUpdate`;
-- allowed profile preference updates to save trimmed `analysis_prompt`;
-- added textarea markup in ASR settings;
-- wired textarea value into JS state/render/save flow;
-- passed the prompt into ASR pipeline settings/effective context;
-- included it in structurer/summary/retry prompts as user profile context, not as hardcoded project logic.
-
-Status: completed for the current checkpoint.
-
-### Stage 2 — Stage Disable Option
-
-Goal: every pipeline stage can be disabled by selecting `Не использовать` in its model dropdown.
-
-Completed:
-
-- introduced UI sentinel value draft: `ASR_PIPELINE_DISABLED_VALUE = "__disabled__"`;
-- started adding `Не использовать` as the first option in pipeline model dropdowns;
-- finished JS collection logic so disabled stage saves `{ enabled: false, model: previous/default model }`;
-- disabled temp/max-token inputs visually when the stage is disabled;
-- confirmed the backend path already respects `enabled=false` through `_stage_enabled`.
-
-Pending:
-
-- add/update generic regression coverage for disabled stages if behavior changes further;
-- verify reset/default behavior during manual UI testing.
-
-Status: mostly completed for the current checkpoint; regression coverage remains pending.
-
-### Stage 3 — Analysis Mode Selector
-
-Goal: replace separate confusing summary/full buttons with a clear mode selector and one run button.
-
-Planned UI:
-
-- button/dropdown label: `Режим анализа`;
-- selected label example: `Режим анализа: Умное саммари`;
-- dropdown opens on normal left click;
-- entries are mutually exclusive, with a checkmark on the active one.
-
-Planned modes:
-
-- `Быстрое саммари`: raw transcript -> summary.
-- `Умное саммари`: raw transcript -> structurer -> summary, recommended for meetings and tasks.
-- `Полный анализ`: raw transcript -> segmenter -> roles -> structurer -> summary, available only if full analysis is enabled in settings.
-
-Important decision:
-
-- cleaner must not be part of summary/smart/full analysis by default because it can remove repeated emphasis and smooth away useful speech signals.
-- cleaner remains available only as a manual `Очистить текст` action or a user-enabled stage.
-
-Pending:
-
-- define backend action name for smart summary, likely `smart_summary`;
-- add UI dropdown and run button;
-- map selected mode to backend action;
-- keep `Полный анализ` hidden/blocked unless `asr_full_analysis_enabled=true`;
-- keep current `Остановить` behavior.
-
-Implemented in this pass:
-
-- added backend action `smart_summary`;
-- mapped `summary` to fast raw-transcript summary without cleaner;
-- mapped `smart_summary` to structurer -> summary without cleaner and without speaker resolver;
-- mapped `full` to segmenter -> speaker resolver -> structurer -> summary, still gated by `asr_full_analysis_enabled`;
-- added one ASR Studio `Режим анализа` selector and one `Запустить анализ` button;
-- kept manual `Очистить` separate from the normal analysis modes;
-- kept `Остановить` behavior unchanged.
-
-Status: implemented; safe checks and docs still pending.
-
-Current implementation note:
-
-- selector implementation is now starting in this pass;
-- `Умное саммари` must route raw transcript/chunks through structurer -> summary when those stages are enabled;
-- `Умное саммари` must not run cleaner or speaker resolver by default;
-- `Полный анализ` remains gated by `asr_full_analysis_enabled`;
-- stage `enabled=false` from user settings has absolute priority over every analysis mode.
-
-### Stage 4 — Repeated Speech / Importance Signal
-
-Goal: make repeated information count as an importance signal.
-
-Generic rule:
-
-- If a topic/constraint/action is repeated in different words, treat the repetition as evidence of importance.
-- Repeated points should be reflected in summary/tasks/current-target state unless contradicted later.
-- Do not collapse repeated technical explanations into generic vague wording.
-
-Important:
-
-- This must be a generic prompt/QA rule.
-- Do not add meeting-specific words, company names, domain examples, market/feed examples, or hardcoded dictionaries.
-
-Completed:
-
-- added this rule to structurer/summary/retry prompts;
-- included profile `analysis_prompt` near this rule so user role/context can guide interpretation.
-
-Pending:
-
-- user manual test on a different meeting transcript;
-- tune wording only if manual tests show generic failures.
-
-Status: implemented generically for the current checkpoint; live quality testing remains user-side.
-
-### Stage 5 — Docs, Tests, Cleanup
-
-Pending:
-
-- update README/TECHNICAL docs after final behavior is implemented;
-- add only generic tests, no real-meeting hardcoded content;
-- run safe syntax checks;
-- do not run live ASR/LLM summary tests unless user explicitly asks;
-- remove this progress file when the task is fully complete.
-
-## Completed Tasks
-
-- Created this progress file.
-- Captured the agreed UX and architecture direction.
-- Captured the decision to keep cleaner out of default analysis modes.
-- Added profile-level ASR analysis context setting.
-- Wired ASR analysis context through UI, API, profile preferences, and ASR pipeline prompts.
-- Added generic repeated-emphasis handling to structurer/summary/retry prompts.
-- Added UI support for selecting `Не использовать` for pipeline stages.
-- Implemented `Режим анализа` selector and run button in ASR Studio.
-- Implemented backend `smart_summary`.
-- Mapped `summary` to fast raw -> summary and kept `full` gated.
-- Added generic regression tests for action routing, disabled summary/structurer stages, smart summary routing, and full-analysis gating.
-- Updated README/technical/backend docs for ASR analysis modes, `Не использовать`, optional cleaner, full-analysis gating, and ASR analysis context.
-- Passed safe checks: `py_compile`, `node --check`, `git diff --check`, and selected mocked ASR pipeline unit tests.
-- Added profile-level `asr.analysis_language` with `auto`, `ru`, `en`.
-- Added top-toolbar ASR Studio `Язык summary` selector after `Язык / prompt`.
-- Changed ASR Studio `Настройки анализа` button text to `Настройки`.
-- Updated structurer/summary/retry prompts to use the selected or auto-detected output language.
-- Added generic mocked tests for auto Russian detection and manual English override.
-- Re-ran safe checks for language changes: `py_compile`, `node --check`, `git diff --check`, and 10 selected mocked ASR pipeline tests.
-- Added a generic summary grounding guard for instruction echoes, service markers, language mismatch, and outputs that are not connected to transcript/structured evidence.
-- Added a grounding retry before saving summary results; if the retry still fails validation, the pipeline returns a clear `asr_summary_grounding_failed` error instead of saving fabricated summary text.
-- Added generic mocked tests for grounding retry success and grounding failure without meeting-specific transcript content.
-- Re-ran safe checks for grounding changes: `py_compile`, `node --check`, `git diff --check`, and 12 selected mocked ASR pipeline tests.
-- Manual ASR/LLM validation showed a weaker but still bad summary class: generic dialogue overview with `Speaker 1/2` artifacts, a self-limiting disclaimer, and no required ASR summary markdown sections.
-- Added generic summary format/quality validation: required `## Краткое резюме` / `## Brief Summary` heading, rejection of placeholder speaker identities, generic dialogue-overview output, participant/language metadata blocks, and limitation disclaimers.
-- Added a mocked regression test for this generic overview failure and re-ran safe checks plus 13 selected mocked ASR pipeline tests.
-- Manual ASR/LLM validation then showed the stricter guard could end with a slow `asr_summary_grounding_failed` error after retry.
-- Added a safe structured-evidence fallback for `smart_summary`/`full`: when structurer evidence exists and summary validation fails, backend assembles a markdown summary from structured data without another LLM retry and without saving fabricated text.
-- Added a mocked regression test for structured fallback and re-ran safe checks plus 14 selected mocked ASR pipeline tests.
-- Found that ASR pipeline requests were still tied to the selected chat model in UI and defaulted to `pipeline_num_gpu=0`, forcing Ollama CPU-only for ASR LLM stages.
-- Started ASR runtime isolation/load-control implementation:
-  - ASR pipeline settings now use dedicated model settings key `__asr_pipeline__` instead of the selected chat model;
-  - default ASR pipeline no longer sends `ollama_num_gpu=0`; Ollama keeps its normal auto/GPU behavior unless `OLLAMA_PIPELINE_NUM_GPU` is explicitly set;
-  - default summary model changed from `mistral-nemo:12b` to `qwen3:8b` to avoid loading two large models for common smart summary;
-  - added a narrow profile-preferences migration for old default `mistral-nemo:12b` summary settings so existing profiles pick up the new ASR default unless they use explicit model_settings overrides;
-  - added profile-level ASR diagnostics logging toggle with profile log-folder creation/removal;
-  - added mocked tests for the dedicated ASR settings slot, auto GPU default and diagnostics folder/log behavior.
-- Safe verification passed after this pass:
-  - `venv/bin/python -m py_compile app/config.py app/db.py app/routes/profiles.py app/schemas/core.py backend/apps/asr/pipeline.py tests/test_pipeline_memory.py`;
-  - `node --check web_ui/js/app.js`;
-  - 16 selected mocked ASR pipeline/unit tests;
-  - `git diff --check`.
-- Manual stop validation showed Ollama can leave `qwen3:8b` in `Stopping...` while its runner keeps consuming CPU after UI/backend stop.
-- Added emergency ASR stop fallback:
-  - `/asr/stop` now calls a bounded `force_unload_models` helper;
-  - helper unloads target ASR pipeline models, waits briefly, checks loaded Ollama models, and sends `SIGTERM` to stuck `ollama runner` processes when target models remain loaded;
-  - stop response now includes `stuck_models`, `terminated_runner_pids`, and `terminate_failed_pids` for clear diagnostics;
-  - added mocked tests for stuck-runner termination and no-kill clean unload path.
-- Manual stop validation after a new `qwen3:8b` stuck run:
-  - before stop: `ollama ps` showed `qwen3:8b` at `100% CPU`, `Stopping...`, runner PID `24867`;
-  - `/asr/stop` returned `stuck_models:["qwen3:8b"]` and `terminated_runner_pids:[24867]`;
-  - after stop: `ollama ps` was empty and PID `24867` no longer existed.
-- Manual ASR test showed `qwen3:8b` still consumed high CPU and a long `smart_summary` run failed only because summary validation reported `summary_missing_required_heading`.
-- Added explicit Ollama thinking controls:
-  - chat topbar now has a compact `Thinking` dropdown for thinking-capable models, with `Включено`/`Выключено` choices and a stable purple visual style;
-  - model settings persist `ollama_think`;
-  - ChatService passes top-level `think` to native Ollama `/api/chat`;
-  - ASR pipeline settings expose `Thinking LLM стадий`;
-  - ASR LLM stages default to `think:false` unless the user explicitly overrides the ASR setting.
-- Reduced avoidable ASR retry/load:
-  - summary QA now repairs a missing required `## Краткое резюме` / `## Brief Summary` heading locally when the summary body is otherwise usable;
-  - missing heading alone no longer causes a second summary LLM call or a 502 validation failure.
-- Added generic mocked tests for native `think:false` payloads, ASR default thinking-off behavior, and missing-heading repair without retry.
-- Safe verification passed for the thinking/heading pass:
-  - `venv/bin/python -m py_compile app/config.py app/db.py app/routes/profiles.py app/schemas/core.py backend/apps/chat/service.py backend/apps/chat/routes.py backend/apps/chat/services/ollama_runtime.py backend/apps/asr/pipeline.py tests/test_model_router.py tests/test_pipeline_memory.py`;
-  - `node --check web_ui/js/app.js`;
-  - `git diff --check`;
-  - `venv/bin/python -m unittest tests.test_model_router tests.test_pipeline_memory` passed 111 mocked/unit tests.
-- User-side validation found that `Режим анализа: Умное саммари` still drives Ollama as CPU-heavy even after removing the old explicit `pipeline_num_gpu=0`.
-- Root cause under investigation/fix: ASR pipeline `auto` GPU mode currently omits `num_gpu`, which does not guarantee full Metal offload on Apple Silicon, and shared Ollama Metal recovery can silently fall back to a CPU payload.
-- Completed a runtime fix:
-  - ASR pipeline should prefer explicit Apple Silicon Metal offload by default;
-  - ASR pipeline should not silently use CPU fallback when Metal fails;
-  - chat/runtime CPU fallback can remain available for normal chat unless explicitly disabled.
-- Implementation details:
-  - Apple Silicon default `OLLAMA_PIPELINE_NUM_GPU` is now `999` when the env var is unset;
-  - `OLLAMA_PIPELINE_NUM_GPU=auto` still omits `ollama_num_gpu` for Ollama-native auto behavior;
-  - ASR pipeline passes `ollama_allow_cpu_fallback=false` for LLM stages;
-  - shared Ollama runtime supports per-request CPU fallback disabling while preserving chat fallback defaults.
-- Safe verification completed:
-  - `py_compile` for changed Python files;
-  - `node --check web_ui/js/app.js`;
-  - selected mocked runtime/ASR tests;
-  - `git diff --check`.
-
-## In Progress Tasks
-
-- Await user-side manual ASR/summary validation after runtime isolation and emergency stop fallback.
-- Await user-side manual ASR validation that `Умное саммари` no longer starts a CPU-only Ollama runner.
-
-## Pending Tasks
-
-- Ensure selected output language applies to the whole ASR result, including structured fallback blocks and UI diagnostics, so English summary is not mixed with Russian `## Тема`/`Предупреждения` blocks.
-- Next stage: improve ASR result rendering without changing pipeline behavior yet.
-- Render ASR summary output as formatted Markdown instead of raw markdown text with visible `**bold**`, headings and bullets.
-- Keep copy/download behavior as plain text or markdown so the source content is not lost.
-- Separate pipeline diagnostics/warnings from the summary body in UI.
-- Convert technical warnings such as `raw_transcript_chunked:2` into human-readable UI text like `Transcript обработан в 2 чанка`.
-- Consider a later lightweight `Перевести summary` action that translates the already generated summary without rerunning ASR/structurer/full pipeline.
-- If translation is added, make it a separate explicit LLM call and store/display it as a language-specific summary variant.
-- Keep live ASR/LLM tests user-side because of thermal risk.
-- Manual user-side ASR/LLM quality testing, if needed.
-- Remove this progress file after completion.
-
-## Architecture Decisions
-
-- Do not delete cleaner code now.
-- Cleaner is not a default analysis stage.
-- Cleaner remains a manual operation and can be disabled/enabled through stage settings.
-- Stage disabling is generic: select `Не использовать` instead of adding stage-specific flags.
-- User stage settings have absolute priority: an analysis mode may recommend a route, but must not override `enabled=false`.
-- ASR analysis context is profile-level user configuration, not hardcoded runtime behavior.
-- `Умное саммари` should improve semantic extraction without role resolution.
-- No meeting-specific dictionaries or transcript-specific hardcoding.
-
-## Changed Files
-
-Currently changed in this task:
-
-- `README.md`
-- `app/config.py`
-- `app/db.py`
-- `app/routes/profiles.py`
-- `app/schemas/core.py`
-- `backend/apps/asr/pipeline.py`
-- `documentation/TECHNICAL_README.md`
-- `tests/test_pipeline_memory.py`
+- `documentation/progress/asr-analysis-modes-progress.md`
+- `web_ui/css/style.css`
 - `web_ui/gui_html.html`
 - `web_ui/js/app.js`
-- `documentation/progress/asr-analysis-modes-progress.md`
 
-## Found Issues
+Do not delete this progress file until the full ASR Studio task is complete and the user explicitly confirms it can be closed.
 
-- Lightweight summary reduced thermal load, but quality can miss repeated emphasis and technical role context.
-- Cleaner can remove exactly the repetitions that the user intentionally uses as importance signals.
-- Separate action buttons are becoming confusing; user needs one explicit analysis mode selector.
-- Manual test produced an English summary from a Russian transcript despite Russian-oriented prompts; ASR summary language needs an explicit auto/manual setting.
-- Manual test produced a fabricated English toy conversation (`Speaker 1: Hello! How are you?`) instead of summarizing the provided transcript. Added generic grounding validation/retry so this class of output is rejected before saving.
-- Manual test then produced a grounded but low-quality generic dialogue overview with `Speaker 1/2` participant artifacts and a disclaimer. Added generic summary format/quality validation and retry for this class.
+## Hard Constraints
 
-## Technical Debt
+- Do not run live ASR, live LLM, live summary, Ollama-heavy, or full pipeline tests without explicit user permission.
+- The user manually runs real ASR/summary tests and monitors Mac temperature.
+- Only safe checks are allowed by default:
+  - `venv/bin/python -m py_compile ...`
+  - `node --check web_ui/js/app.js`
+  - `node tests/markdown_rendering.test.mjs`
+  - generic mocked/unit tests
+  - `git diff --check`
+- Do not add meeting-specific runtime rules, tests, dictionaries, replacements, or hardcoded business/domain context.
+- Do not hardcode domains, subdomains, companies, marketplaces, email files, names, concrete meeting terms, or transcript-specific corrections.
+- Summary quality fixes must be generic and evidence-based.
+- User settings have priority over analysis modes. If a stage is `enabled=false`, the backend must not silently re-enable it.
 
-- Existing action naming (`summary`, `tasks`, `full`) does not fully express UX intent.
-- Legacy action names remain supported, but UI now presents a single explicit mode selector.
+## Core Goal
 
-## Next Steps
+Make ASR Studio usable for long meeting transcripts without returning to heavy default processing:
 
-1. Next implementation pass should focus on ASR result rendering/diagnostics separation.
-2. Keep live ASR/LLM tests user-side because of thermal risk.
-3. Review manual ASR Studio behavior on a real transcript when the user is ready.
-4. Remove this progress file only after the user confirms the task can be closed.
+- normal mode should avoid overheating the Mac;
+- `Умное саммари` should produce a useful semantic summary from raw transcript/chunks through structurer -> summary;
+- repeated spoken emphasis must be treated as an importance signal, not as noise;
+- full analysis must remain gated and hard to launch accidentally;
+- ASR result should be readable in UI, without raw Markdown artifacts or technical pipeline noise in the main summary view.
+
+## Important Architecture Decisions
+
+- Cleaner stays in the project but is not part of default summary routes.
+- Cleaner is a manual/optional stage because it can remove repeated emphasis and speech details.
+- ASR modes are recommendations, not hard dependencies.
+- Stage setting `Не использовать` means `enabled=false`; backend must respect it in every route.
+- `summary` action means fast summary: raw transcript -> summary.
+- `smart_summary` means recommended smart summary: raw transcript/chunks -> structurer -> summary.
+- `full` means heavy full analysis: raw transcript/chunks -> segmenter -> speaker resolver -> structurer -> summary.
+- Full analysis is gated by profile setting `asr_full_analysis_enabled=false` by default.
+- ASR pipeline settings are isolated from chat model settings under service model key `__asr_pipeline__`.
+- Chat and ASR share the same model store/catalog, but do not share runtime settings.
+- ASR LLM stages default to `think:false` for Ollama thinking-capable models.
+- Chat topbar `Thinking` affects only selected chat model settings.
+- ASR `Thinking LLM стадий` affects only ASR pipeline settings.
+
+## Committed Work
+
+### `dcd43ec Stabilize ASR Studio pipeline defaults`
+
+Earlier checkpoint that stabilized ASR Studio defaults and chunk/merge behavior.
+
+### `b3ab74d Add ASR analysis context controls`
+
+Added profile-level ASR analysis context:
+
+- stored `asr.analysis_prompt` in profile preferences;
+- exposed `Контекст анализа` in ASR settings;
+- wired it through UI/API/backend;
+- included it in structurer/summary/retry prompts;
+- added generic repeated-emphasis instruction:
+  - if an important point repeats in different words, treat repetition as importance evidence, not noise.
+
+### `bd67e59 Add ASR analysis modes and grounded summaries`
+
+Implemented major ASR behavior:
+
+- ASR Studio `Режим анализа` selector;
+- one primary `Запустить анализ` button;
+- backend `smart_summary` action;
+- `summary` mapped to fast raw transcript -> summary;
+- `smart_summary` mapped to structurer -> summary without cleaner and without speaker resolver;
+- `full` mapped to segmenter -> speaker resolver -> structurer -> summary;
+- full analysis gated by `Разрешить полный анализ`;
+- stage `Не использовать` support in UI/backend;
+- profile-level output language selection:
+  - `auto`;
+  - `ru`;
+  - `en`;
+- summary language follows transcript by default and can be manually forced;
+- generic grounding validation for fabricated/instruction-echo outputs;
+- generic format/quality validation for weak dialogue overview outputs;
+- structured-evidence fallback for smart/full when summary validation fails;
+- generic tests only, no meeting-specific content.
+
+### `fe154d1 Improve ASR analysis controls and thinking defaults`
+
+Implemented ASR/runtime load-control and thinking settings:
+
+- dedicated ASR pipeline settings model key `__asr_pipeline__`;
+- default summary model changed to `qwen3:8b` to avoid loading two large models for common smart summary;
+- ASR diagnostics toggle:
+  - when enabled, creates profile diagnostics folder;
+  - when disabled, removes it;
+- emergency ASR stop fallback:
+  - `/asr/stop` unloads active/default ASR pipeline models;
+  - if Ollama runner remains stuck, helper can terminate stuck runner PIDs;
+- Apple Silicon ASR pipeline default prefers explicit Metal offload via high `OLLAMA_PIPELINE_NUM_GPU` default;
+- ASR LLM calls disable silent CPU fallback when Metal fails;
+- native Ollama runtime accepts per-request top-level `think`;
+- chat model settings persist `ollama_think`;
+- topbar `Thinking` dropdown added for chat models:
+  - button text stays `Thinking`;
+  - dropdown has `Включено` / `Выключено`;
+  - enabled state is shown by subtle purple glow;
+- ASR settings expose `Thinking LLM стадий`:
+  - `Выключено`;
+  - `Включено`;
+  - `Авто Ollama`;
+- ASR default is thinking off:
+  - if ASR does not explicitly override `ollama_think`, backend effective setting is `off`;
+  - ASR `_call_stage` sends `think:false`;
+- missing required summary heading is repaired locally:
+  - if usable summary body lacks `## Краткое резюме` / `## Brief Summary`, backend prepends heading;
+  - missing heading alone no longer triggers a second LLM call or 502.
+
+Safe verification before `fe154d1`:
+
+- `venv/bin/python -m py_compile app/config.py app/db.py app/routes/profiles.py app/schemas/core.py backend/apps/chat/service.py backend/apps/chat/routes.py backend/apps/chat/services/ollama_runtime.py backend/apps/asr/pipeline.py tests/test_model_router.py tests/test_pipeline_memory.py`
+- `node --check web_ui/js/app.js`
+- `git diff --check`
+- `venv/bin/python -m unittest tests.test_model_router tests.test_pipeline_memory`
+- 111 mocked/unit tests passed.
+
+## Current Uncommitted UI/Output Pass
+
+Started after user confirmed the new summary is already workable enough:
+
+- content quality is no longer the main blocker;
+- current priority is readable ASR UI/output formatting and layout.
+
+User-reported summary state:
+
+- `Умное саммари` output is useful enough for work when user knows the meeting context;
+- output is not perfect, but comparable enough to cloud LLM imperfections;
+- main UI problem is raw formatting artifacts and technical symbols in display;
+- raw pipeline diagnostics should not pollute the main readable summary.
+
+Implemented in uncommitted files:
+
+- ASR summary/tasks output now renders through shared Markdown renderer instead of raw `<pre>` text.
+- Markdown artifacts such as `##`, `**bold**`, bullets and inline code should display as formatted UI.
+- Main summary view now returns `run.summary` directly when summary exists.
+- Main summary view no longer appends structured fallback/debug sections after an existing summary.
+- Main summary view no longer appends raw warnings like `raw_transcript_chunked:2` after an existing summary.
+- Copy/download behavior still uses plain markdown/text source through `getAsrToolSelectedContent()`.
+- ASR Studio layout moved toward the user sketch:
+  - left: search, selected file card, result area, tabs, action buttons, pipeline route;
+  - middle: file/settings/language controls and analysis mode selector;
+  - right: transcript history database;
+- ASR history list now renders each record as an item with:
+  - main clickable content area;
+  - separate delete button `×`;
+- Search behavior:
+  - on text tab, search selects text inside textarea;
+  - on result tabs, search reports whether current rendered result contains the query.
+
+Safe verification already run for the uncommitted UI/output pass:
+
+- `node --check web_ui/js/app.js`
+- `node tests/markdown_rendering.test.mjs`
+- `git diff --check`
+
+## Known UI Follow-Ups
+
+Needs user-side visual review in ASR Studio:
+
+- check that the result-first layout matches the screenshot intent at fullscreen size;
+- check that middle control column width feels right;
+- check that right history column remains readable;
+- check that per-record delete button is not too visually noisy;
+- check that Markdown summary output is readable and not too large;
+- check mobile/responsive behavior if ASR Studio is opened on narrow width;
+- verify that `Открыть анализ`, copy/download, save context, send to chat still use expected text.
+
+Possible next refinement:
+
+- show technical warnings in a separate compact diagnostics/details area instead of inside summary;
+- convert technical warnings into human-readable UI text:
+  - `raw_transcript_chunked:2` -> `Transcript обработан в 2 чанка`;
+  - `summary_required_heading_added` -> `Заголовок summary добавлен автоматически`;
+- add collapsible `Диагностика` near pipeline route;
+- keep diagnostics separate from copy/download unless explicitly requested.
+- backlog for this branch/task: add an ASR Studio checkbox/toggle that controls whether service/model technical information is shown after analysis, for example:
+  - hidden by default in the readable summary view;
+  - visible when enabled by the user;
+  - covers service blocks such as `Предупреждения: - raw_transcript_chunked:2`;
+  - should not remove warnings from backend data, only hide/show them in UI.
+
+## Current Pending Tasks
+
+1. Visually verify ASR Studio layout in browser.
+2. Fix any spacing/overflow issues from the result-first layout.
+3. Decide whether warnings need a visible diagnostics chip/list.
+4. Keep copy/download plain text/markdown, not rendered HTML.
+5. Consider adding a separate lightweight `Перевести summary` action later:
+   - should translate the existing summary only;
+   - must not rerun ASR, structurer, or full pipeline;
+   - should store/display a language-specific summary variant if implemented.
+6. Update README/technical docs if UI/output pass is accepted.
+7. Add an ASR Studio checkbox/toggle to show/hide service information returned after analysis, including warning blocks like `Предупреждения: - raw_transcript_chunked:2`.
+8. Run safe checks again before commit.
+9. Commit UI/output pass when user approves.
+10. Do not remove this progress file until user confirms the whole ASR Studio task is complete.
+
+## Tests And Safe Checks To Prefer
+
+Allowed by default:
+
+- `node --check web_ui/js/app.js`
+- `node tests/markdown_rendering.test.mjs`
+- `git diff --check`
+- `venv/bin/python -m py_compile ...` for changed Python files if any
+- generic mocked/unit tests
+
+Do not run without explicit user permission:
+
+- live ASR transcription;
+- live summary generation;
+- Ollama-heavy tests;
+- long transcript/full pipeline tests;
+- anything that loads local LLMs for generation.
+
+## Handoff Prompt For New Chat
+
+Use this prompt if continuing in another chat. Do not include a hardcoded project path; first locate/open the LocalGPT workspace on the current computer.
+
+```text
+Продолжаем работу в проекте LocalGPT, ветка bug_fix/asr-studio.
+
+Главные ограничения:
+
+- Не запускать live ASR / live LLM / live summary / full pipeline тесты без явного разрешения пользователя.
+- Пользователь сам запускает реальные ASR/summary проверки и следит за температурой Mac.
+- Не добавлять meeting-specific контент, словари, regex/fixups или тесты под конкретную встречу.
+- Не хардкодить домены, поддомены, маркетплейсы, YML, email-файлы, имена, бизнес-контекст или специальные правила под один transcript.
+- Все улучшения summary должны быть универсальными.
+- User settings имеют абсолютный приоритет над режимом анализа: если stage `enabled=false`, backend не должен запускать эту стадию ни в каком режиме.
+- Progress-файл `documentation/progress/asr-analysis-modes-progress.md` нужно актуализировать по ходу работы и не удалять до полного завершения и подтверждения пользователя.
+
+Последний коммит:
+
+- `fe154d1 Improve ASR analysis controls and thinking defaults`
+
+Что уже реализовано и закоммичено:
+
+- ASR Studio получил selector `Режим анализа`:
+  - `Быстрое саммари`: raw transcript -> summary;
+  - `Умное саммари`: raw transcript/chunks -> structurer -> summary;
+  - `Полный анализ`: segmenter -> speaker resolver -> structurer -> summary, доступен только после включения `Разрешить полный анализ`.
+- Cleaner не входит в обычные режимы по умолчанию; он ручной/опциональный.
+- В настройках стадий есть `Не использовать`; backend уважает `enabled=false`.
+- Добавлен profile-level `Контекст анализа`.
+- Добавлен `Язык результата`: auto/ru/en.
+- Summary language по умолчанию должен следовать языку transcript, но может быть выбран вручную.
+- Добавлена generic логика, что повтор важной мысли разными словами является сигналом важности.
+- Добавлена grounding/format validation для summary, чтобы не сохранять fabricated/instruction-echo/generic overview ответы.
+- Если summary без обязательного `## Краткое резюме` / `## Brief Summary`, backend добавляет заголовок локально и не гоняет второй LLM call только из-за этого.
+- ASR pipeline settings отделены от chat model settings под `__asr_pipeline__`.
+- ASR default thinking выключен: ASR LLM stages отправляют `think:false`, если пользователь явно не переопределил настройку.
+- Chat topbar `Thinking` влияет только на chat model settings.
+- ASR `Thinking LLM стадий` влияет только на ASR pipeline settings.
+- ASR stop умеет выгружать/останавливать stuck Ollama runners.
+
+Что сейчас не закоммичено:
+
+- UI/output pass для ASR Studio:
+  - `web_ui/gui_html.html`
+  - `web_ui/css/style.css`
+  - `web_ui/js/app.js`
+  - `documentation/progress/asr-analysis-modes-progress.md`
+- ASR summary/tasks output теперь рендерится через общий Markdown renderer вместо raw `<pre>`.
+- Main summary view больше не добавляет structured/debug sections и raw warnings после `run.summary`.
+- ASR Studio layout переставлен по sketch пользователя:
+  - слева поиск/результат/табы/кнопки/pipeline route;
+  - по центру file/settings/language controls и выбор режима анализа;
+  - справа база транскрибаций.
+- В истории ASR у каждой записи добавлена отдельная кнопка удаления.
+
+Что пользователь сообщил по качеству:
+
+- Новый результат `Умное саммари` уже достаточно рабочий, чтобы с ним быстро работать.
+- Главная текущая проблема не качество summary, а отображение: raw markdown symbols, технические символы и диагностика в основном выводе.
+
+Что нужно сделать дальше:
+
+1. Открыть текущий diff и проверить незакоммиченный UI/output pass.
+2. Визуально проверить ASR Studio layout в браузере, не запуская ASR/LLM.
+3. Исправить spacing/overflow/адаптивность, если видно проблемы.
+4. Решить, как показывать warnings: лучше отдельная диагностика/chips/details, не внутри основного summary.
+5. В рамках этой ветки добавить checkbox/toggle для показа/скрытия служебной информации после анализа, например блока `Предупреждения: - raw_transcript_chunked:2`; данные backend не удалять, управлять только отображением в UI.
+6. Убедиться, что copy/download/send/save context используют plain markdown/text, а не HTML.
+7. Запустить только безопасные проверки:
+   - `node --check web_ui/js/app.js`
+   - `node tests/markdown_rendering.test.mjs`
+   - `git diff --check`
+   - при Python-изменениях `py_compile` и generic mocked tests.
+8. Обновить progress-файл.
+9. После одобрения пользователя сделать коммит UI/output pass.
+
+Не делать:
+
+- Не запускать реальные ASR/LLM/Ollama summary тесты.
+- Не добавлять специальные словари/правила под конкретную встречу.
+- Не удалять `documentation/progress/asr-analysis-modes-progress.md`.
+```

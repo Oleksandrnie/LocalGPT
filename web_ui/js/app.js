@@ -4769,11 +4769,14 @@ function renderAsrToolHistory() {
       const title = getAsrTranscriptTitle(item);
       const preview = stripRichTextToPlain(item.summary || item.content || "");
       return `
-        <button class="tool-history__item${active}" type="button" data-asr-history-id="${escapeHtml(item.id)}">
-          <span class="tool-history__title">${escapeHtml(title || "Транскрипт")}</span>
-          <span class="tool-history__meta">${escapeHtml(meta || "Транскрипт")}</span>
-          <span class="tool-history__preview">${escapeHtml(preview || "Нет превью")}</span>
-        </button>
+        <article class="tool-history__item${active}">
+          <button class="tool-history__content" type="button" data-asr-history-id="${escapeHtml(item.id)}">
+            <span class="tool-history__title">${escapeHtml(title || "Транскрипт")}</span>
+            <span class="tool-history__meta">${escapeHtml(meta || "Транскрипт")}</span>
+            <span class="tool-history__preview">${escapeHtml(preview || "Нет превью")}</span>
+          </button>
+          <button class="tool-history__delete" type="button" data-asr-history-delete-id="${escapeHtml(item.id)}" title="Удалить запись" aria-label="Удалить запись">×</button>
+        </article>
       `;
     })
     .join("");
@@ -5040,14 +5043,28 @@ function renderAsrFileCard() {
 }
 
 function applyAsrTextSearch() {
-  const textarea = els.asrToolOutput;
   const query = String(els.asrToolSearchInput?.value || "").trim();
-  if (!textarea || !query) return;
-  const haystack = textarea.value.toLowerCase();
-  const index = haystack.indexOf(query.toLowerCase());
-  if (index >= 0) {
-    textarea.focus();
-    textarea.setSelectionRange(index, index + query.length);
+  if (!query) return;
+  if (state.asrToolActiveTab === "text") {
+    const textarea = els.asrToolOutput;
+    if (!textarea) return;
+    const haystack = textarea.value.toLowerCase();
+    const index = haystack.indexOf(query.toLowerCase());
+    if (index >= 0) {
+      textarea.focus();
+      textarea.setSelectionRange(index, index + query.length);
+    }
+    return;
+  }
+  const content = getAsrToolSelectedContent().toLowerCase();
+  const found = content.includes(query.toLowerCase());
+  setInlineStatus(
+    els.asrToolStatus,
+    found ? "Совпадение найдено в текущем результате." : "В текущем результате совпадений нет.",
+    found ? "success" : "warning",
+  );
+  if (found) {
+    els.asrToolPipelineOutput?.scrollIntoView({ block: "nearest" });
   }
 }
 
@@ -5341,7 +5358,8 @@ function renderAsrTool() {
     const emptyText = state.asrToolActiveTab === "summary" ? "Саммари появится после анализа транскрипта." : "";
     const outputText = text || busyText || emptyText;
     els.asrToolPipelinePanel.hidden = !outputText;
-    els.asrToolPipelineOutput.textContent = outputText;
+    els.asrToolPipelineOutput.dataset.plainText = outputText;
+    els.asrToolPipelineOutput.innerHTML = renderAsrMarkdownOutput(outputText, emptyText);
     els.asrToolPipelineMeta.textContent = run
       ? `${run.preset || "balanced"} • ${getAsrActionLabel(run.action || "full")} • ${formatDateTime(run.updated_at || run.created_at)}`
       : (state.asrToolPipelineBusy
@@ -5351,7 +5369,9 @@ function renderAsrTool() {
     renderAsrSpeakerEditor(run);
   }
   if (els.asrToolTasksOutput) {
-    els.asrToolTasksOutput.textContent = formatAsrTasksOutput(state.asrToolPipelineRun);
+    const tasksText = formatAsrTasksOutput(state.asrToolPipelineRun);
+    els.asrToolTasksOutput.dataset.plainText = tasksText;
+    els.asrToolTasksOutput.innerHTML = renderAsrMarkdownOutput(tasksText, "Задачи появятся после анализа транскрипта.");
   }
 
   renderAsrToolHistory();
@@ -5634,11 +5654,19 @@ async function deleteSelectedAsrToolTranscript() {
     setInlineStatus(els.asrToolStatus, "Сначала выберите запись в истории.", "warning");
     return;
   }
+  await deleteAsrToolTranscript(state.asrToolSelectedTranscriptId, { clearIfSelected: true });
+}
+
+async function deleteAsrToolTranscript(transcriptId, { clearIfSelected = false } = {}) {
+  const targetId = Number(transcriptId || 0);
+  if (!Number.isFinite(targetId) || targetId <= 0) return;
   if (!window.confirm("Удалить выбранную запись транскрибации?")) return;
 
   try {
-    await request(`/transcripts/${encodeURIComponent(state.asrToolSelectedTranscriptId)}`, { method: "DELETE" });
-    clearAsrToolEditor();
+    await request(`/transcripts/${encodeURIComponent(targetId)}`, { method: "DELETE" });
+    if (clearIfSelected || Number(state.asrToolSelectedTranscriptId || 0) === targetId) {
+      clearAsrToolEditor();
+    }
     await loadAsrToolHistory({ silent: true });
     setFooter("Запись ASR удалена.", "success");
   } catch (error) {
@@ -5807,19 +5835,33 @@ function formatAsrPipelineRun(run) {
   if (!run) return "";
   const parts = [];
   if (run.summary) {
-    parts.push(run.summary);
-  }
-  if (run.structured_json) {
+    return normalizeAsrDisplayMarkdown(run.summary);
+  } else if (run.structured_json) {
     const formatted = formatStructuredData(run.structured_json);
     parts.push(formatted || `Структурированные данные:\n${JSON.stringify(run.structured_json, null, 2)}`);
   }
   if (!parts.length && run.cleaned_transcript) {
     parts.push(run.cleaned_transcript);
   }
-  if (Array.isArray(run.warnings) && run.warnings.length) {
-    parts.push(`Предупреждения:\n${run.warnings.map((item) => `- ${item}`).join("\n")}`);
+  return normalizeAsrDisplayMarkdown(parts.join("\n\n"));
+}
+
+function normalizeAsrDisplayMarkdown(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((line) => !/^\s*-{3,}\s*$/.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function renderAsrMarkdownOutput(value, emptyText = "") {
+  const text = normalizeAsrDisplayMarkdown(value);
+  if (!text) {
+    return emptyText ? `<p class="subtle">${escapeHtml(emptyText)}</p>` : "";
   }
-  return parts.join("\n\n").trim();
+  return formatRichMessage(text);
 }
 
 function renderAsrSpeakerEditor(run) {
@@ -9376,7 +9418,14 @@ function bindEvents() {
     await clearAsrToolHistory();
   });
   els.asrToolHistoryList?.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-asr-history-id]");
+    const deleteButton = event.target instanceof Element ? event.target.closest("[data-asr-history-delete-id]") : null;
+    if (deleteButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      await deleteAsrToolTranscript(deleteButton.dataset.asrHistoryDeleteId);
+      return;
+    }
+    const button = event.target instanceof Element ? event.target.closest("[data-asr-history-id]") : null;
     if (!button) return;
     await selectAsrToolTranscript(button.dataset.asrHistoryId);
   });
