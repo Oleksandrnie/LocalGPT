@@ -465,6 +465,7 @@ const state = {
   chatTaskId: null,
   chatTaskStartController: null,
   chatTaskEventSource: null,
+  chatTaskStreamAbort: null,
   chatTaskReplay: null,
   chatTypingStreams: new Map(),
   isSpeaking: false,
@@ -1696,6 +1697,15 @@ function closeChatTaskEventSource(source = state.chatTaskEventSource) {
   }
 }
 
+function interruptChatTaskEventStream(message = "SSE-соединение закрыто.") {
+  if (typeof state.chatTaskStreamAbort === "function") {
+    state.chatTaskStreamAbort(message);
+    return;
+  }
+  closeChatTaskEventSource();
+  clearChatTaskReplay();
+}
+
 function chatTaskIdFrom(taskOrMessage) {
   return String(taskOrMessage?.task_id || taskOrMessage?.id || "").trim();
 }
@@ -1731,14 +1741,27 @@ function prepareChatTaskReplay(task, baseContent = null) {
     baseContent: content,
     replayedText: "",
     caughtUp: content.length === 0,
+    lastSequence: 0,
   };
 }
 
-function consumeChatTaskDelta(task, text) {
+function normalizeChatDeltaSequence(sequence) {
+  const numeric = Number(sequence);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function consumeChatTaskDelta(task, text, sequence = null) {
   const taskId = chatTaskIdFrom(task);
   const delta = String(text || "");
   if (!delta) return "";
   const replay = state.chatTaskReplay;
+  const deltaSequence = normalizeChatDeltaSequence(sequence);
+  if (replay && replay.taskId === taskId && deltaSequence !== null) {
+    if (deltaSequence <= (replay.lastSequence || 0)) {
+      return null;
+    }
+    replay.lastSequence = deltaSequence;
+  }
   if (!replay || replay.taskId !== taskId || replay.caughtUp) {
     return delta;
   }
@@ -1749,17 +1772,17 @@ function consumeChatTaskDelta(task, text) {
   replay.replayedText = nextReplay;
 
   if (baseContent.startsWith(nextReplay)) {
-    return "";
+    return null;
   }
   if (nextReplay.startsWith(baseContent)) {
     replay.caughtUp = true;
     const appendFrom = Math.max(0, baseContent.length - previousReplay.length);
-    return delta.slice(appendFrom);
+    return delta.slice(appendFrom) || null;
   }
 
   // If persisted partial content was normalized unexpectedly, avoid duplicating old replayed chunks.
   replay.caughtUp = true;
-  return "";
+  return null;
 }
 
 function chatTypingStreamKey(taskOrPayload) {
@@ -1982,30 +2005,45 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
   }
 
   return new Promise((resolve, reject) => {
-    closeChatTaskEventSource();
+    interruptChatTaskEventStream("Открывается новое SSE-соединение.");
     prepareChatTaskReplay(task, replayBaseContent);
     const source = new window.EventSource(`/chat/tasks/${encodeURIComponent(taskId)}/events`);
     let settled = false;
     let terminalEventReceived = false;
-    const timeoutId = window.setTimeout(() => {
-      const error = new Error("Истекло время ожидания генерации ответа.");
-      error.streamConnectionFailed = true;
-      finish(() => reject(error));
-    }, timeoutMs);
+    let timeoutId = null;
 
     const finish = (callback) => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timeoutId);
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
       closeChatTaskEventSource(source);
+      if (state.chatTaskStreamAbort === rejectStreamConnection) {
+        state.chatTaskStreamAbort = null;
+      }
       clearChatTaskReplay(taskId);
       clearChatTypingStreams(taskId);
       callback();
     };
 
+    const rejectStreamConnection = (message) => {
+      if (settled) return;
+      const error = new Error(message || "SSE-соединение прервалось.");
+      error.streamConnectionFailed = true;
+      clearChatTypingStreams(task, { flush: true });
+      finish(() => reject(error));
+    };
+
+    timeoutId = window.setTimeout(() => {
+      rejectStreamConnection("Истекло время ожидания генерации ответа.");
+    }, timeoutMs);
+
     state.chatTaskEventSource = source;
+    state.chatTaskStreamAbort = rejectStreamConnection;
 
     source.addEventListener("status", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       const status = String(data.status || "generating");
       updateAssistantMessageFromTask(task, {
@@ -2015,6 +2053,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("model_selected", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       updateAssistantMessageFromTask(task, {
         ...data,
@@ -2023,8 +2062,10 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("delta", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
-      const delta = consumeChatTaskDelta(task, data.text);
+      const delta = consumeChatTaskDelta(task, data.text, data.sequence);
+      if (delta === null) return;
       if (delta) {
         queueAssistantTypingDelta(task, data, delta);
       } else {
@@ -2036,6 +2077,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("done", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       terminalEventReceived = true;
       finishChatTypingStream(task, () => {
@@ -2048,6 +2090,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("cancelled", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       terminalEventReceived = true;
       clearChatTypingStreams(task, { flush: true });
@@ -2059,6 +2102,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("error", (event) => {
+      if (settled) return;
       if (typeof event?.data !== "string") {
         return;
       }
@@ -2076,11 +2120,9 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.onerror = () => {
+      if (settled) return;
       if (terminalEventReceived) return;
-      const error = new Error("SSE-соединение прервалось.");
-      error.streamConnectionFailed = true;
-      clearChatTypingStreams(task, { flush: true });
-      finish(() => reject(error));
+      rejectStreamConnection("SSE-соединение прервалось.");
     };
   });
 }
@@ -9887,8 +9929,7 @@ function bindEvents() {
   });
 
   window.addEventListener("pagehide", () => {
-    closeChatTaskEventSource();
-    clearChatTaskReplay();
+    interruptChatTaskEventStream("SSE-соединение закрыто при скрытии страницы.");
   });
 }
 

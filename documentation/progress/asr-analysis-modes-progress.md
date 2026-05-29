@@ -6,21 +6,26 @@ In progress.
 
 Last committed checkpoint:
 
-- `fe154d1 Improve ASR analysis controls and thinking defaults`
+- `b1f52fd UI rebuild, progress file`
 
-Current uncommitted work after `fe154d1`:
+Current uncommitted work after `b1f52fd`:
 
-- ASR Studio UI/result-output pass:
-  - result-first ASR Studio layout;
-  - formatted Markdown rendering for ASR summary/tasks output;
-  - per-record delete button in ASR history;
-  - progress file refresh.
+- Mobile/PWA chat streaming hardening:
+  - dedupe repeated SSE `delta` events by per-task `sequence`;
+  - keep existing partial-content replay protection for tab reload/recovery;
+  - convert pagehide/manual SSE close into polling fallback instead of leaving the send flow pending;
+  - ignore late SSE events after a task stream has already settled;
+  - intended fix for iPhone/PWA cases where EventSource reconnects to `/chat/tasks/{id}/events` and replays old deltas, making the UI look like an endless repeated generation.
+- Tailscale plugin backend-port detection hardening:
+  - plugin command/status now prefer the actual FastAPI request server port from `request.scope["server"]`;
+  - avoids falling back to hardcoded/default `8000` when LocalGPT selected a nearby free port such as `8001+`;
+  - Tailscale Serve is still not run automatically by the app; the plugin reports the dynamic command and current Serve target status.
 
 Current dirty files:
 
+- `backend/apps/plugins/tailscale.py`
 - `documentation/progress/asr-analysis-modes-progress.md`
-- `web_ui/css/style.css`
-- `web_ui/gui_html.html`
+- `tests/test_plugin_registry.py`
 - `web_ui/js/app.js`
 
 Do not delete this progress file until the full ASR Studio task is complete and the user explicitly confirms it can be closed.
@@ -144,12 +149,12 @@ Safe verification before `fe154d1`:
 - `venv/bin/python -m unittest tests.test_model_router tests.test_pipeline_memory`
 - 111 mocked/unit tests passed.
 
-## Current Uncommitted UI/Output Pass
+### `b1f52fd UI rebuild, progress file`
 
-Started after user confirmed the new summary is already workable enough:
+Committed ASR Studio UI/output pass after the user confirmed the new summary is already workable enough:
 
 - content quality is no longer the main blocker;
-- current priority is readable ASR UI/output formatting and layout.
+- priority shifted to readable ASR UI/output formatting and layout.
 
 User-reported summary state:
 
@@ -158,7 +163,7 @@ User-reported summary state:
 - main UI problem is raw formatting artifacts and technical symbols in display;
 - raw pipeline diagnostics should not pollute the main readable summary.
 
-Implemented in uncommitted files:
+Implemented and committed:
 
 - ASR summary/tasks output now renders through shared Markdown renderer instead of raw `<pre>` text.
 - Markdown artifacts such as `##`, `**bold**`, bullets and inline code should display as formatted UI.
@@ -181,6 +186,68 @@ Safe verification already run for the uncommitted UI/output pass:
 
 - `node --check web_ui/js/app.js`
 - `node tests/markdown_rendering.test.mjs`
+- `git diff --check`
+
+## Current Uncommitted Mobile/PWA Chat Stream Fix
+
+User-reported problem:
+
+- On iPhone/mobile PWA, after opening the app, some LLM replies can appear to generate forever while repeating the same text.
+- During the stuck state, UI controls appear unresponsive.
+- Server log showed a single `POST /chat/tasks`, then repeated `GET /chat/tasks/{task_id}/events` for the same task before the UI reload.
+- Deployment detail: the Mac is the main LocalGPT server; the iPhone reaches it through Tailscale.
+
+Likely cause:
+
+- Browser `EventSource` can reconnect automatically when mobile/PWA networking, Tailscale tunnel conditions, or page lifecycle interrupts SSE.
+- The backend SSE route currently reads task delta artifacts from offset `0` for each new connection.
+- The client already filtered replay against persisted partial message text after a full reload, but did not dedupe repeated deltas by `sequence` inside the same live tab.
+- Replayed deltas could therefore be appended again, and repeated renders/typewriter backlog could make the interface feel frozen.
+- The old `pagehide` handler also closed `EventSource` without rejecting the active wait promise, which could leave the PWA in an in-memory `isSending=true` state until timeout.
+
+Implemented in uncommitted files:
+
+- `web_ui/js/app.js` tracks the last seen delta `sequence` in `state.chatTaskReplay`.
+- Repeated or already replay-covered deltas return `null` and do not trigger `renderMessages()`.
+- Manual/pagehide SSE interruption now rejects the stream wait as `streamConnectionFailed`, so existing send/recover flows fall back to `/chat/tasks/{id}` polling.
+- SSE event handlers now ignore late events after the stream promise has settled.
+
+Safe verification already run for the uncommitted mobile/PWA fix:
+
+- `node --check web_ui/js/app.js`
+- `node tests/markdown_rendering.test.mjs`
+- `git diff --check`
+
+## Current Uncommitted Tailscale Port Detection Fix
+
+User-reported concern:
+
+- Do not hardcode Tailscale proxy target to one port.
+- LocalGPT can start on `8000`, `8001`, `8002`, etc. if earlier ports are busy.
+- The plugin UI/docs must dynamically reflect the active backend port.
+
+Observed state during debug:
+
+- LocalGPT was listening on `127.0.0.1:8001`.
+- Tailscale Serve status still pointed at `http://127.0.0.1:8000`.
+- Plugin UI correctly showed `Serve active for another target` and exposed `tailscale serve --bg http://127.0.0.1:8001`.
+
+Implemented in uncommitted files:
+
+- `backend/apps/plugins/tailscale.py` now reads the actual FastAPI server port from `request.scope["server"]` before runtime file/env/default fallback.
+- Added regression coverage in `tests/test_plugin_registry.py` proving request server port wins over stale runtime file and env defaults.
+
+Important boundary:
+
+- The app still does not automatically run or rewrite `tailscale serve`; this is currently a deliberate safety constraint.
+- Dynamic behavior means the plugin computes and displays the correct command/status from the active backend port.
+- If automatic Tailscale Serve reconfiguration is desired later, treat it as an explicit security-sensitive design change.
+
+Safe verification already run:
+
+- `venv/bin/python -m py_compile backend/apps/plugins/tailscale.py tests/test_plugin_registry.py`
+- `venv/bin/python -m unittest tests.test_plugin_registry -q`
+- `node --check web_ui/js/app.js`
 - `git diff --check`
 
 ## Known UI Follow-Ups
@@ -211,19 +278,22 @@ Possible next refinement:
 
 ## Current Pending Tasks
 
-1. Visually verify ASR Studio layout in browser.
-2. Fix any spacing/overflow issues from the result-first layout.
-3. Decide whether warnings need a visible diagnostics chip/list.
-4. Keep copy/download plain text/markdown, not rendered HTML.
-5. Consider adding a separate lightweight `Перевести summary` action later:
+1. User-side retest on iPhone/PWA: start a streamed chat generation, background/reopen the app, and confirm the answer does not repeat old chunks.
+2. Confirm Tailscale plugin UI shows the active backend port after server restarts onto `8000+`.
+3. If the mobile/PWA issue persists, inspect Tailscale/iOS EventSource reconnection timing and consider a backend SSE resume offset or `Last-Event-ID` support.
+4. Visually verify ASR Studio layout in browser.
+5. Fix any spacing/overflow issues from the result-first layout.
+6. Decide whether warnings need a visible diagnostics chip/list.
+7. Keep copy/download plain text/markdown, not rendered HTML.
+8. Consider adding a separate lightweight `Перевести summary` action later:
    - should translate the existing summary only;
    - must not rerun ASR, structurer, or full pipeline;
    - should store/display a language-specific summary variant if implemented.
-6. Update README/technical docs if UI/output pass is accepted.
-7. Add an ASR Studio checkbox/toggle to show/hide service information returned after analysis, including warning blocks like `Предупреждения: - raw_transcript_chunked:2`.
-8. Run safe checks again before commit.
-9. Commit UI/output pass when user approves.
-10. Do not remove this progress file until user confirms the whole ASR Studio task is complete.
+9. Update README/technical docs if UI/output pass is accepted.
+10. Add an ASR Studio checkbox/toggle to show/hide service information returned after analysis, including warning blocks like `Предупреждения: - raw_transcript_chunked:2`.
+11. Run safe checks again before commit.
+12. Commit current mobile/PWA and Tailscale port-detection fixes after user confirms behavior.
+13. Do not remove this progress file until user confirms the whole ASR Studio task is complete.
 
 ## Tests And Safe Checks To Prefer
 
@@ -262,7 +332,7 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
 
 Последний коммит:
 
-- `fe154d1 Improve ASR analysis controls and thinking defaults`
+- `b1f52fd UI rebuild, progress file`
 
 Что уже реализовано и закоммичено:
 
@@ -283,21 +353,27 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
 - Chat topbar `Thinking` влияет только на chat model settings.
 - ASR `Thinking LLM стадий` влияет только на ASR pipeline settings.
 - ASR stop умеет выгружать/останавливать stuck Ollama runners.
+- ASR Studio UI/output pass уже закоммичен:
+  - summary/tasks рендерятся через Markdown renderer;
+  - main summary view не добавляет structured/debug/raw warnings после `run.summary`;
+  - ASR Studio layout переставлен в result-first схему;
+  - история ASR получила отдельную кнопку удаления записи.
 
 Что сейчас не закоммичено:
 
-- UI/output pass для ASR Studio:
-  - `web_ui/gui_html.html`
-  - `web_ui/css/style.css`
-  - `web_ui/js/app.js`
-  - `documentation/progress/asr-analysis-modes-progress.md`
-- ASR summary/tasks output теперь рендерится через общий Markdown renderer вместо raw `<pre>`.
-- Main summary view больше не добавляет structured/debug sections и raw warnings после `run.summary`.
-- ASR Studio layout переставлен по sketch пользователя:
-  - слева поиск/результат/табы/кнопки/pipeline route;
-  - по центру file/settings/language controls и выбор режима анализа;
-  - справа база транскрибаций.
-- В истории ASR у каждой записи добавлена отдельная кнопка удаления.
+- Mobile/PWA chat stream fix:
+  - `web_ui/js/app.js`;
+  - `backend/apps/plugins/tailscale.py`;
+  - `tests/test_plugin_registry.py`;
+  - `documentation/progress/asr-analysis-modes-progress.md`.
+- Клиент теперь дедуплицирует SSE `delta` по `sequence` внутри активного task replay.
+- Уже покрытые replay-куски не вызывают `renderMessages()`.
+- `pagehide`/ручное закрытие SSE теперь переводит ожидание генерации в polling fallback, а не оставляет PWA в подвешенном состоянии.
+- Late SSE events после settled stream игнорируются.
+- Контекст: Mac является основным сервером, iPhone подключается через Tailscale.
+- Цель: убрать iPhone/PWA баг, где `EventSource` через Tailscale/мобильный lifecycle переподключается к `/chat/tasks/{id}/events`, backend заново отдаёт старые deltas, а UI выглядит как бесконечная повторяющаяся генерация.
+- Tailscale plugin теперь берёт активный backend-port из `request.scope["server"]` перед runtime/env/default fallback, чтобы не скатываться на hardcoded/default `8000`, когда LocalGPT поднялся на `8001+`.
+- Важно: приложение по-прежнему не запускает и не переписывает `tailscale serve` автоматически; plugin показывает правильную динамическую команду и статус текущего Serve target.
 
 Что пользователь сообщил по качеству:
 
@@ -306,19 +382,21 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
 
 Что нужно сделать дальше:
 
-1. Открыть текущий diff и проверить незакоммиченный UI/output pass.
-2. Визуально проверить ASR Studio layout в браузере, не запуская ASR/LLM.
-3. Исправить spacing/overflow/адаптивность, если видно проблемы.
-4. Решить, как показывать warnings: лучше отдельная диагностика/chips/details, не внутри основного summary.
-5. В рамках этой ветки добавить checkbox/toggle для показа/скрытия служебной информации после анализа, например блока `Предупреждения: - raw_transcript_chunked:2`; данные backend не удалять, управлять только отображением в UI.
-6. Убедиться, что copy/download/send/save context используют plain markdown/text, а не HTML.
-7. Запустить только безопасные проверки:
+1. Попросить пользователя проверить iPhone/PWA сценарий с обычной streamed chat генерацией.
+2. Проверить, что Tailscale plugin после restart на `8000+` показывает активный порт, а не default `8000`.
+3. Если повтор останется, следующим шагом смотреть Tailscale/iOS timing и backend SSE resume offset / `Last-Event-ID`.
+4. Визуально проверить ASR Studio layout в браузере, не запуская ASR/LLM.
+5. Исправить spacing/overflow/адаптивность, если видно проблемы.
+6. Решить, как показывать warnings: лучше отдельная диагностика/chips/details, не внутри основного summary.
+7. В рамках этой ветки добавить checkbox/toggle для показа/скрытия служебной информации после анализа, например блока `Предупреждения: - raw_transcript_chunked:2`; данные backend не удалять, управлять только отображением в UI.
+8. Убедиться, что copy/download/send/save context используют plain markdown/text, а не HTML.
+9. Запустить только безопасные проверки:
    - `node --check web_ui/js/app.js`
    - `node tests/markdown_rendering.test.mjs`
    - `git diff --check`
    - при Python-изменениях `py_compile` и generic mocked tests.
-8. Обновить progress-файл.
-9. После одобрения пользователя сделать коммит UI/output pass.
+10. Обновить progress-файл.
+11. После одобрения пользователя сделать коммит текущих mobile/PWA и Tailscale port-detection fixes.
 
 Не делать:
 
