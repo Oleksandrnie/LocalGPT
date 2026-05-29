@@ -10,6 +10,13 @@ Last committed checkpoint:
 
 Current uncommitted work after `2bc8e60`:
 
+- UI update finalized (desktop + mobile):
+  - desktop ASR Studio aligned to target layout (left collapsible transcript DB sidebar, center results, right controls);
+  - tabs moved above the result area;
+  - main transcript/result field stretches to bottom and is non-resizable;
+  - added persistent reopen control for collapsed DB sidebar (no page reload needed);
+  - mobile layout kept single-column with compact controls and bottom actions.
+
 - ASR `Сохранить в контекст` now creates a linked RAG source:
   - the ASR context is still stored as a transcript with `labels.origin=asr_context`;
   - backend auto-indexes it into RAG as source type `asr_context`;
@@ -21,6 +28,11 @@ Current uncommitted work after `2bc8e60`:
   - `Сохранить в контекст`;
   - `Скачать TXT`;
   - `Добавить к промпту`.
+- ASR desktop layout pass (variant 2 in progress):
+  - transcript database moved into the main left column (`asr-history-column`) instead of separate outer sidebar;
+  - center content remains the largest area for text/summary/tasks/roles;
+  - right controls grouped into a compact vertical panel with top action row (`Настройки`, `Обновить`, `Остановить`);
+  - mobile fallback keeps single-column order: content -> controls -> history.
 - ASR pipeline reset defaults now match the requested stage table:
   - `cleaner`: disabled, temp `0`, max tokens `6000`;
   - `segmenter`: disabled, temp `0.05`, max tokens `6000`;
