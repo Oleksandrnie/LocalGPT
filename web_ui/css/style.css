@@ -3793,6 +3793,14 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     gap: 8px;
 }
 
+.rag-file-list__section {
+    margin: 8px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
 .rag-file-list__item {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

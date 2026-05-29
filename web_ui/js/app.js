@@ -90,15 +90,15 @@ const ASR_PIPELINE_RECOMMENDATIONS = {
   summary: {
     primary: "qwen3:8b",
     alternatives: ["mistral-nemo:12b", "qwen2.5:7b-instruct"],
-    text: "основной вариант для summary; меньше переключений моделей в умном саммари. Mistral оставь как ручной heavy-режим.",
+    text: "основной вариант для summary.",
   },
 };
 const ASR_PIPELINE_DEFAULTS = {
-  cleaner: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0, max_tokens: 9000 },
-  segmenter: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.05, max_tokens: 8000 },
-  speaker_resolver: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.1, max_tokens: 4000 },
-  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.1, max_tokens: 8000 },
-  summary: { enabled: true, model: "qwen3:8b", temperature: 0.1, max_tokens: 8000 },
+  cleaner: { enabled: false, model: "qwen2.5:7b-instruct", temperature: 0, max_tokens: 6000 },
+  segmenter: { enabled: false, model: "qwen2.5:7b-instruct", temperature: 0.05, max_tokens: 6000 },
+  speaker_resolver: { enabled: false, model: "qwen2.5:7b-instruct", temperature: 0, max_tokens: 3000 },
+  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.05, max_tokens: 6000 },
+  summary: { enabled: true, model: "qwen3:8b", temperature: 0.05, max_tokens: 7000 },
 };
 const ASR_ANALYSIS_MODE_DEFAULT = "smart_summary";
 const ASR_ANALYSIS_MODES = [
@@ -146,12 +146,12 @@ const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "pipeline",
 ];
 const RESIDENCY_DEFAULTS = {
-  max_resident_target_models: 2,
+  max_resident_target_models: 1,
   allow_light_with_heavy: false,
   single_large_target_model: true,
   preload_model_on_manual_select: false,
   auto_target_keep_alive: "4m",
-  manual_keep_alive: "4m",
+  manual_keep_alive: "5m",
   code_model_keep_alive: "2m",
   heavy_model_keep_alive: "60s",
   router_keep_alive: "2m",
@@ -3941,22 +3941,17 @@ function pipelineStageRecommendationHtml(stageKey, selectedModel = "") {
   if (stageSettings.enabled === false) {
     return `
       <p class="pipeline-stage-row__recommendation">
-        <strong>Стадия выключена.</strong> Она не будет использоваться, пока в поле модели выбран пункт «Не использовать».
+        <strong>Стадия выключена.</strong>
       </p>
     `;
   }
   const selected = String(selectedModel || "").trim();
-  const altText = recommendation.alternatives
-    .map((modelId) => modelId)
-    .join(" / ");
-  const tokenTarget = ASR_PIPELINE_DEFAULTS[stageKey]?.max_tokens;
   const legacyWarning = selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)
     ? ` Сейчас выбрана ${ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected) ? "legacy-модель" : "модель вне pipeline-каталога"} ${selected}; лучше заменить на ${recommendation.primary}.`
     : "";
   return `
     <p class="pipeline-stage-row__recommendation">
-      <strong>Рекомендация:</strong> <span>${escapeHtml(recommendation.primary)}</span> — ${escapeHtml(recommendation.text)}
-      <em>Max tokens: ${escapeHtml(String(tokenTarget || "—"))}. Альтернатива: ${escapeHtml(altText)}.</em>${escapeHtml(legacyWarning)}
+      <span>${escapeHtml(recommendation.primary)}</span> ${escapeHtml(recommendation.text)}${escapeHtml(legacyWarning)}
     </p>
   `;
 }
@@ -6047,8 +6042,17 @@ async function saveAsrPipelineAsContext() {
     state.latestTranscript = transcript;
     renderTranscriptStrip();
     renderContextSummary();
-    setInlineStatus(els.asrToolStatus, "Обработанный контекст сохранён.", "success");
-    setFooter("ASR контекст сохранён и подключён к текущему чату.", "success");
+    const ragIndex = transcript?.rag_index || null;
+    const ragWasEnabled = activeProfileRagEnabled();
+    if (!ragWasEnabled) {
+      await toggleRagForActiveProfile(true, { notify: false });
+    }
+    await loadRagStatus({ silent: true });
+    const chunks = Number(ragIndex?.chunks_indexed || 0);
+    const ragNote = chunks ? ` RAG chunks: ${chunks}.` : "";
+    const enabledNote = ragWasEnabled ? "" : " RAG включён.";
+    setInlineStatus(els.asrToolStatus, `Контекст сохранён и проиндексирован.${ragNote}${enabledNote}`, "success");
+    setFooter(`ASR контекст сохранён, подключён к чату и добавлен в RAG.${enabledNote}`, "success");
     return transcript;
   } catch (error) {
     setInlineStatus(els.asrToolStatus, `Не удалось сохранить контекст: ${error.message || error}`, "error");
@@ -7139,20 +7143,43 @@ function renderRagPanel() {
   }
   if (els.ragStatusText) {
     const stats = status.stats || {};
+    const contextCount = Array.isArray(status.contexts) ? status.contexts.length : 0;
     els.ragStatusText.textContent = state.ragBusy
-      ? "RAG индексирует файлы из папки…"
-      : `Файлов: ${status.file_count ?? 0} • документов: ${stats.documents ?? 0} • chunks: ${stats.chunks ?? 0} • embeddings: ${stats.embeddings ?? 0}`;
+      ? "RAG обновляется…"
+      : `Файлов: ${status.file_count ?? 0} • контекстов: ${contextCount} • документов: ${stats.documents ?? 0} • chunks: ${stats.chunks ?? 0} • embeddings: ${stats.embeddings ?? 0}`;
   }
   if (els.ragFileList) {
     const files = Array.isArray(status.files) ? status.files : [];
-    els.ragFileList.innerHTML = files.length
-      ? files.slice(0, 100).map((file) => `
+    const contexts = Array.isArray(status.contexts) ? status.contexts : [];
+    const contextMarkup = contexts.length
+      ? [
+        '<p class="rag-file-list__section">Контекст</p>',
+        ...contexts.slice(0, 100).map((item) => {
+          const sourceId = String(item?.source_id || "").trim();
+          const title = String(item?.title || sourceId || "ASR context").trim();
+          return `
+            <div class="rag-file-list__item">
+              <span>${escapeHtml(title)}</span>
+              <button class="rag-file-list__delete" type="button" data-rag-delete-context="${escapeHtml(sourceId)}" aria-label="Удалить ${escapeHtml(title)}">✕</button>
+            </div>
+          `;
+        }),
+      ].join("")
+      : "";
+    const fileMarkup = files.length
+      ? [
+        '<p class="rag-file-list__section">Файлы</p>',
+        ...files.slice(0, 100).map((file) => `
         <div class="rag-file-list__item">
           <span>${escapeHtml(file)}</span>
           <button class="rag-file-list__delete" type="button" data-rag-delete-file="${escapeHtml(file)}" aria-label="Удалить ${escapeHtml(file)}">✕</button>
         </div>
-      `).join("")
-      : '<p class="subtle">Для активного профиля RAG-файлов нет. Нажмите «Добавить файлы», затем «Индексировать».</p>';
+      `),
+      ].join("")
+      : "";
+    els.ragFileList.innerHTML = contextMarkup || fileMarkup
+      ? `${contextMarkup}${fileMarkup}`
+      : '<p class="subtle">Для активного профиля RAG-источников нет. Добавьте файлы или сохраните ASR результат как контекст.</p>';
   }
 }
 
@@ -7291,6 +7318,39 @@ async function deleteRagFile(sourceId, returnFocus = null) {
     setFooter(`RAG: удалено файлов ${deleted.length}.`, "success");
   } catch (error) {
     setFooter(`Не удалось удалить RAG-файл: ${error.message || error}`, "error");
+  } finally {
+    state.ragBusy = false;
+    renderRagPanel();
+  }
+}
+
+async function deleteRagContext(sourceId, returnFocus = null) {
+  const target = String(sourceId || "").trim();
+  if (!target || !state.activeProfileId) return;
+  const approved = await openConfirmDialog({
+    eyebrow: "RAG",
+    title: "Удалить контекст?",
+    message: "ASR context будет удалён из RAG-индекса и из подключённых transcript/context записей.",
+    confirmLabel: "Удалить",
+    cancelLabel: "Отмена",
+    returnFocus,
+  });
+  if (!approved) return;
+  state.ragBusy = true;
+  renderRagPanel();
+  try {
+    const query = new URLSearchParams({ profile_id: String(state.activeProfileId), source_id: target });
+    const result = await request(`/rag/contexts?${query.toString()}`, { method: "DELETE" });
+    state.ragStatus = result?.status || state.ragStatus;
+    await loadRagStatus({ silent: true });
+    if (state.latestTranscript?.id && target === `transcript:${state.latestTranscript.id}`) {
+      state.latestTranscript = null;
+      renderTranscriptStrip();
+      renderContextSummary();
+    }
+    setFooter("RAG: контекст удалён.", "success");
+  } catch (error) {
+    setFooter(`Не удалось удалить RAG-контекст: ${error.message || error}`, "error");
   } finally {
     state.ragBusy = false;
     renderRagPanel();
@@ -9122,9 +9182,15 @@ function bindEvents() {
     await toggleRagForActiveProfile(Boolean(els.ragEnabledToggle.checked));
   });
   els.ragFileList?.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-rag-delete-file]");
-    if (!button) return;
-    await deleteRagFile(button.dataset.ragDeleteFile, button);
+    const fileButton = event.target.closest("[data-rag-delete-file]");
+    if (fileButton) {
+      await deleteRagFile(fileButton.dataset.ragDeleteFile, fileButton);
+      return;
+    }
+    const contextButton = event.target.closest("[data-rag-delete-context]");
+    if (contextButton) {
+      await deleteRagContext(contextButton.dataset.ragDeleteContext, contextButton);
+    }
   });
   els.confirmCancelButton?.addEventListener("click", () => {
     resolveConfirmDialog(false);

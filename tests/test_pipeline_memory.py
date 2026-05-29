@@ -11,13 +11,22 @@ from fastapi.testclient import TestClient
 
 from app import config, db
 from app.routes import profiles as profile_routes
-from app.schemas import AsrPreferencesUpdate, ChatRequest, ProfileCreate, ProfilePreferencesUpdate, ProfileUpdate
+from app.schemas import (
+    AsrPreferencesUpdate,
+    ChatRequest,
+    ModelSettingsReset,
+    ProfileCreate,
+    ProfilePreferencesUpdate,
+    ProfileUpdate,
+)
 from app.services import models as model_service
 from backend.apps.chat import routes as chat_routes
 from backend.apps.asr import pipeline
+from backend.apps.asr.transcripts import router as transcripts_router
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, _sse_event, router as chat_router, start_chat_task
 from backend.apps.chat.service import response_language_instruction, sanitize_reply
+from backend.apps.rag import routes as rag_routes
 from backend.apps.rag import service as rag_service
 
 
@@ -60,15 +69,16 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
     def test_default_pipeline_uses_current_catalog_and_token_budget(self):
         expected = {
-            "cleaner": ("qwen2.5:7b-instruct", 0, 9000),
-            "segmenter": ("qwen2.5:7b-instruct", 0.05, 8000),
-            "speaker_resolver": ("qwen2.5:7b-instruct", 0.1, 4000),
-            "structurer": ("qwen3:8b", 0.1, 8000),
-            "summary": ("qwen3:8b", 0.1, 8000),
+            "cleaner": (False, "qwen2.5:7b-instruct", 0, 6000),
+            "segmenter": (False, "qwen2.5:7b-instruct", 0.05, 6000),
+            "speaker_resolver": (False, "qwen2.5:7b-instruct", 0, 3000),
+            "structurer": (True, "qwen3:8b", 0.05, 6000),
+            "summary": (True, "qwen3:8b", 0.05, 7000),
         }
 
-        for stage, (model, temperature, max_tokens) in expected.items():
+        for stage, (enabled, model, temperature, max_tokens) in expected.items():
             with self.subTest(stage=stage):
+                self.assertEqual(config.DEFAULT_PIPELINE[stage]["enabled"], enabled)
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["model"], model)
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["temperature"], temperature)
                 self.assertEqual(config.DEFAULT_PIPELINE[stage]["max_tokens"], max_tokens)
@@ -122,7 +132,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         summary_cfg = profile["preferences"]["settings"]["pipeline"]["summary"]
 
         self.assertEqual(summary_cfg["model"], "qwen3:8b")
-        self.assertEqual(summary_cfg["max_tokens"], 8000)
+        self.assertEqual(summary_cfg["max_tokens"], 7000)
 
     def test_custom_pipeline_settings_override_updated_defaults(self):
         db.upsert_model_settings(
@@ -137,7 +147,42 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(pipeline_settings["cleaner"]["model"], "qwen2.5:3b-instruct")
         self.assertEqual(pipeline_settings["cleaner"]["max_tokens"], 1234)
         self.assertEqual(pipeline_settings["segmenter"]["model"], "qwen2.5:7b-instruct")
-        self.assertEqual(pipeline_settings["segmenter"]["max_tokens"], 8000)
+        self.assertFalse(pipeline_settings["segmenter"]["enabled"])
+        self.assertEqual(pipeline_settings["segmenter"]["max_tokens"], 6000)
+
+    def test_asr_pipeline_reset_uses_current_defaults_over_stale_profile_pipeline(self):
+        stale_pipeline = deepcopy(config.DEFAULT_PIPELINE)
+        stale_pipeline["cleaner"] = {
+            "enabled": True,
+            "model": "qwen2.5:7b-instruct",
+            "temperature": 0.2,
+            "max_tokens": 9000,
+        }
+        stale_pipeline["segmenter"] = {
+            "enabled": True,
+            "model": "qwen2.5:7b-instruct",
+            "temperature": 0.2,
+            "max_tokens": 8000,
+        }
+        stale_pipeline["speaker_resolver"] = {
+            "enabled": True,
+            "model": "qwen2.5:7b-instruct",
+            "temperature": 0.2,
+            "max_tokens": 4000,
+        }
+        db.update_profile_preferences(self.profile_id, {"settings": {"pipeline": stale_pipeline}})
+
+        result = profile_routes.reset_model_settings(
+            ModelSettingsReset(profile_id=self.profile_id, model_name=pipeline.ASR_PIPELINE_SETTINGS_MODEL_ID)
+        )
+        effective_pipeline = result["effective"]["pipeline"]
+
+        self.assertEqual(result["effective"]["ollama_think"], "off")
+        self.assertEqual(effective_pipeline["cleaner"], config.DEFAULT_PIPELINE["cleaner"])
+        self.assertEqual(effective_pipeline["segmenter"], config.DEFAULT_PIPELINE["segmenter"])
+        self.assertEqual(effective_pipeline["speaker_resolver"], config.DEFAULT_PIPELINE["speaker_resolver"])
+        self.assertEqual(effective_pipeline["structurer"], config.DEFAULT_PIPELINE["structurer"])
+        self.assertEqual(effective_pipeline["summary"], config.DEFAULT_PIPELINE["summary"])
 
     def test_asr_analysis_actions_map_to_generic_stages(self):
         pipeline_cfg = deepcopy(config.DEFAULT_PIPELINE)
@@ -151,8 +196,8 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertTrue(pipeline._stage_enabled("summary", "smart_summary", "balanced", pipeline_cfg))
 
         self.assertFalse(pipeline._stage_enabled("cleaner", "full", "balanced", pipeline_cfg))
-        self.assertTrue(pipeline._stage_enabled("segmenter", "full", "balanced", pipeline_cfg))
-        self.assertTrue(pipeline._stage_enabled("speaker_resolver", "full", "balanced", pipeline_cfg))
+        self.assertFalse(pipeline._stage_enabled("segmenter", "full", "balanced", pipeline_cfg))
+        self.assertFalse(pipeline._stage_enabled("speaker_resolver", "full", "balanced", pipeline_cfg))
         self.assertTrue(pipeline._stage_enabled("structurer", "full", "balanced", pipeline_cfg))
         self.assertTrue(pipeline._stage_enabled("summary", "full", "balanced", pipeline_cfg))
 
@@ -892,6 +937,43 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertTrue(rag_service.search(self.profile_id, "alpha_unique_profile_fact", top_k=3))
         results = rag_service.search(self.profile_id, "beta_unique_profile_fact", top_k=3)
         self.assertFalse(any("beta_unique_profile_fact" in item["content"] for item in results))
+
+    def test_asr_context_transcript_auto_indexes_rag_and_can_be_deleted_from_rag(self):
+        session = db.create_session(self.profile_id, "ASR context", "qwen2.5:7b-instruct")
+        app = FastAPI()
+        app.include_router(transcripts_router)
+        app.include_router(rag_routes.router)
+        client = TestClient(app)
+
+        response = client.post(
+            "/transcripts",
+            json={
+                "profile_id": self.profile_id,
+                "session_id": session["id"],
+                "name": "ASR обработанный контекст",
+                "content": "unique_asr_context_fact значит решение уже принято.",
+                "labels": {"origin": "asr_context"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        transcript = response.json()
+        source_id = f"transcript:{transcript['id']}"
+        self.assertEqual(transcript["rag_index"]["source_id"], source_id)
+        self.assertGreater(transcript["rag_index"]["chunks_indexed"], 0)
+        self.assertTrue(rag_service.search(self.profile_id, "unique_asr_context_fact", top_k=3))
+
+        status = rag_service.status(self.profile_id)
+        self.assertEqual(status["contexts"][0]["source_id"], source_id)
+
+        delete_response = client.delete(
+            "/rag/contexts",
+            params={"profile_id": self.profile_id, "source_id": source_id},
+        )
+
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertIsNone(db.get_transcript(transcript["id"]))
+        self.assertFalse(rag_service.search(self.profile_id, "unique_asr_context_fact", top_k=3))
 
     def test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers(self):
         db.update_profile_preferences(self.profile_id, {"settings": {"asr_full_analysis_enabled": True}})

@@ -6,26 +6,46 @@ In progress.
 
 Last committed checkpoint:
 
-- `b1f52fd UI rebuild, progress file`
+- `2bc8e60 Harden mobile streaming and Tailscale port detection`
 
-Current uncommitted work after `b1f52fd`:
+Current uncommitted work after `2bc8e60`:
 
-- Mobile/PWA chat streaming hardening:
-  - dedupe repeated SSE `delta` events by per-task `sequence`;
-  - keep existing partial-content replay protection for tab reload/recovery;
-  - convert pagehide/manual SSE close into polling fallback instead of leaving the send flow pending;
-  - ignore late SSE events after a task stream has already settled;
-  - intended fix for iPhone/PWA cases where EventSource reconnects to `/chat/tasks/{id}/events` and replays old deltas, making the UI look like an endless repeated generation.
-- Tailscale plugin backend-port detection hardening:
-  - plugin command/status now prefer the actual FastAPI request server port from `request.scope["server"]`;
-  - avoids falling back to hardcoded/default `8000` when LocalGPT selected a nearby free port such as `8001+`;
-  - Tailscale Serve is still not run automatically by the app; the plugin reports the dynamic command and current Serve target status.
+- ASR `Сохранить в контекст` now creates a linked RAG source:
+  - the ASR context is still stored as a transcript with `labels.origin=asr_context`;
+  - backend auto-indexes it into RAG as source type `asr_context`;
+  - the RAG panel lists saved ASR contexts separately from files;
+  - deleting the context from RAG also deletes the linked transcript/context record;
+  - saving context auto-enables RAG for the active profile if it was off and shows an indexed/chunks notification.
+- ASR Studio bottom action row is simplified to the requested primary actions:
+  - `Копировать`;
+  - `Сохранить в контекст`;
+  - `Скачать TXT`;
+  - `Добавить к промпту`.
+- ASR pipeline reset defaults now match the requested stage table:
+  - `cleaner`: disabled, temp `0`, max tokens `6000`;
+  - `segmenter`: disabled, temp `0.05`, max tokens `6000`;
+  - `speaker_resolver`: disabled, temp `0`, max tokens `3000`;
+  - `structurer`: `qwen3:8b`, temp `0.05`, max tokens `6000`;
+  - `summary`: `qwen3:8b`, temp `0.05`, max tokens `7000`.
+  - reset explicitly writes these ASR pipeline defaults so stale profile-level pipeline settings cannot override them.
+- Model residency policy is tightened:
+  - manual non-router model selection keeps the model alive for at least `5m`;
+  - router keep-alive remains separate;
+  - only one target model is kept resident;
+  - selecting another target model unloads the previous target instead of keeping two side by side.
 
 Current dirty files:
 
-- `backend/apps/plugins/tailscale.py`
+- `app/config.py`
+- `backend/apps/asr/transcripts.py`
+- `backend/apps/chat/services/model_residency.py`
+- `backend/apps/rag/routes.py`
+- `backend/apps/rag/service.py`
 - `documentation/progress/asr-analysis-modes-progress.md`
-- `tests/test_plugin_registry.py`
+- `tests/test_model_router.py`
+- `tests/test_pipeline_memory.py`
+- `web_ui/css/style.css`
+- `web_ui/gui_html.html`
 - `web_ui/js/app.js`
 
 Do not delete this progress file until the full ASR Studio task is complete and the user explicitly confirms it can be closed.
@@ -182,22 +202,24 @@ Implemented and committed:
   - on text tab, search selects text inside textarea;
   - on result tabs, search reports whether current rendered result contains the query.
 
-Safe verification already run for the uncommitted UI/output pass:
+Safe verification before `b1f52fd`:
 
 - `node --check web_ui/js/app.js`
 - `node tests/markdown_rendering.test.mjs`
 - `git diff --check`
 
-## Current Uncommitted Mobile/PWA Chat Stream Fix
+### `2bc8e60 Harden mobile streaming and Tailscale port detection`
 
-User-reported problem:
+Committed mobile/PWA chat stream hardening and dynamic Tailscale target detection.
+
+Mobile/PWA user-reported problem:
 
 - On iPhone/mobile PWA, after opening the app, some LLM replies can appear to generate forever while repeating the same text.
 - During the stuck state, UI controls appear unresponsive.
 - Server log showed a single `POST /chat/tasks`, then repeated `GET /chat/tasks/{task_id}/events` for the same task before the UI reload.
 - Deployment detail: the Mac is the main LocalGPT server; the iPhone reaches it through Tailscale.
 
-Likely cause:
+Mobile/PWA likely cause:
 
 - Browser `EventSource` can reconnect automatically when mobile/PWA networking, Tailscale tunnel conditions, or page lifecycle interrupts SSE.
 - The backend SSE route currently reads task delta artifacts from offset `0` for each new connection.
@@ -205,50 +227,158 @@ Likely cause:
 - Replayed deltas could therefore be appended again, and repeated renders/typewriter backlog could make the interface feel frozen.
 - The old `pagehide` handler also closed `EventSource` without rejecting the active wait promise, which could leave the PWA in an in-memory `isSending=true` state until timeout.
 
-Implemented in uncommitted files:
+Implemented and committed:
 
 - `web_ui/js/app.js` tracks the last seen delta `sequence` in `state.chatTaskReplay`.
 - Repeated or already replay-covered deltas return `null` and do not trigger `renderMessages()`.
 - Manual/pagehide SSE interruption now rejects the stream wait as `streamConnectionFailed`, so existing send/recover flows fall back to `/chat/tasks/{id}` polling.
 - SSE event handlers now ignore late events after the stream promise has settled.
 
-Safe verification already run for the uncommitted mobile/PWA fix:
-
-- `node --check web_ui/js/app.js`
-- `node tests/markdown_rendering.test.mjs`
-- `git diff --check`
-
-## Current Uncommitted Tailscale Port Detection Fix
-
-User-reported concern:
+Tailscale user-reported concern:
 
 - Do not hardcode Tailscale proxy target to one port.
 - LocalGPT can start on `8000`, `8001`, `8002`, etc. if earlier ports are busy.
 - The plugin UI/docs must dynamically reflect the active backend port.
 
-Observed state during debug:
+Observed during debug:
 
 - LocalGPT was listening on `127.0.0.1:8001`.
 - Tailscale Serve status still pointed at `http://127.0.0.1:8000`.
 - Plugin UI correctly showed `Serve active for another target` and exposed `tailscale serve --bg http://127.0.0.1:8001`.
 
-Implemented in uncommitted files:
+Implemented and committed:
 
-- `backend/apps/plugins/tailscale.py` now reads the actual FastAPI server port from `request.scope["server"]` before runtime file/env/default fallback.
-- Added regression coverage in `tests/test_plugin_registry.py` proving request server port wins over stale runtime file and env defaults.
+- `backend/apps/plugins/tailscale.py` reads the actual FastAPI server port from `request.scope["server"]` before runtime file/env/default fallback.
+- Regression coverage in `tests/test_plugin_registry.py` proves request server port wins over stale runtime file and env defaults.
 
 Important boundary:
 
-- The app still does not automatically run or rewrite `tailscale serve`; this is currently a deliberate safety constraint.
+- The app still does not automatically run or rewrite `tailscale serve`; this is a deliberate safety constraint.
 - Dynamic behavior means the plugin computes and displays the correct command/status from the active backend port.
 - If automatic Tailscale Serve reconfiguration is desired later, treat it as an explicit security-sensitive design change.
 
-Safe verification already run:
+Safe verification before `2bc8e60`:
 
 - `venv/bin/python -m py_compile backend/apps/plugins/tailscale.py tests/test_plugin_registry.py`
 - `venv/bin/python -m unittest tests.test_plugin_registry -q`
 - `node --check web_ui/js/app.js`
+- `node tests/markdown_rendering.test.mjs`
 - `git diff --check`
+
+## Current Uncommitted ASR Context And RAG Work
+
+User questions being addressed:
+
+- Where does `Сохранить как контекст` save the result?
+- How can the user see that the context was saved?
+- How can the user remove it?
+- Do models actually read the saved context?
+
+Current behavior before this pass:
+
+- `Сохранить как контекст` created a `transcripts` row with `labels.origin=asr_context`.
+- The latest context could be picked up by chat through the session transcript path.
+- It was not visible as a first-class RAG item.
+- It was not automatically indexed into RAG.
+- Deletion status was not obvious to the user.
+
+Implemented in current uncommitted files:
+
+- `backend/apps/rag/service.py` adds `asr_context` as a source document type.
+- ASR contexts are indexed with local hash embeddings and chunk metadata, same search path as manual RAG files.
+- `backend/apps/asr/transcripts.py` auto-indexes transcripts whose `labels.origin` is `asr_context`.
+- Deleting an ASR context transcript removes the linked RAG source.
+- `DELETE /rag/contexts` removes the RAG context and linked transcript/context record.
+- `rag_service.status(profile_id)` now returns `contexts` for UI display.
+- RAG panel shows context count and a separate `Контекст` section above file sources.
+- Saving ASR context auto-enables RAG for the active profile if it was off.
+- UI status/footer now reports that the context was saved, indexed, and how many chunks were created when available.
+- New regression test verifies:
+  - ASR context transcript auto-indexes into RAG;
+  - RAG search finds the saved ASR fact;
+  - RAG status lists the context;
+  - deleting from RAG removes both the source and transcript.
+
+## Current Uncommitted ASR Studio Actions Work
+
+User direction:
+
+- Reduce the ASR action row; the previous set had too many overlapping actions.
+- Keep the useful user-facing actions:
+  - copy text;
+  - save to context;
+  - download txt;
+  - add to prompt.
+- Do not keep delete-record as a bottom-row action; deletion belongs in the transcript/history database.
+
+Implemented in current uncommitted files:
+
+- ASR bottom action row now shows:
+  - `Копировать`;
+  - `Сохранить в контекст`;
+  - `Скачать TXT`;
+  - `Добавить к промпту`.
+- Removed visible bottom-row buttons for:
+  - clean;
+  - save edits;
+  - send to chat;
+  - clear editor;
+  - delete record;
+  - clear history;
+  - open analysis.
+- Existing optional JS handlers remain tolerant of absent buttons.
+
+## Current Uncommitted Model Residency Work
+
+User direction:
+
+- Manual model choice should keep the model in memory for at least 5 minutes.
+- This applies to all model types except router.
+- Router remains a separate story.
+- If the user switches models again, the previous target model should unload.
+- Do not keep two target models resident side by side.
+
+Implemented in current uncommitted files:
+
+- `ollama_manual_keep_alive` default is now `5m`.
+- UI residency defaults now show manual keep-alive as `5m`.
+- `resolve_model_keep_alive(..., mode="manual")` clamps non-router keep-alive to at least `5m`, even if explicit manual payload is shorter.
+- Router keep-alive remains separately configurable and is not clamped by this manual target rule.
+- Target residency limit is effectively one active target model.
+- The resident-model help tooltip now describes:
+  - max target models: `1`;
+  - manual selection unloads the previous target;
+  - manual keep-alive minimum: `5m`;
+  - router is outside target-model limit.
+
+Safe verification already run for the current uncommitted pass:
+
+- `venv/bin/python -m py_compile app/config.py app/routes/profiles.py backend/apps/chat/services/model_residency.py tests/test_model_router.py backend/apps/rag/service.py backend/apps/rag/routes.py backend/apps/asr/transcripts.py tests/test_pipeline_memory.py`
+- `venv/bin/python -m unittest tests.test_model_router -q`
+- `venv/bin/python -m unittest tests.test_pipeline_memory.LocalGPTPipelineMemoryTestCase.test_asr_context_transcript_auto_indexes_rag_and_can_be_deleted_from_rag -q`
+- `venv/bin/python -m unittest tests.test_pipeline_memory.LocalGPTPipelineMemoryTestCase.test_asr_pipeline_reset_uses_current_defaults_over_stale_profile_pipeline tests.test_pipeline_memory.LocalGPTPipelineMemoryTestCase.test_default_pipeline_uses_current_catalog_and_token_budget tests.test_pipeline_memory.LocalGPTPipelineMemoryTestCase.test_asr_pipeline_defaults_disable_ollama_thinking -q`
+- `node --check web_ui/js/app.js`
+- `node tests/markdown_rendering.test.mjs`
+- `git diff --check`
+
+Local UI smoke check on `http://127.0.0.1:8000/ui/gui_html.html`:
+
+- ASR action row shows only:
+  - `Копировать`;
+  - `Сохранить в контекст`;
+  - `Скачать TXT`;
+  - `Добавить к промпту`.
+- Removed old action button IDs are absent from DOM:
+  - `asrToolCleanButton`;
+  - `asrToolSaveButton`;
+  - `asrToolSendButton`;
+  - `asrToolClearButton`;
+  - `asrToolDeleteButton`;
+  - `asrToolClearHistoryButton`;
+  - `asrToolOpenAnalysisButton`.
+- RAG panel opens and displays context count in status.
+- Current real profile had `контекстов: 0`, so no live user-data context was created for visual testing.
+- Residency tooltip says max target models `1`, manual selection unloads previous target, and manual keep-alive minimum is 5 minutes.
 
 ## Known UI Follow-Ups
 
@@ -260,7 +390,7 @@ Needs user-side visual review in ASR Studio:
 - check that per-record delete button is not too visually noisy;
 - check that Markdown summary output is readable and not too large;
 - check mobile/responsive behavior if ASR Studio is opened on narrow width;
-- verify that `Открыть анализ`, copy/download, save context, send to chat still use expected text.
+- verify that `Копировать`, `Сохранить в контекст`, `Скачать TXT`, and `Добавить к промпту` use expected text.
 
 Possible next refinement:
 
@@ -278,22 +408,35 @@ Possible next refinement:
 
 ## Current Pending Tasks
 
-1. User-side retest on iPhone/PWA: start a streamed chat generation, background/reopen the app, and confirm the answer does not repeat old chunks.
-2. Confirm Tailscale plugin UI shows the active backend port after server restarts onto `8000+`.
-3. If the mobile/PWA issue persists, inspect Tailscale/iOS EventSource reconnection timing and consider a backend SSE resume offset or `Last-Event-ID` support.
-4. Visually verify ASR Studio layout in browser.
-5. Fix any spacing/overflow issues from the result-first layout.
-6. Decide whether warnings need a visible diagnostics chip/list.
-7. Keep copy/download plain text/markdown, not rendered HTML.
-8. Consider adding a separate lightweight `Перевести summary` action later:
+1. Visually verify RAG panel after saving an ASR context:
+   - context appears in a separate `Контекст` section;
+   - delete button removes it from RAG and linked transcript/context storage;
+   - context count updates.
+2. Confirm saved ASR context is injected into model prompts through RAG when RAG is enabled.
+3. Confirm manual model switching unloads the previous target model and keeps the new non-router target alive for at least `5m` in a real app session if needed.
+4. Run safe checks again after any visual/UI fixes.
+5. Commit the current ASR context/RAG, ASR actions, residency, and progress update pass.
+6. User-side retest on iPhone/PWA remains useful:
+   - start a streamed chat generation;
+   - background/reopen the app;
+   - confirm the answer does not repeat old chunks.
+7. Confirm Tailscale plugin UI still shows the active backend port after server restarts onto `8000+`.
+8. If the mobile/PWA issue persists, inspect Tailscale/iOS EventSource reconnection timing and consider a backend SSE resume offset or `Last-Event-ID` support.
+9. Continue ASR Studio visual review:
+   - result-first layout at fullscreen size;
+   - middle control column width;
+   - right history column readability;
+   - Markdown summary output readability;
+   - mobile/responsive behavior.
+10. Decide whether warnings need a visible diagnostics chip/list.
+11. Keep copy/download plain text/markdown, not rendered HTML.
+12. Consider adding a separate lightweight `Перевести summary` action later:
    - should translate the existing summary only;
    - must not rerun ASR, structurer, or full pipeline;
    - should store/display a language-specific summary variant if implemented.
-9. Update README/technical docs if UI/output pass is accepted.
-10. Add an ASR Studio checkbox/toggle to show/hide service information returned after analysis, including warning blocks like `Предупреждения: - raw_transcript_chunked:2`.
-11. Run safe checks again before commit.
-12. Commit current mobile/PWA and Tailscale port-detection fixes after user confirms behavior.
-13. Do not remove this progress file until user confirms the whole ASR Studio task is complete.
+13. Update README/technical docs if UI/output/RAG-context pass is accepted.
+14. Add an ASR Studio checkbox/toggle to show/hide service information returned after analysis, including warning blocks like `Предупреждения: - raw_transcript_chunked:2`.
+15. Do not remove this progress file until user confirms the whole ASR Studio task is complete.
 
 ## Tests And Safe Checks To Prefer
 
@@ -332,7 +475,7 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
 
 Последний коммит:
 
-- `b1f52fd UI rebuild, progress file`
+- `2bc8e60 Harden mobile streaming and Tailscale port detection`
 
 Что уже реализовано и закоммичено:
 
@@ -358,22 +501,51 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
   - main summary view не добавляет structured/debug/raw warnings после `run.summary`;
   - ASR Studio layout переставлен в result-first схему;
   - история ASR получила отдельную кнопку удаления записи.
+- Mobile/PWA chat stream hardening уже закоммичен:
+  - клиент дедуплицирует SSE `delta` по `sequence`;
+  - pagehide/manual SSE close переводит ожидание генерации в polling fallback;
+  - late SSE events после settled stream игнорируются.
+- Tailscale plugin port detection уже закоммичен:
+  - backend port берётся из `request.scope["server"]` перед runtime/env/default fallback;
+  - plugin показывает динамическую команду для активного `8000+` порта;
+  - приложение не запускает и не переписывает `tailscale serve` автоматически.
 
 Что сейчас не закоммичено:
 
-- Mobile/PWA chat stream fix:
+- ASR context/RAG pass:
+  - `Сохранить в контекст` создаёт transcript с `labels.origin=asr_context`;
+  - backend автоматически индексирует его в RAG source type `asr_context`;
+  - RAG status возвращает `contexts`;
+  - RAG panel показывает отдельную секцию `Контекст`;
+  - удаление из RAG удаляет связанный transcript/context record;
+  - сохранение ASR context включает RAG для активного профиля, если он был выключен, и показывает статус индексации/chunks.
+- ASR Studio actions pass:
+  - в нижнем action row оставлены `Копировать`, `Сохранить в контекст`, `Скачать TXT`, `Добавить к промпту`;
+  - удаление записи остаётся в истории/базе транскрибаций, не в основном action row.
+- ASR pipeline reset/defaults pass:
+  - reset for `__asr_pipeline__` explicitly persists current `DEFAULT_PIPELINE` and `ollama_think=off`;
+  - this fixes stale profile-level `settings.pipeline` overriding the new defaults after server restart;
+  - UI recommendations are short:
+    - disabled stages show only `Стадия выключена.`;
+    - enabled stages show only the requested model recommendation text.
+- Model residency pass:
+  - manual non-router model keep_alive минимум `5m`;
+  - router остаётся отдельным;
+  - одновременно держим только одну target model;
+  - при выборе новой target model старая выгружается.
+- Изменённые файлы:
+  - `app/config.py`;
+  - `app/routes/profiles.py`;
+  - `backend/apps/asr/transcripts.py`;
+  - `backend/apps/chat/services/model_residency.py`;
+  - `backend/apps/rag/routes.py`;
+  - `backend/apps/rag/service.py`;
+  - `tests/test_model_router.py`;
+  - `tests/test_pipeline_memory.py`;
+  - `web_ui/css/style.css`;
+  - `web_ui/gui_html.html`;
   - `web_ui/js/app.js`;
-  - `backend/apps/plugins/tailscale.py`;
-  - `tests/test_plugin_registry.py`;
   - `documentation/progress/asr-analysis-modes-progress.md`.
-- Клиент теперь дедуплицирует SSE `delta` по `sequence` внутри активного task replay.
-- Уже покрытые replay-куски не вызывают `renderMessages()`.
-- `pagehide`/ручное закрытие SSE теперь переводит ожидание генерации в polling fallback, а не оставляет PWA в подвешенном состоянии.
-- Late SSE events после settled stream игнорируются.
-- Контекст: Mac является основным сервером, iPhone подключается через Tailscale.
-- Цель: убрать iPhone/PWA баг, где `EventSource` через Tailscale/мобильный lifecycle переподключается к `/chat/tasks/{id}/events`, backend заново отдаёт старые deltas, а UI выглядит как бесконечная повторяющаяся генерация.
-- Tailscale plugin теперь берёт активный backend-port из `request.scope["server"]` перед runtime/env/default fallback, чтобы не скатываться на hardcoded/default `8000`, когда LocalGPT поднялся на `8001+`.
-- Важно: приложение по-прежнему не запускает и не переписывает `tailscale serve` автоматически; plugin показывает правильную динамическую команду и статус текущего Serve target.
 
 Что пользователь сообщил по качеству:
 
@@ -382,21 +554,20 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
 
 Что нужно сделать дальше:
 
-1. Попросить пользователя проверить iPhone/PWA сценарий с обычной streamed chat генерацией.
-2. Проверить, что Tailscale plugin после restart на `8000+` показывает активный порт, а не default `8000`.
-3. Если повтор останется, следующим шагом смотреть Tailscale/iOS timing и backend SSE resume offset / `Last-Event-ID`.
-4. Визуально проверить ASR Studio layout в браузере, не запуская ASR/LLM.
-5. Исправить spacing/overflow/адаптивность, если видно проблемы.
-6. Решить, как показывать warnings: лучше отдельная диагностика/chips/details, не внутри основного summary.
-7. В рамках этой ветки добавить checkbox/toggle для показа/скрытия служебной информации после анализа, например блока `Предупреждения: - raw_transcript_chunked:2`; данные backend не удалять, управлять только отображением в UI.
-8. Убедиться, что copy/download/send/save context используют plain markdown/text, а не HTML.
-9. Запустить только безопасные проверки:
+1. Визуально проверить сохранение ASR context:
+   - появляется в RAG section `Контекст`;
+   - удаление из RAG удаляет linked transcript/context;
+   - статус/chunk count понятен пользователю.
+2. Проверить, что RAG context реально попадает в chat retrieval path при включённом RAG.
+3. Визуально проверить ASR Studio action row и адаптивность, не запуская ASR/LLM.
+4. Проверить manual model switching: новая target model выгружает предыдущую, keep_alive минимум `5m`; router отдельно.
+5. Запустить только безопасные проверки:
    - `node --check web_ui/js/app.js`
-   - `node tests/markdown_rendering.test.mjs`
    - `git diff --check`
    - при Python-изменениях `py_compile` и generic mocked tests.
-10. Обновить progress-файл.
-11. После одобрения пользователя сделать коммит текущих mobile/PWA и Tailscale port-detection fixes.
+6. Обновить progress-файл после визуальной проверки.
+7. Сделать коммит текущего ASR context/RAG, ASR actions, model residency pass.
+8. Попросить пользователя по возможности отдельно ретестнуть iPhone/PWA stream и Tailscale active port после серверных restart.
 
 Не делать:
 

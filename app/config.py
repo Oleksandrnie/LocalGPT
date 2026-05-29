@@ -349,34 +349,34 @@ MODEL_RECOMMENDATIONS = MODEL_CATALOG
 
 DEFAULT_PIPELINE = {
     "cleaner": {
-        "enabled": True,
+        "enabled": False,
         "model": "qwen2.5:7b-instruct",
         "temperature": 0,
-        "max_tokens": 9000,
+        "max_tokens": 6000,
     },
     "segmenter": {
-        "enabled": True,
+        "enabled": False,
         "model": "qwen2.5:7b-instruct",
         "temperature": 0.05,
-        "max_tokens": 8000,
+        "max_tokens": 6000,
     },
     "speaker_resolver": {
-        "enabled": True,
+        "enabled": False,
         "model": "qwen2.5:7b-instruct",
-        "temperature": 0.1,
-        "max_tokens": 4000,
+        "temperature": 0,
+        "max_tokens": 3000,
     },
     "structurer": {
         "enabled": True,
         "model": "qwen3:8b",
-        "temperature": 0.1,
-        "max_tokens": 8000,
+        "temperature": 0.05,
+        "max_tokens": 6000,
     },
     "summary": {
         "enabled": True,
         "model": "qwen3:8b",
-        "temperature": 0.1,
-        "max_tokens": 8000,
+        "temperature": 0.05,
+        "max_tokens": 7000,
     },
 }
 
@@ -463,14 +463,14 @@ def _load_settings() -> Settings:
         ),
         ollama_manual_keep_alive=_parse_keep_alive(
             "OLLAMA_MANUAL_KEEP_ALIVE",
-            _parse_keep_alive("OLLAMA_CHAT_KEEP_ALIVE", "4m"),
+            "5m",
         ),
         ollama_code_keep_alive=_parse_keep_alive("OLLAMA_CODE_KEEP_ALIVE", "2m"),
         ollama_router_keep_alive=_parse_keep_alive("OLLAMA_ROUTER_KEEP_ALIVE", "2m"),
         ollama_heavy_keep_alive=_parse_keep_alive("OLLAMA_HEAVY_KEEP_ALIVE", "60s"),
         ollama_pipeline_keep_alive=_parse_keep_alive("OLLAMA_PIPELINE_KEEP_ALIVE", "0"),
         ollama_pipeline_num_gpu=_default_pipeline_num_gpu(),
-        max_resident_target_models=_parse_int("MAX_RESIDENT_TARGET_MODELS", 2),
+        max_resident_target_models=_parse_int("MAX_RESIDENT_TARGET_MODELS", 1),
         allow_light_with_heavy=_parse_bool("ALLOW_LIGHT_WITH_HEAVY", False),
         single_large_target_model=_parse_bool("SINGLE_LARGE_TARGET_MODEL", True),
         preload_model_on_manual_select=_parse_bool("PRELOAD_MODEL_ON_MANUAL_SELECT", False),

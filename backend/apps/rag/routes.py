@@ -28,6 +28,11 @@ def rag_delete_file(profile_id: int = Query(...), path: str = Query(...)) -> dic
     return service.delete_file(profile_id, path)
 
 
+@router.delete("/rag/contexts")
+def rag_delete_context(profile_id: int = Query(...), source_id: str = Query(...)) -> dict[str, object]:
+    return service.delete_asr_context_source(profile_id, source_id)
+
+
 @router.post("/rag/migrate-legacy")
 def rag_migrate_legacy(req: RagIngestRequest) -> dict[str, object]:
     return service.migrate_legacy_root_files(req.profile_id)

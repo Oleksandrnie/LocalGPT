@@ -303,26 +303,12 @@
                     <p class="inline-status" id="asrToolStatus">Выберите аудио или видео для транскрибации.</p>
                     <p class="subtle" id="asrToolMeta">История ASR Studio хранится отдельно от быстрой диктовки.</p>
                     <div class="button-row">
-                        <button class="button button--ghost" id="asrToolCleanButton" type="button">Очистить</button>
-                        <button class="button button--ghost" id="asrToolDownloadButton" type="button">Скачать
-                            .txt</button>
-                        <button class="button button--ghost" id="asrToolCopyButton" type="button">Копировать</button>
-                        <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить
-                            правки</button>
-                        <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как
+                        <button class="button button--primary" id="asrToolCopyButton" type="button">Копировать</button>
+                        <button class="button button--primary" id="asrToolSaveContextButton" type="button">Сохранить в
                             контекст</button>
-                        <button class="button button--ghost" id="asrToolSendButton" type="button">Отправить в
-                            чат</button>
-                        <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить
-                            редактор</button>
-                        <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить
-                            запись</button>
-                        <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить
-                            историю</button>
-                        <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в
-                            промпт</button>
-                        <button class="button button--primary" id="asrToolOpenAnalysisButton" type="button">Открыть
-                            анализ</button>
+                        <button class="button button--primary" id="asrToolDownloadButton" type="button">Скачать TXT</button>
+                        <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Добавить к
+                            промпту</button>
                     </div>
                             <div class="asr-pipeline-route">
                                 <div class="pipeline-steps" id="asrToolPipelineSteps" aria-label="Путь pipeline"></div>
@@ -767,7 +753,7 @@
                     <div class="residency-help-row">
                         <button class="model-info-button residency-help-button" type="button"
                             aria-label="Инструкция по настройке resident-моделей"
-                            data-tooltip="Рекомендация для MacBook Pro 16GB:&#10;- Максимум target-моделей: 2.&#10;- Одна medium/code/heavy модель: включено, чтобы 7B/8B/coder/heavy не висели вместе.&#10;- Auto/Manual keep_alive: 4–6 минут, если часто продолжаете диалог.&#10;- Code keep_alive: 2 минуты.&#10;- Heavy Mistral Nemo: 60–90 секунд.&#10;- Router qwen3:0.6b: 2 минуты, в лимит target-моделей не входит.&#10;- Preload включайте только если хотите загружать модель сразу при ручном выборе.&#10;- Light рядом с heavy включайте только при достаточном запасе RAM.">?</button>
+                            data-tooltip="Рекомендация для MacBook Pro 16GB:&#10;- Максимум target-моделей: 1.&#10;- При ручном выборе новая target-модель выгружает предыдущую.&#10;- Manual keep_alive: минимум 5 минут.&#10;- Auto target keep_alive: 4–6 минут, если часто продолжаете диалог.&#10;- Router qwen3:0.6b: 2 минуты, в лимит target-моделей не входит.&#10;- Preload включайте только если хотите загружать модель сразу при ручном выборе.">?</button>
                     </div>
 
                     <div class="button-row">

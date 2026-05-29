@@ -473,4 +473,11 @@ def reset_model_settings(req: ModelSettingsReset):
     _get_profile_or_404(req.profile_id)
     model = normalize_model_name(req.model_name)
     db.reset_model_settings(req.profile_id, model)
+    if model == "__asr_pipeline__":
+        db.upsert_model_settings(
+            req.profile_id,
+            model,
+            ollama_think="off",
+            pipeline=config.DEFAULT_PIPELINE,
+        )
     return db.effective_settings(req.profile_id, model, config.DEFAULT_SETTINGS)
