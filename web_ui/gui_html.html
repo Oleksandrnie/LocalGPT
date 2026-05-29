@@ -225,8 +225,25 @@
         </header>
         <div class="tool-window__body tool-window__body--asr">
             <div class="tool-panel asr-studio-main">
-                <div class="asr-layout-grid">
+                <div class="asr-layout-grid" id="asrLayoutGrid">
+                    <aside class="tool-sidebar asr-history-column">
+                        <div class="tool-sidebar__head">
+                            <div class="asr-history-column__title">
+                                <h4>База транскрибаций</h4>
+                                <button class="asr-history-column__toggle" id="asrHistoryToggleButton" type="button"
+                                    aria-expanded="true" aria-label="Свернуть базу транскрибаций" title="Свернуть базу транскрибаций">◀</button>
+                            </div>
+                            <label class="asr-search">
+                                <span aria-hidden="true">⌕</span>
+                                <input id="asrToolHistorySearchInput" type="search" placeholder="Поиск в базе..." />
+                            </label>
+                        </div>
+                        <div class="tool-history" id="asrToolHistoryList"></div>
+                    </aside>
+
                     <section class="asr-result-column">
+                        <button class="asr-history-reopen" id="asrHistoryReopenButton" type="button"
+                            aria-label="Развернуть базу транскрибаций" title="Развернуть базу транскрибаций" hidden>▶ База</button>
                         <label class="asr-search asr-search--primary">
                             <span aria-hidden="true">⌕</span>
                             <input id="asrToolSearchInput" type="search" placeholder="Поиск в тексте" />
@@ -242,6 +259,13 @@
                                 <button class="asr-file-card__action" id="asrToolRetranscribeButton"
                                     type="button">Пересоздать</button>
                             </span>
+                        </div>
+
+                        <div class="asr-tabs" role="tablist" aria-label="Разделы ASR Studio">
+                            <button class="asr-tab asr-tab--active" type="button" data-asr-tab="text">Текст</button>
+                            <button class="asr-tab" type="button" data-asr-tab="summary">Саммари</button>
+                            <button class="asr-tab" type="button" data-asr-tab="tasks">Задачи</button>
+                            <button class="asr-tab" type="button" data-asr-tab="roles">Роли</button>
                         </div>
 
                         <div class="asr-content-grid">
@@ -292,13 +316,6 @@
                     </div>
                         </div>
 
-                        <div class="asr-tabs" role="tablist" aria-label="Разделы ASR Studio">
-                            <button class="asr-tab asr-tab--active" type="button" data-asr-tab="text">Текст</button>
-                            <button class="asr-tab" type="button" data-asr-tab="summary">Саммари</button>
-                            <button class="asr-tab" type="button" data-asr-tab="tasks">Задачи</button>
-                            <button class="asr-tab" type="button" data-asr-tab="roles">Роли</button>
-                        </div>
-
                         <div class="asr-bottom-bar">
                     <p class="inline-status" id="asrToolStatus">Выберите аудио или видео для транскрибации.</p>
                     <p class="subtle" id="asrToolMeta">История ASR Studio хранится отдельно от быстрой диктовки.</p>
@@ -320,8 +337,14 @@
                         <div class="tool-toolbar asr-studio-toolbar">
                             <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
                                 файл</button>
-                            <button class="button button--ghost" id="asrToolPipelineSettingsButton"
-                                type="button">Настройки</button>
+                            <div class="asr-toolbar-actions">
+                                <button class="button button--ghost" id="asrToolPipelineSettingsButton"
+                                    type="button">Настройки</button>
+                                <button class="button button--ghost" id="asrToolRefreshHistoryButton"
+                                    type="button">Обновить</button>
+                                <button class="button button--ghost" id="asrToolStopButton"
+                                    type="button">Остановить</button>
+                            </div>
                             <label class="field">
                                 <span class="field__label">ASR модель</span>
                                 <select id="asrToolModelSelect" class="field__control"></select>
@@ -342,9 +365,6 @@
                                     <option value="en">English</option>
                                 </select>
                             </label>
-                            <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
-                                список</button>
-                            <button class="button button--danger" id="asrToolStopButton" type="button">Остановить</button>
                             <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
                         </div>
 
@@ -368,17 +388,6 @@
                     </aside>
                 </div>
             </div>
-
-            <aside class="tool-sidebar asr-history-sidebar">
-                <div class="tool-sidebar__head">
-                    <h4>База транскрибаций</h4>
-                    <label class="asr-search">
-                        <span aria-hidden="true">⌕</span>
-                        <input id="asrToolHistorySearchInput" type="search" placeholder="Поиск" />
-                    </label>
-                </div>
-                <div class="tool-history" id="asrToolHistoryList"></div>
-            </aside>
         </div>
         <div class="drop-zone-overlay drop-zone-overlay--tool" id="asrToolDropOverlay" hidden aria-hidden="true">
             <div class="drop-zone-overlay__card drop-zone-overlay__card--compact">

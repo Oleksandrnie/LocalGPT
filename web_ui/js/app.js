@@ -40,6 +40,7 @@ const STORAGE_KEYS = {
   asrLibraryOpen: "localgpt_simple_asr_library_open",
   asrPipelineSettingsOpen: "localgpt_simple_asr_pipeline_settings_open",
   asrAnalysisMode: "localgpt_simple_asr_analysis_mode",
+  asrHistoryCollapsed: "localgpt_simple_asr_history_collapsed",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
   settingsTab: "localgpt_simple_settings_tab",
 };
@@ -216,6 +217,7 @@ const els = {
   chatDropOverlayMeta: document.getElementById("chatDropOverlayMeta"),
   toolDock: document.getElementById("toolDock"),
   asrToolWindow: document.getElementById("asrToolWindow"),
+  asrLayoutGrid: document.getElementById("asrLayoutGrid"),
   asrToolDropOverlay: document.getElementById("asrToolDropOverlay"),
   asrToolDropOverlayTitle: document.getElementById("asrToolDropOverlayTitle"),
   asrToolDropOverlayMeta: document.getElementById("asrToolDropOverlayMeta"),
@@ -238,6 +240,8 @@ const els = {
   asrToolRetranscribeButton: document.getElementById("asrToolRetranscribeButton"),
   asrToolSearchInput: document.getElementById("asrToolSearchInput"),
   asrToolHistorySearchInput: document.getElementById("asrToolHistorySearchInput"),
+  asrHistoryToggleButton: document.getElementById("asrHistoryToggleButton"),
+  asrHistoryReopenButton: document.getElementById("asrHistoryReopenButton"),
   asrToolDownloadButton: document.getElementById("asrToolDownloadButton"),
   asrToolStatus: document.getElementById("asrToolStatus"),
   asrToolMeta: document.getElementById("asrToolMeta"),
@@ -517,6 +521,7 @@ const state = {
   asrToolActiveTab: "text",
   asrToolTextSearch: "",
   asrToolHistorySearch: "",
+  asrHistoryCollapsed: readStored(STORAGE_KEYS.asrHistoryCollapsed, "") === "1",
   ragStatus: null,
   ragBusy: false,
   pluginsState: {
@@ -1156,6 +1161,28 @@ function setSidebarOpen(open) {
 
 function toggleSidebarCollapse() {
   setSidebarOpen(!state.sidebarOpen);
+}
+
+function applyAsrHistoryCollapsedState() {
+  const collapsed = Boolean(state.asrHistoryCollapsed);
+  els.asrLayoutGrid?.classList.toggle("asr-layout-grid--history-collapsed", collapsed);
+  if (els.asrHistoryReopenButton) {
+    els.asrHistoryReopenButton.hidden = !collapsed;
+  }
+  if (!els.asrHistoryToggleButton) return;
+  els.asrHistoryToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  els.asrHistoryToggleButton.setAttribute(
+    "aria-label",
+    collapsed ? "Развернуть базу транскрибаций" : "Свернуть базу транскрибаций",
+  );
+  els.asrHistoryToggleButton.title = collapsed ? "Развернуть базу транскрибаций" : "Свернуть базу транскрибаций";
+  els.asrHistoryToggleButton.textContent = collapsed ? "▶" : "◀";
+}
+
+function setAsrHistoryCollapsed(collapsed) {
+  state.asrHistoryCollapsed = Boolean(collapsed);
+  writeStored(STORAGE_KEYS.asrHistoryCollapsed, state.asrHistoryCollapsed ? "1" : "");
+  applyAsrHistoryCollapsedState();
 }
 
 function normalizeTheme(value) {
@@ -9402,6 +9429,12 @@ function bindEvents() {
     state.asrToolHistorySearch = els.asrToolHistorySearchInput.value || "";
     renderAsrToolHistory();
   });
+  els.asrHistoryToggleButton?.addEventListener("click", () => {
+    setAsrHistoryCollapsed(!state.asrHistoryCollapsed);
+  });
+  els.asrHistoryReopenButton?.addEventListener("click", () => {
+    setAsrHistoryCollapsed(false);
+  });
   document.querySelectorAll("[data-asr-tab]").forEach((button) => {
     button.addEventListener("click", () => setAsrToolTab(button.dataset.asrTab || "text"));
   });
@@ -10002,6 +10035,7 @@ function bindEvents() {
 async function bootstrap() {
   initTheme();
   applySidebarOpenState();
+  applyAsrHistoryCollapsedState();
   initAppSelects();
   renderWhisperControls();
   renderTtsControls();
