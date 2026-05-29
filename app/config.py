@@ -393,6 +393,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "rag_top_k": 5,
     "rag_max_context_chars": 6000,
     "ollama_think": "auto",
+    "show_router_thinking_toggle": False,
     "pipeline": DEFAULT_PIPELINE,
 }
 

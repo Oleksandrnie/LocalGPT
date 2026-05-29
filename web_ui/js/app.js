@@ -41,6 +41,7 @@ const STORAGE_KEYS = {
   asrPipelineSettingsOpen: "localgpt_simple_asr_pipeline_settings_open",
   asrAnalysisMode: "localgpt_simple_asr_analysis_mode",
   asrHistoryCollapsed: "localgpt_simple_asr_history_collapsed",
+  ttsHistoryCollapsed: "localgpt_simple_tts_history_collapsed",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
   settingsTab: "localgpt_simple_settings_tab",
 };
@@ -176,6 +177,8 @@ const els = {
   sessionList: document.getElementById("sessionList"),
   sessionContextMenu: document.getElementById("sessionContextMenu"),
   renameSessionMenuItem: document.getElementById("renameSessionMenuItem"),
+  asrHistoryContextMenu: document.getElementById("asrHistoryContextMenu"),
+  renameAsrTranscriptMenuItem: document.getElementById("renameAsrTranscriptMenuItem"),
   profileField: document.getElementById("profileField"),
   profileSelect: document.getElementById("profileSelect"),
   chatTitle: document.getElementById("chatTitle"),
@@ -186,6 +189,9 @@ const els = {
   quickModelValue: document.getElementById("quickModelValue"),
   quickModelMeta: document.getElementById("quickModelMeta"),
   quickModelMenu: document.getElementById("quickModelMenu"),
+  quickModelMobileControl: document.getElementById("quickModelMobileControl"),
+  quickModelMobileButton: document.getElementById("quickModelMobileButton"),
+  quickModelMobileMenu: document.getElementById("quickModelMobileMenu"),
   quickModelSelect: document.getElementById("quickModelSelect"),
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
   networkAddressMenu: document.getElementById("networkAddressMenu"),
@@ -249,6 +255,7 @@ const els = {
   asrToolCleanButton: document.getElementById("asrToolCleanButton"),
   asrToolAnalysisModeControl: document.getElementById("asrToolAnalysisModeControl"),
   asrToolAnalysisModeButton: document.getElementById("asrToolAnalysisModeButton"),
+  asrToolAnalysisHelpButton: document.getElementById("asrToolAnalysisHelpButton"),
   asrToolAnalysisModeLabel: document.getElementById("asrToolAnalysisModeLabel"),
   asrToolAnalysisModeMenu: document.getElementById("asrToolAnalysisModeMenu"),
   asrToolAnalysisModeDescription: document.getElementById("asrToolAnalysisModeDescription"),
@@ -295,6 +302,7 @@ const els = {
   ttsToolDeleteButton: document.getElementById("ttsToolDeleteButton"),
   ttsToolClearButton: document.getElementById("ttsToolClearButton"),
   ttsToolPlayer: document.getElementById("ttsToolPlayer"),
+  ttsHistoryToggleButton: document.getElementById("ttsHistoryToggleButton"),
   ttsToolHistoryList: document.getElementById("ttsToolHistoryList"),
   ocrBackdrop: document.getElementById("ocrBackdrop"),
   closeOcrButton: document.getElementById("closeOcrButton"),
@@ -356,6 +364,9 @@ const els = {
   quickThinkingControl: document.getElementById("quickThinkingControl"),
   quickThinkingButton: document.getElementById("quickThinkingButton"),
   quickThinkingMenu: document.getElementById("quickThinkingMenu"),
+  quickThinkingMobileControl: document.getElementById("quickThinkingMobileControl"),
+  quickThinkingMobileButton: document.getElementById("quickThinkingMobileButton"),
+  quickThinkingMobileMenu: document.getElementById("quickThinkingMobileMenu"),
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
@@ -377,6 +388,7 @@ const els = {
   heavyKeepAliveUnitSelect: document.getElementById("heavyKeepAliveUnitSelect"),
   routerKeepAliveInput: document.getElementById("routerKeepAliveInput"),
   routerKeepAliveUnitSelect: document.getElementById("routerKeepAliveUnitSelect"),
+  showRouterThinkingToggle: document.getElementById("showRouterThinkingToggle"),
   saveModelSettingsButton: document.getElementById("saveModelSettingsButton"),
   resetModelSettingsButton: document.getElementById("resetModelSettingsButton"),
   modelSettingsStatus: document.getElementById("modelSettingsStatus"),
@@ -439,6 +451,7 @@ const state = {
   sessions: [],
   currentSessionId: null,
   sessionContextMenuSessionId: null,
+  asrHistoryContextMenuTranscriptId: null,
   messages: [],
   installedModels: [],
   recommendedModels: [],
@@ -522,6 +535,7 @@ const state = {
   asrToolTextSearch: "",
   asrToolHistorySearch: "",
   asrHistoryCollapsed: readStored(STORAGE_KEYS.asrHistoryCollapsed, "") === "1",
+  ttsHistoryCollapsed: readStored(STORAGE_KEYS.ttsHistoryCollapsed, "1") === "1",
   ragStatus: null,
   ragBusy: false,
   pluginsState: {
@@ -641,6 +655,14 @@ function modelSupportsThinking(modelName) {
     return true;
   }
   return THINKING_MODEL_PATTERNS.some((pattern) => pattern.test(target));
+}
+
+function shouldShowThinkingToggleForModel(modelName) {
+  const target = String(modelName || "").trim();
+  if (!modelSupportsThinking(target)) return false;
+  if (target !== AUTO_MODEL_ID) return true;
+  const settings = getActiveProfilePreferences()?.settings || {};
+  return Boolean(settings.show_router_thinking_toggle);
 }
 
 function normalizeOllamaThink(value, fallback = "auto") {
@@ -1165,11 +1187,22 @@ function toggleSidebarCollapse() {
 
 function applyAsrHistoryCollapsedState() {
   const collapsed = Boolean(state.asrHistoryCollapsed);
+  const mobile = isMobileLayout();
   els.asrLayoutGrid?.classList.toggle("asr-layout-grid--history-collapsed", collapsed);
   if (els.asrHistoryReopenButton) {
-    els.asrHistoryReopenButton.hidden = !collapsed;
+    els.asrHistoryReopenButton.hidden = mobile || !collapsed;
   }
   if (!els.asrHistoryToggleButton) return;
+  if (mobile) {
+    els.asrHistoryToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    els.asrHistoryToggleButton.setAttribute(
+      "aria-label",
+      collapsed ? "Показать базу транскрибаций" : "Скрыть базу транскрибаций",
+    );
+    els.asrHistoryToggleButton.title = collapsed ? "Показать базу транскрибаций" : "Скрыть базу транскрибаций";
+    els.asrHistoryToggleButton.textContent = collapsed ? "More" : "Less";
+    return;
+  }
   els.asrHistoryToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
   els.asrHistoryToggleButton.setAttribute(
     "aria-label",
@@ -1183,6 +1216,26 @@ function setAsrHistoryCollapsed(collapsed) {
   state.asrHistoryCollapsed = Boolean(collapsed);
   writeStored(STORAGE_KEYS.asrHistoryCollapsed, state.asrHistoryCollapsed ? "1" : "");
   applyAsrHistoryCollapsedState();
+}
+
+function applyTtsHistoryCollapsedState() {
+  const collapsed = Boolean(state.ttsHistoryCollapsed);
+  const mobile = isMobileLayout();
+  els.ttsToolWindow?.classList.toggle("tts-history-collapsed", mobile && collapsed);
+  if (!els.ttsHistoryToggleButton) return;
+  els.ttsHistoryToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  els.ttsHistoryToggleButton.setAttribute(
+    "aria-label",
+    collapsed ? "Показать историю озвучки" : "Скрыть историю озвучки",
+  );
+  els.ttsHistoryToggleButton.title = collapsed ? "Показать историю озвучки" : "Скрыть историю озвучки";
+  els.ttsHistoryToggleButton.textContent = collapsed ? "More" : "Less";
+}
+
+function setTtsHistoryCollapsed(collapsed) {
+  state.ttsHistoryCollapsed = Boolean(collapsed);
+  writeStored(STORAGE_KEYS.ttsHistoryCollapsed, state.ttsHistoryCollapsed ? "1" : "");
+  applyTtsHistoryCollapsedState();
 }
 
 function normalizeTheme(value) {
@@ -1427,55 +1480,113 @@ function describeChatModelItem(item) {
 }
 
 function closeQuickModelMenu() {
-  if (!els.quickModelMenu || !els.quickModelButton) return;
-  els.quickModelMenu.hidden = true;
-  els.quickModelButton.setAttribute("aria-expanded", "false");
+  [
+    { menu: els.quickModelMenu, button: els.quickModelButton },
+    { menu: els.quickModelMobileMenu, button: els.quickModelMobileButton },
+  ].forEach(({ menu, button }) => {
+    if (menu) menu.hidden = true;
+    if (button) button.setAttribute("aria-expanded", "false");
+  });
 }
 
-function toggleQuickModelMenu(forceState) {
-  if (!els.quickModelMenu || !els.quickModelButton) return;
-  if (els.quickModelButton.disabled) return;
+function syncQuickModelMobileMenuBounds() {
+  if (!els.quickModelMobileMenu || !els.quickModelMobileButton) return;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || 0;
+  const viewportWidth = window.visualViewport?.width || window.innerWidth || 0;
+  const viewportOffsetTop = window.visualViewport?.offsetTop || 0;
+  const buttonRect = els.quickModelMobileButton.getBoundingClientRect();
+  const screenPadding = 12;
+  const menuOffset = 8;
+  const minMenuHeight = 160;
+  const availableHeight = Math.floor(
+    viewportOffsetTop + viewportHeight - buttonRect.bottom - menuOffset - screenPadding,
+  );
+  const boundedHeight = Math.max(minMenuHeight, availableHeight);
+  const boundedWidth = Math.max(220, Math.floor(viewportWidth - screenPadding * 2));
+  els.quickModelMobileMenu.style.maxHeight = `${boundedHeight}px`;
+  els.quickModelMobileMenu.style.maxWidth = `${boundedWidth}px`;
+}
+
+function toggleQuickModelMenu(forceState, source = "desktop") {
+  const target = source === "mobile"
+    ? { menu: els.quickModelMobileMenu, button: els.quickModelMobileButton }
+    : { menu: els.quickModelMenu, button: els.quickModelButton };
+  if (!target.menu || !target.button) return;
+  if (target.button.disabled) return;
   const nextState = typeof forceState === "boolean"
     ? forceState
-    : els.quickModelMenu.hidden;
-  els.quickModelMenu.hidden = !nextState;
-  els.quickModelButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+    : target.menu.hidden;
+  closeQuickModelMenu();
+  target.menu.hidden = !nextState;
+  target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
+  if (source === "mobile" && nextState) {
+    syncQuickModelMobileMenuBounds();
+    requestAnimationFrame(syncQuickModelMobileMenuBounds);
+  }
 }
 
 function closeQuickThinkingMenu() {
-  if (!els.quickThinkingMenu || !els.quickThinkingButton) return;
-  els.quickThinkingMenu.hidden = true;
-  els.quickThinkingButton.setAttribute("aria-expanded", "false");
+  [
+    { menu: els.quickThinkingMenu, button: els.quickThinkingButton },
+    { menu: els.quickThinkingMobileMenu, button: els.quickThinkingMobileButton },
+  ].forEach(({ menu, button }) => {
+    if (menu) menu.hidden = true;
+    if (button) button.setAttribute("aria-expanded", "false");
+  });
 }
 
-function toggleQuickThinkingMenu(forceState) {
-  if (!els.quickThinkingMenu || !els.quickThinkingButton) return;
-  if (els.quickThinkingButton.disabled) return;
+function toggleQuickThinkingMenu(forceState, source = "desktop") {
+  const target = source === "mobile"
+    ? { menu: els.quickThinkingMobileMenu, button: els.quickThinkingMobileButton }
+    : { menu: els.quickThinkingMenu, button: els.quickThinkingButton };
+  if (!target.menu || !target.button) return;
+  if (target.button.disabled) return;
   const nextState = typeof forceState === "boolean"
     ? forceState
-    : els.quickThinkingMenu.hidden;
-  els.quickThinkingMenu.hidden = !nextState;
-  els.quickThinkingButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+    : target.menu.hidden;
+  closeQuickThinkingMenu();
+  target.menu.hidden = !nextState;
+  target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
 }
 
 function renderQuickModelPicker() {
-  if (!els.quickModelButton || !els.quickModelValue || !els.quickModelMeta || !els.quickModelMenu) return;
   const items = getChatModelItems();
   const selectedName = state.selectedLlmModel || "";
   const selectedItem = items.find((item) => item.name === selectedName) || items[0] || null;
+  const hasDesktopPicker = Boolean(els.quickModelButton && els.quickModelValue && els.quickModelMeta && els.quickModelMenu);
+  const hasMobilePicker = Boolean(els.quickModelMobileButton && els.quickModelMobileMenu);
+  if (!hasDesktopPicker && !hasMobilePicker) return;
 
-  els.quickModelButton.disabled = !items.length;
+  if (els.quickModelButton) {
+    els.quickModelButton.disabled = !items.length;
+  }
+  if (els.quickModelMobileButton) {
+    els.quickModelMobileButton.disabled = !items.length;
+  }
+  if (els.quickModelMobileControl) {
+    els.quickModelMobileControl.hidden = false;
+  }
   if (!items.length) {
     closeQuickModelMenu();
   }
-  els.quickModelValue.textContent = selectedItem?.name || "Нет доступных моделей";
-  els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
+  if (els.quickModelValue) {
+    els.quickModelValue.textContent = selectedItem?.name || "Нет доступных моделей";
+  }
+  if (els.quickModelMeta) {
+    els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
+  }
 
-  els.quickModelMenu.innerHTML = [
-    '<div class="quick-model-picker__header">Модель чата</div>',
-    ...items.map((item) => {
-      const active = item.name === selectedName;
-      return `
+  const thinkingValue = normalizeOllamaThink(
+    els.quickThinkingControl?.dataset.thinkingMode ?? state.modelSettingsState?.effective?.ollama_think,
+    "auto",
+  );
+  const thinkingOn = thinkingValue !== "off";
+  const menuHtml = items.map((item) => {
+    const active = item.name === selectedName;
+    const thinkingSupported = shouldShowThinkingToggleForModel(item.name);
+    const itemThinkingOn = active ? thinkingOn : false;
+    return `
+      <div class="quick-model-picker__item-shell${active ? " quick-model-picker__item-shell--active" : ""}">
         <button
           class="quick-model-picker__item${active ? " quick-model-picker__item--active" : ""}"
           type="button"
@@ -1483,16 +1594,23 @@ function renderQuickModelPicker() {
           aria-checked="${active ? "true" : "false"}"
           data-quick-model="${escapeHtml(item.name)}"
         >
-          <span class="quick-model-picker__item-row">
-            <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
-            ${getModelDescription(item) ? renderModelInfoIcon(item, "quick-model-picker__help") : ""}
-          </span>
-          <span class="quick-model-picker__item-meta">${escapeHtml(describeChatModelItem(item))}</span>
+          <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
         </button>
-      `;
-    }),
-    '<div class="quick-model-picker__hint">Выбор здесь переключает модель текущего чата. Управление загрузкой и удалением остаётся в настройках.</div>',
-  ].join("");
+        ${thinkingSupported ? `
+          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking">
+            <input type="checkbox" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
+            <span class="apple-switch__track" aria-hidden="true"></span>
+          </label>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+  if (els.quickModelMenu) {
+    els.quickModelMenu.innerHTML = menuHtml;
+  }
+  if (els.quickModelMobileMenu) {
+    els.quickModelMobileMenu.innerHTML = menuHtml;
+  }
 }
 
 function getWhisperItems() {
@@ -3343,6 +3461,28 @@ function openSessionContextMenu(sessionId, clientX, clientY) {
   els.sessionContextMenu.style.top = `${top}px`;
 }
 
+function closeAsrHistoryContextMenu() {
+  state.asrHistoryContextMenuTranscriptId = null;
+  if (els.asrHistoryContextMenu) {
+    els.asrHistoryContextMenu.hidden = true;
+  }
+}
+
+function openAsrHistoryContextMenu(transcriptId, clientX, clientY) {
+  const targetId = Number(transcriptId || 0);
+  const transcript = state.asrToolHistory.find((item) => Number(item.id) === targetId);
+  if (!transcript || !els.asrHistoryContextMenu) return;
+  state.asrHistoryContextMenuTranscriptId = targetId;
+  els.asrHistoryContextMenu.hidden = false;
+
+  const rect = els.asrHistoryContextMenu.getBoundingClientRect();
+  const margin = 10;
+  const left = Math.min(Math.max(margin, clientX), window.innerWidth - rect.width - margin);
+  const top = Math.min(Math.max(margin, clientY), window.innerHeight - rect.height - margin);
+  els.asrHistoryContextMenu.style.left = `${left}px`;
+  els.asrHistoryContextMenu.style.top = `${top}px`;
+}
+
 function renderContextSummary() {
   if (!els.contextStatus) return;
   if (state.latestTranscript) {
@@ -3543,13 +3683,15 @@ function renderModelControls() {
   queueSyncAppSelects();
 }
 
-async function applySelectedLlmModel(nextModel) {
+async function applySelectedLlmModel(nextModel, { closeMenu = true } = {}) {
   const modelName = String(nextModel || "").trim();
   if (!modelName) return;
 
   state.selectedLlmModel = modelName;
   writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
-  closeQuickModelMenu();
+  if (closeMenu) {
+    closeQuickModelMenu();
+  }
 
   [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
     const hasOption = Array.from(select.options || []).some((option) => option.value === modelName);
@@ -3695,6 +3837,7 @@ function renderModelSettings() {
     code_model_keep_alive: overrides.code_model_keep_alive ?? effective.code_model_keep_alive ?? RESIDENCY_DEFAULTS.code_model_keep_alive,
     heavy_model_keep_alive: overrides.heavy_model_keep_alive ?? effective.heavy_model_keep_alive ?? RESIDENCY_DEFAULTS.heavy_model_keep_alive,
     router_keep_alive: overrides.router_keep_alive ?? effective.router_keep_alive ?? RESIDENCY_DEFAULTS.router_keep_alive,
+    show_router_thinking_toggle: Boolean((getActiveProfilePreferences()?.settings || {}).show_router_thinking_toggle),
   };
   renderQuickThinkingControl(values.ollama_think);
 
@@ -3752,6 +3895,11 @@ function renderModelSettings() {
     els.preloadManualSelectToggle.checked = Boolean(values.preload_model_on_manual_select);
     els.preloadManualSelectToggle.title = "Если включено, ручной выбор модели сразу загружает её в Ollama.";
   }
+  if (els.showRouterThinkingToggle) {
+    els.showRouterThinkingToggle.disabled = profileDisabled;
+    els.showRouterThinkingToggle.checked = Boolean(values.show_router_thinking_toggle);
+    els.showRouterThinkingToggle.title = "Показывать switch Thinking для Auto / Smart Router в верхнем меню выбора модели.";
+  }
   setKeepAliveControl(
     els.autoTargetKeepAliveInput,
     els.autoTargetKeepAliveUnitSelect,
@@ -3793,6 +3941,8 @@ function renderModelSettings() {
   if (els.resetModelSettingsButton) {
     els.resetModelSettingsButton.disabled = profileDisabled || !modelName;
   }
+  renderQuickThinkingControl(values.ollama_think);
+  renderQuickModelPicker();
   queueSyncAppSelects();
   renderAsrPipelineSettings();
 }
@@ -3803,21 +3953,38 @@ function renderQuickThinkingControl(rawValue = null) {
   const supported = modelSupportsThinking(modelName);
   const normalized = normalizeOllamaThink(rawValue, "auto");
   const visibleValue = normalized === "off" ? "off" : "on";
-  els.quickThinkingControl.dataset.thinkingMode = visibleValue;
-  els.quickThinkingButton.disabled = !supported || !state.activeProfileId || !modelName;
-  els.quickThinkingButton.textContent = "Thinking";
-  els.quickThinkingControl.hidden = !modelName;
-  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
-  els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
-  els.quickThinkingControl.title = supported
+  const disabled = !supported || !state.activeProfileId || !modelName;
+  const hint = supported
     ? "Thinking влияет на скорость, CPU и полноту рассуждения для моделей, которые поддерживают этот режим."
     : "Выбранная модель не объявлена как thinking-capable; параметр не отправляется.";
-  els.quickThinkingMenu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
-    const active = button.getAttribute("data-thinking-mode") === visibleValue;
-    button.classList.toggle("thinking-mode-menu__item--active", active);
-    button.setAttribute("aria-checked", active ? "true" : "false");
+
+  els.quickThinkingControl.dataset.thinkingMode = visibleValue;
+  els.quickThinkingButton.disabled = disabled;
+  els.quickThinkingButton.textContent = "Thinking";
+  els.quickThinkingControl.hidden = true;
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
+  els.quickThinkingControl.title = hint;
+
+  if (els.quickThinkingMobileControl) {
+    els.quickThinkingMobileControl.dataset.thinkingMode = visibleValue;
+    els.quickThinkingMobileControl.hidden = true;
+    els.quickThinkingMobileControl.title = hint;
+  }
+  if (els.quickThinkingMobileButton) {
+    els.quickThinkingMobileButton.disabled = disabled;
+    els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking: ${visibleValue === "on" ? "включено" : "выключено"}`);
+  }
+
+  [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
+    menu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
+      const active = button.getAttribute("data-thinking-mode") === visibleValue;
+      button.classList.toggle("thinking-mode-menu__item--active", active);
+      button.setAttribute("aria-checked", active ? "true" : "false");
+    });
   });
-  if (!supported || !state.activeProfileId || !modelName) {
+
+  if (disabled) {
     closeQuickThinkingMenu();
   }
 }
@@ -3880,6 +4047,7 @@ function collectResidencySettings() {
     allow_light_with_heavy: Boolean(els.allowLightWithHeavyToggle?.checked),
     single_large_target_model: Boolean(els.singleLargeTargetModelToggle?.checked),
     preload_model_on_manual_select: Boolean(els.preloadManualSelectToggle?.checked),
+    show_router_thinking_toggle: Boolean(els.showRouterThinkingToggle?.checked),
     auto_target_keep_alive: collectKeepAliveFromControl(els.autoTargetKeepAliveInput, els.autoTargetKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.auto_target_keep_alive,
     manual_keep_alive: collectKeepAliveFromControl(els.manualKeepAliveInput, els.manualKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.manual_keep_alive,
     code_model_keep_alive: collectKeepAliveFromControl(els.codeKeepAliveInput, els.codeKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.code_model_keep_alive,
@@ -4714,6 +4882,7 @@ function renderTtsTool() {
   }
 
   syncTtsToolPlayer(selectedRecord);
+  applyTtsHistoryCollapsedState();
   renderTtsToolHistory();
   queueSyncAppSelects();
 }
@@ -4793,6 +4962,7 @@ async function loadAsrToolHistory({ silent = false } = {}) {
 
 function renderAsrToolHistory() {
   if (!els.asrToolHistoryList) return;
+  closeAsrHistoryContextMenu();
   if (!state.asrToolHistory.length) {
     els.asrToolHistoryList.innerHTML = '<p class="subtle">История транскрибаций пока пуста.</p>';
     return;
@@ -4897,11 +5067,16 @@ function renderAsrAnalysisModeControl() {
   const selectedMode = getAsrAnalysisModeConfig(selectedId);
   const menuOpen = Boolean(state.asrToolAnalysisModeMenuOpen);
 
+  const modeDescription = selectedMode?.description || "Выберите режим анализа транскрипции.";
   if (els.asrToolAnalysisModeLabel) {
-    els.asrToolAnalysisModeLabel.textContent = `Режим анализа: ${selectedMode?.label || "Умное саммари"}`;
+    els.asrToolAnalysisModeLabel.textContent = selectedMode?.label || "Умное саммари";
   }
   if (els.asrToolAnalysisModeDescription) {
-    els.asrToolAnalysisModeDescription.textContent = selectedMode?.description || "Выберите режим анализа транскрипции.";
+    els.asrToolAnalysisModeDescription.textContent = modeDescription;
+  }
+  if (els.asrToolAnalysisHelpButton) {
+    els.asrToolAnalysisHelpButton.setAttribute("data-tooltip", modeDescription);
+    els.asrToolAnalysisHelpButton.setAttribute("aria-label", modeDescription);
   }
   if (els.asrToolAnalysisModeButton) {
     const disabled = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolStopping || !state.activeProfileId;
@@ -5467,6 +5642,7 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
       state.asrToolPipelineRun = null;
     }
     setInlineStatus(els.asrToolStatus, "Транскрипт загружен. Можно редактировать и отправить в чат.", "success");
+    setAsrHistoryCollapsed(true);
     renderAsrTool();
     if (!isMobileLayout()) {
       requestAnimationFrame(() => els.asrToolOutput?.focus({ preventScroll: true }));
@@ -5484,8 +5660,11 @@ async function openAsrTool({ focusText = false } = {}) {
   state.asrToolIsOpen = true;
   state.asrToolIsMinimized = false;
   els.asrToolWindow.hidden = false;
+  els.asrToolWindow.classList.add("tool-window--fullscreen");
   syncMobileScrollLock();
-  setAsrToolWindowBounds();
+  if (!els.asrToolWindow.classList.contains("tool-window--fullscreen")) {
+    setAsrToolWindowBounds();
+  }
   setInlineStatus(
     els.asrToolStatus,
     state.asrToolSelectedTranscript
@@ -6388,6 +6567,9 @@ async function selectTtsToolRecord(recordId, { silent = false } = {}) {
     }
     const preparedRecord = await ensureTtsToolSpeed(record, { silent: true });
     state.ttsToolSelectedRecord = preparedRecord;
+    if (isMobileLayout()) {
+      setTtsHistoryCollapsed(true);
+    }
     setInlineStatus(
       els.ttsToolStatus,
       preparedRecord.status === "completed"
@@ -6427,6 +6609,7 @@ function fillTtsToolWithLatestAssistant({ silent = false } = {}) {
 
 async function openTtsTool({ focusText = false } = {}) {
   if (!els.ttsToolWindow) return;
+  setTtsHistoryCollapsed(true);
   state.ttsToolIsOpen = true;
   state.ttsToolIsMinimized = false;
   els.ttsToolWindow.hidden = false;
@@ -7927,6 +8110,39 @@ async function saveStreamingPreferenceFlow() {
   renderModelSettings();
 }
 
+async function saveShowRouterThinkingToggleFlow() {
+  if (!els.showRouterThinkingToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.showRouterThinkingToggle.checked);
+  const previous = Boolean((getActiveProfilePreferences()?.settings || {}).show_router_thinking_toggle);
+
+  patchActiveProfileSettingsLocal({ show_router_thinking_toggle: checked });
+  renderQuickModelPicker();
+  setInlineStatus(
+    els.modelSettingsStatus,
+    checked
+      ? "Thinking для Auto / Smart Router будет показан в меню выбора модели."
+      : "Thinking для Auto / Smart Router скрыт из меню выбора модели.",
+    "warning",
+  );
+
+  const updatedProfile = await saveActiveProfilePreferences({ settings: { show_router_thinking_toggle: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileSettingsLocal({ show_router_thinking_toggle: previous });
+    renderQuickModelPicker();
+    setInlineStatus(els.modelSettingsStatus, "Не удалось сохранить настройку router Thinking.", "error");
+    return;
+  }
+
+  renderQuickModelPicker();
+  setInlineStatus(
+    els.modelSettingsStatus,
+    checked
+      ? "Router Thinking будет отображаться в верхнем меню."
+      : "Router Thinking скрыт из верхнего меню.",
+    "success",
+  );
+}
+
 async function saveQuickThinkingModeFlow() {
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
   if (!state.activeProfileId || !modelName || !modelSupportsThinking(modelName)) {
@@ -8090,6 +8306,7 @@ async function resetModelSettingsFlow() {
         mem_turns: defaultMemTurns,
         streaming_enabled: defaultStreamingEnabled,
         ...RESIDENCY_DEFAULTS,
+        show_router_thinking_toggle: false,
       },
     });
     await refreshModelSettings({ silent: true });
@@ -8619,6 +8836,43 @@ async function renameSessionById(sessionId) {
   }
 }
 
+async function renameAsrToolTranscriptById(transcriptId) {
+  const targetId = Number(transcriptId || 0);
+  if (!Number.isFinite(targetId) || targetId <= 0) return;
+  const transcript = state.asrToolHistory.find((item) => Number(item.id) === targetId)
+    || (state.asrToolSelectedTranscript && Number(state.asrToolSelectedTranscript.id) === targetId
+      ? state.asrToolSelectedTranscript
+      : null);
+  if (!transcript) return;
+
+  const currentTitle = getAsrTranscriptTitle(transcript);
+  const nextTitle = window.prompt("Новое название транскрибации", currentTitle);
+  if (nextTitle === null) return;
+  const title = nextTitle.trim();
+  if (!title) {
+    setFooter("Название транскрибации не может быть пустым.", "warning");
+    return;
+  }
+  if (title === currentTitle) return;
+
+  try {
+    const updated = await request(`/transcripts/${encodeURIComponent(targetId)}`, {
+      method: "PATCH",
+      body: { name: title },
+    });
+    state.asrToolHistory = state.asrToolHistory.map((item) => (
+      Number(item.id) === targetId ? { ...item, ...updated } : item
+    ));
+    if (Number(state.asrToolSelectedTranscriptId || 0) === targetId) {
+      state.asrToolSelectedTranscript = { ...(state.asrToolSelectedTranscript || {}), ...updated };
+    }
+    renderAsrTool();
+    setFooter("Транскрибация переименована.", "success");
+  } catch (error) {
+    setFooter(`Не удалось переименовать транскрибацию: ${error.message || error}`, "error");
+  }
+}
+
 async function saveModelsDir(moveExisting) {
   const target = (els.modelsDirInput?.value || "").trim();
   if (!target) {
@@ -8972,6 +9226,7 @@ function bindEvents() {
 
   els.sessionList?.addEventListener("click", async (event) => {
     closeSessionContextMenu();
+    closeAsrHistoryContextMenu();
     const target = event.target instanceof Element ? event.target : null;
     const openButton = target?.closest("[data-action='open']");
     const deleteButton = target?.closest("[data-action='delete']");
@@ -9001,6 +9256,13 @@ function bindEvents() {
     closeSessionContextMenu();
     if (sessionId) {
       await renameSessionById(sessionId);
+    }
+  });
+  els.renameAsrTranscriptMenuItem?.addEventListener("click", async () => {
+    const transcriptId = state.asrHistoryContextMenuTranscriptId;
+    closeAsrHistoryContextMenu();
+    if (transcriptId) {
+      await renameAsrToolTranscriptById(transcriptId);
     }
   });
 
@@ -9261,21 +9523,32 @@ function bindEvents() {
   els.saveModelSettingsButton?.addEventListener("click", async () => saveModelSettingsFlow());
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
   els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
+  els.showRouterThinkingToggle?.addEventListener("change", async () => saveShowRouterThinkingToggleFlow());
   els.quickThinkingButton?.addEventListener("click", () => {
     closeQuickModelMenu();
     closeVoiceModelMenu();
-    toggleQuickThinkingMenu();
+    toggleQuickThinkingMenu(undefined, "desktop");
   });
-  els.quickThinkingMenu?.addEventListener("click", async (event) => {
+  els.quickThinkingMobileButton?.addEventListener("click", () => {
+    closeQuickModelMenu();
+    closeVoiceModelMenu();
+    toggleQuickThinkingMenu(undefined, "mobile");
+  });
+  const handleQuickThinkingMenuClick = async (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-thinking-mode]") : null;
     if (!(button instanceof HTMLElement)) return;
     const nextMode = normalizeOllamaThink(button.dataset.thinkingMode, "on");
     if (!els.quickThinkingControl) return;
     closeQuickThinkingMenu();
     els.quickThinkingControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+    if (els.quickThinkingMobileControl) {
+      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+    }
     renderQuickThinkingControl(nextMode);
     await saveQuickThinkingModeFlow();
-  });
+  };
+  els.quickThinkingMenu?.addEventListener("click", handleQuickThinkingMenuClick);
+  els.quickThinkingMobileMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
   els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
   els.asrFullAnalysisEnabledToggle?.addEventListener("change", async () => saveAsrFullAnalysisPreferenceFlow());
@@ -9301,20 +9574,51 @@ function bindEvents() {
     toggleComposerMenu(false);
     closeQuickThinkingMenu();
     closeVoiceModelMenu();
-    toggleQuickModelMenu();
+    toggleQuickModelMenu(undefined, "desktop");
   });
 
-  els.quickModelMenu?.addEventListener("click", async (event) => {
+  els.quickModelMobileButton?.addEventListener("click", () => {
+    toggleComposerMenu(false);
+    closeQuickThinkingMenu();
+    closeVoiceModelMenu();
+    toggleQuickModelMenu(undefined, "mobile");
+  });
+
+  const handleQuickModelMenuClick = async (event) => {
     if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
       return;
     }
-    const button = event.target.closest("[data-quick-model]");
+    const button = event.target instanceof Element ? event.target.closest("[data-quick-model]") : null;
     if (!button) return;
     const modelName = button.dataset.quickModel || "";
     if (!modelName) return;
     closeQuickModelMenu();
     await applySelectedLlmModel(modelName);
-  });
+  };
+  const handleQuickModelMenuChange = async (event) => {
+    const input = event.target instanceof Element ? event.target.closest("[data-quick-thinking-toggle]") : null;
+    if (!(input instanceof HTMLInputElement)) return;
+    const modelName = String(input.dataset.quickThinkingModel || "").trim();
+    if (!modelName) return;
+    if (state.selectedLlmModel !== modelName) {
+      await applySelectedLlmModel(modelName, { closeMenu: false });
+    }
+    const nextMode = input.checked ? "on" : "off";
+    if (els.quickThinkingControl) {
+      els.quickThinkingControl.dataset.thinkingMode = nextMode;
+    }
+    if (els.quickThinkingMobileControl) {
+      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
+    }
+    renderQuickThinkingControl(nextMode);
+    renderQuickModelPicker();
+    await saveQuickThinkingModeFlow();
+    renderQuickModelPicker();
+  };
+  els.quickModelMenu?.addEventListener("click", handleQuickModelMenuClick);
+  els.quickModelMobileMenu?.addEventListener("click", handleQuickModelMenuClick);
+  els.quickModelMenu?.addEventListener("change", handleQuickModelMenuChange);
+  els.quickModelMobileMenu?.addEventListener("change", handleQuickModelMenuChange);
 
   els.quickModelSelect?.addEventListener("change", async () => {
     await applySelectedLlmModel(els.quickModelSelect.value || "");
@@ -9559,6 +9863,7 @@ function bindEvents() {
     await clearAsrToolHistory();
   });
   els.asrToolHistoryList?.addEventListener("click", async (event) => {
+    closeAsrHistoryContextMenu();
     const deleteButton = event.target instanceof Element ? event.target.closest("[data-asr-history-delete-id]") : null;
     if (deleteButton) {
       event.preventDefault();
@@ -9569,6 +9874,16 @@ function bindEvents() {
     const button = event.target instanceof Element ? event.target.closest("[data-asr-history-id]") : null;
     if (!button) return;
     await selectAsrToolTranscript(button.dataset.asrHistoryId);
+  });
+  els.asrToolHistoryList?.addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const deleteButton = target?.closest("[data-asr-history-delete-id]");
+    if (deleteButton) return;
+    const button = target?.closest("[data-asr-history-id]");
+    const transcriptId = button?.getAttribute("data-asr-history-id");
+    if (!transcriptId) return;
+    event.preventDefault();
+    openAsrHistoryContextMenu(transcriptId, event.clientX, event.clientY);
   });
 
   els.refreshTtsVoicesButton?.addEventListener("click", async () => {
@@ -9644,6 +9959,9 @@ function bindEvents() {
   });
   els.ttsToolClearButton?.addEventListener("click", async () => {
     await clearAllTtsToolHistory();
+  });
+  els.ttsHistoryToggleButton?.addEventListener("click", () => {
+    setTtsHistoryCollapsed(!state.ttsHistoryCollapsed);
   });
   els.ttsToolHistoryList?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-tts-history-id]");
@@ -9892,6 +10210,7 @@ function bindEvents() {
         return;
       }
       closeSessionContextMenu();
+      closeAsrHistoryContextMenu();
       if (!els.confirmBackdrop?.hidden) {
         resolveConfirmDialog(false);
         return;
@@ -9924,16 +10243,26 @@ function bindEvents() {
   window.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const insideComposerMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
-    const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
-    const insideQuickThinkingMenu = target?.closest("#quickThinkingMenu") || target?.closest("#quickThinkingButton");
+    const insideQuickModelMenu = target?.closest("#quickModelMenu")
+      || target?.closest("#quickModelButton")
+      || target?.closest("#quickModelMobileMenu")
+      || target?.closest("#quickModelMobileButton");
+    const insideQuickThinkingMenu = target?.closest("#quickThinkingMenu")
+      || target?.closest("#quickThinkingButton")
+      || target?.closest("#quickThinkingMobileMenu")
+      || target?.closest("#quickThinkingMobileButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
     const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
+    const insideAsrHistoryContextMenu = target?.closest("#asrHistoryContextMenu");
     const insideAppSelect = target?.closest(".app-select");
     const insideAsrAnalysisMode = target?.closest("#asrToolAnalysisModeControl");
     if (!insideSessionContextMenu) {
       closeSessionContextMenu();
+    }
+    if (!insideAsrHistoryContextMenu) {
+      closeAsrHistoryContextMenu();
     }
     if (els.composerMenu && els.composerMenuButton && !insideComposerMenu) {
       toggleComposerMenu(false);
@@ -9964,16 +10293,30 @@ function bindEvents() {
   window.addEventListener("contextmenu", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
-    const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideQuickModelMenu = target?.closest("#quickModelMenu")
+      || target?.closest("#quickModelButton")
+      || target?.closest("#quickModelMobileMenu")
+      || target?.closest("#quickModelMobileButton");
+    const insideQuickThinkingMenu = target?.closest("#quickThinkingMenu")
+      || target?.closest("#quickThinkingButton")
+      || target?.closest("#quickThinkingMobileMenu")
+      || target?.closest("#quickThinkingMobileButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
     const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
+    const insideAsrHistoryContextMenu = target?.closest("#asrHistoryContextMenu") || target?.closest("[data-asr-history-id]");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
       closeSessionContextMenu();
     }
+    if (!insideAsrHistoryContextMenu) {
+      closeAsrHistoryContextMenu();
+    }
     if (!insideQuickModelMenu) {
       closeQuickModelMenu();
+    }
+    if (!insideQuickThinkingMenu) {
+      closeQuickThinkingMenu();
     }
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
@@ -10004,6 +10347,9 @@ function bindEvents() {
     closeNetworkAddressMenu();
     closeAppSelect();
     closeSessionContextMenu();
+    closeAsrHistoryContextMenu();
+    applyAsrHistoryCollapsedState();
+    applyTtsHistoryCollapsedState();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {
       setAsrToolWindowBounds();
     }
@@ -10043,6 +10389,7 @@ async function bootstrap() {
   renderOcrEditor();
   renderToolDock();
   renderVoiceRecordButton();
+  renderQuickModelPicker();
   autoResizePrompt();
   updateSendButtonState();
   bindEvents();

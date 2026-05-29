@@ -19,6 +19,7 @@ MESSAGE_STATUSES = {"generating", "streaming", "completed", "failed", "cancelled
 MESSAGE_ACTIVE_STATUSES = {"generating", "streaming"}
 MESSAGE_FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _MESSAGE_UNSET = object()
+TRANSCRIPT_NAME_MAX_LEN = 120
 
 
 def _utcnow() -> str:
@@ -86,6 +87,14 @@ def _from_json(raw: str | None, fallback: Any = None) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError:
         return fallback
+
+
+def _normalize_transcript_name(name: str | None, *, fallback: str = "Транскрипт") -> str:
+    raw = str(name or "").strip()
+    compact = " ".join(raw.split()) if raw else ""
+    if not compact:
+        compact = fallback
+    return compact[:TRANSCRIPT_NAME_MAX_LEN].strip() or fallback
 
 
 def get_app_setting(key: str, fallback: str | None = None) -> str | None:
@@ -1015,7 +1024,7 @@ def create_transcript(
             (
                 profile_id,
                 session_id,
-                name.strip(),
+                _normalize_transcript_name(name),
                 source_path,
                 content,
                 summary,
@@ -1117,7 +1126,7 @@ def update_transcript(
     params: list[Any] = []
     if name is not None:
         fields.append("name = ?")
-        params.append(name)
+        params.append(_normalize_transcript_name(name))
     if content is not None:
         fields.append("content = ?")
         params.append(content)

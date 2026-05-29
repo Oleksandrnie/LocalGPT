@@ -10,6 +10,50 @@ Last committed checkpoint:
 
 Current uncommitted work after `2bc8e60`:
 
+- ASR Studio UX pass (2026-05-29):
+  - ASR Studio now opens immediately in fullscreen mode by default;
+  - backend/profile plumbing:
+    - added profile-level runtime flag `show_router_thinking_toggle` with default `false`;
+    - profile settings normalization now accepts and persists `show_router_thinking_toggle`;
+    - transcript names are normalized and truncated to `120` chars on create/update to avoid oversized auto-generated titles in ASR history.
+  - transcript database behavior updated:
+    - mobile: database moved to the top, with `Less/More` collapse behavior for compact UX;
+    - mobile: selecting a transcript auto-collapses the database list;
+    - desktop: transcript database now opens as an overlay sidebar above content (does not reflow core columns);
+    - desktop: selecting a transcript auto-collapses the overlay sidebar;
+  - analysis panel refinements:
+    - removed internal panel scrolling for the compact "Анализ" block;
+    - moved descriptive analysis-mode text under `?` tooltip;
+    - analysis mode selector kept as an explicit dropdown control.
+  - mobile topbar controls:
+    - added quick chat-model picker in the top-right icon menu;
+    - placed model picker before the mobile `Thinking` button;
+    - mobile `Thinking` control uses icon-only trigger and dropdown;
+    - desktop topbar quick model select was replaced with the same dropdown picker pattern as mobile;
+    - mobile model dropdown now shows only model names (no extra metadata text in list items);
+    - mobile model dropdown dimensions constrained (`max-content` + viewport max width/height) to avoid overflow outside screen;
+    - unified chat model picker and `Thinking`: separate visible `Thinking` button is hidden, and thinking-capable selected models now show a thin Apple-style switch inside the model dropdown;
+    - all thinking-capable chat models now show the switch immediately in the dropdown, even when not selected; non-selected models render it in `off` state, and toggling it first switches to that model and then saves `Thinking`;
+    - reusable thin Apple-style checkbox/switch styling applied to all checkbox inputs with LocalGPT purple checked state and sliding knob animation;
+    - switch knob vertically centered and quick model dropdown/switch colors adapted for both dark and light themes;
+    - model picker now renders immediately on app startup; before models are loaded it stays visible but disabled;
+    - Auto / Smart Router no longer shows Thinking in the main picker by default; LLM settings now include a dedicated checkbox to reveal or hide router Thinking there;
+    - hidden mobile chat title and adjusted sidebar-open icon to vertical `|||` bars.
+- ASR transcript DB history entries:
+  - added right-click context action `Переименовать`;
+  - selection auto-collapses history on mobile and desktop overlay mode.
+- TTS Studio mobile history behavior:
+  - moved history block to top (same UX pattern as ASR);
+  - added `More/Less` collapse toggle;
+  - selecting history item auto-collapses;
+  - opening TTS Studio now always starts with collapsed (`Less`) state.
+
+Safe verification for the current uncommitted work:
+
+- `node --check web_ui/js/app.js`
+- `python3 -m py_compile app/config.py app/routes/profiles.py`
+- `git diff --check`
+
 - UI update finalized (desktop + mobile):
   - desktop ASR Studio aligned to target layout (left collapsible transcript DB sidebar, center results, right controls);
   - tabs moved above the result area;
@@ -49,13 +93,9 @@ Current uncommitted work after `2bc8e60`:
 Current dirty files:
 
 - `app/config.py`
-- `backend/apps/asr/transcripts.py`
-- `backend/apps/chat/services/model_residency.py`
-- `backend/apps/rag/routes.py`
-- `backend/apps/rag/service.py`
+- `app/db.py`
+- `app/routes/profiles.py`
 - `documentation/progress/asr-analysis-modes-progress.md`
-- `tests/test_model_router.py`
-- `tests/test_pipeline_memory.py`
 - `web_ui/css/style.css`
 - `web_ui/gui_html.html`
 - `web_ui/js/app.js`

@@ -54,7 +54,7 @@
                         <div class="topbar__row">
                             <h2 id="chatTitle">Новый чат</h2>
                             <span class="status-pill" id="healthStatus">Проверка…</span>
-                            <div class="thinking-mode-control" id="quickThinkingControl">
+                            <div class="thinking-mode-control" id="quickThinkingControl" hidden>
                                 <button class="thinking-mode-control__button" id="quickThinkingButton" type="button"
                                     aria-label="Режим thinking текущей LLM" aria-haspopup="menu"
                                     aria-expanded="false">Thinking</button>
@@ -65,8 +65,18 @@
                             </div>
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
-                                <select id="quickModelSelect" class="field__control quick-model-switch__control"
-                                    aria-label="Быстро выбрать модель чата"></select>
+                                <div class="quick-model-picker">
+                                    <button class="quick-model-picker__button" id="quickModelButton" type="button"
+                                        aria-label="Быстро выбрать модель чата" aria-haspopup="menu"
+                                        aria-expanded="false">
+                                        <span class="quick-model-picker__text">
+                                            <span class="quick-model-picker__value" id="quickModelValue">Модель</span>
+                                            <span class="quick-model-picker__meta" id="quickModelMeta">Выберите модель</span>
+                                        </span>
+                                        <span class="quick-model-picker__caret" aria-hidden="true"></span>
+                                    </button>
+                                    <div class="quick-model-picker__menu" id="quickModelMenu" role="menu" hidden></div>
+                                </div>
                             </div>
                         </div>
                         <div class="topbar__meta">
@@ -78,6 +88,44 @@
                 </div>
 
                 <div class="topbar__actions">
+                    <div class="quick-model-mobile" id="quickModelMobileControl">
+                        <button class="button button--ghost topbar-icon-button quick-model-mobile__button"
+                            id="quickModelMobileButton" type="button" aria-label="Выбрать модель чата"
+                            aria-haspopup="menu" aria-expanded="false">
+                            <svg class="topbar-icon-button__icon quick-model-mobile__icon" viewBox="0 0 24 24"
+                                aria-hidden="true">
+                                <rect x="8" y="8" width="8" height="8" rx="1.8"></rect>
+                                <path d="M9 4v2"></path>
+                                <path d="M15 4v2"></path>
+                                <path d="M9 18v2"></path>
+                                <path d="M15 18v2"></path>
+                                <path d="M4 9h2"></path>
+                                <path d="M4 15h2"></path>
+                                <path d="M18 9h2"></path>
+                                <path d="M18 15h2"></path>
+                            </svg>
+                        </button>
+                        <div class="quick-model-picker__menu quick-model-picker__menu--mobile" id="quickModelMobileMenu"
+                            role="menu" hidden></div>
+                    </div>
+                    <div class="thinking-mode-mobile" id="quickThinkingMobileControl" hidden>
+                        <button class="button button--ghost topbar-icon-button thinking-mode-mobile__button"
+                            id="quickThinkingMobileButton" type="button" aria-label="Thinking"
+                            aria-haspopup="menu" aria-expanded="false">
+                            <svg class="topbar-icon-button__icon thinking-mode-mobile__icon" viewBox="0 0 24 24"
+                                aria-hidden="true">
+                                <path d="M9 10.25a3 3 0 0 1 3-3"></path>
+                                <path d="M12 7.25a3 3 0 0 1 3 3"></path>
+                                <path d="M8.5 10.5a2.5 2.5 0 0 0-2.5 2.5c0 1 .58 1.89 1.43 2.31.36.18.57.57.57.98v.71a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-.71c0-.41.21-.8.57-.98A2.58 2.58 0 0 0 18 13a2.5 2.5 0 0 0-2.5-2.5"></path>
+                                <path d="M10 16.5h4"></path>
+                            </svg>
+                        </button>
+                        <div class="thinking-mode-menu thinking-mode-menu--mobile" id="quickThinkingMobileMenu"
+                            role="menu" hidden>
+                            <button type="button" role="menuitemradio" data-thinking-mode="on">Включено</button>
+                            <button type="button" role="menuitemradio" data-thinking-mode="off">Выключено</button>
+                        </div>
+                    </div>
                     <button class="button button--ghost lan-url-button lan-url-button--icon-only"
                         id="copyLanUrlButton" type="button"
                         aria-label="Скопировать адрес доступа" title="Скопировать адрес доступа"
@@ -239,6 +287,13 @@
                             </label>
                         </div>
                         <div class="tool-history" id="asrToolHistoryList"></div>
+                        <div class="session-context-menu" id="asrHistoryContextMenu" hidden role="menu"
+                            aria-label="Действия с транскрибацией">
+                            <button class="session-context-menu__item" id="renameAsrTranscriptMenuItem"
+                                type="button" role="menuitem">
+                                Переименовать
+                            </button>
+                        </div>
                     </aside>
 
                     <section class="asr-result-column">
@@ -369,16 +424,24 @@
                         </div>
 
                         <aside class="asr-next-panel">
-                            <h4>Анализ</h4>
-                            <p class="subtle" id="asrToolAnalysisModeDescription">Выберите режим анализа транскрипции.</p>
-                            <div class="asr-analysis-mode" id="asrToolAnalysisModeControl">
-                                <button class="asr-analysis-mode__button" id="asrToolAnalysisModeButton" type="button"
-                                    aria-haspopup="menu" aria-expanded="false" aria-controls="asrToolAnalysisModeMenu">
-                                    <span id="asrToolAnalysisModeLabel">Режим анализа: Умное саммари</span>
-                                    <span class="asr-analysis-mode__chevron" aria-hidden="true">⌄</span>
-                                </button>
-                                <div class="asr-analysis-mode__menu" id="asrToolAnalysisModeMenu" role="menu" hidden></div>
+                            <div class="asr-next-panel__head">
+                                <h4>Анализ</h4>
+                                <button class="model-info-button asr-analysis-help-button" id="asrToolAnalysisHelpButton"
+                                    type="button" aria-label="Подсказка по режиму анализа"
+                                    data-tooltip="Выберите режим анализа транскрипции.">?</button>
                             </div>
+                            <p class="subtle" id="asrToolAnalysisModeDescription" hidden>Выберите режим анализа транскрипции.</p>
+                            <label class="field asr-analysis-field">
+                                <span class="field__label">Режим анализа</span>
+                                <div class="asr-analysis-mode" id="asrToolAnalysisModeControl">
+                                    <button class="asr-analysis-mode__button" id="asrToolAnalysisModeButton" type="button"
+                                        aria-haspopup="menu" aria-expanded="false" aria-controls="asrToolAnalysisModeMenu">
+                                        <span id="asrToolAnalysisModeLabel">Умное саммари</span>
+                                        <span class="asr-analysis-mode__chevron" aria-hidden="true">⌄</span>
+                                    </button>
+                                    <div class="asr-analysis-mode__menu" id="asrToolAnalysisModeMenu" role="menu" hidden></div>
+                                </div>
+                            </label>
                             <button class="asr-next-action asr-next-action--primary" id="asrToolRunAnalysisButton"
                                 type="button" data-asr-open-tab="summary">
                                 <span class="asr-next-action__icon asr-next-action__icon--success">▶</span>
@@ -455,7 +518,11 @@
 
             <aside class="tool-sidebar">
                 <div class="tool-sidebar__head">
-                    <h4>История озвучки</h4>
+                    <div class="tts-history-column__title">
+                        <h4>История озвучки</h4>
+                        <button class="tts-history-column__toggle" id="ttsHistoryToggleButton" type="button"
+                            aria-expanded="true" aria-label="Скрыть историю озвучки" title="Скрыть историю озвучки">Less</button>
+                    </div>
                 </div>
                 <div class="tool-history" id="ttsToolHistoryList"></div>
             </aside>
@@ -755,6 +822,14 @@
                                     <option value="m" selected>мин</option>
                                     <option value="h">час</option>
                                 </select>
+                            </span>
+                        </label>
+
+                        <label class="field field--checkbox">
+                            <input id="showRouterThinkingToggle" type="checkbox" />
+                            <span class="field__checkbox-copy">
+                                <span>Показывать Thinking у Auto / Smart Router</span>
+                                <small>На главном экране добавляет switch для router в меню выбора моделей.</small>
                             </span>
                         </label>
                     </div>

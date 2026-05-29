@@ -199,6 +199,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "code_model_keep_alive",
         "heavy_model_keep_alive",
         "router_keep_alive",
+        "show_router_thinking_toggle",
     }
     cleaned = {key: value[key] for key in allowed if key in value}
     preset = cleaned.get("default_pipeline_preset")
@@ -234,6 +235,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "allow_light_with_heavy",
         "single_large_target_model",
         "preload_model_on_manual_select",
+        "show_router_thinking_toggle",
     ):
         if key in cleaned and cleaned[key] is not None:
             cleaned[key] = _normalize_bool_setting(cleaned[key])
