@@ -38,6 +38,8 @@ Current uncommitted work after `2bc8e60`:
     - switch knob vertically centered and quick model dropdown/switch colors adapted for both dark and light themes;
     - model picker now renders immediately on app startup; before models are loaded it stays visible but disabled;
     - Auto / Smart Router no longer shows Thinking in the main picker by default; LLM settings now include a dedicated checkbox to reveal or hide router Thinking there;
+    - LAN/Tailscale topbar button removed from the main screen on desktop and mobile; access remains in `Система -> Доступ с телефона`;
+    - mobile model dropdown now uses a viewport-fixed popover centered under the trigger button and clamps to screen bounds so the menu and its switch rows stay inside the viewport;
     - hidden mobile chat title and adjusted sidebar-open icon to vertical `|||` bars.
 - ASR transcript DB history entries:
   - added right-click context action `Переименовать`;

@@ -1487,6 +1487,17 @@ function closeQuickModelMenu() {
     if (menu) menu.hidden = true;
     if (button) button.setAttribute("aria-expanded", "false");
   });
+  if (els.quickModelMobileMenu) {
+    els.quickModelMobileMenu.style.position = "";
+    els.quickModelMobileMenu.style.left = "";
+    els.quickModelMobileMenu.style.right = "";
+    els.quickModelMobileMenu.style.top = "";
+    els.quickModelMobileMenu.style.transform = "";
+    els.quickModelMobileMenu.style.visibility = "";
+    els.quickModelMobileMenu.style.maxHeight = "";
+    els.quickModelMobileMenu.style.maxWidth = "";
+    els.quickModelMobileMenu.style.width = "";
+  }
 }
 
 function syncQuickModelMobileMenuBounds() {
@@ -1494,17 +1505,33 @@ function syncQuickModelMobileMenuBounds() {
   const viewportHeight = window.visualViewport?.height || window.innerHeight || 0;
   const viewportWidth = window.visualViewport?.width || window.innerWidth || 0;
   const viewportOffsetTop = window.visualViewport?.offsetTop || 0;
+  const viewportOffsetLeft = window.visualViewport?.offsetLeft || 0;
   const buttonRect = els.quickModelMobileButton.getBoundingClientRect();
   const screenPadding = 12;
   const menuOffset = 8;
   const minMenuHeight = 160;
-  const availableHeight = Math.floor(
-    viewportOffsetTop + viewportHeight - buttonRect.bottom - menuOffset - screenPadding,
-  );
+  const availableHeight = Math.floor(viewportOffsetTop + viewportHeight - buttonRect.bottom - menuOffset - screenPadding);
   const boundedHeight = Math.max(minMenuHeight, availableHeight);
-  const boundedWidth = Math.max(220, Math.floor(viewportWidth - screenPadding * 2));
+  const maxWidth = Math.max(220, Math.floor(viewportWidth - screenPadding * 2));
+  const minLeft = viewportOffsetLeft + screenPadding;
+  const maxLeft = viewportOffsetLeft + viewportWidth - screenPadding;
+  const buttonCenterX = buttonRect.left + (buttonRect.width / 2);
+  els.quickModelMobileMenu.style.position = "fixed";
+  els.quickModelMobileMenu.style.top = `${Math.round(buttonRect.bottom + menuOffset)}px`;
+  els.quickModelMobileMenu.style.right = "auto";
+  els.quickModelMobileMenu.style.left = `${Math.round(buttonCenterX)}px`;
+  els.quickModelMobileMenu.style.transform = "translateX(-50%)";
+  els.quickModelMobileMenu.style.width = "max-content";
+  els.quickModelMobileMenu.style.maxWidth = `${maxWidth}px`;
   els.quickModelMobileMenu.style.maxHeight = `${boundedHeight}px`;
-  els.quickModelMobileMenu.style.maxWidth = `${boundedWidth}px`;
+  els.quickModelMobileMenu.style.visibility = "hidden";
+  const menuRect = els.quickModelMobileMenu.getBoundingClientRect();
+  const menuWidth = Math.min(menuRect.width || maxWidth, maxWidth);
+  let centeredX = buttonCenterX;
+  centeredX = Math.min(centeredX, maxLeft - (menuWidth / 2));
+  centeredX = Math.max(centeredX, minLeft + (menuWidth / 2));
+  els.quickModelMobileMenu.style.left = `${Math.round(centeredX)}px`;
+  els.quickModelMobileMenu.style.visibility = "visible";
 }
 
 function toggleQuickModelMenu(forceState, source = "desktop") {
