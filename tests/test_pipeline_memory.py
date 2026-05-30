@@ -865,6 +865,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertLess(rag_index, query_index)
         self.assertIn("Alpha project deadline", contents[rag_index])
         self.assertIn("JSON chunks are source of truth", contents[rag_index])
+        self.assertIn("For plural cheapest, middle, or highest grid requests", contents[rag_index])
         self.assertEqual(prepared["effective_settings"]["rag_enabled_effective"], True)
         self.assertGreater(prepared["effective_settings"]["rag_chunks_used"], 0)
 
@@ -905,6 +906,31 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         (source_dir / "manual.md").write_text("Авто не должен перезаписать ручной JSON.", encoding="utf-8")
         rag_service.ensure_structured_json_files(self.profile_id, force=True)
         self.assertIn("do not overwrite", manual_json.read_text(encoding="utf-8"))
+
+    def test_pricing_structurer_recognizes_premium_heading(self):
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        md_path = source_dir / "pricing.md"
+        md_path.write_text(
+            "# Pricing\n\n"
+            "### Базовый\n"
+            "- 3 часа — 9 990 ₽\n\n"
+            "### Оптимальный\n"
+            "- 8 часов — 23 920 ₽\n\n"
+            "### Премиальный\n"
+            "- 16 часов — 47 840 ₽\n",
+            encoding="utf-8",
+        )
+
+        payload = rag_service.structured_payload_for_markdown(md_path)
+
+        self.assertEqual(
+            payload["pricing"]["support_tariffs"],
+            [
+                {"line": "Базовый", "hours": 3, "price": 9990},
+                {"line": "Оптимальный", "hours": 8, "price": 23920},
+                {"line": "Премиальный", "hours": 16, "price": 47840},
+            ],
+        )
 
     def test_rag_delete_file_removes_file_and_auto_companion(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)

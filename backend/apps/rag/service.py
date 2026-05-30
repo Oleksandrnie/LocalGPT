@@ -157,7 +157,7 @@ def _pricing_facts(text: str) -> list[dict[str, Any]]:
         heading = HEADING_RE.match(line)
         if heading and len(heading.group(1)) >= 3:
             title = heading.group(2).strip()
-            if title.lower() in {"базовый", "оптимальный", "максимальный / премиальный"}:
+            if title.lower() in {"базовый", "оптимальный", "премиальный", "максимальный / премиальный"}:
                 current_line = title
             continue
         if not current_line:
@@ -276,8 +276,10 @@ def structured_payload_for_markdown(path: Path) -> dict[str, Any]:
                 "Базовый is a tariff line with only 3, 5, and 7 hour variants.",
                 "The maximum variant inside Базовый is 7 hours / 23730 RUB.",
                 "Оптимальный is a tariff line with only 8, 11, and 15 hour variants.",
-                "Максимальный / Премиальный is a separate tariff line, not a Базовый variant.",
+                "Премиальный (legacy name: Максимальный / Премиальный) is a separate tariff line, not a Базовый variant.",
                 "Do not move 16, 24, or 40 hour variants into Базовый.",
+                "For plural cheapest/middle/highest grid requests, return one matching variant from each tariff line.",
+                "For singular cheapest/most-expensive grid requests, return one absolute item across the whole grid.",
             ],
         }
     return payload
@@ -677,7 +679,10 @@ def build_context(chunks: list[dict[str, Any]], *, max_chars: int = 6000) -> str
     parts: list[str] = [
         "RAG rules: JSON chunks are source of truth. If JSON conflicts with Markdown, use JSON. "
         "Markdown chunks are explanatory context. Do not invent facts not present in retrieved chunks. "
-        "For pricing questions, use explicit structured values and distinguish a minimum tariff from a maximum variant inside a tariff line."
+        "For pricing questions, use explicit structured values and distinguish a minimum tariff from a maximum variant inside a tariff line. "
+        "For plural cheapest, middle, or highest grid requests, use one matching variant from each tariff line. "
+        "For singular cheapest or most-expensive grid requests, use one absolute item across the whole grid. "
+        "If the intended selection is ambiguous and the retrieved source does not define it, ask a short clarifying question."
     ]
     total = len(parts[0]) + 2
     for item in chunks:
