@@ -3,9 +3,13 @@ import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
 const ASR_STUDIO_DEFAULT_PROMPT_PRESET = "ru";
+const ASR_ANALYSIS_LANGUAGE_DEFAULT = "auto";
 const ASR_DEFAULT_BEAM_SIZE = 5;
-const ASR_DEFAULT_THREADS = 0;
+const ASR_DEFAULT_THREADS = 4;
 const ASR_PROMPT_PRESETS = ["auto", "ru", "en"];
+const ASR_ANALYSIS_LANGUAGES = ["auto", "ru", "en"];
+const ASR_FULL_ANALYSIS_WARNING = "Полный анализ запускает все стадии ASR pipeline и может заметно нагружать CPU/GPU, повышать температуру Mac и держать Ollama занятой несколько минут. Включайте и запускайте его только осознанно.";
+const ASR_PIPELINE_DISABLED_VALUE = "__disabled__";
 const CREATE_PROFILE_VALUE = "__create_profile__";
 const AUTO_MODEL_ID = "__auto_router__";
 const AUTO_MODEL_TITLE = "Auto / Smart Router";
@@ -13,6 +17,7 @@ const AUTO_MODEL_HELP = "Автоматически классифицирует
 const LOCAL_CALCULATOR_MODEL_ID = "__local_calculator__";
 const LOCAL_CALCULATOR_TITLE = "Local Calculator";
 const LOCAL_CALCULATOR_HELP = "Детерминированный локальный калькулятор для явной арифметики: суммы, вычитание, проценты, часы/минуты и ставка × часы. Не использует LLM и не отвечает на обычные вопросы.";
+const ASR_PIPELINE_SETTINGS_MODEL_ID = "__asr_pipeline__";
 const STREAM_TYPEWRITER_INTERVAL_MS = 28;
 const STREAM_TYPEWRITER_MIN_CHARS = 1;
 const STREAM_TYPEWRITER_MAX_CHARS = 8;
@@ -34,6 +39,9 @@ const STORAGE_KEYS = {
   chatLibraryOpen: "localgpt_simple_chat_library_open",
   asrLibraryOpen: "localgpt_simple_asr_library_open",
   asrPipelineSettingsOpen: "localgpt_simple_asr_pipeline_settings_open",
+  asrAnalysisMode: "localgpt_simple_asr_analysis_mode",
+  asrHistoryCollapsed: "localgpt_simple_asr_history_collapsed",
+  ttsHistoryCollapsed: "localgpt_simple_tts_history_collapsed",
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
   settingsTab: "localgpt_simple_settings_tab",
 };
@@ -50,10 +58,10 @@ const ASR_PIPELINE_STAGES = [
   { key: "summary", label: "Саммари" },
 ];
 const ASR_PIPELINE_MODEL_CATALOG = [
-  { id: "qwen2.5:3b-instruct", title: "Qwen 2.5 3B Instruct", note: "быстрый слой для очистки и сегментов" },
-  { id: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B Instruct", note: "сбалансированное качество для ролей и medium-summary" },
+  { id: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B Instruct", note: "базовое качество для cleaner, segmenter и ролей" },
+  { id: "qwen2.5:3b-instruct", title: "Qwen 2.5 3B Instruct", note: "быстрый fallback, когда важнее скорость" },
   { id: "qwen3:8b", title: "Qwen 3 8B", note: "reasoning для структуры, решений, задач и рисков" },
-  { id: "mistral-nemo:12b", title: "Mistral Nemo 12B", note: "heavy summary и structuring длинных транскриптов" },
+  { id: "mistral-nemo:12b", title: "Mistral Nemo 12B", note: "heavy summary для длинных транскриптов" },
   { id: "qwen3:4b", title: "Qwen 3 4B", note: "experimental fallback для быстрых проверок" },
   { id: "qwen2.5-coder:7b", title: "Qwen 2.5 Coder 7B", note: "только для технических транскриптов с кодом" },
   { id: "deepseek-coder:6.7b", title: "DeepSeek Coder 6.7B", note: "code-alt для технических транскриптов" },
@@ -62,14 +70,14 @@ const ASR_PIPELINE_MODEL_IDS = ASR_PIPELINE_MODEL_CATALOG.map((item) => item.id)
 const ASR_PIPELINE_LEGACY_MODEL_IDS = new Set(["qwen2.5:3b", "mistral:7b", "mistral"]);
 const ASR_PIPELINE_RECOMMENDATIONS = {
   cleaner: {
-    primary: "qwen2.5:3b-instruct",
-    alternatives: ["qwen2.5:7b-instruct"],
-    text: "быстро чистит шум, повторы и мусор ASR без тяжёлого reasoning.",
+    primary: "qwen2.5:7b-instruct",
+    alternatives: ["qwen2.5:3b-instruct"],
+    text: "базовый качественный вариант для очистки длинных встреч; 3B используй только как быстрый fallback.",
   },
   segmenter: {
-    primary: "qwen2.5:3b-instruct",
-    alternatives: ["qwen2.5:7b-instruct"],
-    text: "лучший быстрый вариант для разбиения transcript на смысловые сегменты.",
+    primary: "qwen2.5:7b-instruct",
+    alternatives: ["qwen2.5:3b-instruct"],
+    text: "базовый качественный вариант для разбиения transcript на смысловые сегменты; 3B оставь только для скорости.",
   },
   speaker_resolver: {
     primary: "qwen2.5:7b-instruct",
@@ -82,23 +90,52 @@ const ASR_PIPELINE_RECOMMENDATIONS = {
     text: "лучше подходит для решений, задач, рисков и open questions.",
   },
   summary: {
-    primary: "mistral-nemo:12b",
-    alternatives: ["qwen3:8b", "qwen2.5:7b-instruct"],
-    text: "heavy-модель для длинного summary; если медленно, используй Qwen 3 8B или Qwen 2.5 7B.",
+    primary: "qwen3:8b",
+    alternatives: ["mistral-nemo:12b", "qwen2.5:7b-instruct"],
+    text: "основной вариант для summary.",
   },
 };
 const ASR_PIPELINE_DEFAULTS = {
-  cleaner: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.2, max_tokens: 6000 },
-  segmenter: { enabled: true, model: "qwen2.5:3b-instruct", temperature: 0.1, max_tokens: 6000 },
-  speaker_resolver: { enabled: true, model: "qwen2.5:7b-instruct", temperature: 0.1, max_tokens: 4000 },
-  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.3, max_tokens: 3500 },
-  summary: { enabled: true, model: "mistral-nemo:12b", temperature: 0.3, max_tokens: 3000 },
+  cleaner: { enabled: false, model: "qwen2.5:7b-instruct", temperature: 0, max_tokens: 6000 },
+  segmenter: { enabled: false, model: "qwen2.5:7b-instruct", temperature: 0.05, max_tokens: 6000 },
+  speaker_resolver: { enabled: false, model: "qwen2.5:7b-instruct", temperature: 0, max_tokens: 3000 },
+  structurer: { enabled: true, model: "qwen3:8b", temperature: 0.05, max_tokens: 6000 },
+  summary: { enabled: true, model: "qwen3:8b", temperature: 0.05, max_tokens: 7000 },
 };
+const ASR_ANALYSIS_MODE_DEFAULT = "smart_summary";
+const ASR_ANALYSIS_MODES = [
+  {
+    id: "summary",
+    label: "Быстрое саммари",
+    action: "summary",
+    preset: "fast",
+    tab: "summary",
+    description: "Минимальная нагрузка: raw transcript -> summary.",
+  },
+  {
+    id: "smart_summary",
+    label: "Умное саммари",
+    action: "smart_summary",
+    preset: "balanced",
+    tab: "summary",
+    description: "Рекомендуемый режим: raw transcript/chunks -> structurer -> summary, без cleaner и ролей.",
+  },
+  {
+    id: "full",
+    label: "Полный анализ",
+    action: "full",
+    preset: "balanced",
+    tab: "summary",
+    requiresFullAnalysis: true,
+    description: "Тяжёлый режим: segmenter -> speaker resolver -> structurer -> summary; доступен только после явного разрешения.",
+  },
+];
 const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
   "max_tokens",
   "num_ctx",
   "ollama_keep_alive",
+  "ollama_think",
   "pipeline_enabled",
   "summary_memory_enabled",
   "rag_enabled",
@@ -111,16 +148,17 @@ const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "pipeline",
 ];
 const RESIDENCY_DEFAULTS = {
-  max_resident_target_models: 2,
+  max_resident_target_models: 1,
   allow_light_with_heavy: false,
   single_large_target_model: true,
   preload_model_on_manual_select: false,
   auto_target_keep_alive: "4m",
-  manual_keep_alive: "4m",
+  manual_keep_alive: "5m",
   code_model_keep_alive: "2m",
   heavy_model_keep_alive: "60s",
   router_keep_alive: "2m",
 };
+const THINKING_MODEL_PATTERNS = [/^qwen3\b/i, /^deepseek-r1\b/i, /^gpt-oss\b/i, /^deepseek-v3\.1\b/i];
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
@@ -139,6 +177,8 @@ const els = {
   sessionList: document.getElementById("sessionList"),
   sessionContextMenu: document.getElementById("sessionContextMenu"),
   renameSessionMenuItem: document.getElementById("renameSessionMenuItem"),
+  asrHistoryContextMenu: document.getElementById("asrHistoryContextMenu"),
+  renameAsrTranscriptMenuItem: document.getElementById("renameAsrTranscriptMenuItem"),
   profileField: document.getElementById("profileField"),
   profileSelect: document.getElementById("profileSelect"),
   chatTitle: document.getElementById("chatTitle"),
@@ -149,6 +189,9 @@ const els = {
   quickModelValue: document.getElementById("quickModelValue"),
   quickModelMeta: document.getElementById("quickModelMeta"),
   quickModelMenu: document.getElementById("quickModelMenu"),
+  quickModelMobileControl: document.getElementById("quickModelMobileControl"),
+  quickModelMobileButton: document.getElementById("quickModelMobileButton"),
+  quickModelMobileMenu: document.getElementById("quickModelMobileMenu"),
   quickModelSelect: document.getElementById("quickModelSelect"),
   copyLanUrlButton: document.getElementById("copyLanUrlButton"),
   networkAddressMenu: document.getElementById("networkAddressMenu"),
@@ -180,6 +223,7 @@ const els = {
   chatDropOverlayMeta: document.getElementById("chatDropOverlayMeta"),
   toolDock: document.getElementById("toolDock"),
   asrToolWindow: document.getElementById("asrToolWindow"),
+  asrLayoutGrid: document.getElementById("asrLayoutGrid"),
   asrToolDropOverlay: document.getElementById("asrToolDropOverlay"),
   asrToolDropOverlayTitle: document.getElementById("asrToolDropOverlayTitle"),
   asrToolDropOverlayMeta: document.getElementById("asrToolDropOverlayMeta"),
@@ -190,9 +234,11 @@ const els = {
   asrToolCloseButton: document.getElementById("asrToolCloseButton"),
   asrToolModelSelect: document.getElementById("asrToolModelSelect"),
   asrToolPromptPresetSelect: document.getElementById("asrToolPromptPresetSelect"),
+  asrToolAnalysisLanguageSelect: document.getElementById("asrToolAnalysisLanguageSelect"),
   asrToolChooseFileButton: document.getElementById("asrToolChooseFileButton"),
   asrToolPipelineSettingsButton: document.getElementById("asrToolPipelineSettingsButton"),
   asrToolRefreshHistoryButton: document.getElementById("asrToolRefreshHistoryButton"),
+  asrToolStopButton: document.getElementById("asrToolStopButton"),
   asrToolFileInput: document.getElementById("asrToolFileInput"),
   asrToolFileCard: document.getElementById("asrToolFileCard"),
   asrToolFileTitle: document.getElementById("asrToolFileTitle"),
@@ -200,11 +246,20 @@ const els = {
   asrToolRetranscribeButton: document.getElementById("asrToolRetranscribeButton"),
   asrToolSearchInput: document.getElementById("asrToolSearchInput"),
   asrToolHistorySearchInput: document.getElementById("asrToolHistorySearchInput"),
+  asrHistoryToggleButton: document.getElementById("asrHistoryToggleButton"),
+  asrHistoryReopenButton: document.getElementById("asrHistoryReopenButton"),
   asrToolDownloadButton: document.getElementById("asrToolDownloadButton"),
   asrToolStatus: document.getElementById("asrToolStatus"),
   asrToolMeta: document.getElementById("asrToolMeta"),
   asrToolOutput: document.getElementById("asrToolOutput"),
   asrToolCleanButton: document.getElementById("asrToolCleanButton"),
+  asrToolAnalysisModeControl: document.getElementById("asrToolAnalysisModeControl"),
+  asrToolAnalysisModeButton: document.getElementById("asrToolAnalysisModeButton"),
+  asrToolAnalysisHelpButton: document.getElementById("asrToolAnalysisHelpButton"),
+  asrToolAnalysisModeLabel: document.getElementById("asrToolAnalysisModeLabel"),
+  asrToolAnalysisModeMenu: document.getElementById("asrToolAnalysisModeMenu"),
+  asrToolAnalysisModeDescription: document.getElementById("asrToolAnalysisModeDescription"),
+  asrToolRunAnalysisButton: document.getElementById("asrToolRunAnalysisButton"),
   asrToolSummaryButton: document.getElementById("asrToolSummaryButton"),
   asrToolTasksButton: document.getElementById("asrToolTasksButton"),
   asrToolInsertPromptButton: document.getElementById("asrToolInsertPromptButton"),
@@ -247,6 +302,7 @@ const els = {
   ttsToolDeleteButton: document.getElementById("ttsToolDeleteButton"),
   ttsToolClearButton: document.getElementById("ttsToolClearButton"),
   ttsToolPlayer: document.getElementById("ttsToolPlayer"),
+  ttsHistoryToggleButton: document.getElementById("ttsHistoryToggleButton"),
   ttsToolHistoryList: document.getElementById("ttsToolHistoryList"),
   ocrBackdrop: document.getElementById("ocrBackdrop"),
   closeOcrButton: document.getElementById("closeOcrButton"),
@@ -305,6 +361,12 @@ const els = {
   deleteProfileButton: document.getElementById("deleteProfileButton"),
   profileStatus: document.getElementById("profileStatus"),
   modelSettingsSummary: document.getElementById("modelSettingsSummary"),
+  quickThinkingControl: document.getElementById("quickThinkingControl"),
+  quickThinkingButton: document.getElementById("quickThinkingButton"),
+  quickThinkingMenu: document.getElementById("quickThinkingMenu"),
+  quickThinkingMobileControl: document.getElementById("quickThinkingMobileControl"),
+  quickThinkingMobileButton: document.getElementById("quickThinkingMobileButton"),
+  quickThinkingMobileMenu: document.getElementById("quickThinkingMobileMenu"),
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
@@ -326,6 +388,7 @@ const els = {
   heavyKeepAliveUnitSelect: document.getElementById("heavyKeepAliveUnitSelect"),
   routerKeepAliveInput: document.getElementById("routerKeepAliveInput"),
   routerKeepAliveUnitSelect: document.getElementById("routerKeepAliveUnitSelect"),
+  showRouterThinkingToggle: document.getElementById("showRouterThinkingToggle"),
   saveModelSettingsButton: document.getElementById("saveModelSettingsButton"),
   resetModelSettingsButton: document.getElementById("resetModelSettingsButton"),
   modelSettingsStatus: document.getElementById("modelSettingsStatus"),
@@ -333,10 +396,14 @@ const els = {
   promptPresetSelect: document.getElementById("promptPresetSelect"),
   asrBeamSizeInput: document.getElementById("asrBeamSizeInput"),
   asrThreadsInput: document.getElementById("asrThreadsInput"),
+  asrAnalysisPromptInput: document.getElementById("asrAnalysisPromptInput"),
   asrPipelineSettingsPanel: document.getElementById("asrPipelineSettingsPanel"),
   asrPipelineSettingsSummary: document.getElementById("asrPipelineSettingsSummary"),
   asrPipelineSettingsToggleButton: document.getElementById("asrPipelineSettingsToggleButton"),
   asrPipelineSettingsBody: document.getElementById("asrPipelineSettingsBody"),
+  asrFullAnalysisEnabledToggle: document.getElementById("asrFullAnalysisEnabledToggle"),
+  asrDiagnosticsEnabledToggle: document.getElementById("asrDiagnosticsEnabledToggle"),
+  asrPipelineThinkSelect: document.getElementById("asrPipelineThinkSelect"),
   asrPipelineSettingsGrid: document.getElementById("asrPipelineSettingsGrid"),
   saveAsrPipelineSettingsButton: document.getElementById("saveAsrPipelineSettingsButton"),
   resetAsrPipelineSettingsButton: document.getElementById("resetAsrPipelineSettingsButton"),
@@ -384,6 +451,7 @@ const state = {
   sessions: [],
   currentSessionId: null,
   sessionContextMenuSessionId: null,
+  asrHistoryContextMenuTranscriptId: null,
   messages: [],
   installedModels: [],
   recommendedModels: [],
@@ -414,6 +482,7 @@ const state = {
   chatTaskId: null,
   chatTaskStartController: null,
   chatTaskEventSource: null,
+  chatTaskStreamAbort: null,
   chatTaskReplay: null,
   chatTypingStreams: new Map(),
   isSpeaking: false,
@@ -459,9 +528,14 @@ const state = {
   asrToolPipelineBusy: false,
   asrToolPipelineAction: "",
   asrToolPipelinePreset: "",
+  asrToolStopping: false,
+  asrToolAnalysisMode: readStored(STORAGE_KEYS.asrAnalysisMode, ASR_ANALYSIS_MODE_DEFAULT),
+  asrToolAnalysisModeMenuOpen: false,
   asrToolActiveTab: "text",
   asrToolTextSearch: "",
   asrToolHistorySearch: "",
+  asrHistoryCollapsed: readStored(STORAGE_KEYS.asrHistoryCollapsed, "") === "1",
+  ttsHistoryCollapsed: readStored(STORAGE_KEYS.ttsHistoryCollapsed, "1") === "1",
   ragStatus: null,
   ragBusy: false,
   pluginsState: {
@@ -484,6 +558,7 @@ const state = {
   asrToolResizeSession: null,
   asrToolTaskId: null,
   asrToolStartController: null,
+  asrToolPipelineController: null,
   asrToolIsTranscribing: false,
   asrToolLastFile: null,
   ttsToolSelectedRecordId: null,
@@ -497,6 +572,11 @@ const state = {
   appSelects: new Map(),
   appSelectSyncFrame: null,
   modelSettingsState: {
+    effective: {},
+    overrides: {},
+    defaults: {},
+  },
+  asrPipelineSettingsState: {
     effective: {},
     overrides: {},
     defaults: {},
@@ -557,6 +637,40 @@ function getCatalogModels() {
 function getUtilityModels() {
   return (Array.isArray(state.utilityModels) ? state.utilityModels : [])
     .filter((item) => getModelId(item));
+}
+
+function getCatalogItemById(modelName) {
+  const target = String(modelName || "").trim();
+  return [...getCatalogModels(), ...getUtilityModels()].find((item) => getModelId(item) === target) || null;
+}
+
+function modelSupportsThinking(modelName) {
+  const target = String(modelName || "").trim();
+  if (!target) return false;
+  if (target === AUTO_MODEL_ID) return true;
+  const item = getCatalogItemById(target);
+  const category = String(item?.category || "").toLowerCase();
+  const description = String(item?.description || "").toLowerCase();
+  if (category.includes("thinking") || description.includes("thinking") || description.includes("reasoning")) {
+    return true;
+  }
+  return THINKING_MODEL_PATTERNS.some((pattern) => pattern.test(target));
+}
+
+function shouldShowThinkingToggleForModel(modelName) {
+  const target = String(modelName || "").trim();
+  if (!modelSupportsThinking(target)) return false;
+  if (target !== AUTO_MODEL_ID) return true;
+  const settings = getActiveProfilePreferences()?.settings || {};
+  return Boolean(settings.show_router_thinking_toggle);
+}
+
+function normalizeOllamaThink(value, fallback = "auto") {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "auto") return "auto";
+  if (["on", "true", "1", "yes", "think"].includes(normalized)) return "on";
+  if (["off", "false", "0", "no", "nothink"].includes(normalized)) return "off";
+  return fallback;
 }
 
 function isRuntimeModelInstalled(item, installedByName = null) {
@@ -1071,6 +1185,59 @@ function toggleSidebarCollapse() {
   setSidebarOpen(!state.sidebarOpen);
 }
 
+function applyAsrHistoryCollapsedState() {
+  const collapsed = Boolean(state.asrHistoryCollapsed);
+  const mobile = isMobileLayout();
+  els.asrLayoutGrid?.classList.toggle("asr-layout-grid--history-collapsed", collapsed);
+  if (els.asrHistoryReopenButton) {
+    els.asrHistoryReopenButton.hidden = mobile || !collapsed;
+  }
+  if (!els.asrHistoryToggleButton) return;
+  if (mobile) {
+    els.asrHistoryToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    els.asrHistoryToggleButton.setAttribute(
+      "aria-label",
+      collapsed ? "Показать базу транскрибаций" : "Скрыть базу транскрибаций",
+    );
+    els.asrHistoryToggleButton.title = collapsed ? "Показать базу транскрибаций" : "Скрыть базу транскрибаций";
+    els.asrHistoryToggleButton.textContent = collapsed ? "More" : "Less";
+    return;
+  }
+  els.asrHistoryToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  els.asrHistoryToggleButton.setAttribute(
+    "aria-label",
+    collapsed ? "Развернуть базу транскрибаций" : "Свернуть базу транскрибаций",
+  );
+  els.asrHistoryToggleButton.title = collapsed ? "Развернуть базу транскрибаций" : "Свернуть базу транскрибаций";
+  els.asrHistoryToggleButton.textContent = collapsed ? "▶" : "◀";
+}
+
+function setAsrHistoryCollapsed(collapsed) {
+  state.asrHistoryCollapsed = Boolean(collapsed);
+  writeStored(STORAGE_KEYS.asrHistoryCollapsed, state.asrHistoryCollapsed ? "1" : "");
+  applyAsrHistoryCollapsedState();
+}
+
+function applyTtsHistoryCollapsedState() {
+  const collapsed = Boolean(state.ttsHistoryCollapsed);
+  const mobile = isMobileLayout();
+  els.ttsToolWindow?.classList.toggle("tts-history-collapsed", mobile && collapsed);
+  if (!els.ttsHistoryToggleButton) return;
+  els.ttsHistoryToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  els.ttsHistoryToggleButton.setAttribute(
+    "aria-label",
+    collapsed ? "Показать историю озвучки" : "Скрыть историю озвучки",
+  );
+  els.ttsHistoryToggleButton.title = collapsed ? "Показать историю озвучки" : "Скрыть историю озвучки";
+  els.ttsHistoryToggleButton.textContent = collapsed ? "More" : "Less";
+}
+
+function setTtsHistoryCollapsed(collapsed) {
+  state.ttsHistoryCollapsed = Boolean(collapsed);
+  writeStored(STORAGE_KEYS.ttsHistoryCollapsed, state.ttsHistoryCollapsed ? "1" : "");
+  applyTtsHistoryCollapsedState();
+}
+
 function normalizeTheme(value) {
   return value === "light" ? "light" : "dark";
 }
@@ -1313,39 +1480,140 @@ function describeChatModelItem(item) {
 }
 
 function closeQuickModelMenu() {
-  if (!els.quickModelMenu || !els.quickModelButton) return;
-  els.quickModelMenu.hidden = true;
-  els.quickModelButton.setAttribute("aria-expanded", "false");
+  [
+    { menu: els.quickModelMenu, button: els.quickModelButton },
+    { menu: els.quickModelMobileMenu, button: els.quickModelMobileButton },
+  ].forEach(({ menu, button }) => {
+    if (menu) menu.hidden = true;
+    if (button) button.setAttribute("aria-expanded", "false");
+  });
+  if (els.quickModelMobileMenu) {
+    els.quickModelMobileMenu.style.position = "";
+    els.quickModelMobileMenu.style.left = "";
+    els.quickModelMobileMenu.style.right = "";
+    els.quickModelMobileMenu.style.top = "";
+    els.quickModelMobileMenu.style.transform = "";
+    els.quickModelMobileMenu.style.visibility = "";
+    els.quickModelMobileMenu.style.maxHeight = "";
+    els.quickModelMobileMenu.style.maxWidth = "";
+    els.quickModelMobileMenu.style.width = "";
+  }
 }
 
-function toggleQuickModelMenu(forceState) {
-  if (!els.quickModelMenu || !els.quickModelButton) return;
-  if (els.quickModelButton.disabled) return;
+function syncQuickModelMobileMenuBounds() {
+  if (!els.quickModelMobileMenu || !els.quickModelMobileButton) return;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || 0;
+  const viewportWidth = window.visualViewport?.width || window.innerWidth || 0;
+  const viewportOffsetTop = window.visualViewport?.offsetTop || 0;
+  const viewportOffsetLeft = window.visualViewport?.offsetLeft || 0;
+  const buttonRect = els.quickModelMobileButton.getBoundingClientRect();
+  const screenPadding = 12;
+  const menuOffset = 8;
+  const minMenuHeight = 160;
+  const availableHeight = Math.floor(viewportOffsetTop + viewportHeight - buttonRect.bottom - menuOffset - screenPadding);
+  const boundedHeight = Math.max(minMenuHeight, availableHeight);
+  const maxWidth = Math.max(220, Math.floor(viewportWidth - screenPadding * 2));
+  const minLeft = viewportOffsetLeft + screenPadding;
+  const maxLeft = viewportOffsetLeft + viewportWidth - screenPadding;
+  const buttonCenterX = buttonRect.left + (buttonRect.width / 2);
+  els.quickModelMobileMenu.style.position = "fixed";
+  els.quickModelMobileMenu.style.top = `${Math.round(buttonRect.bottom + menuOffset)}px`;
+  els.quickModelMobileMenu.style.right = "auto";
+  els.quickModelMobileMenu.style.left = `${Math.round(buttonCenterX)}px`;
+  els.quickModelMobileMenu.style.transform = "translateX(-50%)";
+  els.quickModelMobileMenu.style.width = "max-content";
+  els.quickModelMobileMenu.style.maxWidth = `${maxWidth}px`;
+  els.quickModelMobileMenu.style.maxHeight = `${boundedHeight}px`;
+  els.quickModelMobileMenu.style.visibility = "hidden";
+  const menuRect = els.quickModelMobileMenu.getBoundingClientRect();
+  const menuWidth = Math.min(menuRect.width || maxWidth, maxWidth);
+  let centeredX = buttonCenterX;
+  centeredX = Math.min(centeredX, maxLeft - (menuWidth / 2));
+  centeredX = Math.max(centeredX, minLeft + (menuWidth / 2));
+  els.quickModelMobileMenu.style.left = `${Math.round(centeredX)}px`;
+  els.quickModelMobileMenu.style.visibility = "visible";
+}
+
+function toggleQuickModelMenu(forceState, source = "desktop") {
+  const target = source === "mobile"
+    ? { menu: els.quickModelMobileMenu, button: els.quickModelMobileButton }
+    : { menu: els.quickModelMenu, button: els.quickModelButton };
+  if (!target.menu || !target.button) return;
+  if (target.button.disabled) return;
   const nextState = typeof forceState === "boolean"
     ? forceState
-    : els.quickModelMenu.hidden;
-  els.quickModelMenu.hidden = !nextState;
-  els.quickModelButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+    : target.menu.hidden;
+  closeQuickModelMenu();
+  target.menu.hidden = !nextState;
+  target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
+  if (source === "mobile" && nextState) {
+    syncQuickModelMobileMenuBounds();
+    requestAnimationFrame(syncQuickModelMobileMenuBounds);
+  }
+}
+
+function closeQuickThinkingMenu() {
+  [
+    { menu: els.quickThinkingMenu, button: els.quickThinkingButton },
+    { menu: els.quickThinkingMobileMenu, button: els.quickThinkingMobileButton },
+  ].forEach(({ menu, button }) => {
+    if (menu) menu.hidden = true;
+    if (button) button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function toggleQuickThinkingMenu(forceState, source = "desktop") {
+  const target = source === "mobile"
+    ? { menu: els.quickThinkingMobileMenu, button: els.quickThinkingMobileButton }
+    : { menu: els.quickThinkingMenu, button: els.quickThinkingButton };
+  if (!target.menu || !target.button) return;
+  if (target.button.disabled) return;
+  const nextState = typeof forceState === "boolean"
+    ? forceState
+    : target.menu.hidden;
+  closeQuickThinkingMenu();
+  target.menu.hidden = !nextState;
+  target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
 }
 
 function renderQuickModelPicker() {
-  if (!els.quickModelButton || !els.quickModelValue || !els.quickModelMeta || !els.quickModelMenu) return;
   const items = getChatModelItems();
   const selectedName = state.selectedLlmModel || "";
   const selectedItem = items.find((item) => item.name === selectedName) || items[0] || null;
+  const hasDesktopPicker = Boolean(els.quickModelButton && els.quickModelValue && els.quickModelMeta && els.quickModelMenu);
+  const hasMobilePicker = Boolean(els.quickModelMobileButton && els.quickModelMobileMenu);
+  if (!hasDesktopPicker && !hasMobilePicker) return;
 
-  els.quickModelButton.disabled = !items.length;
+  if (els.quickModelButton) {
+    els.quickModelButton.disabled = !items.length;
+  }
+  if (els.quickModelMobileButton) {
+    els.quickModelMobileButton.disabled = !items.length;
+  }
+  if (els.quickModelMobileControl) {
+    els.quickModelMobileControl.hidden = false;
+  }
   if (!items.length) {
     closeQuickModelMenu();
   }
-  els.quickModelValue.textContent = selectedItem?.name || "Нет доступных моделей";
-  els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
+  if (els.quickModelValue) {
+    els.quickModelValue.textContent = selectedItem?.name || "Нет доступных моделей";
+  }
+  if (els.quickModelMeta) {
+    els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
+  }
 
-  els.quickModelMenu.innerHTML = [
-    '<div class="quick-model-picker__header">Модель чата</div>',
-    ...items.map((item) => {
-      const active = item.name === selectedName;
-      return `
+  const thinkingValue = normalizeOllamaThink(
+    els.quickThinkingControl?.dataset.thinkingMode ?? state.modelSettingsState?.effective?.ollama_think,
+    "auto",
+  );
+  const thinkingOn = thinkingValue !== "off";
+  const menuHtml = items.map((item) => {
+    const active = item.name === selectedName;
+    const thinkingSupported = shouldShowThinkingToggleForModel(item.name);
+    const itemThinkingOn = active ? thinkingOn : false;
+    return `
+      <div class="quick-model-picker__item-shell${active ? " quick-model-picker__item-shell--active" : ""}">
         <button
           class="quick-model-picker__item${active ? " quick-model-picker__item--active" : ""}"
           type="button"
@@ -1353,16 +1621,23 @@ function renderQuickModelPicker() {
           aria-checked="${active ? "true" : "false"}"
           data-quick-model="${escapeHtml(item.name)}"
         >
-          <span class="quick-model-picker__item-row">
-            <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
-            ${getModelDescription(item) ? renderModelInfoIcon(item, "quick-model-picker__help") : ""}
-          </span>
-          <span class="quick-model-picker__item-meta">${escapeHtml(describeChatModelItem(item))}</span>
+          <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
         </button>
-      `;
-    }),
-    '<div class="quick-model-picker__hint">Выбор здесь переключает модель текущего чата. Управление загрузкой и удалением остаётся в настройках.</div>',
-  ].join("");
+        ${thinkingSupported ? `
+          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking">
+            <input type="checkbox" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
+            <span class="apple-switch__track" aria-hidden="true"></span>
+          </label>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+  if (els.quickModelMenu) {
+    els.quickModelMenu.innerHTML = menuHtml;
+  }
+  if (els.quickModelMobileMenu) {
+    els.quickModelMobileMenu.innerHTML = menuHtml;
+  }
 }
 
 function getWhisperItems() {
@@ -1399,6 +1674,14 @@ function normalizePromptPreset(promptPreset) {
     return "auto";
   }
   return ASR_PROMPT_PRESETS.includes(preset) ? preset : ASR_STUDIO_DEFAULT_PROMPT_PRESET;
+}
+
+function normalizeAsrAnalysisLanguage(value) {
+  const language = String(value || "").trim().toLowerCase();
+  if (language === "none") {
+    return ASR_ANALYSIS_LANGUAGE_DEFAULT;
+  }
+  return ASR_ANALYSIS_LANGUAGES.includes(language) ? language : ASR_ANALYSIS_LANGUAGE_DEFAULT;
 }
 
 function languageForPromptPreset(promptPreset) {
@@ -1586,6 +1869,15 @@ function closeChatTaskEventSource(source = state.chatTaskEventSource) {
   }
 }
 
+function interruptChatTaskEventStream(message = "SSE-соединение закрыто.") {
+  if (typeof state.chatTaskStreamAbort === "function") {
+    state.chatTaskStreamAbort(message);
+    return;
+  }
+  closeChatTaskEventSource();
+  clearChatTaskReplay();
+}
+
 function chatTaskIdFrom(taskOrMessage) {
   return String(taskOrMessage?.task_id || taskOrMessage?.id || "").trim();
 }
@@ -1621,14 +1913,27 @@ function prepareChatTaskReplay(task, baseContent = null) {
     baseContent: content,
     replayedText: "",
     caughtUp: content.length === 0,
+    lastSequence: 0,
   };
 }
 
-function consumeChatTaskDelta(task, text) {
+function normalizeChatDeltaSequence(sequence) {
+  const numeric = Number(sequence);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function consumeChatTaskDelta(task, text, sequence = null) {
   const taskId = chatTaskIdFrom(task);
   const delta = String(text || "");
   if (!delta) return "";
   const replay = state.chatTaskReplay;
+  const deltaSequence = normalizeChatDeltaSequence(sequence);
+  if (replay && replay.taskId === taskId && deltaSequence !== null) {
+    if (deltaSequence <= (replay.lastSequence || 0)) {
+      return null;
+    }
+    replay.lastSequence = deltaSequence;
+  }
   if (!replay || replay.taskId !== taskId || replay.caughtUp) {
     return delta;
   }
@@ -1639,17 +1944,17 @@ function consumeChatTaskDelta(task, text) {
   replay.replayedText = nextReplay;
 
   if (baseContent.startsWith(nextReplay)) {
-    return "";
+    return null;
   }
   if (nextReplay.startsWith(baseContent)) {
     replay.caughtUp = true;
     const appendFrom = Math.max(0, baseContent.length - previousReplay.length);
-    return delta.slice(appendFrom);
+    return delta.slice(appendFrom) || null;
   }
 
   // If persisted partial content was normalized unexpectedly, avoid duplicating old replayed chunks.
   replay.caughtUp = true;
-  return "";
+  return null;
 }
 
 function chatTypingStreamKey(taskOrPayload) {
@@ -1872,30 +2177,45 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
   }
 
   return new Promise((resolve, reject) => {
-    closeChatTaskEventSource();
+    interruptChatTaskEventStream("Открывается новое SSE-соединение.");
     prepareChatTaskReplay(task, replayBaseContent);
     const source = new window.EventSource(`/chat/tasks/${encodeURIComponent(taskId)}/events`);
     let settled = false;
     let terminalEventReceived = false;
-    const timeoutId = window.setTimeout(() => {
-      const error = new Error("Истекло время ожидания генерации ответа.");
-      error.streamConnectionFailed = true;
-      finish(() => reject(error));
-    }, timeoutMs);
+    let timeoutId = null;
 
     const finish = (callback) => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timeoutId);
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
       closeChatTaskEventSource(source);
+      if (state.chatTaskStreamAbort === rejectStreamConnection) {
+        state.chatTaskStreamAbort = null;
+      }
       clearChatTaskReplay(taskId);
       clearChatTypingStreams(taskId);
       callback();
     };
 
+    const rejectStreamConnection = (message) => {
+      if (settled) return;
+      const error = new Error(message || "SSE-соединение прервалось.");
+      error.streamConnectionFailed = true;
+      clearChatTypingStreams(task, { flush: true });
+      finish(() => reject(error));
+    };
+
+    timeoutId = window.setTimeout(() => {
+      rejectStreamConnection("Истекло время ожидания генерации ответа.");
+    }, timeoutMs);
+
     state.chatTaskEventSource = source;
+    state.chatTaskStreamAbort = rejectStreamConnection;
 
     source.addEventListener("status", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       const status = String(data.status || "generating");
       updateAssistantMessageFromTask(task, {
@@ -1905,6 +2225,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("model_selected", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       updateAssistantMessageFromTask(task, {
         ...data,
@@ -1913,8 +2234,10 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("delta", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
-      const delta = consumeChatTaskDelta(task, data.text);
+      const delta = consumeChatTaskDelta(task, data.text, data.sequence);
+      if (delta === null) return;
       if (delta) {
         queueAssistantTypingDelta(task, data, delta);
       } else {
@@ -1926,6 +2249,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("done", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       terminalEventReceived = true;
       finishChatTypingStream(task, () => {
@@ -1938,6 +2262,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("cancelled", (event) => {
+      if (settled) return;
       const data = parseSsePayload(event);
       terminalEventReceived = true;
       clearChatTypingStreams(task, { flush: true });
@@ -1949,6 +2274,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.addEventListener("error", (event) => {
+      if (settled) return;
       if (typeof event?.data !== "string") {
         return;
       }
@@ -1966,11 +2292,9 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
     });
 
     source.onerror = () => {
+      if (settled) return;
       if (terminalEventReceived) return;
-      const error = new Error("SSE-соединение прервалось.");
-      error.streamConnectionFailed = true;
-      clearChatTypingStreams(task, { flush: true });
-      finish(() => reject(error));
+      rejectStreamConnection("SSE-соединение прервалось.");
     };
   });
 }
@@ -2811,6 +3135,52 @@ function activeProfileStreamingEnabled() {
   return value === undefined || value === null ? true : Boolean(value);
 }
 
+function asrFullAnalysisEnabled() {
+  const preferences = getActiveProfilePreferences();
+  return Boolean(preferences?.settings?.asr_full_analysis_enabled);
+}
+
+function asrDiagnosticsEnabled() {
+  const preferences = getActiveProfilePreferences();
+  return Boolean(preferences?.asr?.diagnostics_enabled);
+}
+
+function getAsrAnalysisModeConfig(modeId) {
+  return ASR_ANALYSIS_MODES.find((mode) => mode.id === modeId) || ASR_ANALYSIS_MODES.find((mode) => mode.id === ASR_ANALYSIS_MODE_DEFAULT);
+}
+
+function normalizeAsrAnalysisMode(modeId) {
+  const mode = getAsrAnalysisModeConfig(modeId);
+  if (!mode) return ASR_ANALYSIS_MODE_DEFAULT;
+  if (mode.requiresFullAnalysis && !asrFullAnalysisEnabled()) {
+    return ASR_ANALYSIS_MODE_DEFAULT;
+  }
+  return mode.id;
+}
+
+function setAsrAnalysisModeMenuOpen(open) {
+  state.asrToolAnalysisModeMenuOpen = Boolean(open);
+  renderAsrAnalysisModeControl();
+}
+
+function setAsrAnalysisMode(modeId) {
+  const mode = getAsrAnalysisModeConfig(modeId);
+  if (!mode) return;
+  if (mode.requiresFullAnalysis && !asrFullAnalysisEnabled()) {
+    setInlineStatus(
+      els.asrToolStatus,
+      "Полный анализ отключён. Его можно включить в настройках ASR после предупреждения о нагрузке.",
+      "warning",
+    );
+    openAsrPipelineSettings();
+    return;
+  }
+  state.asrToolAnalysisMode = mode.id;
+  state.asrToolAnalysisModeMenuOpen = false;
+  writeStored(STORAGE_KEYS.asrAnalysisMode, mode.id);
+  renderAsrAnalysisModeControl();
+}
+
 function applyActiveProfilePreferences() {
   const preferences = getActiveProfilePreferences();
   const whisperFallback = state.asrModels[0]?.name || "medium";
@@ -2855,6 +3225,26 @@ function patchActiveProfileSettingsLocal(settingsPatch) {
   replaceProfileState(nextProfile);
   applyActiveProfilePreferences();
   renderModelSettings();
+  return nextProfile;
+}
+
+function patchActiveProfileAsrLocal(asrPatch) {
+  const profile = getActiveProfile();
+  if (!profile || !asrPatch || typeof asrPatch !== "object") return null;
+  const preferences = profile.preferences || {};
+  const nextProfile = {
+    ...profile,
+    preferences: {
+      ...preferences,
+      asr: {
+        ...(preferences.asr || {}),
+        ...asrPatch,
+      },
+    },
+  };
+  replaceProfileState(nextProfile);
+  applyActiveProfilePreferences();
+  renderAsrPipelineSettings();
   return nextProfile;
 }
 
@@ -3098,6 +3488,28 @@ function openSessionContextMenu(sessionId, clientX, clientY) {
   els.sessionContextMenu.style.top = `${top}px`;
 }
 
+function closeAsrHistoryContextMenu() {
+  state.asrHistoryContextMenuTranscriptId = null;
+  if (els.asrHistoryContextMenu) {
+    els.asrHistoryContextMenu.hidden = true;
+  }
+}
+
+function openAsrHistoryContextMenu(transcriptId, clientX, clientY) {
+  const targetId = Number(transcriptId || 0);
+  const transcript = state.asrToolHistory.find((item) => Number(item.id) === targetId);
+  if (!transcript || !els.asrHistoryContextMenu) return;
+  state.asrHistoryContextMenuTranscriptId = targetId;
+  els.asrHistoryContextMenu.hidden = false;
+
+  const rect = els.asrHistoryContextMenu.getBoundingClientRect();
+  const margin = 10;
+  const left = Math.min(Math.max(margin, clientX), window.innerWidth - rect.width - margin);
+  const top = Math.min(Math.max(margin, clientY), window.innerHeight - rect.height - margin);
+  els.asrHistoryContextMenu.style.left = `${left}px`;
+  els.asrHistoryContextMenu.style.top = `${top}px`;
+}
+
 function renderContextSummary() {
   if (!els.contextStatus) return;
   if (state.latestTranscript) {
@@ -3293,17 +3705,20 @@ function renderModelControls() {
   renderLibraryPanels();
   renderChatModelLibrary();
   renderChatModelNotice();
+  renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
   updateSendButtonState();
   queueSyncAppSelects();
 }
 
-async function applySelectedLlmModel(nextModel) {
+async function applySelectedLlmModel(nextModel, { closeMenu = true } = {}) {
   const modelName = String(nextModel || "").trim();
   if (!modelName) return;
 
   state.selectedLlmModel = modelName;
   writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
-  closeQuickModelMenu();
+  if (closeMenu) {
+    closeQuickModelMenu();
+  }
 
   [els.llmModelSelect, els.quickModelSelect].filter(Boolean).forEach((select) => {
     const hasOption = Array.from(select.options || []).some((option) => option.value === modelName);
@@ -3439,6 +3854,7 @@ function renderModelSettings() {
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
     streaming_enabled: activeProfileStreamingEnabled(),
     ollama_keep_alive: overrides.ollama_keep_alive ?? effective.ollama_keep_alive ?? defaultKeepAliveForModel(modelName),
+    ollama_think: overrides.ollama_think ?? effective.ollama_think ?? "auto",
     max_resident_target_models: overrides.max_resident_target_models ?? effective.max_resident_target_models ?? RESIDENCY_DEFAULTS.max_resident_target_models,
     allow_light_with_heavy: overrides.allow_light_with_heavy ?? effective.allow_light_with_heavy ?? RESIDENCY_DEFAULTS.allow_light_with_heavy,
     single_large_target_model: overrides.single_large_target_model ?? effective.single_large_target_model ?? RESIDENCY_DEFAULTS.single_large_target_model,
@@ -3448,7 +3864,9 @@ function renderModelSettings() {
     code_model_keep_alive: overrides.code_model_keep_alive ?? effective.code_model_keep_alive ?? RESIDENCY_DEFAULTS.code_model_keep_alive,
     heavy_model_keep_alive: overrides.heavy_model_keep_alive ?? effective.heavy_model_keep_alive ?? RESIDENCY_DEFAULTS.heavy_model_keep_alive,
     router_keep_alive: overrides.router_keep_alive ?? effective.router_keep_alive ?? RESIDENCY_DEFAULTS.router_keep_alive,
+    show_router_thinking_toggle: Boolean((getActiveProfilePreferences()?.settings || {}).show_router_thinking_toggle),
   };
+  renderQuickThinkingControl(values.ollama_think);
 
   if (els.temperatureInput) {
     els.temperatureInput.disabled = disabled;
@@ -3504,6 +3922,11 @@ function renderModelSettings() {
     els.preloadManualSelectToggle.checked = Boolean(values.preload_model_on_manual_select);
     els.preloadManualSelectToggle.title = "Если включено, ручной выбор модели сразу загружает её в Ollama.";
   }
+  if (els.showRouterThinkingToggle) {
+    els.showRouterThinkingToggle.disabled = profileDisabled;
+    els.showRouterThinkingToggle.checked = Boolean(values.show_router_thinking_toggle);
+    els.showRouterThinkingToggle.title = "Показывать switch Thinking для Auto / Smart Router в верхнем меню выбора модели.";
+  }
   setKeepAliveControl(
     els.autoTargetKeepAliveInput,
     els.autoTargetKeepAliveUnitSelect,
@@ -3545,8 +3968,52 @@ function renderModelSettings() {
   if (els.resetModelSettingsButton) {
     els.resetModelSettingsButton.disabled = profileDisabled || !modelName;
   }
+  renderQuickThinkingControl(values.ollama_think);
+  renderQuickModelPicker();
   queueSyncAppSelects();
   renderAsrPipelineSettings();
+}
+
+function renderQuickThinkingControl(rawValue = null) {
+  if (!els.quickThinkingControl || !els.quickThinkingButton || !els.quickThinkingMenu) return;
+  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
+  const supported = modelSupportsThinking(modelName);
+  const normalized = normalizeOllamaThink(rawValue, "auto");
+  const visibleValue = normalized === "off" ? "off" : "on";
+  const disabled = !supported || !state.activeProfileId || !modelName;
+  const hint = supported
+    ? "Thinking влияет на скорость, CPU и полноту рассуждения для моделей, которые поддерживают этот режим."
+    : "Выбранная модель не объявлена как thinking-capable; параметр не отправляется.";
+
+  els.quickThinkingControl.dataset.thinkingMode = visibleValue;
+  els.quickThinkingButton.disabled = disabled;
+  els.quickThinkingButton.textContent = "Thinking";
+  els.quickThinkingControl.hidden = true;
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
+  els.quickThinkingControl.title = hint;
+
+  if (els.quickThinkingMobileControl) {
+    els.quickThinkingMobileControl.dataset.thinkingMode = visibleValue;
+    els.quickThinkingMobileControl.hidden = true;
+    els.quickThinkingMobileControl.title = hint;
+  }
+  if (els.quickThinkingMobileButton) {
+    els.quickThinkingMobileButton.disabled = disabled;
+    els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking: ${visibleValue === "on" ? "включено" : "выключено"}`);
+  }
+
+  [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
+    menu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
+      const active = button.getAttribute("data-thinking-mode") === visibleValue;
+      button.classList.toggle("thinking-mode-menu__item--active", active);
+      button.setAttribute("aria-checked", active ? "true" : "false");
+    });
+  });
+
+  if (disabled) {
+    closeQuickThinkingMenu();
+  }
 }
 
 function defaultKeepAliveForModel(modelName = "") {
@@ -3607,6 +4074,7 @@ function collectResidencySettings() {
     allow_light_with_heavy: Boolean(els.allowLightWithHeavyToggle?.checked),
     single_large_target_model: Boolean(els.singleLargeTargetModelToggle?.checked),
     preload_model_on_manual_select: Boolean(els.preloadManualSelectToggle?.checked),
+    show_router_thinking_toggle: Boolean(els.showRouterThinkingToggle?.checked),
     auto_target_keep_alive: collectKeepAliveFromControl(els.autoTargetKeepAliveInput, els.autoTargetKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.auto_target_keep_alive,
     manual_keep_alive: collectKeepAliveFromControl(els.manualKeepAliveInput, els.manualKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.manual_keep_alive,
     code_model_keep_alive: collectKeepAliveFromControl(els.codeKeepAliveInput, els.codeKeepAliveUnitSelect) || RESIDENCY_DEFAULTS.code_model_keep_alive,
@@ -3635,9 +4103,9 @@ function normalizeAsrPipelineStage(stageKey, value = {}) {
 }
 
 function getAsrPipelineStageSettings(stageKey) {
-  const defaults = asrPipelineSourceObject(state.modelSettingsState?.defaults?.pipeline);
-  const effective = asrPipelineSourceObject(state.modelSettingsState?.effective?.pipeline);
-  const overrides = asrPipelineSourceObject(state.modelSettingsState?.overrides?.pipeline);
+  const defaults = asrPipelineSourceObject(state.asrPipelineSettingsState?.defaults?.pipeline);
+  const effective = asrPipelineSourceObject(state.asrPipelineSettingsState?.effective?.pipeline);
+  const overrides = asrPipelineSourceObject(state.asrPipelineSettingsState?.overrides?.pipeline);
   return normalizeAsrPipelineStage(stageKey, {
     ...(ASR_PIPELINE_DEFAULTS[stageKey] || {}),
     ...asrPipelineSourceObject(defaults[stageKey]),
@@ -3646,15 +4114,19 @@ function getAsrPipelineStageSettings(stageKey) {
   });
 }
 
-function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
+function pipelineModelOptionsHtml(selectedValue = "", stageKey = "", stageEnabled = true) {
   const selected = String(selectedValue || "").trim();
-  const selectedLlm = String(state.selectedLlmModel || "").trim();
   const installedNames = new Set(state.installedModels.map((item) => String(item?.name || "").trim()).filter(Boolean));
   const stageRecommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey] || null;
-  const fallbackLabel = selectedLlm ? `Текущая LLM (${selectedLlm})` : "Текущая LLM";
-  const options = [`<option value=""${selected ? "" : " selected"}>${escapeHtml(fallbackLabel)}</option>`];
+  const fallbackLabel = stageRecommendation?.primary
+    ? `Рекомендованная модель (${stageRecommendation.primary})`
+    : "Модель по умолчанию";
+  const options = [
+    `<option value="${ASR_PIPELINE_DISABLED_VALUE}"${stageEnabled ? "" : " selected"}>Не использовать</option>`,
+    `<option value=""${stageEnabled && !selected ? " selected" : ""}>${escapeHtml(fallbackLabel)}</option>`,
+  ];
 
-  if (selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)) {
+  if (stageEnabled && selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)) {
     const legacyLabel = ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected)
       ? `${selected} (legacy, замените)`
       : `${selected} (вне каталога)`;
@@ -3677,7 +4149,7 @@ function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
     }
     const label = `${item.id}${markers.length ? ` (${markers.join(", ")})` : ""}`;
     options.push(
-      `<option value="${escapeHtml(item.id)}"${item.id === selected ? " selected" : ""}>${escapeHtml(label)}</option>`,
+      `<option value="${escapeHtml(item.id)}"${stageEnabled && item.id === selected ? " selected" : ""}>${escapeHtml(label)}</option>`,
     );
   });
 
@@ -3687,18 +4159,21 @@ function pipelineModelOptionsHtml(selectedValue = "", stageKey = "") {
 function pipelineStageRecommendationHtml(stageKey, selectedModel = "") {
   const recommendation = ASR_PIPELINE_RECOMMENDATIONS[stageKey];
   if (!recommendation) return "";
+  const stageSettings = getAsrPipelineStageSettings(stageKey);
+  if (stageSettings.enabled === false) {
+    return `
+      <p class="pipeline-stage-row__recommendation">
+        <strong>Стадия выключена.</strong>
+      </p>
+    `;
+  }
   const selected = String(selectedModel || "").trim();
-  const altText = recommendation.alternatives
-    .map((modelId) => modelId)
-    .join(" / ");
-  const tokenTarget = ASR_PIPELINE_DEFAULTS[stageKey]?.max_tokens;
   const legacyWarning = selected && !ASR_PIPELINE_MODEL_IDS.includes(selected)
     ? ` Сейчас выбрана ${ASR_PIPELINE_LEGACY_MODEL_IDS.has(selected) ? "legacy-модель" : "модель вне pipeline-каталога"} ${selected}; лучше заменить на ${recommendation.primary}.`
     : "";
   return `
     <p class="pipeline-stage-row__recommendation">
-      <strong>Рекомендация:</strong> <span>${escapeHtml(recommendation.primary)}</span> — ${escapeHtml(recommendation.text)}
-      <em>Max tokens: ${escapeHtml(String(tokenTarget || "—"))}. Альтернатива: ${escapeHtml(altText)}.</em>${escapeHtml(legacyWarning)}
+      <span>${escapeHtml(recommendation.primary)}</span> ${escapeHtml(recommendation.text)}${escapeHtml(legacyWarning)}
     </p>
   `;
 }
@@ -3715,8 +4190,7 @@ function clearEnhancedSelectsIn(container) {
 
 function renderAsrPipelineSettings() {
   const profile = getActiveProfile();
-  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
-  const disabled = !profile || !modelName;
+  const disabled = !profile;
   const expanded = Boolean(state.asrPipelineSettingsExpanded);
 
   if (els.asrPipelineSettingsPanel) {
@@ -3734,9 +4208,9 @@ function renderAsrPipelineSettings() {
     );
   }
   if (els.asrPipelineSettingsSummary) {
-    els.asrPipelineSettingsSummary.textContent = profile && modelName
-      ? `${profile.name} • ${modelName}`
-      : "Профиль и LLM-модель не выбраны";
+    els.asrPipelineSettingsSummary.textContent = profile
+      ? `${profile.name} • ASR pipeline`
+      : "Профиль не выбран";
   }
   if (els.saveAsrPipelineSettingsButton) {
     els.saveAsrPipelineSettingsButton.disabled = disabled;
@@ -3744,12 +4218,32 @@ function renderAsrPipelineSettings() {
   if (els.resetAsrPipelineSettingsButton) {
     els.resetAsrPipelineSettingsButton.disabled = disabled;
   }
+  if (els.asrFullAnalysisEnabledToggle) {
+    els.asrFullAnalysisEnabledToggle.disabled = !profile;
+    els.asrFullAnalysisEnabledToggle.checked = asrFullAnalysisEnabled();
+  }
+  if (els.asrDiagnosticsEnabledToggle) {
+    els.asrDiagnosticsEnabledToggle.disabled = !profile;
+    els.asrDiagnosticsEnabledToggle.checked = asrDiagnosticsEnabled();
+  }
+  if (els.asrPipelineThinkSelect) {
+    const { effective = {}, overrides = {} } = state.asrPipelineSettingsState || {};
+    const rawThink = overrides.ollama_think ?? effective.ollama_think ?? "off";
+    els.asrPipelineThinkSelect.disabled = !profile;
+    els.asrPipelineThinkSelect.value = normalizeOllamaThink(rawThink, "off");
+    queueSyncAppSelects();
+  }
+  if (els.asrAnalysisPromptInput && document.activeElement !== els.asrAnalysisPromptInput) {
+    els.asrAnalysisPromptInput.disabled = !profile;
+    els.asrAnalysisPromptInput.value = String(getActiveProfilePreferences()?.asr?.analysis_prompt || "");
+  }
   if (!els.asrPipelineSettingsGrid) return;
 
   clearEnhancedSelectsIn(els.asrPipelineSettingsGrid);
   els.asrPipelineSettingsGrid.innerHTML = ASR_PIPELINE_STAGES
     .map((stage) => {
       const settings = getAsrPipelineStageSettings(stage.key);
+      const stageDisabled = settings.enabled === false;
       return `
         <article class="pipeline-stage-row">
           <div class="pipeline-stage-row__title">
@@ -3759,16 +4253,16 @@ function renderAsrPipelineSettings() {
           <label class="field">
             <span class="field__label">Модель</span>
             <select class="field__control" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="model"${disabled ? " disabled" : ""}>
-              ${pipelineModelOptionsHtml(settings.model, stage.key)}
+              ${pipelineModelOptionsHtml(settings.model, stage.key, !stageDisabled)}
             </select>
           </label>
           <label class="field">
             <span class="field__label">Temp</span>
-            <input class="field__control" type="number" min="0" max="2" step="0.05" value="${escapeHtml(String(settings.temperature))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="temperature"${disabled ? " disabled" : ""} />
+            <input class="field__control" type="number" min="0" max="2" step="0.05" value="${escapeHtml(String(settings.temperature))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="temperature"${disabled || stageDisabled ? " disabled" : ""} />
           </label>
           <label class="field">
             <span class="field__label">Max tokens</span>
-            <input class="field__control" type="number" min="1" step="1" value="${escapeHtml(String(settings.max_tokens))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="max_tokens"${disabled ? " disabled" : ""} />
+            <input class="field__control" type="number" min="1" step="1" value="${escapeHtml(String(settings.max_tokens))}" data-asr-pipeline-stage="${escapeHtml(stage.key)}" data-asr-pipeline-field="max_tokens"${disabled || stageDisabled ? " disabled" : ""} />
           </label>
           ${pipelineStageRecommendationHtml(stage.key, settings.model)}
         </article>
@@ -3805,9 +4299,11 @@ function collectAsrPipelineSettingsFromControls() {
     const maxTokensControl = getAsrPipelineControl(stage.key, "max_tokens");
     const temperature = parseOptionalNumber(temperatureControl?.value, "float");
     const maxTokens = parseOptionalNumber(maxTokensControl?.value, "int");
+    const selectedModel = String(modelControl?.value ?? current.model ?? "").trim();
+    const stageEnabled = selectedModel !== ASR_PIPELINE_DISABLED_VALUE;
     acc[stage.key] = {
-      enabled: current.enabled !== false,
-      model: String(modelControl?.value ?? current.model ?? "").trim(),
+      enabled: stageEnabled,
+      model: stageEnabled ? selectedModel : String(current.model || ASR_PIPELINE_DEFAULTS[stage.key]?.model || "").trim(),
       temperature: temperature ?? current.temperature,
       max_tokens: maxTokens ?? current.max_tokens,
     };
@@ -3847,13 +4343,17 @@ function renderWhisperControls() {
   if (els.asrThreadsInput) {
     els.asrThreadsInput.value = String(normalizeAsrThreads(state.selectedAsrThreads));
   }
+  if (els.asrAnalysisPromptInput && document.activeElement !== els.asrAnalysisPromptInput) {
+    els.asrAnalysisPromptInput.value = String(getActiveProfilePreferences()?.asr?.analysis_prompt || "");
+  }
 
   if (els.asrSettingsStatus) {
     const selectedItem = items.find((item) => item.name === state.selectedWhisperModel);
     const isInstalled = Boolean(selectedItem?.installed);
     const isReady = isWhisperItemReady(selectedItem);
     const warning = getWhisperItemWarnings(selectedItem)[0] || "";
-    const asrProfileSummary = `язык/prompt ${normalizePromptPreset(state.selectedPromptPreset)}, beam ${normalizeAsrBeamSize(state.selectedAsrBeamSize)}, threads ${normalizeAsrThreads(state.selectedAsrThreads)}`;
+    const analysisLanguage = normalizeAsrAnalysisLanguage(getActiveProfilePreferences()?.asr?.analysis_language);
+    const asrProfileSummary = `язык/prompt ${normalizePromptPreset(state.selectedPromptPreset)}, язык анализа ${analysisLanguage}, beam ${normalizeAsrBeamSize(state.selectedAsrBeamSize)}, threads ${normalizeAsrThreads(state.selectedAsrThreads)}`;
     setInlineStatus(
       els.asrSettingsStatus,
       isReady
@@ -4409,6 +4909,7 @@ function renderTtsTool() {
   }
 
   syncTtsToolPlayer(selectedRecord);
+  applyTtsHistoryCollapsedState();
   renderTtsToolHistory();
   queueSyncAppSelects();
 }
@@ -4488,6 +4989,7 @@ async function loadAsrToolHistory({ silent = false } = {}) {
 
 function renderAsrToolHistory() {
   if (!els.asrToolHistoryList) return;
+  closeAsrHistoryContextMenu();
   if (!state.asrToolHistory.length) {
     els.asrToolHistoryList.innerHTML = '<p class="subtle">История транскрибаций пока пуста.</p>';
     return;
@@ -4528,11 +5030,14 @@ function renderAsrToolHistory() {
       const title = getAsrTranscriptTitle(item);
       const preview = stripRichTextToPlain(item.summary || item.content || "");
       return `
-        <button class="tool-history__item${active}" type="button" data-asr-history-id="${escapeHtml(item.id)}">
-          <span class="tool-history__title">${escapeHtml(title || "Транскрипт")}</span>
-          <span class="tool-history__meta">${escapeHtml(meta || "Транскрипт")}</span>
-          <span class="tool-history__preview">${escapeHtml(preview || "Нет превью")}</span>
-        </button>
+        <article class="tool-history__item${active}">
+          <button class="tool-history__content" type="button" data-asr-history-id="${escapeHtml(item.id)}">
+            <span class="tool-history__title">${escapeHtml(title || "Транскрипт")}</span>
+            <span class="tool-history__meta">${escapeHtml(meta || "Транскрипт")}</span>
+            <span class="tool-history__preview">${escapeHtml(preview || "Нет превью")}</span>
+          </button>
+          <button class="tool-history__delete" type="button" data-asr-history-delete-id="${escapeHtml(item.id)}" title="Удалить запись" aria-label="Удалить запись">×</button>
+        </article>
       `;
     })
     .join("");
@@ -4541,10 +5046,103 @@ function renderAsrToolHistory() {
 function getAsrActionLabel(action) {
   return {
     clean: "очистка",
-    summary: "саммари",
+    summary: "быстрое саммари",
+    smart_summary: "умное саммари",
     tasks: "задачи",
     full: "полный анализ",
   }[action] || "обработка";
+}
+
+function getAsrActionStageKeys(action) {
+  return {
+    clean: ["cleaner"],
+    summary: ["summary"],
+    smart_summary: ["structurer", "summary"],
+    tasks: ["segmenter", "structurer"],
+    full: ["segmenter", "speaker_resolver", "structurer", "summary"],
+  }[action] || ASR_PIPELINE_STAGES.map((stage) => stage.key);
+}
+
+function asrRunStageEnabled(run, stageKey) {
+  const pipelineSettings = run?.used_settings?.pipeline;
+  if (!pipelineSettings || typeof pipelineSettings !== "object") return true;
+  const stageSettings = pipelineSettings[stageKey];
+  return !stageSettings || stageSettings.enabled !== false;
+}
+
+function getAsrPipelineStagesForDisplay(run, activeAction) {
+  const action = activeAction || run?.action || "";
+  const routeStageKeys = new Set(getAsrActionStageKeys(action));
+  const timings = run?.stage_timings && typeof run.stage_timings === "object" ? run.stage_timings : {};
+  const warningText = Array.isArray(run?.warnings) ? run.warnings.join("\n") : "";
+  return ASR_PIPELINE_STAGES.filter((stage) => {
+    const belongsToRoute = routeStageKeys.has(stage.key);
+    const hasResult = Boolean(timings[stage.key]) || warningText.includes(`${stage.key}_failed`);
+    if (!belongsToRoute && !hasResult) return false;
+    if (run && belongsToRoute && !asrRunStageEnabled(run, stage.key) && !hasResult) return false;
+    if (!run && activeAction && belongsToRoute && getAsrPipelineStageSettings(stage.key).enabled === false) return false;
+    return true;
+  });
+}
+
+function renderAsrAnalysisModeControl() {
+  const selectedId = normalizeAsrAnalysisMode(state.asrToolAnalysisMode);
+  if (selectedId !== state.asrToolAnalysisMode) {
+    state.asrToolAnalysisMode = selectedId;
+    writeStored(STORAGE_KEYS.asrAnalysisMode, selectedId);
+  }
+  const selectedMode = getAsrAnalysisModeConfig(selectedId);
+  const menuOpen = Boolean(state.asrToolAnalysisModeMenuOpen);
+
+  const modeDescription = selectedMode?.description || "Выберите режим анализа транскрипции.";
+  if (els.asrToolAnalysisModeLabel) {
+    els.asrToolAnalysisModeLabel.textContent = selectedMode?.label || "Умное саммари";
+  }
+  if (els.asrToolAnalysisModeDescription) {
+    els.asrToolAnalysisModeDescription.textContent = modeDescription;
+  }
+  if (els.asrToolAnalysisHelpButton) {
+    els.asrToolAnalysisHelpButton.setAttribute("data-tooltip", modeDescription);
+    els.asrToolAnalysisHelpButton.setAttribute("aria-label", modeDescription);
+  }
+  if (els.asrToolAnalysisModeButton) {
+    const disabled = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolStopping || !state.activeProfileId;
+    els.asrToolAnalysisModeButton.disabled = disabled;
+    els.asrToolAnalysisModeButton.setAttribute("aria-expanded", menuOpen ? "true" : "false");
+  }
+  if (els.asrToolAnalysisModeMenu) {
+    els.asrToolAnalysisModeMenu.hidden = !menuOpen;
+    els.asrToolAnalysisModeMenu.innerHTML = ASR_ANALYSIS_MODES.map((mode) => {
+      const active = mode.id === selectedId;
+      const disabled = Boolean(mode.requiresFullAnalysis && !asrFullAnalysisEnabled());
+      const description = disabled
+        ? "Отключён в настройках ASR; включается только после предупреждения о нагрузке."
+        : mode.description;
+      return `
+        <button class="asr-analysis-mode__option" type="button" role="menuitemradio"
+          data-asr-analysis-mode="${escapeHtml(mode.id)}" aria-checked="${active ? "true" : "false"}"
+          aria-disabled="${disabled ? "true" : "false"}"${disabled ? " tabindex=\"-1\"" : ""}>
+          <span class="asr-analysis-mode__check" aria-hidden="true">${active ? "✓" : ""}</span>
+          <span class="asr-analysis-mode__option-copy">
+            <strong>${escapeHtml(mode.label)}</strong>
+            <small>${escapeHtml(description)}</small>
+          </span>
+        </button>
+      `;
+    }).join("");
+  }
+  if (els.asrToolRunAnalysisButton) {
+    const content = String(els.asrToolOutput?.value || "").trim();
+    els.asrToolRunAnalysisButton.disabled = !content
+      || !state.activeProfileId
+      || state.asrToolIsTranscribing
+      || state.asrToolPipelineBusy
+      || state.asrToolStopping;
+    const small = els.asrToolRunAnalysisButton.querySelector("small");
+    if (small) {
+      small.textContent = selectedMode ? selectedMode.label : "Использовать выбранный режим";
+    }
+  }
 }
 
 function getAsrStageStatus(stageKey, run) {
@@ -4560,7 +5158,8 @@ function renderAsrPipelineSteps(run) {
   const activeAction = state.asrToolPipelineBusy ? state.asrToolPipelineAction : "";
   const activePreset = state.asrToolPipelineBusy ? state.asrToolPipelinePreset : "";
   let hasActiveStage = false;
-  const html = ASR_PIPELINE_STAGES.map((stage) => {
+  const stages = getAsrPipelineStagesForDisplay(run, activeAction);
+  const html = stages.map((stage) => {
     let status = getAsrStageStatus(stage.key, run);
     if (status === "pending" && activeAction && !hasActiveStage) {
       status = "active";
@@ -4575,7 +5174,7 @@ function renderAsrPipelineSteps(run) {
     `;
   }).join("");
   els.asrToolPipelineSteps.innerHTML = html;
-  els.asrToolPipelineSteps.hidden = !run && !activeAction && !activePreset;
+  els.asrToolPipelineSteps.hidden = (!run && !activeAction && !activePreset) || !stages.length;
 }
 
 function getAsrTranscriptTitle(transcript) {
@@ -4710,14 +5309,28 @@ function renderAsrFileCard() {
 }
 
 function applyAsrTextSearch() {
-  const textarea = els.asrToolOutput;
   const query = String(els.asrToolSearchInput?.value || "").trim();
-  if (!textarea || !query) return;
-  const haystack = textarea.value.toLowerCase();
-  const index = haystack.indexOf(query.toLowerCase());
-  if (index >= 0) {
-    textarea.focus();
-    textarea.setSelectionRange(index, index + query.length);
+  if (!query) return;
+  if (state.asrToolActiveTab === "text") {
+    const textarea = els.asrToolOutput;
+    if (!textarea) return;
+    const haystack = textarea.value.toLowerCase();
+    const index = haystack.indexOf(query.toLowerCase());
+    if (index >= 0) {
+      textarea.focus();
+      textarea.setSelectionRange(index, index + query.length);
+    }
+    return;
+  }
+  const content = getAsrToolSelectedContent().toLowerCase();
+  const found = content.includes(query.toLowerCase());
+  setInlineStatus(
+    els.asrToolStatus,
+    found ? "Совпадение найдено в текущем результате." : "В текущем результате совпадений нет.",
+    found ? "success" : "warning",
+  );
+  if (found) {
+    els.asrToolPipelineOutput?.scrollIntoView({ block: "nearest" });
   }
 }
 
@@ -4906,22 +5519,47 @@ function renderAsrTool() {
   if (els.asrToolPromptPresetSelect) {
     els.asrToolPromptPresetSelect.value = normalizePromptPreset(state.selectedPromptPreset);
   }
+  if (els.asrToolAnalysisLanguageSelect) {
+    els.asrToolAnalysisLanguageSelect.value = normalizeAsrAnalysisLanguage(getActiveProfilePreferences()?.asr?.analysis_language);
+    els.asrToolAnalysisLanguageSelect.disabled = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolStopping || !state.activeProfileId;
+  }
+
+  renderAsrAnalysisModeControl();
 
   if (els.asrToolChooseFileButton) {
-    els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
+    els.asrToolChooseFileButton.disabled = state.asrToolIsTranscribing || state.asrToolStopping || !state.activeProfileId;
     els.asrToolChooseFileButton.textContent = state.asrToolIsTranscribing ? "Транскрибация…" : "Выбрать файл";
   }
   if (els.asrToolPipelineSettingsButton) {
     els.asrToolPipelineSettingsButton.disabled = !state.activeProfileId;
   }
   if (els.asrToolRefreshHistoryButton) {
-    els.asrToolRefreshHistoryButton.disabled = state.asrToolIsTranscribing || !state.activeProfileId;
+    els.asrToolRefreshHistoryButton.disabled = state.asrToolIsTranscribing || state.asrToolStopping || !state.activeProfileId;
+  }
+  if (els.asrToolStopButton) {
+    const canStop = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolTaskId || state.asrToolStartController || state.asrToolPipelineController;
+    els.asrToolStopButton.disabled = !canStop || state.asrToolStopping;
+    els.asrToolStopButton.textContent = state.asrToolStopping ? "Останавливаю…" : "Остановить";
   }
   if (els.asrToolInsertPromptButton) {
     els.asrToolInsertPromptButton.disabled = !selectedContent;
   }
   if (els.asrToolSendButton) {
     els.asrToolSendButton.disabled = !formatAsrPipelineRun(state.asrToolPipelineRun) || state.isSending;
+  }
+  if (els.asrToolFullAnalysisButton) {
+    const fullEnabled = asrFullAnalysisEnabled();
+    els.asrToolFullAnalysisButton.hidden = !fullEnabled;
+    els.asrToolFullAnalysisButton.title = fullEnabled
+      ? "Запускает все стадии pipeline и может заметно нагревать Mac."
+      : "Полный анализ отключён в настройках ASR.";
+  }
+  if (els.asrToolRolesButton) {
+    const rolesAvailable = asrFullAnalysisEnabled() || Boolean(state.asrToolPipelineRun?.speaker_mapping?.length);
+    els.asrToolRolesButton.hidden = !rolesAvailable;
+    els.asrToolRolesButton.title = rolesAvailable
+      ? "Открыть роли участников."
+      : "Роли требуют полного анализа; включите его в настройках ASR.";
   }
   [
     els.asrToolCleanButton,
@@ -4930,7 +5568,7 @@ function renderAsrTool() {
     els.asrToolRolesButton,
     els.asrToolFullAnalysisButton,
   ].filter(Boolean).forEach((button) => {
-    button.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolPipelineBusy;
+    button.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolStopping;
   });
   if (els.asrToolOpenAnalysisButton) {
     els.asrToolOpenAnalysisButton.disabled = !hasOutput && !state.asrToolPipelineRun;
@@ -4939,7 +5577,7 @@ function renderAsrTool() {
     els.asrToolDownloadButton.disabled = !selectedContent && !hasOutput;
   }
   if (els.asrToolRetranscribeButton) {
-    els.asrToolRetranscribeButton.disabled = !state.asrToolLastFile || state.asrToolIsTranscribing;
+    els.asrToolRetranscribeButton.disabled = !state.asrToolLastFile || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolSaveContextButton) {
     els.asrToolSaveContextButton.disabled = !state.asrToolPipelineRun || !state.activeProfileId;
@@ -4948,22 +5586,22 @@ function renderAsrTool() {
     els.asrToolCopyButton.disabled = !selectedContent && !hasOutput;
   }
   if (els.asrToolSaveSpeakersButton) {
-    els.asrToolSaveSpeakersButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy;
+    els.asrToolSaveSpeakersButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy || state.asrToolStopping;
   }
   if (els.asrToolRegenerateSummaryButton) {
-    els.asrToolRegenerateSummaryButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy;
+    els.asrToolRegenerateSummaryButton.disabled = !state.asrToolPipelineRun || state.asrToolPipelineBusy || state.asrToolStopping;
   }
   if (els.asrToolSaveButton) {
-    els.asrToolSaveButton.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing;
+    els.asrToolSaveButton.disabled = !hasOutput || !state.activeProfileId || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolClearButton) {
     els.asrToolClearButton.disabled = !hasOutput && !hasSelectedTranscript;
   }
   if (els.asrToolDeleteButton) {
-    els.asrToolDeleteButton.disabled = !hasSelectedTranscript || state.asrToolIsTranscribing;
+    els.asrToolDeleteButton.disabled = !hasSelectedTranscript || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolClearHistoryButton) {
-    els.asrToolClearHistoryButton.disabled = !historyCount || state.asrToolIsTranscribing;
+    els.asrToolClearHistoryButton.disabled = !historyCount || state.asrToolIsTranscribing || state.asrToolStopping;
   }
   if (els.asrToolFullscreenButton) {
     els.asrToolFullscreenButton.setAttribute(
@@ -4986,7 +5624,8 @@ function renderAsrTool() {
     const emptyText = state.asrToolActiveTab === "summary" ? "Саммари появится после анализа транскрипта." : "";
     const outputText = text || busyText || emptyText;
     els.asrToolPipelinePanel.hidden = !outputText;
-    els.asrToolPipelineOutput.textContent = outputText;
+    els.asrToolPipelineOutput.dataset.plainText = outputText;
+    els.asrToolPipelineOutput.innerHTML = renderAsrMarkdownOutput(outputText, emptyText);
     els.asrToolPipelineMeta.textContent = run
       ? `${run.preset || "balanced"} • ${getAsrActionLabel(run.action || "full")} • ${formatDateTime(run.updated_at || run.created_at)}`
       : (state.asrToolPipelineBusy
@@ -4996,7 +5635,9 @@ function renderAsrTool() {
     renderAsrSpeakerEditor(run);
   }
   if (els.asrToolTasksOutput) {
-    els.asrToolTasksOutput.textContent = formatAsrTasksOutput(state.asrToolPipelineRun);
+    const tasksText = formatAsrTasksOutput(state.asrToolPipelineRun);
+    els.asrToolTasksOutput.dataset.plainText = tasksText;
+    els.asrToolTasksOutput.innerHTML = renderAsrMarkdownOutput(tasksText, "Задачи появятся после анализа транскрипта.");
   }
 
   renderAsrToolHistory();
@@ -5028,6 +5669,7 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
       state.asrToolPipelineRun = null;
     }
     setInlineStatus(els.asrToolStatus, "Транскрипт загружен. Можно редактировать и отправить в чат.", "success");
+    setAsrHistoryCollapsed(true);
     renderAsrTool();
     if (!isMobileLayout()) {
       requestAnimationFrame(() => els.asrToolOutput?.focus({ preventScroll: true }));
@@ -5045,8 +5687,11 @@ async function openAsrTool({ focusText = false } = {}) {
   state.asrToolIsOpen = true;
   state.asrToolIsMinimized = false;
   els.asrToolWindow.hidden = false;
+  els.asrToolWindow.classList.add("tool-window--fullscreen");
   syncMobileScrollLock();
-  setAsrToolWindowBounds();
+  if (!els.asrToolWindow.classList.contains("tool-window--fullscreen")) {
+    setAsrToolWindowBounds();
+  }
   setInlineStatus(
     els.asrToolStatus,
     state.asrToolSelectedTranscript
@@ -5176,6 +5821,51 @@ async function runAsrToolTranscription(file) {
   }
 }
 
+async function stopAsrToolProcessing() {
+  if (state.asrToolStopping) return;
+  const hasLocalWork = state.asrToolIsTranscribing || state.asrToolPipelineBusy || state.asrToolTaskId || state.asrToolStartController || state.asrToolPipelineController;
+  if (!hasLocalWork) {
+    setInlineStatus(els.asrToolStatus, "Активных процессов ASR Studio нет.", "warning");
+    return;
+  }
+
+  state.asrToolStopping = true;
+  renderAsrTool();
+  setInlineStatus(els.asrToolStatus, "Останавливаю ASR Studio…", "warning");
+  setFooter("Останавливаю ASR Studio…", "warning");
+
+  try {
+    state.asrToolStartController?.abort();
+    state.asrToolPipelineController?.abort();
+    if (state.asrToolTaskId) {
+      try {
+        await request(`/transcribe/tasks/${encodeURIComponent(state.asrToolTaskId)}/cancel`, {
+          method: "POST",
+          body: {},
+        });
+      } catch (error) {
+        if ((error?.status || 0) !== 404) throw error;
+      }
+    }
+    await request("/asr/stop", { method: "POST", body: {} });
+    state.asrToolTaskId = null;
+    state.asrToolStartController = null;
+    state.asrToolPipelineController = null;
+    state.asrToolIsTranscribing = false;
+    state.asrToolPipelineBusy = false;
+    state.asrToolPipelineAction = "";
+    state.asrToolPipelinePreset = "";
+    setInlineStatus(els.asrToolStatus, "ASR Studio остановлена. Если модель уже была внутри текущего LLM-вызова, дождитесь освобождения Ollama.", "warning");
+    setFooter("ASR Studio остановлена.", "warning");
+  } catch (error) {
+    setInlineStatus(els.asrToolStatus, `Не удалось остановить ASR Studio: ${error.message || error}`, "error");
+    setFooter(`Не удалось остановить ASR Studio: ${error.message || error}`, "error");
+  } finally {
+    state.asrToolStopping = false;
+    renderAsrTool();
+  }
+}
+
 async function saveAsrToolTranscript() {
   const content = String(els.asrToolOutput?.value || "").trim();
   if (!content) {
@@ -5234,11 +5924,19 @@ async function deleteSelectedAsrToolTranscript() {
     setInlineStatus(els.asrToolStatus, "Сначала выберите запись в истории.", "warning");
     return;
   }
+  await deleteAsrToolTranscript(state.asrToolSelectedTranscriptId, { clearIfSelected: true });
+}
+
+async function deleteAsrToolTranscript(transcriptId, { clearIfSelected = false } = {}) {
+  const targetId = Number(transcriptId || 0);
+  if (!Number.isFinite(targetId) || targetId <= 0) return;
   if (!window.confirm("Удалить выбранную запись транскрибации?")) return;
 
   try {
-    await request(`/transcripts/${encodeURIComponent(state.asrToolSelectedTranscriptId)}`, { method: "DELETE" });
-    clearAsrToolEditor();
+    await request(`/transcripts/${encodeURIComponent(targetId)}`, { method: "DELETE" });
+    if (clearIfSelected || Number(state.asrToolSelectedTranscriptId || 0) === targetId) {
+      clearAsrToolEditor();
+    }
     await loadAsrToolHistory({ silent: true });
     setFooter("Запись ASR удалена.", "success");
   } catch (error) {
@@ -5407,19 +6105,33 @@ function formatAsrPipelineRun(run) {
   if (!run) return "";
   const parts = [];
   if (run.summary) {
-    parts.push(run.summary);
-  }
-  if (run.structured_json) {
+    return normalizeAsrDisplayMarkdown(run.summary);
+  } else if (run.structured_json) {
     const formatted = formatStructuredData(run.structured_json);
     parts.push(formatted || `Структурированные данные:\n${JSON.stringify(run.structured_json, null, 2)}`);
   }
   if (!parts.length && run.cleaned_transcript) {
     parts.push(run.cleaned_transcript);
   }
-  if (Array.isArray(run.warnings) && run.warnings.length) {
-    parts.push(`Предупреждения:\n${run.warnings.map((item) => `- ${item}`).join("\n")}`);
+  return normalizeAsrDisplayMarkdown(parts.join("\n\n"));
+}
+
+function normalizeAsrDisplayMarkdown(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((line) => !/^\s*-{3,}\s*$/.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function renderAsrMarkdownOutput(value, emptyText = "") {
+  const text = normalizeAsrDisplayMarkdown(value);
+  if (!text) {
+    return emptyText ? `<p class="subtle">${escapeHtml(emptyText)}</p>` : "";
   }
-  return parts.join("\n\n").trim();
+  return formatRichMessage(text);
 }
 
 function renderAsrSpeakerEditor(run) {
@@ -5466,8 +6178,25 @@ async function ensureAsrToolTranscriptSaved() {
   return saveAsrToolTranscript();
 }
 
+async function runSelectedAsrAnalysisMode() {
+  const mode = getAsrAnalysisModeConfig(normalizeAsrAnalysisMode(state.asrToolAnalysisMode));
+  if (!mode) return;
+  if (mode.requiresFullAnalysis && !confirmAsrFullAnalysisRisk()) return;
+  setAsrToolTab(mode.tab || "summary");
+  await runAsrPipelineAction(mode.action, mode.preset);
+}
+
 async function runAsrPipelineAction(action, preset = "balanced") {
   if (state.asrToolPipelineBusy) return;
+  if (action === "full" && !asrFullAnalysisEnabled()) {
+    setInlineStatus(
+      els.asrToolStatus,
+      "Полный анализ отключён. Его можно включить в настройках ASR после предупреждения о нагрузке.",
+      "warning",
+    );
+    openAsrPipelineSettings();
+    return;
+  }
   const content = String(els.asrToolOutput?.value || "").trim();
   if (!content) {
     setInlineStatus(els.asrToolStatus, "Нет текста для обработки.", "warning");
@@ -5475,19 +6204,19 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   }
   const transcript = await ensureAsrToolTranscriptSaved();
   if (!transcript?.id) return;
-  const modelName = String(state.selectedLlmModel || "").trim();
-  const modelAvailable = await ensureModelInstalled(modelName);
-  if (!modelAvailable) return;
 
   state.asrToolPipelineBusy = true;
   state.asrToolPipelineAction = action;
   state.asrToolPipelinePreset = preset;
+  const controller = new AbortController();
+  state.asrToolPipelineController = controller;
   renderAsrTool();
   setInlineStatus(els.asrToolStatus, "Идёт обработка транскрипта…", "warning");
   try {
     const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
       method: "POST",
-      body: { action, preset, model_name: modelName },
+      body: { action, preset, model_name: ASR_PIPELINE_SETTINGS_MODEL_ID },
+      signal: controller.signal,
     });
     state.asrToolPipelineRun = run;
     if (action === "clean" && run?.cleaned_transcript && els.asrToolOutput) {
@@ -5503,12 +6232,28 @@ async function runAsrPipelineAction(action, preset = "balanced") {
     setInlineStatus(els.asrToolStatus, "Обработка готова.", "success");
     setFooter("ASR обработка готова.", "success");
   } catch (error) {
-    setInlineStatus(els.asrToolStatus, `Ошибка обработки: ${error.message || error}`, "error");
-    setFooter(`Ошибка ASR обработки: ${error.message || error}`, "error");
+    if (isAbortError(error)) {
+      setInlineStatus(els.asrToolStatus, "ASR обработка остановлена.", "warning");
+      setFooter("ASR обработка остановлена.", "warning");
+    } else if (error?.code === "asr_full_analysis_disabled") {
+      setInlineStatus(els.asrToolStatus, "Полный анализ отключён в настройках ASR.", "warning");
+      setFooter("Полный анализ ASR отключён.", "warning");
+      openAsrPipelineSettings();
+    } else if (error?.code === "asr_summary_stage_disabled") {
+      setInlineStatus(els.asrToolStatus, "Стадия саммари выключена в настройках ASR. Включите её или выберите другой маршрут.", "warning");
+      setFooter("ASR summary выключено в настройках стадий.", "warning");
+      openAsrPipelineSettings();
+    } else {
+      setInlineStatus(els.asrToolStatus, `Ошибка обработки: ${error.message || error}`, "error");
+      setFooter(`Ошибка ASR обработки: ${error.message || error}`, "error");
+    }
   } finally {
     state.asrToolPipelineBusy = false;
     state.asrToolPipelineAction = "";
     state.asrToolPipelinePreset = "";
+    if (state.asrToolPipelineController === controller) {
+      state.asrToolPipelineController = null;
+    }
     renderAsrTool();
   }
 }
@@ -5530,8 +6275,17 @@ async function saveAsrPipelineAsContext() {
     state.latestTranscript = transcript;
     renderTranscriptStrip();
     renderContextSummary();
-    setInlineStatus(els.asrToolStatus, "Обработанный контекст сохранён.", "success");
-    setFooter("ASR контекст сохранён и подключён к текущему чату.", "success");
+    const ragIndex = transcript?.rag_index || null;
+    const ragWasEnabled = activeProfileRagEnabled();
+    if (!ragWasEnabled) {
+      await toggleRagForActiveProfile(true, { notify: false });
+    }
+    await loadRagStatus({ silent: true });
+    const chunks = Number(ragIndex?.chunks_indexed || 0);
+    const ragNote = chunks ? ` RAG chunks: ${chunks}.` : "";
+    const enabledNote = ragWasEnabled ? "" : " RAG включён.";
+    setInlineStatus(els.asrToolStatus, `Контекст сохранён и проиндексирован.${ragNote}${enabledNote}`, "success");
+    setFooter(`ASR контекст сохранён, подключён к чату и добавлен в RAG.${enabledNote}`, "success");
     return transcript;
   } catch (error) {
     setInlineStatus(els.asrToolStatus, `Не удалось сохранить контекст: ${error.message || error}`, "error");
@@ -5585,11 +6339,13 @@ async function regenerateAsrSummary() {
   state.asrToolPipelineBusy = true;
   state.asrToolPipelineAction = "summary";
   state.asrToolPipelinePreset = run.preset || "balanced";
+  const controller = new AbortController();
+  state.asrToolPipelineController = controller;
   renderAsrTool();
   try {
     const updated = await request(
       `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/summary`,
-      { method: "POST", body: { save_memory: true } },
+      { method: "POST", body: { save_memory: true }, signal: controller.signal },
     );
     state.asrToolPipelineRun = updated;
     try {
@@ -5600,11 +6356,18 @@ async function regenerateAsrSummary() {
     }
     setInlineStatus(els.asrToolStatus, "Саммари пересобрано с учётом ролей.", "success");
   } catch (error) {
-    setInlineStatus(els.asrToolStatus, `Не удалось пересобрать саммари: ${error.message || error}`, "error");
+    if (isAbortError(error)) {
+      setInlineStatus(els.asrToolStatus, "Пересборка саммари остановлена.", "warning");
+    } else {
+      setInlineStatus(els.asrToolStatus, `Не удалось пересобрать саммари: ${error.message || error}`, "error");
+    }
   } finally {
     state.asrToolPipelineBusy = false;
     state.asrToolPipelineAction = "";
     state.asrToolPipelinePreset = "";
+    if (state.asrToolPipelineController === controller) {
+      state.asrToolPipelineController = null;
+    }
     renderAsrTool();
   }
 }
@@ -5831,6 +6594,9 @@ async function selectTtsToolRecord(recordId, { silent = false } = {}) {
     }
     const preparedRecord = await ensureTtsToolSpeed(record, { silent: true });
     state.ttsToolSelectedRecord = preparedRecord;
+    if (isMobileLayout()) {
+      setTtsHistoryCollapsed(true);
+    }
     setInlineStatus(
       els.ttsToolStatus,
       preparedRecord.status === "completed"
@@ -5870,6 +6636,7 @@ function fillTtsToolWithLatestAssistant({ silent = false } = {}) {
 
 async function openTtsTool({ focusText = false } = {}) {
   if (!els.ttsToolWindow) return;
+  setTtsHistoryCollapsed(true);
   state.ttsToolIsOpen = true;
   state.ttsToolIsMinimized = false;
   els.ttsToolWindow.hidden = false;
@@ -6491,6 +7258,7 @@ function applyCurrentSessionMeta() {
   renderContextSummary();
   renderSettings();
   void refreshModelSettings({ silent: true });
+  void refreshAsrPipelineSettings({ silent: true });
 }
 
 function openSidebar() {
@@ -6524,6 +7292,7 @@ function openSettings() {
   syncMobileScrollLock();
   renderSettings();
   void refreshModelSettings({ silent: true });
+  void refreshAsrPipelineSettings({ silent: true });
   void loadWhisperModels({ silent: true });
   void loadTtsSettings({ silent: true });
   void loadTtsLibrary({ silent: true });
@@ -6611,20 +7380,43 @@ function renderRagPanel() {
   }
   if (els.ragStatusText) {
     const stats = status.stats || {};
+    const contextCount = Array.isArray(status.contexts) ? status.contexts.length : 0;
     els.ragStatusText.textContent = state.ragBusy
-      ? "RAG индексирует файлы из папки…"
-      : `Файлов: ${status.file_count ?? 0} • документов: ${stats.documents ?? 0} • chunks: ${stats.chunks ?? 0} • embeddings: ${stats.embeddings ?? 0}`;
+      ? "RAG обновляется…"
+      : `Файлов: ${status.file_count ?? 0} • контекстов: ${contextCount} • документов: ${stats.documents ?? 0} • chunks: ${stats.chunks ?? 0} • embeddings: ${stats.embeddings ?? 0}`;
   }
   if (els.ragFileList) {
     const files = Array.isArray(status.files) ? status.files : [];
-    els.ragFileList.innerHTML = files.length
-      ? files.slice(0, 100).map((file) => `
+    const contexts = Array.isArray(status.contexts) ? status.contexts : [];
+    const contextMarkup = contexts.length
+      ? [
+        '<p class="rag-file-list__section">Контекст</p>',
+        ...contexts.slice(0, 100).map((item) => {
+          const sourceId = String(item?.source_id || "").trim();
+          const title = String(item?.title || sourceId || "ASR context").trim();
+          return `
+            <div class="rag-file-list__item">
+              <span>${escapeHtml(title)}</span>
+              <button class="rag-file-list__delete" type="button" data-rag-delete-context="${escapeHtml(sourceId)}" aria-label="Удалить ${escapeHtml(title)}">✕</button>
+            </div>
+          `;
+        }),
+      ].join("")
+      : "";
+    const fileMarkup = files.length
+      ? [
+        '<p class="rag-file-list__section">Файлы</p>',
+        ...files.slice(0, 100).map((file) => `
         <div class="rag-file-list__item">
           <span>${escapeHtml(file)}</span>
           <button class="rag-file-list__delete" type="button" data-rag-delete-file="${escapeHtml(file)}" aria-label="Удалить ${escapeHtml(file)}">✕</button>
         </div>
-      `).join("")
-      : '<p class="subtle">Для активного профиля RAG-файлов нет. Нажмите «Добавить файлы», затем «Индексировать».</p>';
+      `),
+      ].join("")
+      : "";
+    els.ragFileList.innerHTML = contextMarkup || fileMarkup
+      ? `${contextMarkup}${fileMarkup}`
+      : '<p class="subtle">Для активного профиля RAG-источников нет. Добавьте файлы или сохраните ASR результат как контекст.</p>';
   }
 }
 
@@ -6763,6 +7555,39 @@ async function deleteRagFile(sourceId, returnFocus = null) {
     setFooter(`RAG: удалено файлов ${deleted.length}.`, "success");
   } catch (error) {
     setFooter(`Не удалось удалить RAG-файл: ${error.message || error}`, "error");
+  } finally {
+    state.ragBusy = false;
+    renderRagPanel();
+  }
+}
+
+async function deleteRagContext(sourceId, returnFocus = null) {
+  const target = String(sourceId || "").trim();
+  if (!target || !state.activeProfileId) return;
+  const approved = await openConfirmDialog({
+    eyebrow: "RAG",
+    title: "Удалить контекст?",
+    message: "ASR context будет удалён из RAG-индекса и из подключённых transcript/context записей.",
+    confirmLabel: "Удалить",
+    cancelLabel: "Отмена",
+    returnFocus,
+  });
+  if (!approved) return;
+  state.ragBusy = true;
+  renderRagPanel();
+  try {
+    const query = new URLSearchParams({ profile_id: String(state.activeProfileId), source_id: target });
+    const result = await request(`/rag/contexts?${query.toString()}`, { method: "DELETE" });
+    state.ragStatus = result?.status || state.ragStatus;
+    await loadRagStatus({ silent: true });
+    if (state.latestTranscript?.id && target === `transcript:${state.latestTranscript.id}`) {
+      state.latestTranscript = null;
+      renderTranscriptStrip();
+      renderContextSummary();
+    }
+    setFooter("RAG: контекст удалён.", "success");
+  } catch (error) {
+    setFooter(`Не удалось удалить RAG-контекст: ${error.message || error}`, "error");
   } finally {
     state.ragBusy = false;
     renderRagPanel();
@@ -7064,6 +7889,30 @@ async function refreshModelSettings({ silent = false } = {}) {
   }
 }
 
+async function refreshAsrPipelineSettings({ silent = false } = {}) {
+  if (!state.activeProfileId) {
+    state.asrPipelineSettingsState = { effective: {}, overrides: {}, defaults: {} };
+    renderAsrPipelineSettings();
+    if (!silent) {
+      setInlineStatus(els.asrPipelineSettingsStatus, "Выберите профиль.", "warning");
+    }
+    return;
+  }
+
+  try {
+    const data = await request(`/model_settings?profile_id=${encodeURIComponent(state.activeProfileId)}&model_name=${encodeURIComponent(ASR_PIPELINE_SETTINGS_MODEL_ID)}`);
+    state.asrPipelineSettingsState = data || { effective: {}, overrides: {}, defaults: {} };
+    renderAsrPipelineSettings();
+    if (!silent) {
+      setInlineStatus(els.asrPipelineSettingsStatus, "Настройки анализа загружены.", "success");
+    }
+  } catch (error) {
+    if (!silent) {
+      setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось загрузить настройки анализа: ${error.message || error}`, "error");
+    }
+  }
+}
+
 async function openSession(sessionId) {
   state.currentSessionId = sessionId || null;
   writeStored(STORAGE_KEYS.activeSessionId, state.currentSessionId || "");
@@ -7150,6 +7999,7 @@ async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   await loadAsrToolHistory({ silent: true });
   await loadRagStatus({ silent: true });
   await refreshModelSettings({ silent: true });
+  await refreshAsrPipelineSettings({ silent: true });
 }
 
 async function loadProfiles() {
@@ -7229,6 +8079,9 @@ async function saveModelSettingsFlow() {
         max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         ollama_keep_alive: collectKeepAliveValue(),
+        ollama_think: modelSupportsThinking(modelName)
+          ? normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on")
+          : null,
       }),
     });
     state.modelSettingsState = data || state.modelSettingsState;
@@ -7284,22 +8137,78 @@ async function saveStreamingPreferenceFlow() {
   renderModelSettings();
 }
 
-async function saveAsrPipelineSettingsFlow() {
+async function saveShowRouterThinkingToggleFlow() {
+  if (!els.showRouterThinkingToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.showRouterThinkingToggle.checked);
+  const previous = Boolean((getActiveProfilePreferences()?.settings || {}).show_router_thinking_toggle);
+
+  patchActiveProfileSettingsLocal({ show_router_thinking_toggle: checked });
+  renderQuickModelPicker();
+  setInlineStatus(
+    els.modelSettingsStatus,
+    checked
+      ? "Thinking для Auto / Smart Router будет показан в меню выбора модели."
+      : "Thinking для Auto / Smart Router скрыт из меню выбора модели.",
+    "warning",
+  );
+
+  const updatedProfile = await saveActiveProfilePreferences({ settings: { show_router_thinking_toggle: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileSettingsLocal({ show_router_thinking_toggle: previous });
+    renderQuickModelPicker();
+    setInlineStatus(els.modelSettingsStatus, "Не удалось сохранить настройку router Thinking.", "error");
+    return;
+  }
+
+  renderQuickModelPicker();
+  setInlineStatus(
+    els.modelSettingsStatus,
+    checked
+      ? "Router Thinking будет отображаться в верхнем меню."
+      : "Router Thinking скрыт из верхнего меню.",
+    "success",
+  );
+}
+
+async function saveQuickThinkingModeFlow() {
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
-  if (!state.activeProfileId || !modelName) {
-    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля или LLM-модели.", "warning");
+  if (!state.activeProfileId || !modelName || !modelSupportsThinking(modelName)) {
+    renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
+    return;
+  }
+  const nextMode = normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on");
+  try {
+    const data = await request("/model_settings", {
+      method: "POST",
+      body: buildModelSettingsPayload({ ollama_think: nextMode }),
+    });
+    state.modelSettingsState = data || state.modelSettingsState;
+    renderModelSettings();
+    setFooter(`Thinking ${nextMode === "off" ? "выключен" : "включён"} для текущей модели.`, "success");
+  } catch (error) {
+    renderModelSettings();
+    setFooter(`Не удалось сохранить Thinking: ${error.message || error}`, "error");
+  }
+}
+
+async function saveAsrPipelineSettingsFlow() {
+  if (!state.activeProfileId) {
+    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля.", "warning");
     return;
   }
 
   try {
     const data = await request("/model_settings", {
       method: "POST",
-      body: buildModelSettingsPayload({
+      body: {
+        profile_id: state.activeProfileId,
+        model_name: ASR_PIPELINE_SETTINGS_MODEL_ID,
+        ollama_think: normalizeOllamaThink(els.asrPipelineThinkSelect?.value, "off"),
         pipeline: collectAsrPipelineSettingsFromControls(),
-      }),
+      },
     });
-    state.modelSettingsState = data || state.modelSettingsState;
-    renderModelSettings();
+    state.asrPipelineSettingsState = data || state.asrPipelineSettingsState;
+    renderAsrPipelineSettings();
     setInlineStatus(els.asrPipelineSettingsStatus, "Настройки анализа сохранены.", "success");
   } catch (error) {
     setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сохранить анализ: ${error.message || error}`, "error");
@@ -7307,25 +8216,98 @@ async function saveAsrPipelineSettingsFlow() {
 }
 
 async function resetAsrPipelineSettingsFlow() {
-  const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
-  if (!state.activeProfileId || !modelName) {
-    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля или LLM-модели.", "warning");
+  if (!state.activeProfileId) {
+    setInlineStatus(els.asrPipelineSettingsStatus, "Нет активного профиля.", "warning");
     return;
   }
 
   try {
-    const data = await request("/model_settings", {
+    const data = await request("/model_settings/reset_to_defaults", {
       method: "POST",
-      body: buildModelSettingsPayload({
-        pipeline: ASR_PIPELINE_DEFAULTS,
-      }),
+      body: {
+        profile_id: state.activeProfileId,
+        model_name: ASR_PIPELINE_SETTINGS_MODEL_ID,
+      },
     });
-    state.modelSettingsState = data || state.modelSettingsState;
-    renderModelSettings();
+    state.asrPipelineSettingsState = data || state.asrPipelineSettingsState;
+    renderAsrPipelineSettings();
     setInlineStatus(els.asrPipelineSettingsStatus, "Настройки стадий сброшены к рекомендациям.", "success");
   } catch (error) {
     setInlineStatus(els.asrPipelineSettingsStatus, `Не удалось сбросить стадии: ${error.message || error}`, "error");
   }
+}
+
+function confirmAsrFullAnalysisRisk() {
+  return window.confirm(`${ASR_FULL_ANALYSIS_WARNING}\n\nПродолжить?`);
+}
+
+async function saveAsrFullAnalysisPreferenceFlow() {
+  if (!els.asrFullAnalysisEnabledToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.asrFullAnalysisEnabledToggle.checked);
+  const previous = asrFullAnalysisEnabled();
+
+  if (checked && !previous && !confirmAsrFullAnalysisRisk()) {
+    els.asrFullAnalysisEnabledToggle.checked = false;
+    return;
+  }
+
+  patchActiveProfileSettingsLocal({ asr_full_analysis_enabled: checked });
+  els.asrFullAnalysisEnabledToggle.disabled = true;
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked ? "Включаю полный анализ ASR…" : "Отключаю полный анализ ASR…",
+    "warning",
+  );
+
+  const updatedProfile = await saveActiveProfilePreferences({ settings: { asr_full_analysis_enabled: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileSettingsLocal({ asr_full_analysis_enabled: previous });
+    setInlineStatus(els.asrPipelineSettingsStatus, "Не удалось сохранить настройку полного анализа.", "error");
+    renderAsrPipelineSettings();
+    renderAsrTool();
+    return;
+  }
+
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked
+      ? "Полный анализ включён для этого профиля. Используйте осторожно: он запускает все стадии."
+      : "Полный анализ отключён. Саммари работает в облегчённом режиме.",
+    "success",
+  );
+  renderAsrPipelineSettings();
+  renderAsrTool();
+}
+
+async function saveAsrDiagnosticsPreferenceFlow() {
+  if (!els.asrDiagnosticsEnabledToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.asrDiagnosticsEnabledToggle.checked);
+  const previous = asrDiagnosticsEnabled();
+
+  patchActiveProfileAsrLocal({ diagnostics_enabled: checked });
+  els.asrDiagnosticsEnabledToggle.disabled = true;
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked ? "Включаю ASR-логи…" : "Выключаю ASR-логи и удаляю папку diagnostics…",
+    "warning",
+  );
+
+  const updatedProfile = await saveActiveProfilePreferences({ asr: { diagnostics_enabled: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileAsrLocal({ diagnostics_enabled: previous });
+    setInlineStatus(els.asrPipelineSettingsStatus, "Не удалось сохранить настройку ASR-логов.", "error");
+    renderAsrPipelineSettings();
+    return;
+  }
+
+  setInlineStatus(
+    els.asrPipelineSettingsStatus,
+    checked
+      ? "ASR-логи включены. Диагностика pipeline будет записываться в папку профиля."
+      : "ASR-логи выключены. Папка diagnostics для профиля удалена.",
+    "success",
+  );
+  renderAsrPipelineSettings();
 }
 
 async function resetModelSettingsFlow() {
@@ -7351,6 +8333,7 @@ async function resetModelSettingsFlow() {
         mem_turns: defaultMemTurns,
         streaming_enabled: defaultStreamingEnabled,
         ...RESIDENCY_DEFAULTS,
+        show_router_thinking_toggle: false,
       },
     });
     await refreshModelSettings({ silent: true });
@@ -7880,6 +8863,43 @@ async function renameSessionById(sessionId) {
   }
 }
 
+async function renameAsrToolTranscriptById(transcriptId) {
+  const targetId = Number(transcriptId || 0);
+  if (!Number.isFinite(targetId) || targetId <= 0) return;
+  const transcript = state.asrToolHistory.find((item) => Number(item.id) === targetId)
+    || (state.asrToolSelectedTranscript && Number(state.asrToolSelectedTranscript.id) === targetId
+      ? state.asrToolSelectedTranscript
+      : null);
+  if (!transcript) return;
+
+  const currentTitle = getAsrTranscriptTitle(transcript);
+  const nextTitle = window.prompt("Новое название транскрибации", currentTitle);
+  if (nextTitle === null) return;
+  const title = nextTitle.trim();
+  if (!title) {
+    setFooter("Название транскрибации не может быть пустым.", "warning");
+    return;
+  }
+  if (title === currentTitle) return;
+
+  try {
+    const updated = await request(`/transcripts/${encodeURIComponent(targetId)}`, {
+      method: "PATCH",
+      body: { name: title },
+    });
+    state.asrToolHistory = state.asrToolHistory.map((item) => (
+      Number(item.id) === targetId ? { ...item, ...updated } : item
+    ));
+    if (Number(state.asrToolSelectedTranscriptId || 0) === targetId) {
+      state.asrToolSelectedTranscript = { ...(state.asrToolSelectedTranscript || {}), ...updated };
+    }
+    renderAsrTool();
+    setFooter("Транскрибация переименована.", "success");
+  } catch (error) {
+    setFooter(`Не удалось переименовать транскрибацию: ${error.message || error}`, "error");
+  }
+}
+
 async function saveModelsDir(moveExisting) {
   const target = (els.modelsDirInput?.value || "").trim();
   if (!target) {
@@ -8233,6 +9253,7 @@ function bindEvents() {
 
   els.sessionList?.addEventListener("click", async (event) => {
     closeSessionContextMenu();
+    closeAsrHistoryContextMenu();
     const target = event.target instanceof Element ? event.target : null;
     const openButton = target?.closest("[data-action='open']");
     const deleteButton = target?.closest("[data-action='delete']");
@@ -8262,6 +9283,13 @@ function bindEvents() {
     closeSessionContextMenu();
     if (sessionId) {
       await renameSessionById(sessionId);
+    }
+  });
+  els.renameAsrTranscriptMenuItem?.addEventListener("click", async () => {
+    const transcriptId = state.asrHistoryContextMenuTranscriptId;
+    closeAsrHistoryContextMenu();
+    if (transcriptId) {
+      await renameAsrToolTranscriptById(transcriptId);
     }
   });
 
@@ -8470,9 +9498,15 @@ function bindEvents() {
     await toggleRagForActiveProfile(Boolean(els.ragEnabledToggle.checked));
   });
   els.ragFileList?.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-rag-delete-file]");
-    if (!button) return;
-    await deleteRagFile(button.dataset.ragDeleteFile, button);
+    const fileButton = event.target.closest("[data-rag-delete-file]");
+    if (fileButton) {
+      await deleteRagFile(fileButton.dataset.ragDeleteFile, fileButton);
+      return;
+    }
+    const contextButton = event.target.closest("[data-rag-delete-context]");
+    if (contextButton) {
+      await deleteRagContext(contextButton.dataset.ragDeleteContext, contextButton);
+    }
   });
   els.confirmCancelButton?.addEventListener("click", () => {
     resolveConfirmDialog(false);
@@ -8516,10 +9550,47 @@ function bindEvents() {
   els.saveModelSettingsButton?.addEventListener("click", async () => saveModelSettingsFlow());
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
   els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
+  els.showRouterThinkingToggle?.addEventListener("change", async () => saveShowRouterThinkingToggleFlow());
+  els.quickThinkingButton?.addEventListener("click", () => {
+    closeQuickModelMenu();
+    closeVoiceModelMenu();
+    toggleQuickThinkingMenu(undefined, "desktop");
+  });
+  els.quickThinkingMobileButton?.addEventListener("click", () => {
+    closeQuickModelMenu();
+    closeVoiceModelMenu();
+    toggleQuickThinkingMenu(undefined, "mobile");
+  });
+  const handleQuickThinkingMenuClick = async (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-thinking-mode]") : null;
+    if (!(button instanceof HTMLElement)) return;
+    const nextMode = normalizeOllamaThink(button.dataset.thinkingMode, "on");
+    if (!els.quickThinkingControl) return;
+    closeQuickThinkingMenu();
+    els.quickThinkingControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+    if (els.quickThinkingMobileControl) {
+      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+    }
+    renderQuickThinkingControl(nextMode);
+    await saveQuickThinkingModeFlow();
+  };
+  els.quickThinkingMenu?.addEventListener("click", handleQuickThinkingMenuClick);
+  els.quickThinkingMobileMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
   els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
+  els.asrFullAnalysisEnabledToggle?.addEventListener("change", async () => saveAsrFullAnalysisPreferenceFlow());
+  els.asrDiagnosticsEnabledToggle?.addEventListener("change", async () => saveAsrDiagnosticsPreferenceFlow());
   els.asrPipelineSettingsToggleButton?.addEventListener("click", () => {
     setAsrPipelineSettingsExpanded(!state.asrPipelineSettingsExpanded);
+  });
+  els.asrPipelineSettingsGrid?.addEventListener("change", (event) => {
+    const control = event.target instanceof Element ? event.target.closest("[data-asr-pipeline-field='model']") : null;
+    if (!(control instanceof HTMLSelectElement)) return;
+    const row = control.closest(".pipeline-stage-row");
+    const disabledStage = control.value === ASR_PIPELINE_DISABLED_VALUE;
+    row?.querySelectorAll("[data-asr-pipeline-field='temperature'], [data-asr-pipeline-field='max_tokens']").forEach((input) => {
+      input.disabled = disabledStage;
+    });
   });
 
   els.llmModelSelect?.addEventListener("change", async () => {
@@ -8528,21 +9599,53 @@ function bindEvents() {
 
   els.quickModelButton?.addEventListener("click", () => {
     toggleComposerMenu(false);
+    closeQuickThinkingMenu();
     closeVoiceModelMenu();
-    toggleQuickModelMenu();
+    toggleQuickModelMenu(undefined, "desktop");
   });
 
-  els.quickModelMenu?.addEventListener("click", async (event) => {
+  els.quickModelMobileButton?.addEventListener("click", () => {
+    toggleComposerMenu(false);
+    closeQuickThinkingMenu();
+    closeVoiceModelMenu();
+    toggleQuickModelMenu(undefined, "mobile");
+  });
+
+  const handleQuickModelMenuClick = async (event) => {
     if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
       return;
     }
-    const button = event.target.closest("[data-quick-model]");
+    const button = event.target instanceof Element ? event.target.closest("[data-quick-model]") : null;
     if (!button) return;
     const modelName = button.dataset.quickModel || "";
     if (!modelName) return;
     closeQuickModelMenu();
     await applySelectedLlmModel(modelName);
-  });
+  };
+  const handleQuickModelMenuChange = async (event) => {
+    const input = event.target instanceof Element ? event.target.closest("[data-quick-thinking-toggle]") : null;
+    if (!(input instanceof HTMLInputElement)) return;
+    const modelName = String(input.dataset.quickThinkingModel || "").trim();
+    if (!modelName) return;
+    if (state.selectedLlmModel !== modelName) {
+      await applySelectedLlmModel(modelName, { closeMenu: false });
+    }
+    const nextMode = input.checked ? "on" : "off";
+    if (els.quickThinkingControl) {
+      els.quickThinkingControl.dataset.thinkingMode = nextMode;
+    }
+    if (els.quickThinkingMobileControl) {
+      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
+    }
+    renderQuickThinkingControl(nextMode);
+    renderQuickModelPicker();
+    await saveQuickThinkingModeFlow();
+    renderQuickModelPicker();
+  };
+  els.quickModelMenu?.addEventListener("click", handleQuickModelMenuClick);
+  els.quickModelMobileMenu?.addEventListener("click", handleQuickModelMenuClick);
+  els.quickModelMenu?.addEventListener("change", handleQuickModelMenuChange);
+  els.quickModelMobileMenu?.addEventListener("change", handleQuickModelMenuChange);
 
   els.quickModelSelect?.addEventListener("change", async () => {
     await applySelectedLlmModel(els.quickModelSelect.value || "");
@@ -8580,6 +9683,14 @@ function bindEvents() {
     const updated = await saveActiveProfilePreferences({ asr: { threads } });
     if (!updated) return;
     setFooter(`Профиль обновлён: ASR threads ${threads}`, "success");
+  });
+
+  els.asrAnalysisPromptInput?.addEventListener("change", async () => {
+    const analysisPrompt = String(els.asrAnalysisPromptInput.value || "").trim();
+    els.asrAnalysisPromptInput.value = analysisPrompt;
+    const updated = await saveActiveProfilePreferences({ asr: { analysis_prompt: analysisPrompt } });
+    if (!updated) return;
+    setFooter(analysisPrompt ? "Профиль обновлён: ASR контекст анализа сохранён." : "Профиль обновлён: ASR контекст анализа очищен.", "success");
   });
 
   els.ttsVoiceSelect?.addEventListener("change", async () => {
@@ -8629,6 +9740,14 @@ function bindEvents() {
     if (!updated) return;
     setFooter(`Профиль обновлён: ASR язык/prompt ${promptPreset}`, "success");
   });
+  els.asrToolAnalysisLanguageSelect?.addEventListener("change", async () => {
+    const analysisLanguage = normalizeAsrAnalysisLanguage(els.asrToolAnalysisLanguageSelect.value);
+    els.asrToolAnalysisLanguageSelect.value = analysisLanguage;
+    const updated = await saveActiveProfilePreferences({ asr: { analysis_language: analysisLanguage } });
+    if (!updated) return;
+    const label = analysisLanguage === "auto" ? "авто" : analysisLanguage;
+    setFooter(`Профиль обновлён: язык summary ${label}`, "success");
+  });
   els.asrToolOutput?.addEventListener("input", () => {
     state.asrToolPipelineRun = null;
     renderAsrTool();
@@ -8640,6 +9759,12 @@ function bindEvents() {
   els.asrToolHistorySearchInput?.addEventListener("input", () => {
     state.asrToolHistorySearch = els.asrToolHistorySearchInput.value || "";
     renderAsrToolHistory();
+  });
+  els.asrHistoryToggleButton?.addEventListener("click", () => {
+    setAsrHistoryCollapsed(!state.asrHistoryCollapsed);
+  });
+  els.asrHistoryReopenButton?.addEventListener("click", () => {
+    setAsrHistoryCollapsed(false);
   });
   document.querySelectorAll("[data-asr-tab]").forEach((button) => {
     button.addEventListener("click", () => setAsrToolTab(button.dataset.asrTab || "text"));
@@ -8662,6 +9787,9 @@ function bindEvents() {
     els.asrToolFileInput?.click();
   });
   els.asrToolPipelineSettingsButton?.addEventListener("click", () => openAsrPipelineSettings());
+  els.asrToolStopButton?.addEventListener("click", async () => {
+    await stopAsrToolProcessing();
+  });
   els.asrToolFileInput?.addEventListener("change", async () => {
     const file = els.asrToolFileInput.files?.[0];
     if (file) {
@@ -8674,6 +9802,23 @@ function bindEvents() {
       setInlineStatus(els.asrToolStatus, "История ASR Studio обновлена.", "success");
       setFooter("История ASR обновлена.", "success");
     }
+  });
+  els.asrToolAnalysisModeButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    setAsrAnalysisModeMenuOpen(!state.asrToolAnalysisModeMenuOpen);
+  });
+  els.asrToolAnalysisModeMenu?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-asr-analysis-mode]") : null;
+    if (!button) return;
+    event.preventDefault();
+    if (button.getAttribute("aria-disabled") === "true") {
+      setAsrAnalysisMode(button.dataset.asrAnalysisMode);
+      return;
+    }
+    setAsrAnalysisMode(button.dataset.asrAnalysisMode);
+  });
+  els.asrToolRunAnalysisButton?.addEventListener("click", async () => {
+    await runSelectedAsrAnalysisMode();
   });
   els.asrToolCleanButton?.addEventListener("click", async () => {
     setAsrToolTab("text");
@@ -8690,11 +9835,22 @@ function bindEvents() {
   els.asrToolRolesButton?.addEventListener("click", async () => {
     setAsrToolTab("roles");
     if (!state.asrToolPipelineRun?.speaker_mapping?.length) {
+      if (!asrFullAnalysisEnabled()) {
+        setInlineStatus(
+          els.asrToolStatus,
+          "Определение ролей требует полного анализа. Включите его в настройках ASR, если готовы к повышенной нагрузке.",
+          "warning",
+        );
+        openAsrPipelineSettings();
+        return;
+      }
+      if (!confirmAsrFullAnalysisRisk()) return;
       await runAsrPipelineAction("full", "balanced");
     }
   });
   els.asrToolFullAnalysisButton?.addEventListener("click", async () => {
     setAsrToolTab("summary");
+    if (!confirmAsrFullAnalysisRisk()) return;
     await runAsrPipelineAction("full", "balanced");
   });
   els.asrToolInsertPromptButton?.addEventListener("click", () => {
@@ -8734,9 +9890,27 @@ function bindEvents() {
     await clearAsrToolHistory();
   });
   els.asrToolHistoryList?.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-asr-history-id]");
+    closeAsrHistoryContextMenu();
+    const deleteButton = event.target instanceof Element ? event.target.closest("[data-asr-history-delete-id]") : null;
+    if (deleteButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      await deleteAsrToolTranscript(deleteButton.dataset.asrHistoryDeleteId);
+      return;
+    }
+    const button = event.target instanceof Element ? event.target.closest("[data-asr-history-id]") : null;
     if (!button) return;
     await selectAsrToolTranscript(button.dataset.asrHistoryId);
+  });
+  els.asrToolHistoryList?.addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const deleteButton = target?.closest("[data-asr-history-delete-id]");
+    if (deleteButton) return;
+    const button = target?.closest("[data-asr-history-id]");
+    const transcriptId = button?.getAttribute("data-asr-history-id");
+    if (!transcriptId) return;
+    event.preventDefault();
+    openAsrHistoryContextMenu(transcriptId, event.clientX, event.clientY);
   });
 
   els.refreshTtsVoicesButton?.addEventListener("click", async () => {
@@ -8812,6 +9986,9 @@ function bindEvents() {
   });
   els.ttsToolClearButton?.addEventListener("click", async () => {
     await clearAllTtsToolHistory();
+  });
+  els.ttsHistoryToggleButton?.addEventListener("click", () => {
+    setTtsHistoryCollapsed(!state.ttsHistoryCollapsed);
   });
   els.ttsToolHistoryList?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-tts-history-id]");
@@ -9050,12 +10227,17 @@ function bindEvents() {
     }
     if (event.key === "Escape") {
       hideTooltip();
+      if (state.asrToolAnalysisModeMenuOpen) {
+        setAsrAnalysisModeMenuOpen(false);
+        return;
+      }
       const appSelectOpen = Array.from(state.appSelects.values()).some((entry) => entry.wrapper.classList.contains("app-select--open"));
       if (appSelectOpen) {
         closeAppSelect();
         return;
       }
       closeSessionContextMenu();
+      closeAsrHistoryContextMenu();
       if (!els.confirmBackdrop?.hidden) {
         resolveConfirmDialog(false);
         return;
@@ -9079,6 +10261,7 @@ function bindEvents() {
       closeTtsTool();
       toggleComposerMenu(false);
       closeQuickModelMenu();
+      closeQuickThinkingMenu();
       closeVoiceModelMenu();
       closeAppSelect();
     }
@@ -9087,20 +10270,35 @@ function bindEvents() {
   window.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const insideComposerMenu = target?.closest("#composerMenu") || target?.closest("#composerMenuButton");
-    const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideQuickModelMenu = target?.closest("#quickModelMenu")
+      || target?.closest("#quickModelButton")
+      || target?.closest("#quickModelMobileMenu")
+      || target?.closest("#quickModelMobileButton");
+    const insideQuickThinkingMenu = target?.closest("#quickThinkingMenu")
+      || target?.closest("#quickThinkingButton")
+      || target?.closest("#quickThinkingMobileMenu")
+      || target?.closest("#quickThinkingMobileButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
     const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
+    const insideAsrHistoryContextMenu = target?.closest("#asrHistoryContextMenu");
     const insideAppSelect = target?.closest(".app-select");
+    const insideAsrAnalysisMode = target?.closest("#asrToolAnalysisModeControl");
     if (!insideSessionContextMenu) {
       closeSessionContextMenu();
+    }
+    if (!insideAsrHistoryContextMenu) {
+      closeAsrHistoryContextMenu();
     }
     if (els.composerMenu && els.composerMenuButton && !insideComposerMenu) {
       toggleComposerMenu(false);
     }
     if (!insideQuickModelMenu) {
       closeQuickModelMenu();
+    }
+    if (!insideQuickThinkingMenu) {
+      closeQuickThinkingMenu();
     }
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
@@ -9114,21 +10312,38 @@ function bindEvents() {
     if (!insideAppSelect) {
       closeAppSelect();
     }
+    if (!insideAsrAnalysisMode && state.asrToolAnalysisModeMenuOpen) {
+      setAsrAnalysisModeMenuOpen(false);
+    }
   });
 
   window.addEventListener("contextmenu", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
-    const insideQuickModelMenu = target?.closest("#quickModelMenu") || target?.closest("#quickModelButton");
+    const insideQuickModelMenu = target?.closest("#quickModelMenu")
+      || target?.closest("#quickModelButton")
+      || target?.closest("#quickModelMobileMenu")
+      || target?.closest("#quickModelMobileButton");
+    const insideQuickThinkingMenu = target?.closest("#quickThinkingMenu")
+      || target?.closest("#quickThinkingButton")
+      || target?.closest("#quickThinkingMobileMenu")
+      || target?.closest("#quickThinkingMobileButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
     const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
+    const insideAsrHistoryContextMenu = target?.closest("#asrHistoryContextMenu") || target?.closest("[data-asr-history-id]");
     const insideAppSelect = target?.closest(".app-select");
     if (!insideSessionContextMenu) {
       closeSessionContextMenu();
     }
+    if (!insideAsrHistoryContextMenu) {
+      closeAsrHistoryContextMenu();
+    }
     if (!insideQuickModelMenu) {
       closeQuickModelMenu();
+    }
+    if (!insideQuickThinkingMenu) {
+      closeQuickThinkingMenu();
     }
     if (!insideVoiceMenu) {
       closeVoiceModelMenu();
@@ -9159,6 +10374,9 @@ function bindEvents() {
     closeNetworkAddressMenu();
     closeAppSelect();
     closeSessionContextMenu();
+    closeAsrHistoryContextMenu();
+    applyAsrHistoryCollapsedState();
+    applyTtsHistoryCollapsedState();
     if (state.asrToolIsOpen && !els.asrToolWindow?.classList.contains("tool-window--fullscreen")) {
       setAsrToolWindowBounds();
     }
@@ -9183,14 +10401,14 @@ function bindEvents() {
   });
 
   window.addEventListener("pagehide", () => {
-    closeChatTaskEventSource();
-    clearChatTaskReplay();
+    interruptChatTaskEventStream("SSE-соединение закрыто при скрытии страницы.");
   });
 }
 
 async function bootstrap() {
   initTheme();
   applySidebarOpenState();
+  applyAsrHistoryCollapsedState();
   initAppSelects();
   renderWhisperControls();
   renderTtsControls();
@@ -9198,6 +10416,7 @@ async function bootstrap() {
   renderOcrEditor();
   renderToolDock();
   renderVoiceRecordButton();
+  renderQuickModelPicker();
   autoResizePrompt();
   updateSendButtonState();
   bindEvents();

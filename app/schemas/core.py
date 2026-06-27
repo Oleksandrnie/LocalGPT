@@ -57,6 +57,9 @@ class AsrPreferencesUpdate(BaseModel):
     prompt_preset: str | None = None
     beam_size: int | None = None
     threads: int | None = None
+    analysis_language: str | None = None
+    analysis_prompt: str | None = None
+    diagnostics_enabled: bool | None = None
 
 
 class TtsPreferencesUpdate(BaseModel):
@@ -93,6 +96,7 @@ class ModelSettingsRequest(BaseModel):
     num_ctx: int | None = None
     mem_turns: int | None = None
     ollama_keep_alive: str | None = None
+    ollama_think: str | None = None
     pipeline_enabled: bool | None = None
     summary_memory_enabled: bool | None = None
     rag_enabled: bool | None = None

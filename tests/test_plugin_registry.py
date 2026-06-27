@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.apps.plugins import registry
+from backend.apps.plugins import tailscale
 
 
 def _write_manifest(root: Path, plugin_id: str, payload: dict) -> None:
@@ -133,6 +134,23 @@ class PluginRegistryTests(unittest.TestCase):
             "tailscale serve --bg http://127.0.0.1:<LOCALGPT_PORT>",
         )
         self.assertIn("Do not expose LocalGPT directly to the public internet.", plugin["security_warnings"])
+
+    def test_tailscale_manual_command_uses_request_server_port_before_defaults(self) -> None:
+        class Request:
+            scope = {"server": ("127.0.0.1", 8003)}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stale_port_file = Path(tmp) / "backend.port"
+            stale_port_file.write_text("8001", encoding="utf-8")
+            with (
+                patch.object(tailscale, "_BACKEND_PORT_FILE", stale_port_file),
+                patch.dict("os.environ", {"LOCALGPT_PORT": "8000", "LOCALGPT_BACKEND_PORT": "8002"}),
+            ):
+                self.assertEqual(tailscale.detect_localgpt_port(Request()), 8003)
+                self.assertEqual(
+                    tailscale.manual_command(request=Request()),
+                    "tailscale serve --bg http://127.0.0.1:8003",
+                )
 
     def test_network_addresses_uses_enabled_trusted_tailscale_handler_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

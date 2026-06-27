@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import shlex
 import shutil
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ LOG_DIR = PROJECT_ROOT / "tmp_logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 CHAT_LOG_FILE = LOG_DIR / "chat.log"
 PIPELINE_LOG_FILE = LOG_DIR / "pipeline.log"
+TRANSCRIBE_LOG_FILE = LOG_DIR / "transcribe.log"
+ASR_DIAGNOSTICS_DIR = LOG_DIR / "asr_diagnostics"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
 RAG_SOURCE_DIR = PROJECT_ROOT / "rag_sources"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
@@ -40,6 +43,7 @@ ALLOWED_WHISPER_MODELS = (
     "large-v3-turbo",
 )
 ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo"
+APPLE_SILICON_PIPELINE_NUM_GPU = 999
 
 
 def _parse_bool(name: str, default: bool) -> bool:
@@ -67,6 +71,27 @@ def _parse_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _parse_optional_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if not value or value in {"auto", "default", "none", "null"}:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _default_pipeline_num_gpu() -> int | None:
+    if os.getenv("OLLAMA_PIPELINE_NUM_GPU") is not None:
+        return _parse_optional_int("OLLAMA_PIPELINE_NUM_GPU")
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        return APPLE_SILICON_PIPELINE_NUM_GPU
+    return None
 
 
 def _parse_args(name: str) -> tuple[str, ...]:
@@ -187,7 +212,7 @@ class Settings:
     ollama_router_keep_alive: str
     ollama_heavy_keep_alive: str
     ollama_pipeline_keep_alive: str
-    ollama_pipeline_num_gpu: int
+    ollama_pipeline_num_gpu: int | None
     max_resident_target_models: int
     allow_light_with_heavy: bool
     single_large_target_model: bool
@@ -225,8 +250,8 @@ MODEL_CATALOG = [
         "recommended": True,
         "experimental": False,
         "description": (
-            "Быстрый слой: RAG, короткие ответы, быстрые уточнения, pipeline cleaner/segmenter. "
-            "Использовать, когда важна скорость, а не глубокий анализ."
+            "Быстрый слой: RAG, короткие ответы и быстрые уточнения. Для ASR pipeline использовать "
+            "как fallback, когда важна скорость, а не качество длинной встречи."
         ),
     },
     {
@@ -324,40 +349,41 @@ MODEL_RECOMMENDATIONS = MODEL_CATALOG
 
 DEFAULT_PIPELINE = {
     "cleaner": {
-        "enabled": True,
-        "model": "qwen2.5:3b-instruct",
-        "temperature": 0.2,
+        "enabled": False,
+        "model": "qwen2.5:7b-instruct",
+        "temperature": 0,
         "max_tokens": 6000,
     },
     "segmenter": {
-        "enabled": True,
-        "model": "qwen2.5:3b-instruct",
-        "temperature": 0.1,
+        "enabled": False,
+        "model": "qwen2.5:7b-instruct",
+        "temperature": 0.05,
         "max_tokens": 6000,
     },
     "speaker_resolver": {
-        "enabled": True,
+        "enabled": False,
         "model": "qwen2.5:7b-instruct",
-        "temperature": 0.1,
-        "max_tokens": 4000,
+        "temperature": 0,
+        "max_tokens": 3000,
     },
     "structurer": {
         "enabled": True,
         "model": "qwen3:8b",
-        "temperature": 0.3,
-        "max_tokens": 3500,
+        "temperature": 0.05,
+        "max_tokens": 6000,
     },
     "summary": {
         "enabled": True,
-        "model": "mistral-nemo:12b",
-        "temperature": 0.3,
-        "max_tokens": 3000,
+        "model": "qwen3:8b",
+        "temperature": 0.05,
+        "max_tokens": 7000,
     },
 }
 
 DEFAULT_RUNTIME_SETTINGS = {
     "streaming_enabled": True,
     "pipeline_enabled": True,
+    "asr_full_analysis_enabled": False,
     "summary_memory_enabled": True,
     "rag_enabled": False,
     "default_pipeline_preset": "balanced",
@@ -366,6 +392,8 @@ DEFAULT_RUNTIME_SETTINGS = {
     "summary_memory_limit": 5,
     "rag_top_k": 5,
     "rag_max_context_chars": 6000,
+    "ollama_think": "auto",
+    "show_router_thinking_toggle": False,
     "pipeline": DEFAULT_PIPELINE,
 }
 
@@ -436,14 +464,14 @@ def _load_settings() -> Settings:
         ),
         ollama_manual_keep_alive=_parse_keep_alive(
             "OLLAMA_MANUAL_KEEP_ALIVE",
-            _parse_keep_alive("OLLAMA_CHAT_KEEP_ALIVE", "4m"),
+            "5m",
         ),
         ollama_code_keep_alive=_parse_keep_alive("OLLAMA_CODE_KEEP_ALIVE", "2m"),
         ollama_router_keep_alive=_parse_keep_alive("OLLAMA_ROUTER_KEEP_ALIVE", "2m"),
         ollama_heavy_keep_alive=_parse_keep_alive("OLLAMA_HEAVY_KEEP_ALIVE", "60s"),
         ollama_pipeline_keep_alive=_parse_keep_alive("OLLAMA_PIPELINE_KEEP_ALIVE", "0"),
-        ollama_pipeline_num_gpu=_parse_int("OLLAMA_PIPELINE_NUM_GPU", 0),
-        max_resident_target_models=_parse_int("MAX_RESIDENT_TARGET_MODELS", 2),
+        ollama_pipeline_num_gpu=_default_pipeline_num_gpu(),
+        max_resident_target_models=_parse_int("MAX_RESIDENT_TARGET_MODELS", 1),
         allow_light_with_heavy=_parse_bool("ALLOW_LIGHT_WITH_HEAVY", False),
         single_large_target_model=_parse_bool("SINGLE_LARGE_TARGET_MODEL", True),
         preload_model_on_manual_select=_parse_bool("PRELOAD_MODEL_ON_MANUAL_SELECT", False),
@@ -465,7 +493,7 @@ def _load_settings() -> Settings:
         ).strip(),
         whisper_cpp_models_dir=MODEL_PATHS.whisper_cpp,
         whisper_cpp_model_path=(os.getenv("WHISPER_CPP_MODEL_PATH", "") or "").strip(),
-        whisper_cpp_threads=max(0, _parse_int("WHISPER_CPP_THREADS", 0)),
+        whisper_cpp_threads=max(0, _parse_int("WHISPER_CPP_THREADS", 4)),
         whisper_cpp_extra_args=_parse_args("WHISPER_CPP_EXTRA_ARGS"),
         whisper_cpp_convert_audio=_parse_bool("WHISPER_CPP_CONVERT_AUDIO", True),
         whisper_cpp_ffmpeg_binary=(os.getenv("WHISPER_CPP_FFMPEG_BINARY", "ffmpeg") or "ffmpeg").strip(),

@@ -25,6 +25,13 @@ _BACKEND_PORT_FILE = _RUNTIME_DIR / "backend.port"
 def _request_port(request: Any | None) -> int | None:
     if request is None:
         return None
+    scope = getattr(request, "scope", None)
+    if isinstance(scope, dict):
+        server = scope.get("server")
+        if isinstance(server, (list, tuple)) and len(server) >= 2:
+            port = server[1]
+            if isinstance(port, int) and port > 0:
+                return port
     host = str(getattr(getattr(request, "url", None), "hostname", "") or "").strip().lower()
     if host not in {"127.0.0.1", "localhost", "::1"}:
         return None
@@ -52,10 +59,10 @@ def _read_runtime_port_file() -> int | None:
 
 def detect_localgpt_port(request: Any | None = None) -> int:
     return (
-        _read_runtime_port_file()
+        _request_port(request)
+        or _read_runtime_port_file()
         or _parse_port(os.getenv("LOCALGPT_PORT"))
         or _parse_port(os.getenv("LOCALGPT_BACKEND_PORT"))
-        or _request_port(request)
         or 8000
     )
 

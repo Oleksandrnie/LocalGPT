@@ -28,6 +28,15 @@ LANGUAGE_MATCHING_POLICY = (
     "- Язык истории, RAG, transcript/context, примеров кода и профильных инструкций не является разрешением менять язык ответа."
 )
 
+
+def _resolve_ollama_think(value: Any) -> bool | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"on", "true", "1", "yes", "think"}:
+        return True
+    if normalized in {"off", "false", "0", "no", "nothink"}:
+        return False
+    return None
+
 EXPLICIT_RESPONSE_LANGUAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+english\b", re.IGNORECASE), "английском"),
     (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+russian\b", re.IGNORECASE), "русском"),
@@ -320,6 +329,11 @@ class ChatService:
         }
         if num_gpu is not None:
             runtime_kwargs["num_gpu"] = num_gpu
+        if "ollama_allow_cpu_fallback" in request_settings:
+            runtime_kwargs["allow_cpu_fallback"] = bool(request_settings.get("ollama_allow_cpu_fallback"))
+        think = _resolve_ollama_think(request_settings.get("ollama_think"))
+        if think is not None:
+            runtime_kwargs["think"] = think
         return runtime_kwargs
 
     def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:

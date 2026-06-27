@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 
 from app import db
 from app.schemas import TranscriptCreate, TranscriptUpdate
+from backend.apps.rag import service as rag_service
 
 router = APIRouter()
 
@@ -13,6 +14,11 @@ def _get_profile_or_404(profile_id: int) -> dict:
     if not profile or not profile.get("is_active", 1):
         raise HTTPException(status_code=404, detail="profile_not_found")
     return profile
+
+
+def _is_asr_context(transcript: dict) -> bool:
+    labels = transcript.get("labels") if isinstance(transcript.get("labels"), dict) else {}
+    return str((labels or {}).get("origin") or "").strip() == "asr_context"
 
 
 @router.get("/transcripts")
@@ -46,6 +52,8 @@ def create_transcript(req: TranscriptCreate):
             structured_json=req.structured_json,
             latest_pipeline_run_id=req.latest_pipeline_run_id,
         )
+        if _is_asr_context(transcript):
+            transcript["rag_index"] = rag_service.index_asr_context_transcript(transcript)
         return transcript
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": str(exc), "message": "Контент транскрипта обязателен"}) from exc
@@ -83,6 +91,8 @@ def delete_transcript(transcript_id: int):
     transcript = db.get_transcript(transcript_id)
     if not transcript:
         raise HTTPException(status_code=404, detail="transcript_not_found")
+    if _is_asr_context(transcript):
+        rag_service.delete_asr_context_for_transcript(int(transcript["profile_id"]), transcript_id)
     db.delete_transcript(transcript_id)
     return {"deleted": transcript_id}
 
@@ -90,5 +100,9 @@ def delete_transcript(transcript_id: int):
 @router.delete("/transcripts")
 def delete_transcripts(profile_id: int, session_id: str | None = None, origin: str | None = None):
     _get_profile_or_404(profile_id)
+    transcripts = db.list_transcripts(profile_id, session_id=session_id, origin=origin)
+    for transcript in transcripts:
+        if _is_asr_context(transcript):
+            rag_service.delete_asr_context_for_transcript(profile_id, int(transcript["id"]))
     deleted = db.delete_transcripts(profile_id, session_id=session_id, origin=origin)
     return {"deleted": deleted}

@@ -13,6 +13,7 @@ from fastapi import HTTPException, UploadFile
 from app import config, db
 
 SOURCE_TYPE = "manual_file"
+ASR_CONTEXT_SOURCE_TYPE = "asr_context"
 EMBEDDING_MODEL = "local-hash-v1"
 SUPPORTED_SUFFIXES = {".txt", ".md", ".json"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -156,7 +157,7 @@ def _pricing_facts(text: str) -> list[dict[str, Any]]:
         heading = HEADING_RE.match(line)
         if heading and len(heading.group(1)) >= 3:
             title = heading.group(2).strip()
-            if title.lower() in {"базовый", "оптимальный", "максимальный / премиальный"}:
+            if title.lower() in {"базовый", "оптимальный", "премиальный", "максимальный / премиальный"}:
                 current_line = title
             continue
         if not current_line:
@@ -275,8 +276,10 @@ def structured_payload_for_markdown(path: Path) -> dict[str, Any]:
                 "Базовый is a tariff line with only 3, 5, and 7 hour variants.",
                 "The maximum variant inside Базовый is 7 hours / 23730 RUB.",
                 "Оптимальный is a tariff line with only 8, 11, and 15 hour variants.",
-                "Максимальный / Премиальный is a separate tariff line, not a Базовый variant.",
+                "Премиальный (legacy name: Максимальный / Премиальный) is a separate tariff line, not a Базовый variant.",
                 "Do not move 16, 24, or 40 hour variants into Базовый.",
+                "For plural cheapest/middle/highest grid requests, return one matching variant from each tariff line.",
+                "For singular cheapest/most-expensive grid requests, return one absolute item across the whole grid.",
             ],
         }
     return payload
@@ -351,11 +354,147 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(left[idx] * right[idx] for idx in range(size))
 
 
-def _existing_documents(profile_id: int) -> dict[str, dict[str, Any]]:
+def _existing_documents(profile_id: int, source_type: str = SOURCE_TYPE) -> dict[str, dict[str, Any]]:
     return {
         str(item.get("source_id") or ""): item
-        for item in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)
+        for item in db.list_source_documents(profile_id=profile_id, source_type=source_type)
     }
+
+
+def _index_text_document(
+    *,
+    profile_id: int,
+    session_id: str | None,
+    source_type: str,
+    source_id: str,
+    title: str,
+    text: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    chunks = _chunk_text(text)
+    if not chunks:
+        raise HTTPException(status_code=422, detail="rag_context_empty")
+
+    db.delete_source_document(profile_id, source_type, source_id)
+    document = db.create_source_document(
+        profile_id=profile_id,
+        session_id=session_id,
+        source_type=source_type,
+        source_id=source_id,
+        title=title,
+        content=text,
+        metadata={**metadata, "embedding_model": EMBEDDING_MODEL},
+    )
+    document_id = int(document["id"])
+    for idx, chunk in enumerate(chunks):
+        chunk_id = db.create_document_chunk(
+            document_id=document_id,
+            profile_id=profile_id,
+            session_id=session_id,
+            chunk_index=idx,
+            content=chunk,
+            metadata={"source_id": source_id, "chunk_index": idx, "source_type": source_type},
+        )
+        db.create_document_embedding(
+            chunk_id=chunk_id,
+            profile_id=profile_id,
+            embedding_model=EMBEDDING_MODEL,
+            embedding=embed_text(chunk),
+            metadata={"source_id": source_id, "chunk_index": idx, "source_type": source_type},
+        )
+    return {
+        "indexed": True,
+        "document_id": document_id,
+        "source_type": source_type,
+        "source_id": source_id,
+        "title": title,
+        "chunks_indexed": len(chunks),
+        "embedding_model": EMBEDDING_MODEL,
+    }
+
+
+def asr_context_source_id(transcript_id: int | str) -> str:
+    return f"transcript:{int(transcript_id)}"
+
+
+def index_asr_context_transcript(transcript: dict[str, Any]) -> dict[str, Any]:
+    transcript_id = transcript.get("id")
+    profile_id = transcript.get("profile_id")
+    if transcript_id is None or profile_id is None:
+        raise HTTPException(status_code=422, detail="asr_context_transcript_invalid")
+    title = str(transcript.get("name") or f"ASR context #{transcript_id}").strip()
+    source_id = asr_context_source_id(transcript_id)
+    metadata = {
+        "source_kind": "asr_context",
+        "source_role": "source_of_truth",
+        "truth_priority": 80,
+        "transcript_id": int(transcript_id),
+        "origin": "asr_context",
+        "labels": transcript.get("labels") or {},
+    }
+    return _index_text_document(
+        profile_id=int(profile_id),
+        session_id=transcript.get("session_id"),
+        source_type=ASR_CONTEXT_SOURCE_TYPE,
+        source_id=source_id,
+        title=title,
+        text=str(transcript.get("content") or ""),
+        metadata=metadata,
+    )
+
+
+def _context_items(profile_id: int) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for document in db.list_source_documents(profile_id=profile_id, source_type=ASR_CONTEXT_SOURCE_TYPE):
+        metadata = document.get("metadata") or {}
+        items.append(
+            {
+                "source_type": ASR_CONTEXT_SOURCE_TYPE,
+                "source_id": document.get("source_id") or "",
+                "title": document.get("title") or "ASR context",
+                "session_id": document.get("session_id"),
+                "transcript_id": metadata.get("transcript_id"),
+                "created_at": document.get("created_at"),
+                "updated_at": document.get("updated_at"),
+            }
+        )
+    return items
+
+
+def delete_asr_context_source(profile_id: int, source_id: str) -> dict[str, Any]:
+    target = str(source_id or "").strip()
+    if not target:
+        raise HTTPException(status_code=422, detail="rag_context_required")
+    document = next(
+        (
+            item
+            for item in db.list_source_documents(profile_id=profile_id, source_type=ASR_CONTEXT_SOURCE_TYPE)
+            if str(item.get("source_id") or "") == target
+        ),
+        None,
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="rag_context_not_found")
+
+    metadata = document.get("metadata") or {}
+    transcript_id = metadata.get("transcript_id")
+    deleted_docs = db.delete_source_document(profile_id, ASR_CONTEXT_SOURCE_TYPE, target)
+    deleted_transcript = False
+    if transcript_id is not None:
+        transcript = db.get_transcript(int(transcript_id))
+        if transcript and int(transcript.get("profile_id") or 0) == int(profile_id):
+            db.delete_transcript(int(transcript_id))
+            deleted_transcript = True
+    return {
+        "profile_id": profile_id,
+        "deleted": [target] if deleted_docs else [],
+        "deleted_transcript": deleted_transcript,
+        "status": status(profile_id),
+    }
+
+
+def delete_asr_context_for_transcript(profile_id: int, transcript_id: int | str) -> int:
+    return db.delete_source_document(profile_id, ASR_CONTEXT_SOURCE_TYPE, asr_context_source_id(transcript_id))
 
 
 def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
@@ -477,6 +616,7 @@ def status(profile_id: int | None = None) -> dict[str, Any]:
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "file_count": len(files),
         "files": [_relative_source_id(path, profile_id) for path in files[:100]],
+        "contexts": _context_items(profile_id) if profile_id is not None else [],
         "stats": db.rag_stats(profile_id),
     }
 
@@ -539,7 +679,10 @@ def build_context(chunks: list[dict[str, Any]], *, max_chars: int = 6000) -> str
     parts: list[str] = [
         "RAG rules: JSON chunks are source of truth. If JSON conflicts with Markdown, use JSON. "
         "Markdown chunks are explanatory context. Do not invent facts not present in retrieved chunks. "
-        "For pricing questions, use explicit structured values and distinguish a minimum tariff from a maximum variant inside a tariff line."
+        "For pricing questions, use explicit structured values and distinguish a minimum tariff from a maximum variant inside a tariff line. "
+        "For plural cheapest, middle, or highest grid requests, use one matching variant from each tariff line. "
+        "For singular cheapest or most-expensive grid requests, use one absolute item across the whole grid. "
+        "If the intended selection is ambiguous and the retrieved source does not define it, ask a short clarifying question."
     ]
     total = len(parts[0]) + 2
     for item in chunks:

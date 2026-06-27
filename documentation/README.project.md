@@ -364,7 +364,8 @@ UI component guide:
 - отдельная транскрибация аудио/видео;
 - история транскриптов;
 - редактирование текста;
-- действия `Очистить`, `Сделать summary`, `Разобрать по задачам`;
+- selector `Режим анализа`: `Быстрое саммари`, `Умное саммари`, `Полный анализ`;
+- ручная операция `Очистить`, отдельно от обычных режимов анализа;
 - speaker role editor с ручными overrides;
 - пересборка summary с учётом исправленных ролей;
 - summary/tasks сохраняются в записи транскрибации и используются для названия записи в истории;
@@ -373,6 +374,10 @@ UI component guide:
 - очистка всей истории;
 - вставка processed context в prompt;
 - отправка processed context прямо в чат.
+
+`Быстрое саммари` идёт raw transcript -> summary. `Умное саммари` идёт raw transcript/chunks -> structurer -> summary без cleaner и speaker resolver. `Полный анализ` добавляет segmenter/speaker resolver/structurer перед summary и доступен только после явного включения `Разрешить полный анализ` в настройках ASR.
+
+Пункт `Не использовать` в настройках стадий сохраняет stage как `enabled=false`; backend пропускает такую стадию во всех режимах. `Язык summary` (`Авто`, `Русский`, `English`) и `Контекст анализа` влияют на structurer/summary/retry, но не на Whisper transcription.
 
 Быстрый voice-to-input при этом остаётся отдельным UX и не смешивается с `ASR Studio`.
 

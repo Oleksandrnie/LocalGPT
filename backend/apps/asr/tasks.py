@@ -145,6 +145,7 @@ def _transcription_worker(
 
         detected_language = transcription.get("language") if isinstance(transcription, dict) else None
         role_keywords = transcription.get("role_keywords") or {} if isinstance(transcription, dict) else {}
+        runtime = transcription.get("runtime") or {} if isinstance(transcription, dict) else {}
         transcript_record = None
 
         if store_result:
@@ -172,6 +173,7 @@ def _transcription_worker(
                 "segments": segments,
                 "timeline": timeline,
                 "role_keywords": role_keywords,
+                "runtime": runtime,
                 "transcript_id": transcript_record.get("id") if transcript_record else None,
                 "profile_id": profile_id or None,
                 "session_id": session_id or None,

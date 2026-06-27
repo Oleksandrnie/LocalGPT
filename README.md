@@ -343,6 +343,7 @@ MacBook запускает LocalGPT/model runtime, iPhone является то�
 - нижняя зона оставлена только под ввод сообщения;
 - icon-only RAG в topbar показывает состояние активного профиля:
   OFF без dot/glow, ON с фиолетовым dot и glow;
+- `Thinking` в topbar управляет Ollama thinking для выбранной chat-модели, если модель его поддерживает; пункт остаётся визуально стабильным, а включение отмечается лёгким фиолетовым свечением;
 - `ThemeToggle` в topbar переключает dark/light theme;
 - тема сохраняется в `localStorage` через ключ `localgpt_simple_theme`;
 - светлая тема использует мягкий фон `#F6F7FB`, radial-пятна, glass-слои, blur и тени;
@@ -363,7 +364,8 @@ UI component guide:
 - отдельная транскрибация аудио/видео;
 - история транскриптов;
 - редактирование текста;
-- действия `Очистить`, `Сделать summary`, `Разобрать по задачам`;
+- selector `Режим анализа` с вариантами `Быстрое саммари`, `Умное саммари`, `Полный анализ`;
+- ручная операция `Очистить`, отдельно от обычных режимов анализа;
 - speaker role editor с ручными overrides;
 - пересборка summary с учётом исправленных ролей;
 - summary/tasks сохраняются в записи транскрибации и используются для названия записи в истории;
@@ -371,7 +373,44 @@ UI component guide:
 - удаление записи;
 - очистка всей истории;
 - вставка processed context в prompt;
-- отправка processed context прямо в чат.
+- отправка processed context прямо в чат;
+- остановка активной ASR Studio обработки из интерфейса.
+
+Базовые настройки ASR Studio рассчитаны на длинные русскоязычные встречи: Whisper `large-v3-turbo`, русский prompt, `beam_size=5`, `threads=4`. Pipeline по умолчанию использует:
+
+- cleaner: `qwen2.5:7b-instruct`, `temperature=0`, `max_tokens=9000`;
+- segmenter: `qwen2.5:7b-instruct`, `temperature=0.05`, `max_tokens=8000`;
+- speaker resolver: `qwen2.5:7b-instruct`, `temperature=0.1`, `max_tokens=4000`;
+- structurer: `qwen3:8b`, `temperature=0.1`, `max_tokens=8000`;
+- summary: `qwen3:8b`, `temperature=0.1`, `max_tokens=8000`.
+
+`qwen2.5:3b-instruct` больше не основной качественный вариант для cleaner/segmenter; он оставлен как быстрый fallback, когда важнее скорость. ASR pipeline settings сохраняются отдельно от выбранной chat-модели под служебным ключом `__asr_pipeline__`; чат и ASR используют общий каталог моделей, но не общий набор runtime-настроек. Сохранённые ASR custom-настройки остаются приоритетнее default preset.
+
+В ASR Studio используется один selector `Режим анализа`:
+
+- `Быстрое саммари`: raw transcript -> summary. Минимальная нагрузка, без cleaner/segmenter/speaker resolver/structurer.
+- `Умное саммари`: raw transcript/chunks -> structurer -> summary. Это рекомендованный режим для встреч: он использует chunk/merge, coverage QA, `Контекст анализа` профиля и правило, что повтор важной мысли разными словами является сигналом важности. Cleaner и speaker resolver здесь не запускаются.
+- `Полный анализ`: raw transcript/chunks -> segmenter -> speaker resolver -> structurer -> summary. Тяжёлый режим закрыт настройкой `Разрешить полный анализ`, выключенной по умолчанию; включение требует подтверждения warning о CPU/GPU-нагрузке, температуре Mac и занятости Ollama.
+
+Cleaner не является обязательной стадией ни для одного режима. Он оставлен как ручная/опциональная стадия, потому что автоматическая очистка может удалить повторные акценты и детали, важные для summary.
+
+В настройках стадий пункт `Не использовать` сохраняет stage как `enabled=false`; temp/max tokens визуально отключаются, а backend пропускает стадию во всех режимах. User settings имеют приоритет над режимом анализа: режим не включает выключенную стадию обратно. Если выключен `structurer`, `Умное саммари` деградирует до обычного summary с warning; если выключен `summary`, режимы, которым нужен итоговый summary, возвращают понятную ошибку.
+
+`Язык summary` управляет языком ASR analysis output: `Авто` выбирает язык по transcript, `Русский` и `English` задают результат вручную. Эта настройка, как и `Контекст анализа`, влияет на structurer/summary/retry, но не на Whisper transcription.
+
+На Apple Silicon ASR pipeline по умолчанию передаёт высокий `ollama_num_gpu`, чтобы Ollama offload-ил LLM-стадии в Metal вместо CPU-only генерации. Если нужен штатный auto-режим Ollama, задайте `OLLAMA_PIPELINE_NUM_GPU=auto`; если нужен принудительный CPU-only режим, задайте `OLLAMA_PIPELINE_NUM_GPU=0`. ASR pipeline не использует silent CPU fallback при ошибке Metal, чтобы тяжёлый режим не начинал незаметно греть CPU.
+
+Для ASR LLM-стадий thinking по умолчанию выключен (`think:false` для native Ollama `/api/chat`), потому что structurer/summary pipeline требует форматированного результата, а не reasoning trace. В настройках анализа можно явно выбрать `Включено`, `Выключено` или `Авто Ollama`; chat-модель на главной странице имеет отдельный быстрый переключатель `Thinking`.
+
+Чекбокс `Вести ASR-логи` включает профильную папку diagnostics для ASR pipeline. При выключении чекбокса эта папка профиля удаляется; обычный режим не пишет расширенную ASR-диагностику.
+
+Длинные transcript не обрезаются перед summary: `max_transcript_chars` используется как размер chunk. В `Умном саммари` и `Полном анализе` structured outputs merge-ятся, и final summary строится по merged evidence. Warning `raw_transcript_chunked:<N>` означает штатную chunked-обработку полной встречи. `summary_topic_coverage_missing:<N>` запускает повторную генерацию summary с пропущенными темами и merged evidence; retry считается успешным только если темы раскрыты смыслово, а не упомянуты одним ключевым словом. Если retry не закрыл покрытие, итог явно получает блок `Неполное summary: не удалось покрыть следующие темы`. Старый `raw_transcript_truncated` теперь должен считаться диагностикой неполной обработки, а не нормальным режимом качественного summary.
+
+Structurer и summary дополнительно разделяют `current_state` и `target_state`, чтобы не смешивать текущее устройство процесса/архитектуры с целевой схемой. Подозрительные ASR-термины технических артефактов не исправляются словарём; summary prompt требует выносить спорные термины в вопросы для уточнения. Неподтверждённые действия не должны попадать в `Ключевые решения`: без явных маркеров подтверждения они переносятся в предложения/варианты.
+
+Для длинных встреч локальный pipeline может делать больше последовательных model calls: chunks проходят несколько стадий, а coverage QA может добавить один summary retry. `Умное саммари` по умолчанию использует `qwen3:8b` и для structurer, и для summary, чтобы не грузить две большие модели подряд. `Полный анализ` особенно дорогой, потому что добавляет segmenter/speaker resolver/structurer перед summary. При ручных тестах на ноутбуке стоит закрыть лишние LLM/ASR процессы и смотреть `warnings`/`stage_timings`, если машина уходит в перегрев.
+
+Кнопка `Остановить` в ASR Studio отменяет активные transcription task processes, просит pipeline остановиться перед следующей LLM-стадией и выгружает активные pipeline-модели из Ollama. Если модель уже выполняет текущий LLM-вызов, остановка может стать видимой после возврата/ошибки этого вызова; следующая стадия не должна стартовать.
 
 Быстрый voice-to-input при этом остаётся отдельным UX и не смешивается с `ASR Studio`.
 
@@ -480,7 +519,7 @@ LOCALGPT_CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1|\[::1\]|192\.
 
 Приложение запускается без LLM-модели. Если локальных Ollama chat-моделей нет, UI показывает состояние `Нет доступных моделей` / `Модель не загружена`.
 
-Состояние LLM-моделей определяется по Ollama runtime из `.env`: `OLLAMA_HOST`/`LOCAL_BASE_URL` и `OLLAMA_MODELS_DIR`. Если приложение использует project-scoped `models/ollama` на отдельном host/port, обычный `ollama list` в терминале без этих переменных может показывать другой default-store (`~/.ollama`) и не совпадать с UI.
+Состояние LLM-моделей определяется по Ollama runtime из `.env`: `OLLAMA_HOST`/`LOCAL_BASE_URL` и `OLLAMA_MODELS_DIR`. Если приложение использует project-scoped `models/ollama` на отдельном host/port, обычный `ollama list` в терминале без этих переменных может показывать другой default-store (`~/.ollama`) и не совпадать с UI. Для thinking-capable моделей UI сохраняет отдельную настройку `Thinking` на уровне профиля/модели и передаёт её в native Ollama как top-level `think`.
 
 `/models` различает `configured`, `installed`, `active`, `downloading`, `partial` и `missing`. Partial blobs в другом storage показываются как диагностика, но не отменяют `installed`, если configured runtime уже видит модель через `ollama list`.
 
@@ -509,9 +548,13 @@ WHISPER_MODEL_SIZE=large-v3-turbo
 WHISPER_CPP_BINARY=models/whisper_cpp/bin/whisper-cli
 WHISPER_CPP_MODELS_DIR=models/whisper_cpp
 WHISPER_CPP_MODEL_PATH=models/whisper_cpp/ggml-{model}.bin
+WHISPER_BEAM_SIZE=5
+WHISPER_CPP_THREADS=4
+TRANSCRIBE_LOG_MAX_BYTES=2097152
 ```
 
 Для этого нужен отдельный `whisper-cli`, собранный с Metal/CoreML, и GGML-модель в `models/whisper_cpp`.
+Фактический запуск ASR пишется в `tmp_logs/transcribe.log`; лог ротируется по `TRANSCRIBE_LOG_MAX_BYTES` и держит один backup `transcribe.log.1`. Значение `0` отключает запись.
 
 Для macOS есть проектный setup-скрипт:
 
@@ -638,6 +681,7 @@ curl -s 'http://127.0.0.1:8000/chat/debug/pipeline?run_id=<id>'
 - `ollama.log`
 - `tmp_logs/chat.log`
 - `tmp_logs/pipeline.log`
+- `tmp_logs/transcribe.log`
 - runtime-логи launcher в `${TMPDIR}/LocalGPT-<uid>/`
 
 ## Текущее ограничение

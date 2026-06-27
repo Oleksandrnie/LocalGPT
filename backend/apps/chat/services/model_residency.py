@@ -36,6 +36,35 @@ def _normalize_keep_alive(value: Any) -> str | None:
     return text or None
 
 
+def _keep_alive_seconds(value: str | None) -> int | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    unit = text[-1]
+    raw_number = text[:-1] if unit in {"s", "m", "h"} else text
+    try:
+        amount = int(raw_number)
+    except ValueError:
+        return None
+    if amount < 0:
+        return None
+    if unit == "h":
+        return amount * 3600
+    if unit == "m":
+        return amount * 60
+    return amount
+
+
+def _at_least_keep_alive(value: str | None, minimum: str) -> str:
+    current = _normalize_keep_alive(value)
+    minimum_value = _normalize_keep_alive(minimum) or "5m"
+    current_seconds = _keep_alive_seconds(current)
+    minimum_seconds = _keep_alive_seconds(minimum_value)
+    if current is None or current_seconds is None or minimum_seconds is None or current_seconds < minimum_seconds:
+        return minimum_value
+    return current
+
+
 def _coerce_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -155,14 +184,21 @@ def resolve_model_keep_alive(
 ) -> str | None:
     payload = settings or {}
     explicit = _normalize_keep_alive(payload.get("ollama_keep_alive"))
-    if explicit is not None:
-        return explicit
 
     model_class = "router" if router else model_weight_class(model_name)
     if model_class == "router":
+        if explicit is not None:
+            return explicit
         return _normalize_keep_alive(payload.get("router_keep_alive")) or _normalize_keep_alive(
             config.SETTINGS.ollama_router_keep_alive
         )
+    if mode == "manual":
+        manual = explicit or _normalize_keep_alive(payload.get("manual_keep_alive")) or _normalize_keep_alive(
+            config.SETTINGS.ollama_manual_keep_alive
+        )
+        return _at_least_keep_alive(manual, "5m")
+    if explicit is not None:
+        return explicit
     if model_class == "heavy":
         return _normalize_keep_alive(payload.get("heavy_model_keep_alive")) or _normalize_keep_alive(
             config.SETTINGS.ollama_heavy_keep_alive
@@ -174,10 +210,6 @@ def resolve_model_keep_alive(
     if mode == "auto":
         return _normalize_keep_alive(payload.get("auto_target_keep_alive")) or _normalize_keep_alive(
             config.SETTINGS.ollama_auto_target_keep_alive
-        )
-    if mode == "manual":
-        return _normalize_keep_alive(payload.get("manual_keep_alive")) or _normalize_keep_alive(
-            config.SETTINGS.ollama_manual_keep_alive
         )
     return _normalize_keep_alive(config.SETTINGS.ollama_chat_keep_alive)
 
@@ -211,7 +243,7 @@ def prepare_target_for_request(
         }
 
     keep_alive = resolve_model_keep_alive(target, settings, mode=mode)
-    max_resident = _max_resident_target_models(settings)
+    max_resident = 1
     allow_light = _allow_light_with_heavy(settings)
     single_large = _single_large_target_model(settings)
     target_class = model_weight_class(target)

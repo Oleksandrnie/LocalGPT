@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app import config, db
 from app.services.timeline import build_timeline
+from backend.apps.asr import pipeline as pipeline_service
 from backend.apps.asr import tasks as transcribe_tasks
 from backend.apps.asr.whisper import transcribe_with_fallback
 
@@ -123,6 +124,7 @@ def _transcribe_sync(
         raise RuntimeError("empty_transcription")
     detected_language = transcription.get("language") if isinstance(transcription, dict) else None
     role_keywords = transcription.get("role_keywords") or {} if isinstance(transcription, dict) else {}
+    runtime = transcription.get("runtime") or {} if isinstance(transcription, dict) else {}
 
     if store_result:
         labels = {"origin": origin} if origin else None
@@ -147,6 +149,7 @@ def _transcribe_sync(
         "segments": segments,
         "timeline": timeline,
         "role_keywords": role_keywords,
+        "runtime": runtime,
         "transcript_id": transcript_record.get("id") if transcript_record else None,
         "profile_id": profile_id or None,
         "session_id": session_id or None,
@@ -308,3 +311,14 @@ def cancel_transcription_task(task_id: str) -> dict[str, object]:
             detail={"code": "transcription_task_not_found", "message": "Задача транскрибации не найдена"},
         )
     return task
+
+
+@router.post("/asr/stop")
+def stop_asr_runtime() -> dict[str, object]:
+    pipeline_stop = pipeline_service.request_pipeline_stop()
+    cancelled = transcribe_tasks.cancel_all_tasks()
+    return {
+        "state": "stopping",
+        "transcription_tasks_cancelled": cancelled,
+        **pipeline_stop,
+    }

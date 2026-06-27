@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from typing import Any
 
@@ -52,6 +55,18 @@ def _normalize_prompt_preset(value: str) -> str:
         raise HTTPException(
             status_code=422,
             detail={"code": "invalid_prompt_preset", "message": "Допустимые prompt preset: auto, ru, en."},
+        )
+    return normalized
+
+
+def _normalize_analysis_language(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized or normalized == "none":
+        normalized = "auto"
+    if normalized not in {"auto", "ru", "en"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_asr_analysis_language", "message": "Допустимый язык анализа ASR: auto, ru, en."},
         )
     return normalized
 
@@ -120,6 +135,34 @@ def _normalize_bool_setting(value: object) -> bool:
     return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
+def _normalize_ollama_think(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value or "").strip().lower()
+    if normalized in {"auto", "default", ""}:
+        return "auto"
+    if normalized in {"on", "true", "1", "yes", "think"}:
+        return "on"
+    if normalized in {"off", "false", "0", "no", "nothink"}:
+        return "off"
+    raise HTTPException(
+        status_code=422,
+        detail={"code": "invalid_ollama_think", "message": "ollama_think must be auto, on, or off."},
+    )
+
+
+def _asr_diagnostics_profile_dir(profile_id: int) -> Path:
+    return config.ASR_DIAGNOSTICS_DIR / f"profile_{int(profile_id)}"
+
+
+def _sync_asr_diagnostics_dir(profile_id: int, enabled: bool) -> None:
+    path = _asr_diagnostics_profile_dir(profile_id)
+    if enabled:
+        path.mkdir(parents=True, exist_ok=True)
+    else:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _normalize_keep_alive_setting(value: object, key: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -137,6 +180,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "mem_turns",
         "streaming_enabled",
         "pipeline_enabled",
+        "asr_full_analysis_enabled",
         "summary_memory_enabled",
         "rag_enabled",
         "default_pipeline_preset",
@@ -155,6 +199,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "code_model_keep_alive",
         "heavy_model_keep_alive",
         "router_keep_alive",
+        "show_router_thinking_toggle",
     }
     cleaned = {key: value[key] for key in allowed if key in value}
     preset = cleaned.get("default_pipeline_preset")
@@ -185,10 +230,12 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 ) from exc
     for key in (
         "streaming_enabled",
+        "asr_full_analysis_enabled",
         "rag_enabled",
         "allow_light_with_heavy",
         "single_large_target_model",
         "preload_model_on_manual_select",
+        "show_router_thinking_toggle",
     ):
         if key in cleaned and cleaned[key] is not None:
             cleaned[key] = _normalize_bool_setting(cleaned[key])
@@ -255,6 +302,7 @@ def update_profile(profile_id: int, req: ProfileUpdate):
 def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
     _get_profile_or_404(profile_id)
     updates: dict[str, dict[str, Any]] = {}
+    asr_diagnostics_enabled: bool | None = None
 
     if req.chat and req.chat.dictation_model is not None:
         updates.setdefault("chat", {})["dictation_model"] = _normalize_whisper_model(req.chat.dictation_model)
@@ -270,6 +318,13 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
             updates.setdefault("asr", {})["beam_size"] = _normalize_asr_beam_size(req.asr.beam_size)
         if req.asr.threads is not None:
             updates.setdefault("asr", {})["threads"] = _normalize_asr_threads(req.asr.threads)
+        if req.asr.analysis_language is not None:
+            updates.setdefault("asr", {})["analysis_language"] = _normalize_analysis_language(req.asr.analysis_language)
+        if req.asr.analysis_prompt is not None:
+            updates.setdefault("asr", {})["analysis_prompt"] = str(req.asr.analysis_prompt or "").strip()[:4000]
+        if req.asr.diagnostics_enabled is not None:
+            asr_diagnostics_enabled = _normalize_bool_setting(req.asr.diagnostics_enabled)
+            updates.setdefault("asr", {})["diagnostics_enabled"] = asr_diagnostics_enabled
 
     if req.tts:
         if req.tts.provider is not None:
@@ -289,6 +344,8 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
     updated = db.update_profile_preferences(profile_id, updates)
     if not updated:
         raise HTTPException(status_code=404, detail="profile_not_found")
+    if asr_diagnostics_enabled is not None:
+        _sync_asr_diagnostics_dir(profile_id, asr_diagnostics_enabled)
     return updated
 
 
@@ -301,6 +358,7 @@ def delete_profile(profile_id: int):
             detail={"code": "cannot_delete_last_profile", "message": "Нельзя удалить единственный профиль"},
         )
     rag_service.delete_profile_source_dir(profile_id)
+    _sync_asr_diagnostics_dir(profile_id, False)
     db.delete_profile(profile_id)
     db.ensure_default_profile()
     return {"deleted": profile_id}
@@ -397,6 +455,7 @@ def save_model_settings(req: ModelSettingsRequest):
         num_ctx=req.num_ctx,
         mem_turns=None,
         ollama_keep_alive=(req.ollama_keep_alive.strip() if isinstance(req.ollama_keep_alive, str) and req.ollama_keep_alive.strip() else None),
+        ollama_think=_normalize_ollama_think(req.ollama_think),
         pipeline_enabled=req.pipeline_enabled,
         summary_memory_enabled=req.summary_memory_enabled,
         rag_enabled=req.rag_enabled,
@@ -416,4 +475,11 @@ def reset_model_settings(req: ModelSettingsReset):
     _get_profile_or_404(req.profile_id)
     model = normalize_model_name(req.model_name)
     db.reset_model_settings(req.profile_id, model)
+    if model == "__asr_pipeline__":
+        db.upsert_model_settings(
+            req.profile_id,
+            model,
+            ollama_think="off",
+            pipeline=config.DEFAULT_PIPELINE,
+        )
     return db.effective_settings(req.profile_id, model, config.DEFAULT_SETTINGS)

@@ -198,12 +198,7 @@ def build_whisper_prompt(audio_path: Path, prompt_preset: str | None) -> str | N
     prompt_from_preset = _PROMPT_PRESETS.get(preset, "")
 
     local_prompt_file = audio_path.parent / "whisper_prompt.txt"
-    local_prompt = ""
-    if local_prompt_file.exists():
-        try:
-            local_prompt = local_prompt_file.read_text(encoding="utf-8").strip()
-        except OSError:
-            local_prompt = ""
+    local_prompt = _read_local_whisper_prompt(local_prompt_file)
 
     parts: list[str] = []
     if prompt_from_preset:
@@ -214,6 +209,31 @@ def build_whisper_prompt(audio_path: Path, prompt_preset: str | None) -> str | N
     if not parts:
         return None
     return "; ".join(parts)
+
+
+def _read_local_whisper_prompt(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _prompt_runtime_metadata(audio_path: Path, prompt_preset: str | None, prompt: str | None) -> dict[str, Any]:
+    preset = (prompt_preset or "auto").strip().lower() or "auto"
+    if preset == "none":
+        preset = "auto"
+    local_prompt_file = audio_path.parent / "whisper_prompt.txt"
+    local_prompt = _read_local_whisper_prompt(local_prompt_file)
+    return {
+        "prompt_preset": preset,
+        "preset_prompt_used": preset in _PROMPT_PRESETS,
+        "local_prompt_path": str(local_prompt_file),
+        "local_prompt_used": bool(local_prompt),
+        "prompt_present": bool(prompt),
+        "prompt_chars": len(prompt or ""),
+    }
 
 
 def _normalize_language(value: str | None) -> str | None:
@@ -486,7 +506,7 @@ def transcribe_with_fallback(
     role_keywords = _load_role_keywords(path)
 
     if _should_use_whisper_cpp(model):
-        return _transcribe_with_whisper_cpp_backend(
+        result = _transcribe_with_whisper_cpp_backend(
             path=path,
             model=model,
             prompt=full_prompt,
@@ -496,6 +516,20 @@ def transcribe_with_fallback(
             threads=threads,
             role_keywords=role_keywords,
         )
+        runtime = dict(result.get("runtime") or {})
+        runtime.update(
+            {
+                **_prompt_runtime_metadata(path, prompt_preset, full_prompt),
+                "requested_language": requested_language or "auto",
+                "prompt_language": prompt_language or "auto",
+                "effective_language": effective_language or "auto",
+                "fallback_language": fallback_language or "auto",
+                "beam_size": resolved_beam_size,
+                "threads": threads if threads is not None else config.SETTINGS.whisper_cpp_threads,
+            }
+        )
+        result["runtime"] = runtime
+        return result
 
     try:
         whisper_model = _load_model(model, compute_type=compute_type, device=device)
@@ -544,6 +578,19 @@ def transcribe_with_fallback(
         "text": text,
         "segments": annotated_segments,
         "role_keywords": role_keywords,
+        "runtime": {
+            "backend": "faster_whisper",
+            "model": model,
+            "model_path": str(local_model_dir(model)) if is_local_model_ready(model) else model,
+            **_prompt_runtime_metadata(path, prompt_preset, full_prompt),
+            "requested_language": requested_language or "auto",
+            "prompt_language": prompt_language or "auto",
+            "effective_language": effective_language or "auto",
+            "fallback_language": fallback_language or "auto",
+            "beam_size": resolved_beam_size,
+            "compute_type": compute_type or config.SETTINGS.whisper_compute_type,
+            "device": device or config.SETTINGS.whisper_device,
+        },
     }
 
     detected_language = getattr(info, "language", None)

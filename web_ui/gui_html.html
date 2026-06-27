@@ -54,10 +54,29 @@
                         <div class="topbar__row">
                             <h2 id="chatTitle">Новый чат</h2>
                             <span class="status-pill" id="healthStatus">Проверка…</span>
+                            <div class="thinking-mode-control" id="quickThinkingControl" hidden>
+                                <button class="thinking-mode-control__button" id="quickThinkingButton" type="button"
+                                    aria-label="Режим thinking текущей LLM" aria-haspopup="menu"
+                                    aria-expanded="false">Thinking</button>
+                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden>
+                                    <button type="button" role="menuitemradio" data-thinking-mode="on">Включено</button>
+                                    <button type="button" role="menuitemradio" data-thinking-mode="off">Выключено</button>
+                                </div>
+                            </div>
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
-                                <select id="quickModelSelect" class="field__control quick-model-switch__control"
-                                    aria-label="Быстро выбрать модель чата"></select>
+                                <div class="quick-model-picker">
+                                    <button class="quick-model-picker__button" id="quickModelButton" type="button"
+                                        aria-label="Быстро выбрать модель чата" aria-haspopup="menu"
+                                        aria-expanded="false">
+                                        <span class="quick-model-picker__text">
+                                            <span class="quick-model-picker__value" id="quickModelValue">Модель</span>
+                                            <span class="quick-model-picker__meta" id="quickModelMeta">Выберите модель</span>
+                                        </span>
+                                        <span class="quick-model-picker__caret" aria-hidden="true"></span>
+                                    </button>
+                                    <div class="quick-model-picker__menu" id="quickModelMenu" role="menu" hidden></div>
+                                </div>
                             </div>
                         </div>
                         <div class="topbar__meta">
@@ -69,24 +88,44 @@
                 </div>
 
                 <div class="topbar__actions">
-                    <button class="button button--ghost lan-url-button lan-url-button--icon-only"
-                        id="copyLanUrlButton" type="button"
-                        aria-label="Скопировать адрес доступа" title="Скопировать адрес доступа"
-                        aria-haspopup="menu" aria-expanded="false">
-                        <svg class="lan-url-button__icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle cx="12" cy="12" r="3"></circle>
-                            <circle cx="5" cy="6" r="2"></circle>
-                            <circle cx="19" cy="6" r="2"></circle>
-                            <circle cx="5" cy="18" r="2"></circle>
-                            <circle cx="19" cy="18" r="2"></circle>
-                            <path d="M7 7.3 10 10"></path>
-                            <path d="M17 7.3 14 10"></path>
-                            <path d="M7 16.7 10 14"></path>
-                            <path d="M17 16.7 14 14"></path>
-                        </svg>
-                    </button>
-                    <div class="network-address-menu" id="networkAddressMenu" role="menu"
-                        aria-label="Адреса доступа" hidden></div>
+                    <div class="quick-model-mobile" id="quickModelMobileControl">
+                        <button class="button button--ghost topbar-icon-button quick-model-mobile__button"
+                            id="quickModelMobileButton" type="button" aria-label="Выбрать модель чата"
+                            aria-haspopup="menu" aria-expanded="false">
+                            <svg class="topbar-icon-button__icon quick-model-mobile__icon" viewBox="0 0 24 24"
+                                aria-hidden="true">
+                                <rect x="8" y="8" width="8" height="8" rx="1.8"></rect>
+                                <path d="M9 4v2"></path>
+                                <path d="M15 4v2"></path>
+                                <path d="M9 18v2"></path>
+                                <path d="M15 18v2"></path>
+                                <path d="M4 9h2"></path>
+                                <path d="M4 15h2"></path>
+                                <path d="M18 9h2"></path>
+                                <path d="M18 15h2"></path>
+                            </svg>
+                        </button>
+                        <div class="quick-model-picker__menu quick-model-picker__menu--mobile" id="quickModelMobileMenu"
+                            role="menu" hidden></div>
+                    </div>
+                    <div class="thinking-mode-mobile" id="quickThinkingMobileControl" hidden>
+                        <button class="button button--ghost topbar-icon-button thinking-mode-mobile__button"
+                            id="quickThinkingMobileButton" type="button" aria-label="Thinking"
+                            aria-haspopup="menu" aria-expanded="false">
+                            <svg class="topbar-icon-button__icon thinking-mode-mobile__icon" viewBox="0 0 24 24"
+                                aria-hidden="true">
+                                <path d="M9 10.25a3 3 0 0 1 3-3"></path>
+                                <path d="M12 7.25a3 3 0 0 1 3 3"></path>
+                                <path d="M8.5 10.5a2.5 2.5 0 0 0-2.5 2.5c0 1 .58 1.89 1.43 2.31.36.18.57.57.57.98v.71a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-.71c0-.41.21-.8.57-.98A2.58 2.58 0 0 0 18 13a2.5 2.5 0 0 0-2.5-2.5"></path>
+                                <path d="M10 16.5h4"></path>
+                            </svg>
+                        </button>
+                        <div class="thinking-mode-menu thinking-mode-menu--mobile" id="quickThinkingMobileMenu"
+                            role="menu" hidden>
+                            <button type="button" role="menuitemradio" data-thinking-mode="on">Включено</button>
+                            <button type="button" role="menuitemradio" data-thinking-mode="off">Выключено</button>
+                        </div>
+                    </div>
                     <button class="button button--ghost topbar-icon-button rag-status-button" id="openRagButton"
                         type="button" aria-pressed="false" aria-label="Открыть RAG, выключен"
                         title="RAG выключен для активного профиля">
@@ -215,94 +254,60 @@
             </div>
         </header>
         <div class="tool-window__body tool-window__body--asr">
-            <div class="asr-workflow" id="asrToolWorkflow" aria-label="Статус ASR Studio">
-                <div class="asr-workflow__step" data-asr-workflow-step="upload">
-                    <span class="asr-workflow__index">1</span>
-                    <span>
-                        <strong>Загрузка</strong>
-                        <small>Выберите файл</small>
-                    </span>
-                </div>
-                <div class="asr-workflow__step" data-asr-workflow-step="transcribe">
-                    <span class="asr-workflow__index">2</span>
-                    <span>
-                        <strong>Транскрибация</strong>
-                        <small>Ожидает файл</small>
-                    </span>
-                </div>
-                <div class="asr-workflow__step" data-asr-workflow-step="analysis">
-                    <span class="asr-workflow__index">3</span>
-                    <span>
-                        <strong>Анализ</strong>
-                        <small>Выберите действие</small>
-                    </span>
-                </div>
-                <div class="asr-workflow__step" data-asr-workflow-step="export">
-                    <span class="asr-workflow__index">4</span>
-                    <span>
-                        <strong>Экспорт</strong>
-                        <small>Сохраните результат</small>
-                    </span>
-                </div>
-            </div>
-
             <div class="tool-panel asr-studio-main">
-                <div class="tool-toolbar asr-studio-toolbar">
-                    <label class="field">
-                        <span class="field__label">ASR модель</span>
-                        <select id="asrToolModelSelect" class="field__control"></select>
-                    </label>
-                    <label class="field">
-                        <span class="field__label">Язык / prompt</span>
-                        <select id="asrToolPromptPresetSelect" class="field__control">
-                            <option value="auto">Авто</option>
-                            <option value="ru">Русский</option>
-                            <option value="en">Английский</option>
-                        </select>
-                    </label>
-                    <div class="button-row">
-                        <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
-                            файл</button>
-                        <button class="button button--ghost" id="asrToolPipelineSettingsButton"
-                            type="button">Настройки анализа</button>
-                        <button class="button button--ghost" id="asrToolRefreshHistoryButton" type="button">Обновить
-                            список</button>
-                    </div>
-                    <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
-                </div>
-
-                <div class="asr-file-card" id="asrToolFileCard" role="button" tabindex="0">
-                    <span class="asr-file-card__play" aria-hidden="true">▶</span>
-                    <span class="asr-file-card__body">
-                        <strong id="asrToolFileTitle">Файл не выбран</strong>
-                        <small id="asrToolFileMeta">Загрузите аудио или видео для транскрибации</small>
-                    </span>
-                    <span class="asr-file-card__actions">
-                        <button class="asr-file-card__action" id="asrToolRetranscribeButton"
-                            type="button">Пересоздать</button>
-                    </span>
-                </div>
-
-                <div class="asr-tabs" role="tablist" aria-label="Разделы ASR Studio">
-                    <button class="asr-tab asr-tab--active" type="button" data-asr-tab="text">Текст</button>
-                    <button class="asr-tab" type="button" data-asr-tab="summary">Саммари</button>
-                    <button class="asr-tab" type="button" data-asr-tab="tasks">Задачи</button>
-                    <button class="asr-tab" type="button" data-asr-tab="roles">Роли</button>
-                </div>
-
-                <div class="asr-content-grid">
-                    <div class="asr-tab-stack">
-                        <section class="asr-tab-panel asr-tab-panel--active" data-asr-tab-panel="text">
-                            <div class="asr-tab-toolbar">
-                                <label class="asr-search">
-                                    <span aria-hidden="true">⌕</span>
-                                    <input id="asrToolSearchInput" type="search" placeholder="Поиск в тексте" />
-                                </label>
-                                <button class="button button--ghost" id="asrToolDownloadButton" type="button">Скачать
-                                    .txt</button>
-                                <button class="button button--ghost" id="asrToolCopyButton"
-                                    type="button">Копировать</button>
+                <div class="asr-layout-grid" id="asrLayoutGrid">
+                    <aside class="tool-sidebar asr-history-column">
+                        <div class="tool-sidebar__head">
+                            <div class="asr-history-column__title">
+                                <h4>База транскрибаций</h4>
+                                <button class="asr-history-column__toggle" id="asrHistoryToggleButton" type="button"
+                                    aria-expanded="true" aria-label="Свернуть базу транскрибаций" title="Свернуть базу транскрибаций">◀</button>
                             </div>
+                            <label class="asr-search">
+                                <span aria-hidden="true">⌕</span>
+                                <input id="asrToolHistorySearchInput" type="search" placeholder="Поиск в базе..." />
+                            </label>
+                        </div>
+                        <div class="tool-history" id="asrToolHistoryList"></div>
+                        <div class="session-context-menu" id="asrHistoryContextMenu" hidden role="menu"
+                            aria-label="Действия с транскрибацией">
+                            <button class="session-context-menu__item" id="renameAsrTranscriptMenuItem"
+                                type="button" role="menuitem">
+                                Переименовать
+                            </button>
+                        </div>
+                    </aside>
+
+                    <section class="asr-result-column">
+                        <button class="asr-history-reopen" id="asrHistoryReopenButton" type="button"
+                            aria-label="Развернуть базу транскрибаций" title="Развернуть базу транскрибаций" hidden>▶ База</button>
+                        <label class="asr-search asr-search--primary">
+                            <span aria-hidden="true">⌕</span>
+                            <input id="asrToolSearchInput" type="search" placeholder="Поиск в тексте" />
+                        </label>
+
+                        <div class="asr-file-card" id="asrToolFileCard" role="button" tabindex="0">
+                            <span class="asr-file-card__play" aria-hidden="true">▶</span>
+                            <span class="asr-file-card__body">
+                                <strong id="asrToolFileTitle">Файл не выбран</strong>
+                                <small id="asrToolFileMeta">Загрузите аудио или видео для транскрибации</small>
+                            </span>
+                            <span class="asr-file-card__actions">
+                                <button class="asr-file-card__action" id="asrToolRetranscribeButton"
+                                    type="button">Пересоздать</button>
+                            </span>
+                        </div>
+
+                        <div class="asr-tabs" role="tablist" aria-label="Разделы ASR Studio">
+                            <button class="asr-tab asr-tab--active" type="button" data-asr-tab="text">Текст</button>
+                            <button class="asr-tab" type="button" data-asr-tab="summary">Саммари</button>
+                            <button class="asr-tab" type="button" data-asr-tab="tasks">Задачи</button>
+                            <button class="asr-tab" type="button" data-asr-tab="roles">Роли</button>
+                        </div>
+
+                        <div class="asr-content-grid">
+                            <div class="asr-tab-stack">
+                                <section class="asr-tab-panel asr-tab-panel--active" data-asr-tab-panel="text">
                             <label class="asr-transcript-editor">
                                 <span class="field__label">Текст транскрибации</span>
                                 <textarea id="asrToolOutput" class="tool-textarea asr-transcript-textarea"
@@ -317,14 +322,12 @@
                                     <strong>Результат обработки</strong>
                                     <span id="asrToolPipelineMeta"></span>
                                 </div>
-                                <div class="pipeline-steps" id="asrToolPipelineSteps" aria-label="Статусы обработки">
-                                </div>
-                                <pre id="asrToolPipelineOutput"></pre>
+                                <div class="asr-markdown-output" id="asrToolPipelineOutput"></div>
                             </div>
                         </section>
 
                         <section class="asr-tab-panel" data-asr-tab-panel="tasks">
-                            <pre class="asr-tasks-output" id="asrToolTasksOutput">Задачи появятся после анализа транскрипта.</pre>
+                            <div class="asr-markdown-output asr-tasks-output" id="asrToolTasksOutput">Задачи появятся после анализа транскрипта.</div>
                         </section>
 
                         <section class="asr-tab-panel" data-asr-tab-panel="roles">
@@ -348,65 +351,88 @@
                             </section>
                         </section>
                     </div>
+                        </div>
 
-                    <aside class="asr-next-panel">
-                        <h4>Что дальше?</h4>
-                        <p class="subtle">Выберите действие для анализа транскрипции</p>
-                        <button class="asr-next-action" id="asrToolSummaryButton" type="button" data-asr-open-tab="summary">
-                            <span class="asr-next-action__icon">☷</span>
-                            <span><strong>Саммари</strong><small>Получить краткое резюме разговора</small></span>
-                        </button>
-                        <button class="asr-next-action" id="asrToolTasksButton" type="button" data-asr-open-tab="tasks">
-                            <span class="asr-next-action__icon asr-next-action__icon--success">✓</span>
-                            <span><strong>Разобрать по задачам</strong><small>Выделить задачи и договорённости</small></span>
-                        </button>
-                        <button class="asr-next-action" id="asrToolRolesButton" type="button" data-asr-open-tab="roles">
-                            <span class="asr-next-action__icon asr-next-action__icon--blue">♙</span>
-                            <span><strong>Определить роли</strong><small>Кто говорил и о чём</small></span>
-                        </button>
-                        <button class="asr-next-action" id="asrToolFullAnalysisButton" type="button"
-                            data-asr-open-tab="summary">
-                            <span class="asr-next-action__icon">✧</span>
-                            <span><strong>Полный анализ</strong><small>Саммари + задачи + роли</small></span>
-                        </button>
-                    </aside>
-                </div>
-
-                <div class="asr-bottom-bar">
+                        <div class="asr-bottom-bar">
                     <p class="inline-status" id="asrToolStatus">Выберите аудио или видео для транскрибации.</p>
                     <p class="subtle" id="asrToolMeta">История ASR Studio хранится отдельно от быстрой диктовки.</p>
                     <div class="button-row">
-                        <button class="button button--ghost" id="asrToolCleanButton" type="button">Очистить</button>
-                        <button class="button button--ghost" id="asrToolSaveButton" type="button">Сохранить
-                            правки</button>
-                        <button class="button button--ghost" id="asrToolSaveContextButton" type="button">Сохранить как
+                        <button class="button button--primary" id="asrToolCopyButton" type="button">Копировать</button>
+                        <button class="button button--primary" id="asrToolSaveContextButton" type="button">Сохранить в
                             контекст</button>
-                        <button class="button button--ghost" id="asrToolSendButton" type="button">Отправить в
-                            чат</button>
-                        <button class="button button--ghost" id="asrToolClearButton" type="button">Очистить
-                            редактор</button>
-                        <button class="button button--ghost" id="asrToolDeleteButton" type="button">Удалить
-                            запись</button>
-                        <button class="button button--ghost" id="asrToolClearHistoryButton" type="button">Очистить
-                            историю</button>
-                        <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Вставить в
-                            промпт</button>
-                        <button class="button button--primary" id="asrToolOpenAnalysisButton" type="button">Открыть
-                            анализ</button>
+                        <button class="button button--primary" id="asrToolDownloadButton" type="button">Скачать TXT</button>
+                        <button class="button button--primary" id="asrToolInsertPromptButton" type="button">Добавить к
+                            промпту</button>
                     </div>
+                            <div class="asr-pipeline-route">
+                                <div class="pipeline-steps" id="asrToolPipelineSteps" aria-label="Путь pipeline"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <aside class="asr-control-column">
+                        <div class="tool-toolbar asr-studio-toolbar">
+                            <button class="button button--primary" id="asrToolChooseFileButton" type="button">Выбрать
+                                файл</button>
+                            <div class="asr-toolbar-actions">
+                                <button class="button button--ghost" id="asrToolPipelineSettingsButton"
+                                    type="button">Настройки</button>
+                                <button class="button button--ghost" id="asrToolRefreshHistoryButton"
+                                    type="button">Обновить</button>
+                                <button class="button button--ghost" id="asrToolStopButton"
+                                    type="button">Остановить</button>
+                            </div>
+                            <label class="field">
+                                <span class="field__label">ASR модель</span>
+                                <select id="asrToolModelSelect" class="field__control"></select>
+                            </label>
+                            <label class="field">
+                                <span class="field__label">Язык / prompt</span>
+                                <select id="asrToolPromptPresetSelect" class="field__control">
+                                    <option value="auto">Авто</option>
+                                    <option value="ru">Русский</option>
+                                    <option value="en">Английский</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span class="field__label">Язык результата</span>
+                                <select id="asrToolAnalysisLanguageSelect" class="field__control">
+                                    <option value="auto">Авто</option>
+                                    <option value="ru">Русский</option>
+                                    <option value="en">English</option>
+                                </select>
+                            </label>
+                            <input id="asrToolFileInput" type="file" accept="audio/*,video/*" hidden />
+                        </div>
+
+                        <aside class="asr-next-panel">
+                            <div class="asr-next-panel__head">
+                                <h4>Анализ</h4>
+                                <button class="model-info-button asr-analysis-help-button" id="asrToolAnalysisHelpButton"
+                                    type="button" aria-label="Подсказка по режиму анализа"
+                                    data-tooltip="Выберите режим анализа транскрипции.">?</button>
+                            </div>
+                            <p class="subtle" id="asrToolAnalysisModeDescription" hidden>Выберите режим анализа транскрипции.</p>
+                            <label class="field asr-analysis-field">
+                                <span class="field__label">Режим анализа</span>
+                                <div class="asr-analysis-mode" id="asrToolAnalysisModeControl">
+                                    <button class="asr-analysis-mode__button" id="asrToolAnalysisModeButton" type="button"
+                                        aria-haspopup="menu" aria-expanded="false" aria-controls="asrToolAnalysisModeMenu">
+                                        <span id="asrToolAnalysisModeLabel">Умное саммари</span>
+                                        <span class="asr-analysis-mode__chevron" aria-hidden="true">⌄</span>
+                                    </button>
+                                    <div class="asr-analysis-mode__menu" id="asrToolAnalysisModeMenu" role="menu" hidden></div>
+                                </div>
+                            </label>
+                            <button class="asr-next-action asr-next-action--primary" id="asrToolRunAnalysisButton"
+                                type="button" data-asr-open-tab="summary">
+                                <span class="asr-next-action__icon asr-next-action__icon--success">▶</span>
+                                <span><strong>Запустить анализ</strong><small>Использовать выбранный режим</small></span>
+                            </button>
+                        </aside>
+                    </aside>
                 </div>
             </div>
-
-            <aside class="tool-sidebar asr-history-sidebar">
-                <div class="tool-sidebar__head">
-                    <h4>База транскрибаций</h4>
-                    <label class="asr-search">
-                        <span aria-hidden="true">⌕</span>
-                        <input id="asrToolHistorySearchInput" type="search" placeholder="Поиск" />
-                    </label>
-                </div>
-                <div class="tool-history" id="asrToolHistoryList"></div>
-            </aside>
         </div>
         <div class="drop-zone-overlay drop-zone-overlay--tool" id="asrToolDropOverlay" hidden aria-hidden="true">
             <div class="drop-zone-overlay__card drop-zone-overlay__card--compact">
@@ -474,7 +500,11 @@
 
             <aside class="tool-sidebar">
                 <div class="tool-sidebar__head">
-                    <h4>История озвучки</h4>
+                    <div class="tts-history-column__title">
+                        <h4>История озвучки</h4>
+                        <button class="tts-history-column__toggle" id="ttsHistoryToggleButton" type="button"
+                            aria-expanded="true" aria-label="Скрыть историю озвучки" title="Скрыть историю озвучки">Less</button>
+                    </div>
                 </div>
                 <div class="tool-history" id="ttsToolHistoryList"></div>
             </aside>
@@ -776,12 +806,20 @@
                                 </select>
                             </span>
                         </label>
+
+                        <label class="field field--checkbox">
+                            <input id="showRouterThinkingToggle" type="checkbox" />
+                            <span class="field__checkbox-copy">
+                                <span>Показывать Thinking у Auto / Smart Router</span>
+                                <small>На главном экране добавляет switch для router в меню выбора моделей.</small>
+                            </span>
+                        </label>
                     </div>
 
                     <div class="residency-help-row">
                         <button class="model-info-button residency-help-button" type="button"
                             aria-label="Инструкция по настройке resident-моделей"
-                            data-tooltip="Рекомендация для MacBook Pro 16GB:&#10;- Максимум target-моделей: 2.&#10;- Одна medium/code/heavy модель: включено, чтобы 7B/8B/coder/heavy не висели вместе.&#10;- Auto/Manual keep_alive: 4–6 минут, если часто продолжаете диалог.&#10;- Code keep_alive: 2 минуты.&#10;- Heavy Mistral Nemo: 60–90 секунд.&#10;- Router qwen3:0.6b: 2 минуты, в лимит target-моделей не входит.&#10;- Preload включайте только если хотите загружать модель сразу при ручном выборе.&#10;- Light рядом с heavy включайте только при достаточном запасе RAM.">?</button>
+                            data-tooltip="Рекомендация для MacBook Pro 16GB:&#10;- Максимум target-моделей: 1.&#10;- При ручном выборе новая target-модель выгружает предыдущую.&#10;- Manual keep_alive: минимум 5 минут.&#10;- Auto target keep_alive: 4–6 минут, если часто продолжаете диалог.&#10;- Router qwen3:0.6b: 2 минуты, в лимит target-моделей не входит.&#10;- Preload включайте только если хотите загружать модель сразу при ручном выборе.">?</button>
                     </div>
 
                     <div class="button-row">
@@ -828,7 +866,14 @@
                         <label class="field">
                             <span class="field__label">Threads</span>
                             <input id="asrThreadsInput" class="field__control" type="number" min="0" max="32" step="1" />
-                            <span class="field__description">Потоки CPU для whisper.cpp. 0 значит авто/настройка окружения; 4 часто стабильно на MacBook.</span>
+                            <span class="field__description">Потоки CPU для whisper.cpp. 4 — базовый стабильный вариант; 0 оставляет авто/настройку окружения.</span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field__label">Контекст анализа</span>
+                            <textarea id="asrAnalysisPromptInput" class="field__control" rows="4"
+                                placeholder="Например: я IT-специалист; повторы в речи часто означают важные задачи или уточнения; различай текущее состояние, цель, гипотезы и решения."></textarea>
+                            <span class="field__description">Профильный system prompt для ASR summary/structure. Не влияет на Whisper-транскрибацию.</span>
                         </label>
                     </div>
 
@@ -846,9 +891,31 @@
                         </div>
                         <div class="pipeline-settings-body" id="asrPipelineSettingsBody" hidden>
                             <div class="info-card">
-                                <span class="info-card__label">LLM для pipeline</span>
-                                <strong id="asrPipelineSettingsSummary">Профиль и модель не выбраны</strong>
+                                <span class="info-card__label">Настройки</span>
+                                <strong id="asrPipelineSettingsSummary">Профиль не выбран</strong>
                             </div>
+                            <label class="field field--checkbox">
+                                <input id="asrFullAnalysisEnabledToggle" type="checkbox" />
+                                <span class="field__checkbox-copy">
+                                    <strong>Разрешить полный анализ</strong>
+                                    <small>Запускает все стадии pipeline и может сильно нагревать Mac. Включайте только осознанно.</small>
+                                </span>
+                            </label>
+                            <label class="field field--checkbox">
+                                <input id="asrDiagnosticsEnabledToggle" type="checkbox" />
+                                <span class="field__checkbox-copy">
+                                    <strong>Вести ASR-логи</strong>
+                                    <small>При включении создаётся папка diagnostics для ASR pipeline. При выключении папка удаляется.</small>
+                                </span>
+                            </label>
+                            <label class="field">
+                                <span class="field__label">Thinking LLM стадий</span>
+                                <select id="asrPipelineThinkSelect" class="field__control">
+                                    <option value="off">Выключено</option>
+                                    <option value="on">Включено</option>
+                                    <option value="auto">Авто Ollama</option>
+                                </select>
+                            </label>
                             <div class="pipeline-stage-settings" id="asrPipelineSettingsGrid"></div>
                             <div class="button-row">
                                 <button class="button button--primary" id="saveAsrPipelineSettingsButton"

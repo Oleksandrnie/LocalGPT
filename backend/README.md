@@ -11,10 +11,10 @@
   - debug endpoints for assembled prompt inspection
 
 - `backend/apps/asr/`
-  - `routes.py` — transcribe API
+  - `routes.py` — transcribe API and ASR Studio emergency stop endpoint
   - `transcripts.py` — transcript history CRUD, including latest summary/structured result fields
   - `pipeline_routes.py` — ASR pipeline API
-  - `pipeline.py` — cleaner/segmenter/speaker resolver/structurer/summary flow and transcript result sync
+  - `pipeline.py` — ASR analysis action routing (`summary`, `smart_summary`, gated `full`, manual `clean`), optional cleaner/segmenter/speaker resolver/structurer/summary stages, long transcript chunking/merge, current/target state extraction, semantic summary coverage QA and transcript result sync
   - `models_routes.py` — Whisper model management
   - `whisper.py` — faster-whisper integration
   - `tasks.py` — background transcription tasks

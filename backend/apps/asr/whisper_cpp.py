@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from app import config
 
 
 _QUANT_SUFFIXES = ("", "-q8_0", "-q5_0", "-q5_1", "-q4_0", "-q4_1")
+DEFAULT_TRANSCRIBE_LOG_MAX_BYTES = 2 * 1024 * 1024
 
 
 def _resolve_path_template(raw: str, model_name: str) -> Path:
@@ -123,15 +125,58 @@ def is_whisper_cpp_runtime_ready(model_name: str) -> bool:
     return is_whisper_cpp_binary_ready()
 
 
-def _prepare_audio(input_path: Path, temp_dir: Path) -> Path:
+def _redacted_command(command: list[str]) -> list[str]:
+    result: list[str] = []
+    skip_next = False
+    for idx, item in enumerate(command):
+        if skip_next:
+            skip_next = False
+            continue
+        result.append(item)
+        if item == "--prompt" and idx + 1 < len(command):
+            result.append(f"<prompt chars={len(command[idx + 1])}>")
+            skip_next = True
+    return result
+
+
+def _log_transcription_event(payload: dict[str, Any]) -> None:
+    try:
+        max_bytes = int(os.getenv("TRANSCRIBE_LOG_MAX_BYTES", str(DEFAULT_TRANSCRIBE_LOG_MAX_BYTES)) or "0")
+        if max_bytes <= 0:
+            return
+        config.TRANSCRIBE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if config.TRANSCRIBE_LOG_FILE.exists() and config.TRANSCRIBE_LOG_FILE.stat().st_size > max_bytes:
+            backup_path = config.TRANSCRIBE_LOG_FILE.with_name(f"{config.TRANSCRIBE_LOG_FILE.name}.1")
+            try:
+                backup_path.unlink()
+            except FileNotFoundError:
+                pass
+            config.TRANSCRIBE_LOG_FILE.replace(backup_path)
+        with config.TRANSCRIBE_LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _prepare_audio(input_path: Path, temp_dir: Path) -> tuple[Path, dict[str, Any]]:
+    info: dict[str, Any] = {
+        "convert_audio": bool(config.SETTINGS.whisper_cpp_convert_audio),
+        "source_path": str(input_path),
+        "input_path": str(input_path),
+        "converted": False,
+        "ffmpeg_binary": config.SETTINGS.whisper_cpp_ffmpeg_binary,
+    }
     if not config.SETTINGS.whisper_cpp_convert_audio:
-        return input_path
+        return input_path, info
 
     ffmpeg_binary = config.SETTINGS.whisper_cpp_ffmpeg_binary
     ffmpeg = shutil.which(ffmpeg_binary) or ffmpeg_binary
     if not ffmpeg:
-        return input_path
+        info["ffmpeg_found"] = False
+        return input_path, info
 
+    info["ffmpeg_binary"] = ffmpeg
+    info["ffmpeg_found"] = True
     output_path = temp_dir / "input.wav"
     command = [
         ffmpeg,
@@ -150,15 +195,24 @@ def _prepare_audio(input_path: Path, temp_dir: Path) -> Path:
         "pcm_s16le",
         str(output_path),
     ]
+    info["ffmpeg_command"] = command
     try:
         subprocess.run(command, capture_output=True, text=True, check=True)
     except FileNotFoundError:
-        return input_path
+        info["ffmpeg_found"] = False
+        return input_path, info
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
+        info["error"] = f"WHISPER_CPP_AUDIO_CONVERT_FAILED::{detail}"
+        _log_transcription_event({"event": "whisper_cpp_audio_convert_error", "audio": info})
         raise RuntimeError(f"WHISPER_CPP_AUDIO_CONVERT_FAILED::{detail}") from exc
 
-    return output_path if output_path.exists() else input_path
+    if output_path.exists():
+        info["input_path"] = str(output_path)
+        info["converted"] = True
+        info["format"] = "wav_pcm_s16le_16000hz_mono"
+        return output_path, info
+    return input_path, info
 
 
 def _offset_to_seconds(value: Any) -> float:
@@ -238,10 +292,12 @@ def transcribe_with_whisper_cpp(
     if not model_path.exists():
         raise RuntimeError(f"WHISPER_CPP_MODEL_NOT_FOUND::{model_path}")
 
+    started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="localgpt-whisper-cpp-") as temp_name:
         temp_dir = Path(temp_name)
         output_prefix = temp_dir / "transcript"
-        input_path = _prepare_audio(audio_path, temp_dir)
+        input_path, audio_info = _prepare_audio(audio_path, temp_dir)
+        resolved_threads = int(threads if threads is not None else config.SETTINGS.whisper_cpp_threads)
         command = [
             _binary_path(),
             "--model",
@@ -257,34 +313,74 @@ def transcribe_with_whisper_cpp(
             str(output_prefix),
             "--no-prints",
         ]
-        resolved_threads = int(threads if threads is not None else config.SETTINGS.whisper_cpp_threads)
         if resolved_threads > 0:
             command.extend(["--threads", str(resolved_threads)])
         if prompt:
             command.extend(["--prompt", prompt])
         command.extend(config.SETTINGS.whisper_cpp_extra_args)
+        runtime: dict[str, Any] = {
+            "backend": "whisper_cpp",
+            "binary": command[0],
+            "model": model_name,
+            "model_path": str(model_path),
+            "source_audio_path": str(audio_path),
+            "input_audio_path": str(input_path),
+            "audio": audio_info,
+            "language": language or "auto",
+            "beam_size": max(1, int(beam_size)),
+            "threads": resolved_threads,
+            "threads_arg_used": resolved_threads > 0,
+            "prompt_present": bool(prompt),
+            "prompt_chars": len(prompt or ""),
+            "extra_args": list(config.SETTINGS.whisper_cpp_extra_args),
+            "output_json": str(output_prefix.with_suffix(".json")),
+            "command": _redacted_command(command),
+        }
+        _log_transcription_event({"event": "whisper_cpp_start", "runtime": runtime})
 
         try:
             completed = subprocess.run(command, capture_output=True, text=True, check=True)
         except FileNotFoundError as exc:
+            runtime["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+            runtime["error"] = f"WHISPER_CPP_BINARY_NOT_FOUND::{command[0]}"
+            _log_transcription_event({"event": "whisper_cpp_error", "runtime": runtime})
             raise RuntimeError(f"WHISPER_CPP_BINARY_NOT_FOUND::{command[0]}") from exc
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or exc.stdout or "").strip()
+            runtime["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+            runtime["returncode"] = exc.returncode
+            runtime["error"] = f"WHISPER_CPP_FAILED::{detail}"
+            _log_transcription_event({"event": "whisper_cpp_error", "runtime": runtime})
             raise RuntimeError(f"WHISPER_CPP_FAILED::{detail}") from exc
 
         json_path = output_prefix.with_suffix(".json")
         if not json_path.exists():
             detail = (completed.stderr or completed.stdout or "").strip()
+            runtime["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+            runtime["returncode"] = completed.returncode
+            runtime["error"] = f"WHISPER_CPP_EMPTY_OUTPUT::{detail}"
+            _log_transcription_event({"event": "whisper_cpp_error", "runtime": runtime})
             raise RuntimeError(f"WHISPER_CPP_EMPTY_OUTPUT::{detail}")
 
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
+            runtime["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+            runtime["returncode"] = completed.returncode
+            runtime["error"] = "WHISPER_CPP_INVALID_OUTPUT"
+            _log_transcription_event({"event": "whisper_cpp_error", "runtime": runtime})
             raise RuntimeError("WHISPER_CPP_INVALID_OUTPUT")
 
     segments = _dedupe_repeated_segments(_segments_from_payload(payload))
     text = "\n".join(segment["text"] for segment in segments).strip()
+    runtime["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+    runtime["returncode"] = completed.returncode
+    runtime["detected_language"] = _language_from_payload(payload)
+    runtime["segments_count"] = len(segments)
+    runtime["text_chars"] = len(text)
+    _log_transcription_event({"event": "whisper_cpp_done", "runtime": runtime})
     return {
         "text": text,
         "segments": segments,
-        "language": _language_from_payload(payload),
+        "language": runtime["detected_language"],
+        "runtime": runtime,
     }

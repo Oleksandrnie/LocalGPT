@@ -159,6 +159,8 @@ Metal-to-CPU recovery:
 
 - если native Ollama request падает на Metal backend до выдачи текста, runtime выгружает модель и повторяет запрос;
 - если повтор тоже падает на Metal backend, runtime ещё раз выгружает модель перед CPU fallback payload (`num_gpu=0`, `keep_alive=0`);
+- callers can disable CPU fallback per request; ASR pipeline disables it so failed Metal does not silently become a CPU-heavy summary run;
+- model settings can pass native Ollama top-level `think`; ASR disables it by default for pipeline LLM stages because structured ASR output does not need reasoning traces;
 - для streaming path fallback разрешён только до первого text chunk, чтобы не смешивать два разных ответа в одном assistant-message.
 
 ### 3.2. Message lifecycle storage
@@ -221,11 +223,12 @@ Pipeline:
 
 ```text
 raw ASR transcript
--> cleaner
--> segmenter
--> speaker resolver
--> structurer
--> summary
+-> chunking by max_transcript_chars for long inputs
+-> selected action route
+   clean: cleaner
+   summary: summary
+   smart_summary: structurer -> merge structured chunks -> summary -> coverage QA
+   full: segmenter -> speaker resolver -> structurer -> merge structured chunks -> summary -> coverage QA
 -> DB
 -> optional chat context / memory
 ```
@@ -236,6 +239,7 @@ API:
 - `GET /transcripts/{id}/pipeline/latest`
 - `PATCH /transcripts/{id}/pipeline/{run_id}/speakers`
 - `POST /transcripts/{id}/pipeline/{run_id}/summary`
+- `POST /asr/stop` — emergency stop для ASR Studio: отменяет активные transcription tasks, ставит stop flag для pipeline и выгружает активные/default pipeline-модели из Ollama.
 
 Хранится:
 
@@ -252,6 +256,77 @@ API:
 - optional debug artifacts.
 
 Основная история pipeline хранится в `transcript_pipeline_runs`. Для удобства `ASR Studio` последние `summary`, `structured_json` и `latest_pipeline_run_id` также денормализуются в запись `transcripts`, а `name` обновляется по теме/summary. Это не заменяет run history, а даёт понятные названия и быстрый доступ в базе транскрибаций.
+
+Default preset для длинных русскоязычных встреч:
+
+| Stage | Model | Temperature | Max tokens |
+| --- | --- | ---: | ---: |
+| cleaner | `qwen2.5:7b-instruct` | `0` | `9000` |
+| segmenter | `qwen2.5:7b-instruct` | `0.05` | `8000` |
+| speaker resolver | `qwen2.5:7b-instruct` | `0.1` | `4000` |
+| structurer | `qwen3:8b` | `0.1` | `8000` |
+| summary | `qwen3:8b` | `0.1` | `8000` |
+
+Whisper defaults для ASR Studio: `large-v3-turbo`, русский prompt/language, `beam_size=5`, `threads=4`. `qwen2.5:3b-instruct` больше не основной качественный вариант для cleaner/segmenter; он остаётся быстрым fallback. ASR pipeline settings хранятся отдельно от chat model settings под служебным model name `__asr_pipeline__`; user ASR overrides из `model_settings.pipeline_json` merge-ятся поверх default pipeline и имеют приоритет.
+
+ASR Studio analysis actions:
+
+| UI mode | Backend action | Route |
+| --- | --- | --- |
+| `Быстрое саммари` | `summary` | raw transcript -> summary |
+| `Умное саммари` | `smart_summary` | raw transcript/chunks -> structurer -> summary |
+| `Полный анализ` | `full` | raw transcript/chunks -> segmenter -> speaker resolver -> structurer -> summary |
+| manual `Очистить` | `clean` | raw transcript -> cleaner |
+
+Cleaner is optional and is not part of the default summary/smart/full routes. It remains available as a manual stage because repeated speech can be useful evidence rather than noise.
+
+Stage settings have priority over mode routes. If a stage is saved as `enabled=false` via UI `Не использовать`, backend `_stage_enabled` skips it in every action. `smart_summary` falls back to direct summary when `structurer` is disabled and records `smart_summary_structurer_disabled_fallback_summary`; summary-producing actions return `asr_summary_stage_disabled` when `summary` is disabled instead of silently re-enabling it.
+
+`asr.analysis_language` controls ASR analysis output language: `auto` follows the transcript language, while `ru` and `en` force Russian or English. `asr.analysis_prompt` is profile-level context for structurer/summary/retry prompts. These settings do not affect Whisper transcription.
+
+`asr.diagnostics_enabled` controls extended ASR pipeline diagnostics. When enabled, the profile folder under `tmp_logs/asr_diagnostics/profile_<id>/` is created and JSONL pipeline events are written there. When disabled through the profile preference API/UI, that profile folder is removed.
+
+`OLLAMA_PIPELINE_NUM_GPU` is optional. On Apple Silicon, the default ASR pipeline value is a high layer count so Ollama fully offloads LLM stages to Metal when possible. Set `OLLAMA_PIPELINE_NUM_GPU=auto` to omit `ollama_num_gpu` and use Ollama's own default behavior. Set `OLLAMA_PIPELINE_NUM_GPU=0` only when a deliberate CPU-only pipeline is needed.
+
+ASR pipeline settings also include `ollama_think`. Default effective behavior for `__asr_pipeline__` is `off`, so `_call_stage` sends `think:false` to native Ollama chat calls. Users may override it to `on` or `auto` from ASR settings, but mode routing never flips it implicitly. Chat model settings use the same persisted field and the topbar `Thinking` control for supported models.
+
+Long transcript handling:
+
+- `max_transcript_chars` в ASR pipeline используется как размер chunk, а не как лимит полного transcript;
+- действие `summary` намеренно лёгкое: raw transcript -> summary, без cleaner/speaker/structurer;
+- действие `smart_summary` использует chunked structurer merge перед final summary и coverage QA;
+- compact segment digest для длинного summary сохраняет начало и конец встречи, а не только prefix;
+- полный анализ закрыт profile setting `asr_full_analysis_enabled=false` по умолчанию; UI не даёт запустить `Полный анализ` без явного включения и warning confirmation;
+- в полном анализе каждый chunk проходит segmenter/speaker resolver/structurer, если эти stages не выключены пользователем;
+- structured outputs merge-ятся в единый `structured_json` с `coverage_topics`, `chunk_summaries` и `chunk_count`;
+- summary получает `source_mode=chunked_merge`, merged structure, coverage topics и compact segment digest, а не обрезанный raw transcript prefix;
+- warning `raw_transcript_chunked:<N>` означает штатную полную chunked-обработку;
+- warning `raw_transcript_truncated` не должен появляться в нормальном summary path; если он возникнет, результат нужно считать неполным;
+- summary QA чинит ложный блок `Ключевые решения — не зафиксировано`, когда structured decisions/agreements есть;
+- если final summary не покрывает крупные темы, warning `summary_topic_coverage_missing:<N>` запускает retry с `missing_topics`, предыдущим summary и merged evidence;
+- успешный retry добавляет диагностический warning `summary_topic_coverage_retry_succeeded`, но только если missing topics раскрыты смыслово, а не упомянуты одним ключевым словом;
+- если retry всё ещё пропускает темы, добавляется `summary_topic_coverage_retry_failed:<N>`, а результат явно получает блок `Неполное summary: не удалось покрыть следующие темы`;
+- если summary validation падает после успешного structurer, `smart_summary`/`full` могут собрать безопасный markdown summary из structured evidence вместо ещё одного дорогого LLM retry;
+- structurer выделяет generic `current_state` и `target_state`, чтобы summary не смешивало текущее устройство процесса/архитектуры с целевой схемой;
+- подозрительные ASR-термины технических артефактов не исправляются словарём; summary prompt требует выносить спорные термины в вопросы для уточнения;
+- неподтверждённые action-like bullets из `Ключевые решения` переносятся в proposals, если нет явного confirmation marker.
+
+Runtime note: full long chunked runs can perform multiple sequential local LLM calls across segmenter/speaker resolver/structurer plus one summary retry. Smart summary defaults to `qwen3:8b` for both structurer and summary to avoid loading two large models for the common route. This is still thermally expensive on a laptop. Missing required summary headings are repaired locally before grounding validation so a usable summary body does not trigger a second LLM call only for format. Keep full analysis disabled for routine summary-only work, use `stage_timings`, warnings and process checks during manual QA, and do not run repeated live long-meeting tests in parallel with other local LLM/ASR workloads.
+
+ASR stop behavior:
+
+- transcription tasks run in separate processes and can be terminated/killed by task id or through `POST /asr/stop`;
+- pipeline requests are synchronous, so `POST /asr/stop` sets an in-memory stop flag checked before/after every LLM stage and unloads active pipeline models from Ollama;
+- if the current model call is already inside Ollama, cancellation may become effective after that call returns or fails; the next stage must not start after the stop flag is set;
+- UI `Остановить` aborts the active frontend request, calls backend stop, clears busy state and leaves the user in control for manual thermal testing.
+
+Whisper runtime diagnostics:
+
+- фактический запуск whisper.cpp пишется JSONL-строками в `tmp_logs/transcribe.log`;
+- лог содержит backend, binary, model/model_path, language, beam_size, threads, prompt metadata, audio conversion metadata и redacted argv command;
+- prompt в command не раскрывается: вместо текста пишется `<prompt chars=N>`, отдельно сохраняются только prompt flags и длина;
+- `TRANSCRIBE_LOG_MAX_BYTES` ограничивает размер текущего файла, default `2097152`; при превышении текущий файл переезжает в `transcribe.log.1`, хранится только один backup;
+- `TRANSCRIBE_LOG_MAX_BYTES=0` отключает запись diagnostics.
 
 Speaker rules:
 
@@ -370,11 +445,11 @@ Profile metadata редактируется отдельно от model settings
 
 - chat/factual/RAG: `0.2-0.4`;
 - обычный свободный чат: `0.7-0.8`;
-- cleaner: `0.2`;
-- segmenter: `0.1`;
+- cleaner: `0`;
+- segmenter: `0.05`;
 - speaker resolver: `0.1`;
-- structurer: `0.3`;
-- summary: `0.3`;
+- structurer: `0.1`;
+- summary: `0.1`;
 - code assistant: `0.2-0.4`.
 
 ## 9. num_ctx
@@ -397,7 +472,8 @@ Dev/admin endpoints:
 Логи:
 
 - `tmp_logs/chat.log`;
-- `tmp_logs/pipeline.log`.
+- `tmp_logs/pipeline.log`;
+- `tmp_logs/transcribe.log`.
 
 Pipeline log содержит stage, elapsed time, input/output sizes, errors, truncation flag и used settings.
 
