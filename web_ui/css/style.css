@@ -1985,11 +1985,17 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     padding-bottom: 12px;
 }
 
+.message-scroll-end {
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+}
+
 .scroll-jump {
     position: absolute;
     right: 28px;
-    bottom: 24px;
-    z-index: var(--z-base);
+    bottom: 88px;
+    z-index: var(--z-topbar);
     width: 48px;
     height: 48px;
     border-radius: 999px;
@@ -7189,7 +7195,7 @@ body.theme-light .tool-window__resize::before {
         width: 44px;
         height: 44px;
         right: 18px;
-        bottom: 18px;
+        bottom: 88px;
     }
 
     .composer-menu__trigger {

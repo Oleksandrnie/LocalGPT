@@ -187,9 +187,11 @@
                 </div>
 
                 <div class="message-list" id="messageList"></div>
-                <button class="scroll-jump" id="scrollTopButton" type="button" hidden
-                    aria-label="К началу чата">↑</button>
+                <div id="messageScrollEnd" class="message-scroll-end" aria-hidden="true"></div>
             </section>
+
+            <button class="scroll-jump" id="scrollTopButton" type="button" hidden
+                aria-label="Перейти к последнему сообщению" title="Перейти к последнему сообщению">↓</button>
 
             <form class="composer" id="composerForm">
                 <div class="composer__tools">
