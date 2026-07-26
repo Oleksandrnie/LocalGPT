@@ -203,6 +203,7 @@ const els = {
   chatModelNotice: document.getElementById("chatModelNotice"),
   chatModelNoticeSettingsButton: document.getElementById("chatModelNoticeSettingsButton"),
   messageList: document.getElementById("messageList"),
+  messageScrollEnd: document.getElementById("messageScrollEnd"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
   promptInput: document.getElementById("promptInput"),
@@ -487,6 +488,7 @@ const state = {
   chatTypingStreams: new Map(),
   isSpeaking: false,
   autoScrollPinned: true,
+  messageScrollEndObserver: null,
   theme: "dark",
   sidebarOpen: readStored(STORAGE_KEYS.sidebarOpen, "true") !== "false",
   modelsDir: "",
@@ -1144,8 +1146,22 @@ function syncMessageScrollState() {
   const remaining = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight;
   state.autoScrollPinned = remaining <= 96;
   if (els.scrollTopButton) {
-    els.scrollTopButton.hidden = els.messageScroll.scrollTop < 320;
+    els.scrollTopButton.hidden = remaining <= 24;
   }
+}
+
+function observeMessageScrollEnd() {
+  if (!els.messageScroll || !els.messageScrollEnd || !els.scrollTopButton) return;
+  state.messageScrollEndObserver?.disconnect();
+  state.messageScrollEndObserver = new IntersectionObserver(([entry]) => {
+    const hasOverflow = els.messageScroll.scrollHeight > els.messageScroll.clientHeight + 1;
+    const remaining = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight;
+    els.scrollTopButton.hidden = !hasOverflow || (entry.isIntersecting && remaining <= 24) || remaining <= 24;
+  }, {
+    root: els.messageScroll,
+    threshold: 0,
+  });
+  state.messageScrollEndObserver.observe(els.messageScrollEnd);
 }
 
 function scrollMessagesToBottom({ force = false } = {}) {
@@ -1155,10 +1171,6 @@ function scrollMessagesToBottom({ force = false } = {}) {
     els.messageScroll?.scrollTo({ top: els.messageScroll.scrollHeight, behavior: "smooth" });
     syncMessageScrollState();
   });
-}
-
-function scrollMessagesToTop() {
-  els.messageScroll?.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function applySidebarOpenState() {
@@ -3602,6 +3614,7 @@ function renderMessages() {
     .join("");
   requestAnimationFrame(() => {
     syncMessageScrollState();
+    observeMessageScrollEnd();
   });
 }
 
@@ -9379,7 +9392,7 @@ function bindEvents() {
   });
 
   els.scrollTopButton?.addEventListener("click", () => {
-    scrollMessagesToTop();
+    scrollMessagesToBottom({ force: true });
   });
 
   els.composerMenuButton?.addEventListener("click", () => {
