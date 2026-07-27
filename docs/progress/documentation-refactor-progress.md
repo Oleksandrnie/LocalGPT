@@ -9,10 +9,10 @@
 
 ## Current Status
 
-- Status: Stage 3 consolidation implemented; validation and checkpoint pending.
-- Completed: Stages 1–2 committed; root README rewritten; architecture/testing/changelog/backlog and six knowledge files filled from code-verified sources; replaced hub copies removed.
-- In progress: completing Stage 3 validation and recording pre-existing test-suite failures.
-- Pending: agent workflow migration, final validation, cleanup, and documentation-refactor progress removal.
+- Status: Stage 4 agent workflow migration implemented; validation and checkpoint pending.
+- Completed: Stages 1–3 committed; `AGENTS.md` completed; old GPT instruction variants removed; active ASR progress moved to `docs/progress/` with self-references updated.
+- In progress: validating `AGENTS.md` as a standalone entry point and checking old progress/instruction references.
+- Pending: final validation, cleanup, documentation-refactor progress removal, and Stage 5 checkpoint.
 - Branch note: the specification names `update-documentation`, while the user explicitly selected `update_project_docs`; the explicit user choice is authoritative.
 
 ## Architecture Scope
@@ -122,13 +122,16 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 - [x] Ran safe application smoke and documentation checks.
 - Architectural decisions: root README contains only product overview/startup; project-wide subsystem details live in `docs/knowledge/`; manifest-owned plugin docs and runtime-folder RAG docs remain canonical locally.
 - Validation: all 27 project Markdown files have valid relative targets; isolated `/health` + `/ui/gui_html.html` smoke passed on a temporary SQLite DB; `node --check web_ui/js/app.js` and both Markdown renderer tests passed; full Python suite ran 160 tests with 157 passing and three pre-existing failures recorded below; `git diff --check` and runtime-preservation checks passed.
-- Git checkpoint: pending — `stage 3: consolidate project documentation`.
+- Git checkpoint: `37bd1b6` — `stage 3: consolidate project documentation`.
 
 ### Stage 4 — Migrate Agent Documentation Workflow
 
-- [ ] Finish `AGENTS.md`, including task-specific reading, progress tracking, affected-documents policy, testing, legacy rules, and Definition of Done.
-- [ ] Move the active ASR progress file to `docs/progress/`.
-- [ ] Remove obsolete GPT instruction variants after coverage validation.
+- [x] Finished `AGENTS.md`, including task-specific reading, progress tracking, affected-documents policy, testing, legacy rules, forbidden actions, and Definition of Done.
+- [x] Moved the active ASR progress file to `docs/progress/` and updated its self-references.
+- [x] Removed obsolete GPT instruction variants after transferring their durable constraints.
+- [x] Validated the standalone entry point and absence of deprecated paths.
+- Architectural decisions: `AGENTS.md` owns workflow only; it links to architecture/knowledge rather than duplicating them. Active task records survive a documentation refactor and are moved without changing their completion state.
+- Validation: all 21 current project Markdown files have valid relative link targets; required `AGENTS.md` sections are present; active ASR progress self-references use `docs/progress/`; no deprecated progress path remains in the active record; runtime prompt hash is unchanged; `git diff --check` and no-project-skills checks passed.
 - Git checkpoint: pending — `stage 4: migrate agent documentation workflow`.
 
 ### Stage 5 — Validation, Cleanup and Finalization
@@ -163,6 +166,7 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 - `docs/knowledge/ui.md`
 - `docs/knowledge/networking.md`
 - `docs/progress/.gitkeep`
+- `docs/progress/asr-analysis-modes-progress.md` (moved from deprecated path; still active)
 - `docs/progress/documentation-refactor-progress.md`
 
 ## Found Problems
@@ -192,10 +196,10 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 
 ## Next Steps
 
-1. Complete scoped link validation and isolated backend smoke.
-2. Create the exact Stage 3 checkpoint commit.
-3. Finish `AGENTS.md`, move the active ASR progress file, and remove old GPT instruction copies in Stage 4.
+1. Validate Stage 4 links, required workflow sections, and deprecated path removal.
+2. Create the exact Stage 4 checkpoint commit.
+3. Run final Stage 5 structure/link/test checks, finalize changelog/backlog, and delete only this documentation-refactor progress file.
 
 ## Continuation Prompt
 
-Continue the LocalGPT documentation refactor in branch `update_project_docs`. Read `docs/progress/documentation-refactor-progress.md`, `git status`, and commits `8a87bc2` / `39ba7a5` first. Stage 3 content and deletions are implemented. Complete scoped link validation and isolated backend smoke, then commit as `stage 3: consolidate project documentation`. Known unrelated test issues: two ASR pipeline tests fail in isolation and one plugin-doc test fails only after full-suite DB-state leakage; they are recorded in `docs/BACKLOG.md`. Next implement Stage 4: complete `AGENTS.md`, move active ASR progress to `docs/progress/`, and remove old GPT instruction variants. Preserve `app/prompts/system_base.md`, `compare-branch/`, plugin-local docs, and `rag_sources/README.md`. Do not edit any AI Coding Retrieval Stack specification or create project skills.
+Continue the LocalGPT documentation refactor in branch `update_project_docs`. Read `docs/progress/documentation-refactor-progress.md`, `git status`, and commits `8a87bc2`, `39ba7a5`, `37bd1b6` first. Stage 4 is implemented: `AGENTS.md` is complete, old GPT instruction variants are removed, and the active ASR record is moved to `docs/progress/asr-analysis-modes-progress.md` without closing it. Validate Stage 4 and commit as `stage 4: migrate agent documentation workflow`. Then run Stage 5 final structure/link/smoke checks, retain the documented unrelated test failures in backlog, remove only `docs/progress/documentation-refactor-progress.md`, and commit as `stage 5: validate and finalize documentation`. Preserve the active ASR progress, `app/prompts/system_base.md`, `compare-branch/`, plugin-local docs, and `rag_sources/README.md`. Do not edit any AI Coding Retrieval Stack specification or create project skills.
