@@ -338,6 +338,7 @@ VISION_MODEL_CATALOG = [
         "recommended": True,
         "experimental": False,
         "capabilities": ["text", "vision"],
+        "approx_size_gb": 3.2,
         "description": (
             "Основная локальная vision-модель для изображений, документов, схем и интерфейсов. "
             "Рекомендуемый первый вариант для M1 Pro 16GB; загружается только по явному действию пользователя."
@@ -351,6 +352,7 @@ VISION_MODEL_CATALOG = [
         "recommended": False,
         "experimental": False,
         "capabilities": ["text", "vision"],
+        "approx_size_gb": 6.0,
         "description": (
             "Более качественный vision-профиль для сложных документов и диаграмм. "
             "Требует больше памяти и не выбирается автоматически, пока 3B доступна."
@@ -364,6 +366,7 @@ VISION_MODEL_CATALOG = [
         "recommended": False,
         "experimental": True,
         "capabilities": ["text", "vision"],
+        "approx_size_gb": 3.3,
         "description": (
             "Альтернативная multimodal-модель для сравнительной проверки качества. "
             "Не загружается и не выбирается автоматически без явного действия пользователя."

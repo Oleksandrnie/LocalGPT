@@ -99,23 +99,26 @@
 - Related files: `backend/apps/rag/routes.py`, `backend/apps/rag/service.py`, DB source repository, chat UI action/dialog, RAG tests.
 - [x] Completed: Explicit editable Vision → RAG dialog/action and profile/session/message ownership checks.
 - [x] Completed: Text-only `vision_context` indexing, safe reference metadata, binary data-URI rejection and independent deletion.
-- [ ] Pending: Checkpoint commit.
+- [x] Completed: Checkpoint commit.
 - Architectural decisions: Auto-save запрещён; image binary/path не копируется в RAG content; metadata хранит attachment/message/session references.
 - Problems: Нет.
 - Technical debt: Нет.
 - Next steps: Создать Stage 7 checkpoint и перейти к dedicated Vision settings/model tab.
 - Validation: `venv/bin/python -m unittest tests.test_vision_rag` + two existing RAG/ASR context regressions — 5 passed; `node tests/chat_attachments_ui.test.mjs` — 5 passed; markdown tests — 2 passed; compileall, JS syntax и diff-check passed.
-- Git checkpoint: pending
+- Git checkpoint: `6108556` — Add explicit vision context RAG export
 
 ### Stage 7.5 — Dedicated Vision Models and Settings Tab
 - Goal: Перед финальным live QA собрать отдельный Settings tab для vision model library и всех vision-owned controls, затем остановиться и передать пользователю точный download handoff.
 - Related files: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, model catalog/routes, profile settings/cache endpoints, UI/static/manual tests.
-- [ ] Pending: Implementation and validation.
+- [x] Completed: Dedicated Vision tab, separate three-model library and explicit download/update/delete/primary actions.
+- [x] Completed: Declared vs runtime-confirmed capability display, all profile-owned Vision controls and cache stats/cleanup UI.
+- [x] Completed: Static/unit/application-route validation and fresh local model-state audit.
+- [ ] Pending: Checkpoint commit.
 - Architectural decisions: `qwen2.5vl:3b`, `qwen2.5vl:7b` и `gemma3:4b` не смешиваются с обычной chat library; tab показывает declared и runtime-confirmed capabilities отдельно; download/update/delete остаются явными действиями пользователя; в tab находятся `chat_images_enabled`, primary vision model/auto, fallback route, OCR assist, image count/byte/pixel/side limits, cache stats и cleanup.
-- Problems: Vision-моделей сейчас нет в project storage, Ollama runtime недоступен.
+- Problems: Все три модели сейчас `runtime_installed=false`, `storage_present=false`, `capabilities_confirmed=false`; Ollama CLI найден в `/opt/homebrew/bin/ollama`, но server/app не запущен.
 - Technical debt: Нет.
-- Next steps: Выполнить после Stage 7, создать checkpoint и сообщить пользователю, что можно скачать модели; Stage 8 не начинать до пользовательского handoff.
-- Validation: pending
+- Next steps: Создать Stage 7.5 checkpoint и сообщить пользователю: сначала запустить Ollama, затем скачать `qwen2.5vl:3b` через Vision tab; опционально `qwen2.5vl:7b` и `gemma3:4b`. Stage 8 не начинать до подтверждения.
+- Validation: `node tests/chat_attachments_ui.test.mjs` — 6 passed; `node tests/markdown_rendering.test.mjs` — 2 passed; combined multimodal/model-router Python suite — 87 passed; compileall, JS syntax, diff-check and backend route import audit passed. Fresh model audit: 0/3 installed, 0/3 in storage, 0/3 runtime-confirmed; Ollama server unavailable. Live download/inference intentionally not run.
 - Git checkpoint: pending
 
 ### Stage 8 — Regression, Documentation and Cleanup
@@ -131,14 +134,14 @@
 
 ## Overall Status
 - Status: in progress
-- Completed: Request/TЗ analysis, DOCX text/layout review, documentation-impact review, repository/code boundary inspection, Stage 1 implementation and validation.
-- In progress: Stage 7 checkpoint.
-- Pending: Stages 4–7.5, user model-download handoff, then Stage 8 final QA/docs/cleanup.
-- Changed files since latest checkpoint: RAG schema/routes/service, Vision → RAG dialog/action, backend/UI tests and this progress file.
+- Completed: Request/TЗ analysis and checkpoints for Stages 1–7; Stage 7.5 implementation/validation is ready for checkpoint.
+- In progress: Stage 7.5 checkpoint and user download handoff.
+- Pending: Stage 7.5 checkpoint, user model-download handoff, then Stage 8 controlled live QA/docs/cleanup.
+- Changed files since latest checkpoint: Vision catalog size metadata, dedicated Settings tab/UI logic, static UI contract test and this progress file.
 - Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
 - Technical debt: Нет.
-- Next action: Inspect/stage/commit Stage 7, then implement Stage 7.5 dedicated Vision tab and stop for user download.
+- Next action: Inspect/stage/commit Stage 7.5, report exact user download steps and stop. Do not start Stage 8 until user confirms downloaded models.
 - Latest Git checkpoint: `2a608a6` — Add vision model capability runtime.
 
 ## Continuation Prompt
-Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Current status: Stage 4 implemented/validated, checkpoint pending. Completed checkpoints: Stage 1 `7b84d91`; Stage 2 `18db044`; Stage 3 `2a608a6`. Stage 4 adds attachment ownership/limit preflight, direct/context vision worker routes, persisted task/message linkage, vision statuses, cancellation/restart reconciliation and history thumbnails; focused lifecycle tests pass. Remaining: commit Stage 4, Stages 5–7.5, then stop for user model download before Stage 8. Problems/blockers: broader pipeline-memory suite retains two pre-existing ASR summary failures; Ollama runtime unavailable and no vision model exists; live inference/download must not run automatically. Preserve: confirmed-only capabilities, transient base64, explicit OCR/degraded behavior, no binary RAG ingest, dedicated Vision tab and user gate after Stage 7.5.
+Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Current status: Stages 1–7 checkpointed; Stage 7.5 implemented/validated and checkpoint pending. Dedicated Vision tab contains separate `qwen2.5vl:3b`, `qwen2.5vl:7b`, `gemma3:4b` cards with download/update/delete/primary actions, declared/runtime capabilities, all profile settings and cache controls. Combined relevant suite: 87 Python + 8 Node tests passed. Fresh audit: none of the three models is installed or present in storage; Ollama CLI exists but server/app is not running. Next: commit Stage 7.5, tell user to start Ollama and download at least `qwen2.5vl:3b`, then stop. Do not begin Stage 8 until user confirms downloads. Preserve active `docs/progress/asr-analysis-modes-progress.md`; do not delete this progress file until final Stage 8 cleanup.

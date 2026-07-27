@@ -563,6 +563,7 @@
             <nav class="settings-tabs" id="settingsTabList" role="tablist" aria-label="Разделы настроек">
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="profile">Профиль</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="models">Чат / LLM</button>
+                <button class="settings-tab" type="button" role="tab" data-settings-tab="vision">Vision</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="asr">ASR</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="tts">TTS</button>
                 <button class="settings-tab" type="button" role="tab" data-settings-tab="plugins">Plugins</button>
@@ -836,6 +837,101 @@
                     </div>
 
                     <p class="inline-status" id="modelSettingsStatus"></p>
+                </section>
+
+                <section class="settings-group settings-group--vision" data-settings-tab-panel="vision">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Multimodal</p>
+                            <h4>Vision-модели и изображения в чате</h4>
+                        </div>
+                        <button class="button button--ghost" id="refreshVisionButton" type="button">Обновить</button>
+                    </div>
+
+                    <div class="info-card">
+                        <span class="info-card__label">Готовность runtime</span>
+                        <strong id="visionRuntimeSummary">Проверяю локальные vision-модели…</strong>
+                    </div>
+
+                    <div class="model-library model-library--vision" id="visionModelLibrary"></div>
+
+                    <label class="field field--checkbox">
+                        <input id="chatImagesEnabledToggle" type="checkbox" />
+                        <span class="field__checkbox-copy">
+                            <span>Изображения в обычном чате</span>
+                            <small>Разрешить picker, paste и drag-and-drop PNG/JPEG/WebP.</small>
+                        </span>
+                    </label>
+
+                    <div class="settings-grid">
+                        <label class="field">
+                            <span class="field__label">Основная vision-модель</span>
+                            <select id="visionModelSelect" class="field__control">
+                                <option value="auto">Auto — первая установленная</option>
+                                <option value="qwen2.5vl:3b">Qwen2.5-VL 3B</option>
+                                <option value="qwen2.5vl:7b">Qwen2.5-VL 7B</option>
+                                <option value="gemma3:4b">Gemma 3 4B</option>
+                            </select>
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Text-model fallback</span>
+                            <select id="visionFallbackSelect" class="field__control">
+                                <option value="vision_context">Vision context → выбранная LLM</option>
+                                <option value="error">Только явная ошибка</option>
+                            </select>
+                        </label>
+                        <label class="field">
+                            <span class="field__label">OCR assist</span>
+                            <select id="visionOcrAssistSelect" class="field__control">
+                                <option value="auto">Auto — optional evidence</option>
+                                <option value="on">On — OCR обязателен</option>
+                                <option value="off">Off</option>
+                                <option value="ocr_only">OCR only — degraded mode</option>
+                            </select>
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Языки OCR</span>
+                            <input id="visionOcrLanguageInput" class="field__control" type="text"
+                                placeholder="Пусто = eng+deu+fra+spa+rus+ukr" />
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Изображений в сообщении</span>
+                            <input id="visionMaxImagesInput" class="field__control" type="number" min="1" max="10" step="1" />
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Один файл, MB</span>
+                            <input id="visionMaxFileMbInput" class="field__control" type="number" min="1" max="100" step="1" />
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Все файлы, MB</span>
+                            <input id="visionMaxTotalMbInput" class="field__control" type="number" min="1" max="400" step="1" />
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Максимум мегапикселей</span>
+                            <input id="visionMaxMegapixelsInput" class="field__control" type="number" min="1" max="100" step="1" />
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Максимальная сторона, px</span>
+                            <input id="visionMaxSideInput" class="field__control" type="number" min="256" max="16384" step="64" />
+                        </label>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="button button--primary" id="saveVisionSettingsButton" type="button">Сохранить Vision</button>
+                        <button class="button button--ghost" id="resetVisionSettingsButton" type="button">Сбросить</button>
+                    </div>
+                    <p class="inline-status" id="visionSettingsStatus"></p>
+
+                    <div class="info-card">
+                        <span class="info-card__label">Кэш изображений профиля</span>
+                        <strong id="visionCacheSummary">Нет данных</strong>
+                    </div>
+                    <div class="button-row">
+                        <button class="button button--ghost" id="refreshVisionCacheButton" type="button">Обновить кэш</button>
+                        <button class="button button--ghost" id="cleanupVisionOrphansButton" type="button">Удалить orphan-файлы</button>
+                        <button class="button button--ghost" id="cleanupVisionCacheButton" type="button">Очистить кэш профиля</button>
+                    </div>
+                    <p class="subtle">Активные задачи пропускаются при очистке. История сообщений не получает binary/base64.</p>
                 </section>
 
                 <section class="settings-group settings-group--asr" data-settings-tab-panel="asr">

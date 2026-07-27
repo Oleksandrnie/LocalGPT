@@ -363,6 +363,26 @@ const els = {
   chatLibraryMeta: document.getElementById("chatLibraryMeta"),
   chatLibraryPanel: document.getElementById("chatLibraryPanel"),
   chatModelLibrary: document.getElementById("chatModelLibrary"),
+  visionModelLibrary: document.getElementById("visionModelLibrary"),
+  visionRuntimeSummary: document.getElementById("visionRuntimeSummary"),
+  refreshVisionButton: document.getElementById("refreshVisionButton"),
+  chatImagesEnabledToggle: document.getElementById("chatImagesEnabledToggle"),
+  visionModelSelect: document.getElementById("visionModelSelect"),
+  visionFallbackSelect: document.getElementById("visionFallbackSelect"),
+  visionOcrAssistSelect: document.getElementById("visionOcrAssistSelect"),
+  visionOcrLanguageInput: document.getElementById("visionOcrLanguageInput"),
+  visionMaxImagesInput: document.getElementById("visionMaxImagesInput"),
+  visionMaxFileMbInput: document.getElementById("visionMaxFileMbInput"),
+  visionMaxTotalMbInput: document.getElementById("visionMaxTotalMbInput"),
+  visionMaxMegapixelsInput: document.getElementById("visionMaxMegapixelsInput"),
+  visionMaxSideInput: document.getElementById("visionMaxSideInput"),
+  saveVisionSettingsButton: document.getElementById("saveVisionSettingsButton"),
+  resetVisionSettingsButton: document.getElementById("resetVisionSettingsButton"),
+  visionSettingsStatus: document.getElementById("visionSettingsStatus"),
+  visionCacheSummary: document.getElementById("visionCacheSummary"),
+  refreshVisionCacheButton: document.getElementById("refreshVisionCacheButton"),
+  cleanupVisionOrphansButton: document.getElementById("cleanupVisionOrphansButton"),
+  cleanupVisionCacheButton: document.getElementById("cleanupVisionCacheButton"),
   activeProfileSummary: document.getElementById("activeProfileSummary"),
   profileManagementSelect: document.getElementById("profileManagementSelect"),
   profileNameField: document.getElementById("profileNameField"),
@@ -470,10 +490,13 @@ const state = {
   visionRagSourceMessageId: null,
   installedModels: [],
   recommendedModels: [],
+  visionModels: [],
   utilityModels: [],
   downloads: [],
   modelDiagnostics: null,
   chatModelsError: null,
+  visionCache: null,
+  visionCacheBusy: false,
   selectedLlmModel: "",
   selectedChatWhisperModel: "medium",
   selectedWhisperModel: ASR_STUDIO_DEFAULT_MODEL,
@@ -3465,6 +3488,7 @@ function applyActiveProfilePreferences() {
   renderRagButton();
   renderWhisperControls();
   renderTtsControls();
+  renderVisionSettings();
 }
 
 function replaceProfileState(profile) {
@@ -4183,6 +4207,220 @@ function renderChatModelLibrary() {
       `;
     })
     .join("");
+}
+
+function visionSettingsValues() {
+  const settings = getActiveProfilePreferences()?.settings || {};
+  return {
+    chat_images_enabled: settings.chat_images_enabled !== false,
+    vision_model: String(settings.vision_model || "auto"),
+    vision_fallback: String(settings.vision_fallback || "vision_context"),
+    ocr_assist: String(settings.ocr_assist || "auto"),
+    ocr_language: String(settings.ocr_language || ""),
+    max_images_per_message: Math.min(10, Math.max(1, Number(settings.max_images_per_message) || 1)),
+    chat_image_max_file_bytes: Number(settings.chat_image_max_file_bytes) || 20 * 1024 * 1024,
+    chat_image_max_total_bytes: Number(settings.chat_image_max_total_bytes) || 40 * 1024 * 1024,
+    chat_image_max_pixels: Number(settings.chat_image_max_pixels) || 16_000_000,
+    chat_image_max_side: Number(settings.chat_image_max_side) || 4096,
+  };
+}
+
+function renderVisionModelLibrary() {
+  if (!els.visionModelLibrary) return;
+  const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
+  const selectedVisionModel = visionSettingsValues().vision_model;
+  const models = Array.isArray(state.visionModels) ? state.visionModels : [];
+  if (!models.length) {
+    els.visionModelLibrary.innerHTML = '<p class="subtle">Vision-каталог недоступен.</p>';
+    return;
+  }
+  els.visionModelLibrary.innerHTML = models.map((item) => {
+    const name = getModelId(item);
+    const runtimeInfo = installedByName.get(name) || item.runtime || null;
+    const installed = isRuntimeModelInstalled(item, installedByName);
+    const confirmed = Boolean(installed && item.capabilities_confirmed);
+    const runtimeCapabilities = confirmed
+      ? (runtimeInfo?.capabilities || item.capabilities || [])
+      : [];
+    const task = getActiveChatDownload(name);
+    const selected = selectedVisionModel === name;
+    const stateLabel = task
+      ? String(task.state || "running")
+      : (confirmed ? "Vision подтверждён" : installed ? "Capability не подтверждён" : "Не загружена");
+    const tone = confirmed ? "success" : task ? "warning" : installed ? "warning" : "muted";
+    const declared = Array.isArray(item.declared_capabilities) ? item.declared_capabilities.join(", ") : "text, vision";
+    const runtime = runtimeCapabilities.length ? runtimeCapabilities.join(", ") : "не подтверждено";
+    const size = runtimeInfo?.size_gb
+      ? `${runtimeInfo.size_gb} GB runtime`
+      : item.approx_size_gb ? `≈ ${item.approx_size_gb} GB` : "";
+    return `
+      <article class="model-card${installed ? " model-card--installed" : ""}${selected ? " model-card--active" : ""}">
+        <div class="model-card__head">
+          <div>
+            <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
+            <p class="model-card__meta">${escapeHtml([`ID: ${name}`, size, item.weight].filter(Boolean).join(" • "))}</p>
+          </div>
+          <div class="model-card__badges">
+            <span class="status-badge status-badge--${tone}">${escapeHtml(stateLabel)}</span>
+            ${selected ? '<span class="status-badge status-badge--selected">Основная</span>' : ""}
+          </div>
+        </div>
+        <p class="model-card__note">${escapeHtml(item.description || "")}</p>
+        <p class="model-card__meta">Declared: ${escapeHtml(declared)} • Runtime confirmed: ${escapeHtml(runtime)}</p>
+        <div class="button-row">
+          <button class="button ${selected ? "button--primary" : "button--ghost"}" type="button" data-vision-model-action="select" data-vision-model="${escapeHtml(name)}">Основная</button>
+          ${installed ? "" : `<button class="button button--ghost" type="button" data-vision-model-action="download" data-vision-model="${escapeHtml(name)}">Загрузить</button>`}
+          <button class="button button--ghost" type="button" data-vision-model-action="update" data-vision-model="${escapeHtml(name)}">Обновить</button>
+          ${installed ? `<button class="button button--ghost" type="button" data-vision-model-action="delete" data-vision-model="${escapeHtml(name)}">Удалить</button>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderVisionSettings() {
+  const values = visionSettingsValues();
+  const profileDisabled = !state.activeProfileId;
+  const installedVision = state.visionModels.filter((item) => item.runtime_installed);
+  const confirmedVision = installedVision.filter((item) => item.capabilities_confirmed);
+  if (els.visionRuntimeSummary) {
+    els.visionRuntimeSummary.textContent = confirmedVision.length
+      ? `Готово: ${confirmedVision.map((item) => getModelId(item)).join(", ")}`
+      : installedVision.length
+        ? "Модель найдена, но Ollama ещё не подтвердил vision capability."
+        : "Vision-модели не установлены. Начните с Qwen2.5-VL 3B.";
+  }
+  if (els.chatImagesEnabledToggle) els.chatImagesEnabledToggle.checked = values.chat_images_enabled;
+  if (els.visionModelSelect) els.visionModelSelect.value = values.vision_model;
+  if (els.visionFallbackSelect) els.visionFallbackSelect.value = values.vision_fallback;
+  if (els.visionOcrAssistSelect) els.visionOcrAssistSelect.value = values.ocr_assist;
+  if (els.visionOcrLanguageInput) els.visionOcrLanguageInput.value = values.ocr_language;
+  if (els.visionMaxImagesInput) els.visionMaxImagesInput.value = String(values.max_images_per_message);
+  if (els.visionMaxFileMbInput) els.visionMaxFileMbInput.value = String(Math.round(values.chat_image_max_file_bytes / 1024 / 1024));
+  if (els.visionMaxTotalMbInput) els.visionMaxTotalMbInput.value = String(Math.round(values.chat_image_max_total_bytes / 1024 / 1024));
+  if (els.visionMaxMegapixelsInput) els.visionMaxMegapixelsInput.value = String(Math.round(values.chat_image_max_pixels / 1_000_000));
+  if (els.visionMaxSideInput) els.visionMaxSideInput.value = String(values.chat_image_max_side);
+  [
+    els.chatImagesEnabledToggle,
+    els.visionModelSelect,
+    els.visionFallbackSelect,
+    els.visionOcrAssistSelect,
+    els.visionOcrLanguageInput,
+    els.visionMaxImagesInput,
+    els.visionMaxFileMbInput,
+    els.visionMaxTotalMbInput,
+    els.visionMaxMegapixelsInput,
+    els.visionMaxSideInput,
+    els.saveVisionSettingsButton,
+    els.resetVisionSettingsButton,
+  ].filter(Boolean).forEach((control) => {
+    control.disabled = profileDisabled;
+  });
+  if (els.visionCacheSummary) {
+    const cache = state.visionCache;
+    els.visionCacheSummary.textContent = cache
+      ? `${cache.attachment_count || 0} файлов • ${formatBytes(cache.total_bytes || 0)} • active: ${cache.active_count || 0}`
+      : "Нет данных";
+  }
+  [els.refreshVisionCacheButton, els.cleanupVisionOrphansButton, els.cleanupVisionCacheButton]
+    .filter(Boolean)
+    .forEach((button) => {
+      button.disabled = profileDisabled || state.visionCacheBusy;
+    });
+  renderVisionModelLibrary();
+  queueSyncAppSelects();
+}
+
+async function saveVisionSettingsFlow(settingsOverride = null) {
+  if (!state.activeProfileId) return;
+  const mb = 1024 * 1024;
+  const settings = settingsOverride || {
+    chat_images_enabled: Boolean(els.chatImagesEnabledToggle?.checked),
+    vision_model: String(els.visionModelSelect?.value || "auto"),
+    vision_fallback: String(els.visionFallbackSelect?.value || "vision_context"),
+    ocr_assist: String(els.visionOcrAssistSelect?.value || "auto"),
+    ocr_language: String(els.visionOcrLanguageInput?.value || "").trim(),
+    max_images_per_message: Number(els.visionMaxImagesInput?.value || 1),
+    chat_image_max_file_bytes: Number(els.visionMaxFileMbInput?.value || 20) * mb,
+    chat_image_max_total_bytes: Number(els.visionMaxTotalMbInput?.value || 40) * mb,
+    chat_image_max_pixels: Number(els.visionMaxMegapixelsInput?.value || 16) * 1_000_000,
+    chat_image_max_side: Number(els.visionMaxSideInput?.value || 4096),
+  };
+  setInlineStatus(els.visionSettingsStatus, "Сохраняю Vision-настройки…", "warning");
+  const updated = await saveActiveProfilePreferences({ settings });
+  if (!updated) {
+    setInlineStatus(els.visionSettingsStatus, "Не удалось сохранить Vision-настройки.", "error");
+    return;
+  }
+  renderVisionSettings();
+  setInlineStatus(els.visionSettingsStatus, "Vision-настройки сохранены для активного профиля.", "success");
+}
+
+async function resetVisionSettingsFlow() {
+  await saveVisionSettingsFlow({
+    chat_images_enabled: true,
+    vision_model: "auto",
+    vision_fallback: "vision_context",
+    ocr_assist: "auto",
+    ocr_language: "",
+    max_images_per_message: 1,
+    chat_image_max_file_bytes: 20 * 1024 * 1024,
+    chat_image_max_total_bytes: 40 * 1024 * 1024,
+    chat_image_max_pixels: 16_000_000,
+    chat_image_max_side: 4096,
+  });
+}
+
+async function loadVisionCache({ silent = false } = {}) {
+  if (!state.activeProfileId) {
+    state.visionCache = null;
+    renderVisionSettings();
+    return;
+  }
+  try {
+    state.visionCache = await request(`/chat/attachments/cache?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+  } catch (error) {
+    if (!silent) setInlineStatus(els.visionSettingsStatus, `Кэш недоступен: ${error.message || error}`, "error");
+  } finally {
+    renderVisionSettings();
+  }
+}
+
+async function cleanupVisionCache(scope) {
+  if (!state.activeProfileId || state.visionCacheBusy) return;
+  const label = scope === "orphans" ? "orphan-файлы" : "весь image-кэш профиля";
+  const approved = await openConfirmDialog({
+    eyebrow: "Очистка Vision-кэша",
+    title: `Удалить ${label}?`,
+    message: scope === "orphans"
+      ? "Будут удалены только непривязанные файлы старше 24 часов. Активные задачи будут пропущены."
+      : "Будут удалены изображения из истории этого профиля. Активные задачи будут пропущены.",
+    confirmLabel: "Удалить",
+  });
+  if (!approved) return;
+  state.visionCacheBusy = true;
+  renderVisionSettings();
+  try {
+    const result = await request("/chat/attachments/cleanup", {
+      method: "POST",
+      body: {
+        scope,
+        profile_id: state.activeProfileId,
+        temporary_ttl_seconds: 24 * 60 * 60,
+      },
+    });
+    await loadVisionCache({ silent: true });
+    setInlineStatus(
+      els.visionSettingsStatus,
+      `Удалено: ${result.deleted_count || 0}, освобождено: ${formatBytes(result.deleted_bytes || 0)}, active skipped: ${result.skipped_active_count || 0}.`,
+      "success",
+    );
+  } catch (error) {
+    setInlineStatus(els.visionSettingsStatus, `Очистка не выполнена: ${error.message || error}`, "error");
+  } finally {
+    state.visionCacheBusy = false;
+    renderVisionSettings();
+  }
 }
 
 function renderModelSettings() {
@@ -7534,7 +7772,7 @@ function renderAppRuntimeMaintenance() {
 }
 
 function setSettingsTab(tabName, { persist = true, render = true } = {}) {
-  const allowed = new Set(["profile", "models", "asr", "tts", "plugins", "system"]);
+  const allowed = new Set(["profile", "models", "vision", "asr", "tts", "plugins", "system"]);
   const next = allowed.has(tabName) ? tabName : "profile";
   state.activeSettingsTab = next;
   if (persist) {
@@ -7578,6 +7816,7 @@ function renderSettings() {
   renderLibraryPanels();
   renderModelControls();
   renderModelSettings();
+  renderVisionSettings();
   renderWhisperControls();
   renderTtsControls();
   renderDownloads();
@@ -7642,6 +7881,7 @@ function openSettings() {
   void loadTtsSettings({ silent: true });
   void loadTtsLibrary({ silent: true });
   void loadPlugins({ silent: true });
+  void loadVisionCache({ silent: true });
 }
 
 function openAsrPipelineSettings() {
@@ -8076,6 +8316,7 @@ async function loadModels({ silent = false } = {}) {
       ? data.catalog
       : (Array.isArray(data?.recommended) ? data.recommended : []);
     state.utilityModels = Array.isArray(data?.utility) ? data.utility : [];
+    state.visionModels = Array.isArray(data?.vision_catalog) ? data.vision_catalog : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     state.modelDiagnostics = data?.diagnostics || null;
     state.chatModelsError = data?.error || null;
@@ -8107,6 +8348,7 @@ async function loadModels({ silent = false } = {}) {
       writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
     }
     renderModelControls();
+    renderVisionSettings();
     renderDownloads();
     void refreshModelSettings({ silent: true });
     syncDownloadsPolling();
@@ -10543,6 +10785,42 @@ function bindEvents() {
       await deleteCurrentModel(modelName);
     }
   });
+
+  els.visionModelLibrary?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-vision-model-action]");
+    if (!button) return;
+    const action = button.dataset.visionModelAction || "";
+    const modelName = button.dataset.visionModel || "";
+    if (!modelName) return;
+    if (action === "select") {
+      await saveVisionSettingsFlow({
+        ...visionSettingsValues(),
+        vision_model: modelName,
+      });
+      return;
+    }
+    if (action === "download") {
+      await startModelDownload(modelName);
+      return;
+    }
+    if (action === "update") {
+      await startModelDownload(modelName, { mode: "update" });
+      return;
+    }
+    if (action === "delete") {
+      await deleteCurrentModel(modelName);
+    }
+  });
+  els.refreshVisionButton?.addEventListener("click", async () => {
+    await loadModels();
+    await loadVisionCache({ silent: true });
+    setInlineStatus(els.visionSettingsStatus, "Vision runtime и каталог обновлены.", "success");
+  });
+  els.saveVisionSettingsButton?.addEventListener("click", () => saveVisionSettingsFlow());
+  els.resetVisionSettingsButton?.addEventListener("click", resetVisionSettingsFlow);
+  els.refreshVisionCacheButton?.addEventListener("click", () => loadVisionCache());
+  els.cleanupVisionOrphansButton?.addEventListener("click", () => cleanupVisionCache("orphans"));
+  els.cleanupVisionCacheButton?.addEventListener("click", () => cleanupVisionCache("profile"));
 
   els.asrModelLibrary?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-asr-model-action]");

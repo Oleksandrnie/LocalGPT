@@ -42,3 +42,31 @@ test("vision context export is explicit, editable, and text-only", () => {
   assert.match(javascript, /request\("\/rag\/vision-contexts"/);
   assert.match(javascript, /text,\s*\n\s*\},/);
 });
+
+test("settings expose a dedicated Vision tab with catalog, controls, and cache actions", () => {
+  assert.match(html, /data-settings-tab="vision">Vision</);
+  assert.match(html, /data-settings-tab-panel="vision"/);
+  [
+    "visionModelLibrary",
+    "chatImagesEnabledToggle",
+    "visionModelSelect",
+    "visionFallbackSelect",
+    "visionOcrAssistSelect",
+    "visionOcrLanguageInput",
+    "visionMaxImagesInput",
+    "visionMaxFileMbInput",
+    "visionMaxTotalMbInput",
+    "visionMaxMegapixelsInput",
+    "visionMaxSideInput",
+    "visionCacheSummary",
+  ].forEach((id) => assert.match(html, new RegExp(`id="${id}"`)));
+  assert.match(html, /qwen2\.5vl:3b/);
+  assert.match(html, /qwen2\.5vl:7b/);
+  assert.match(html, /gemma3:4b/);
+  assert.match(javascript, /state\.visionModels = Array\.isArray\(data\?\.vision_catalog\)/);
+  assert.match(javascript, /Runtime confirmed:/);
+  assert.match(javascript, /data-vision-model-action="download"/);
+  assert.match(javascript, /saveActiveProfilePreferences\(\{ settings \}\)/);
+  assert.match(javascript, /\/chat\/attachments\/cache\?profile_id=/);
+  assert.match(javascript, /request\("\/chat\/attachments\/cleanup"/);
+});
