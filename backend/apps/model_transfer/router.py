@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from .inventory import export_inventory
 from . import export_service
-from .import_service import inspect_archive
+from .import_service import apply_import, discard_upload, inspect_archive, register_upload
 from .manifest import BundleValidationError
 from app import config
 
@@ -60,12 +60,36 @@ async def inspect_import(bundle: UploadFile = File(...)):
     staging = config.DATA_DIR / "model_transfer" / "uploads"
     staging.mkdir(parents=True, exist_ok=True)
     path = staging / f"{__import__('uuid').uuid4()}.localgpt-models"
+    keep = False
     try:
         with path.open("wb") as target:
             while chunk := await bundle.read(1024 * 1024):
                 target.write(chunk)
-        return inspect_archive(path)
+        result = inspect_archive(path)
+        upload_id = register_upload(path)
+        keep = True
+        return {**result, "upload_id": upload_id}
     except BundleValidationError as exc:
         raise HTTPException(422, detail={"code": exc.code, "message": str(exc)}) from exc
     finally:
-        path.unlink(missing_ok=True)
+        if not keep:
+            path.unlink(missing_ok=True)
+
+
+class ImportRequest(BaseModel):
+    upload_id: str
+
+
+@router.post("/imports")
+def import_bundle(request: ImportRequest):
+    try:
+        return apply_import(request.upload_id)
+    except BundleValidationError as exc:
+        raise HTTPException(409 if exc.code == "target_conflict" else 422, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
+@router.delete("/uploads/{upload_id}")
+def delete_upload(upload_id: str):
+    if not discard_upload(upload_id):
+        raise HTTPException(404, detail={"code": "upload_not_found"})
+    return {"deleted": True}

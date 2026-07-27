@@ -1,98 +1,80 @@
-# Safe Local Model Transfer
+# Model Export and Import
 
 ## Original Task
-- Goal: implement the agreed `docs/MODEL_TRANSFER_SPEC.md` for safe export/import of complete Ollama, faster-whisper, whisper.cpp, and Piper model artifacts between independent LocalGPT profiles through external storage.
-- Acceptance criteria: satisfy all ten criteria in `docs/MODEL_TRANSFER_SPEC.md`, including byte-level integrity, provider-unit atomic publication, idempotence, safe path handling, persisted/recoverable tasks, loopback/admin-token protection, and an accessible active Web UI flow.
-- Source ТЗ or request: `docs/MODEL_TRANSFER_SPEC.md` (identical to the supplied `MODEL_TRANSFER_SPEC.md` attachment) plus explicit use of the `temporary-progress-tracking` skill.
+- Goal: add a simple Settings → System workflow that exports selected locally installed models into one transferable file and imports that file in another LocalGPT profile.
+- Current acceptance criteria:
+  - export lists complete Ollama, faster-whisper, whisper.cpp, and Piper units and supports individual/all selection;
+  - one uncompressed ZIP64 `.localgpt-models` downloads through the browser;
+  - import uses the browser file picker, validates every payload size/SHA-256, previews contents, and requires a separate confirmation;
+  - target paths come only from current `config.MODEL_PATHS`;
+  - corrupt/unsafe bundles and differing existing targets do not change model storage;
+  - identical files are skipped, Ollama blobs publish before manifests, and existing models are never deleted;
+  - active UI provides progress, cancellation, concrete errors, and refreshes provider inventory;
+  - automated tests use synthetic temporary files only; real model export/import runs only after explicit user action.
+- Superseded requirements: external-volume discovery, destination path APIs, exFAT/FAT32 policy, Shared model drive, bundle-directory format, and resume across an interrupted browser transfer are excluded.
+- Source: user-approved simplification of `docs/MODEL_TRANSFER_SPEC.md`; progress governed by LocalGPT `AGENTS.md` and the explicitly invoked `temporary-progress-tracking` skill.
 
 ## Task Analysis
-- Architecture scope: new feature mini-app under `backend/apps/model_transfer/`; composition-only router registration in `backend/server.py`; shared SQLite migration/repository integration through the current `app/db.py` boundary; coordination with existing Ollama, ASR, and TTS discovery/task lifecycle; active static UI in `web_ui/gui_html.html`, `web_ui/js/app.js`, and `web_ui/css/style.css`.
-- Affected areas/files: model path configuration in `app/config.py`; install-state semantics in `app/services/models.py`; ASR discovery in `backend/apps/asr/downloads.py` and `backend/apps/asr/whisper_cpp.py`; Piper discovery in `backend/apps/tts/providers/piper_provider.py` and service layer; model pull/delete/prepare/preload/voice download coordination; SQLite schema; feature routes/services/repositories/schemas/platform adapters; active Settings UI; targeted tests and affected permanent docs.
-- Constraints and risks: preserve profile-specific configured model paths; expose a dry browser download/upload workflow without backend destination-path or volume APIs; use a single uncompressed ZIP64 container with `.localgpt-models` extension; reject traversal/duplicate paths/partial or executable artifacts; avoid leaking source paths or secrets; publish Ollama manifests and other provider units only after required files validate; do not delete existing models/shared blobs; bound archive metadata and stream/spool large payloads without loading models into browser or backend memory; no live heavy model workload without explicit intent.
-- Current Git context: branch `models_export_and_import`, clean at analysis start, two local commits ahead of `origin/models_export_and_import`: `3a9593d` and `2619842`; those commits add and clean up the agreed specification only.
-- Governing progress convention: use `docs/progress/` from `AGENTS.md`; preserve `docs/progress/.gitkeep`; keep `docs/progress/asr-analysis-modes-progress.md` untouched. The project has no `documentation/` tree and uses `docs/CHANGELOG.md` for completed significant changes, so do not introduce `documentation/change-index.md` contrary to LocalGPT documentation ownership.
+- Architecture scope: feature mini-app `backend/apps/model_transfer/`, router registration in `backend/server.py`, active UI in `web_ui/gui_html.html` / `web_ui/js/app.js` / `web_ui/css/style.css`, targeted tests, then affected permanent docs.
+- Storage boundaries: Ollama → `MODEL_PATHS.ollama`; faster-whisper → `MODEL_PATHS.whisper`; whisper.cpp → `MODEL_PATHS.whisper_cpp`; Piper → `MODEL_PATHS.piper`.
+- Security/integrity: no browser-supplied filesystem paths; strict POSIX archive entries below `payload/`; bounded manifest; case-insensitive uniqueness; no symlinks/executables/partial artifacts; complete conflict preflight before writes; server-owned upload/import staging only.
+- Atomicity: package-wide rollback is not promised; preflight prevents known conflicts before writes; each file is copied to backend staging, rehashed, and atomically replaced; Ollama manifest entries publish last.
+- Constraints/risks: current task registries and uploads are process-local; browser upload is spooled to disk; post-import provider discovery and durable task reconciliation remain to implement; no heavy/live model operations during development.
 
 ## Documentation Impact Review
 - Outcome: Required
-- Documents to update / reason: `README.md` if the new user-facing feature changes the overview; `docs/ARCHITECTURE.md` for the new feature/data flow and storage boundary; `docs/knowledge/backend.md` for router/task/repository contracts; `docs/knowledge/providers.md` for transferable provider artifact/discovery rules; `docs/knowledge/networking.md` for loopback/admin-token authorization; `docs/knowledge/ui.md` for the Models → Transfer flow; `docs/TESTING.md` for targeted and platform/manual checks; `docs/CHANGELOG.md` for the completed significant change; `docs/MODEL_TRANSFER_SPEC.md` to change its implementation status and record resolved open decisions. Re-check exact affected set after implementation and update only documents made incomplete or inaccurate.
+- Update after implementation: `README.md` only if overview becomes incomplete; `docs/ARCHITECTURE.md`; `docs/knowledge/backend.md`; `docs/knowledge/providers.md`; `docs/knowledge/ui.md`; `docs/TESTING.md`; `docs/CHANGELOG.md`; final status/contract cleanup in `docs/MODEL_TRANSFER_SPEC.md`.
+- Project override: do not create `documentation/change-index.md`; LocalGPT owns completed significant records in `docs/CHANGELOG.md` and forbids an unrelated documentation tree.
 
 ## Implementation Stages
 
-### Stage 1 — Contract and Read-only Inventory
-- Goal: establish strict bundle/task contracts, security primitives, persisted task schema/lock policy, and provider inventory/preview without write actions.
-- Related files: `backend/apps/model_transfer/`, `backend/server.py`, `app/db.py`, provider discovery/service boundaries, `tests/test_model_transfer_*.py`.
-- [x] Completed: read supplied ТЗ, branch/status, local specification commits, `AGENTS.md`, `docs/README.md`, `docs/ARCHITECTURE.md`, `docs/knowledge/backend.md`, `docs/knowledge/providers.md`, `docs/knowledge/networking.md`, `docs/knowledge/ui.md`, and `docs/TESTING.md`.
-- [x] Completed: locate configured provider paths, active provider discovery entry points, model task entry points, active UI entry points, progress ignore rules, and the unrelated active ASR progress file.
-- [x] Completed: final UX decision supersedes destination-folder handling — export is a browser download and import is a browser file selection/upload; LocalGPT does not discover volumes or accept destination paths.
-- [x] Completed: Shared model drive is excluded entirely from the task rather than retained as an implementation follow-up.
-- [x] Completed: filesystem-format policy is excluded; no exFAT/FAT32 gating or product concern is required.
-- [x] Completed: container decision — one uncompressed ZIP64 file with `.localgpt-models` extension.
-- [x] Completed: folder-selection contract removed from scope; the browser owns save/open dialogs.
-- [x] Completed: use byte-valid import with a clear runtime validation warning when Ollama is unavailable; never claim runtime-ready until existing provider discovery confirms it.
-- [x] Completed: implement strict manifest v1 parser, bounded JSON size, safe POSIX payload paths, case-fold uniqueness, SHA-256 validation helper, and supported-family validation.
-- [x] Completed: implement configured-path read-only inventory for Ollama, active ASR backend, whisper.cpp assets, and Piper voice pairs, including partial rejection and shared-file size deduplication.
-- [x] Completed: register `GET /model-transfer/export-preview` through the feature router and revise the permanent ТЗ to the confirmed browser ZIP64 workflow.
-- [ ] Pending: task persistence/reconciliation and process-wide transfer coordination move to Stage 2 with write actions.
-- [x] Completed: test valid/invalid manifests, traversal/case-fold collisions, unsupported versions, partial Ollama, shared blobs, and unique-size plan.
-- Architectural decisions: feature logic remains in `backend/apps/model_transfer/`; existing provider discovery semantics are reused rather than reimplemented in the browser; no source changes begin until the open decisions are confirmed.
-- Problems: browser download/upload of very large archives requires streaming/spooled I/O and explicit size/free-space handling; archive-level resume after a disconnected transfer is not promised by the simplified UX.
-- Technical debt: current model/ASR/TTS task registries are separate and process-local; transfer coordination needs a narrow shared boundary without broad unrelated refactoring.
-- Next steps: create Stage 1 checkpoint, then implement streamed ZIP64 export task/download.
-- Validation: `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory -v` (6 passed); targeted `compileall` passed; `git diff --check` passed.
-- Git checkpoint: `31e79d2` — Add model transfer bundle contract; validation: 6 targeted tests, compileall, and diff check passed; changed tracked files: model-transfer contract/inventory/router, server registration, targeted tests, revised ТЗ, and progress record.
+### Stage 1 — Bundle Contract and Inventory
+- Goal: strict bundle v1 contract, configured-path inventory, unique-size preview, and feature router.
+- [x] Implemented strict manifest parser, path/family/version/hash validation, configured provider inventory, partial rejection, and Ollama shared-blob size deduplication.
+- [x] Added `GET /model-transfer/export-preview`.
+- Validation: 6 targeted tests, compileall, and `git diff --check` passed.
+- Git checkpoint: `31e79d2` — Add model transfer bundle contract.
 
-### Stage 2 — Safe Export
-- Goal: implement removable-volume allowlisting, streamed hash/copy, incomplete bundle journal, resume/cancel/report, final manifest/READY publication, export endpoints, and export UI.
-- Related files: `backend/apps/model_transfer/`, `backend/server.py`, `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, model task coordination points, targeted tests.
-- [x] Completed: implement background uncompressed ZIP64 export task, SHA-256 manifest, unique payload entries, status/cancel endpoints, and ready-only download endpoint.
-- [ ] Pending: add System Settings selection/progress/download UI and stronger interruption/cleanup/task-persistence coverage.
-- [x] Completed: add active System Settings transfer panel with model selection, refresh, export progress/cancel/download, import file picker, and checksum inspection status.
-- [ ] Pending: import application/confirmation remains Stage 3; current import button validates and previews only, with explicit UI wording.
-- [ ] Pending: implement exact provider artifact export, Ollama blob deduplication, free-space reserve, streamed SHA-256, resumable incomplete bundle, cancellation, and error mapping.
-- [ ] Pending: add export preview/task UI and targeted backend/static UI tests.
-- Architectural decisions: source model artifacts remain immutable; browser download destination and subsequent transport are outside LocalGPT; the archive contains strict manifest/checksums and provider payload only.
-- Problems: platform-specific discovery and eject behavior require test doubles plus later real-device checks.
-- Technical debt: none recorded yet.
-- Next steps: start only after Stage 1 validation/checkpoint.
-- Validation: `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export -v` (7 passed); targeted compileall and `git diff --check` passed; tests used temporary synthetic bytes only.
-- Git checkpoint: `cc1910e` — Implement model bundle export tasks; UI/inspect checkpoint pending.
+### Stage 2 — Export and System Settings UI
+- Goal: background ZIP64 export and active Settings → System controls.
+- [x] Implemented export start/status/cancel/download, ready-only download, temporary archive cleanup, selection UI, progress, download trigger, and import file picker.
+- [x] Implemented upload/checksum inspect preview.
+- [x] Browser smoke: System tab rendered both buttons; refresh found 12 complete units and showed 28.9 GB unique size; no export was started.
+- Validation: 7 targeted tests, JS syntax check, compileall, API/UI smoke, and `git diff --check` passed.
+- Git checkpoints:
+  - `cc1910e` — Implement model bundle export tasks.
+  - `2072be1` — Add model transfer settings UI.
 
-### Stage 3 — Safe Import
-- Goal: implement read-only bundle inspect, explicit confirmation/conflict choices, staged provider-unit publication, post-import discovery validation, recovery, and import UI.
-- Related files: `backend/apps/model_transfer/`, provider discovery/runtime boundaries, active Web UI, targeted tests.
-- [ ] Pending: validate READY/schema/path/file inventory and hashes without writes to model storage.
-- [ ] Pending: implement idempotent staged copy, Ollama blobs-before-manifest publication, atomic ASR/Piper units, explicit tag replacement, and no-overwrite defaults.
-- [ ] Pending: implement provider post-import validation, task recovery/reporting, UI refresh, and targeted tests.
-- Architectural decisions: package-wide atomicity is not claimed; discoverable model-unit atomicity is required.
-- Problems: runtime validation result semantics depend on the unresolved Ollama decision.
-- Technical debt: none recorded yet.
-- Next steps: start only after Stage 2 validation/checkpoint.
-- Validation: pending.
+### Stage 3 — Confirmed Import
+- Goal: revalidate staged upload, preflight conflicts, publish to configured provider paths, and report/refresh results.
+- [x] Implemented server-owned upload retention with opaque `upload_id`.
+- [x] Implemented second validation on confirm, provider-root mapping, full conflict preflight, identical-file skip, staged copy/hash, atomic file publication, and Ollama manifest-last ordering.
+- [x] Corrected export manifest so every selected model references shared deduplicated files.
+- [x] Implemented explicit accessible confirmation UI, apply endpoint, provider inventory refresh after success, concrete imported/skipped report, and cancellation before storage mutation.
+- [x] Added staged-upload discard endpoint and cleanup test.
+- [x] Added synthetic clean import, identical reimport, target conflict/no-overwrite, and upload discard tests.
+- [ ] Pending: checkpoint after staged-diff review.
+- Validation: JS syntax check and targeted compileall passed; 10 model-transfer tests passed; `git diff --check` passed. All import tests used temporary synthetic files and patched configured roots.
 - Git checkpoint: pending.
 
-### Stage 4 — QA, Documentation and Cleanup
-- Goal: run proportionate automated/manual verification, update only affected permanent documentation, record deferred platform checks truthfully, remove temporary artifacts, and create the final cleanup commit.
-- Related files: targeted tests, active UI, affected docs listed in the documentation-impact review, this progress file.
-- [ ] Pending: baseline static checks, targeted model-transfer/provider tests, full safe unit suite when useful, API smoke, and UI contract checks.
-- [ ] Pending: manual desktop/mobile, dark/light, keyboard/focus/error-state checks; real macOS/Windows removable-volume checks only where suitable hardware/environments are available.
-- [ ] Pending: update affected permanent docs and remove this completed progress file in a separate final cleanup commit.
-- Architectural decisions: Shared model drive is explicitly excluded and must not be designed or implemented as part of this task.
-- Problems: current workspace is macOS; Windows and physical exFAT/APFS/NTFS/FAT32/eject checks may remain external validation blockers rather than being falsely reported as passed.
-- Technical debt: none recorded yet.
-- Next steps: start after Stage 3 checkpoint.
-- Validation: pending.
+### Stage 4 — QA, Permanent Documentation and Cleanup
+- Goal: complete proportional validation, update only affected docs, and remove this temporary file in a terminal cleanup commit.
+- [ ] Pending: baseline static checks and full safe unit suite.
+- [ ] Pending: desktop/mobile, dark/light, keyboard/focus/error-state UI checks without real export/import.
+- [ ] Pending: user-controlled later smoke with real models; do not claim it has run.
+- [ ] Pending: affected permanent docs and `docs/CHANGELOG.md`.
+- [ ] Pending: final cleanup commit removing this progress file while preserving `docs/progress/.gitkeep` and the unrelated active ASR progress file.
 - Git checkpoint: pending.
 
 ## Overall Status
 - Status: in progress
-- Completed: decisions, revised contract, Stage 1 manifest/inventory/preview implementation and targeted validation.
-- In progress: Stage 2 System Settings UI and import-inspect checkpoint.
-- Pending: all implementation, validation, permanent documentation updates, checkpoint commits, and final cleanup.
-- Changed files: `backend/apps/model_transfer/__init__.py`, `manifest.py`, `inventory.py`, `router.py`, `backend/server.py`, two targeted test modules, `docs/MODEL_TRANSFER_SPEC.md`, and this progress file.
-- Known problems: simplified single-file browser transfer drops the original external-volume resume workflow; large-file streaming and temporary-space behavior must be explicit and tested.
-- Technical debt: separate provider task registries will require carefully scoped coordination.
-- Next action: checkpoint UI/import inspect, then implement Stage 3 confirmed import application.
-- Latest Git checkpoint: `31e79d2` — Add model transfer bundle contract.
+- Completed: current product decisions, bundle contract/inventory, export backend, System Settings export UI, upload inspect, and initial import-apply core.
+- In progress: Stage 3 checkpoint preparation.
+- Pending: Stage 4 validation/docs/cleanup.
+- Current uncommitted files: export shared-file manifest correction, import service/router, confirmation UI, import tests, and this refreshed progress file.
+- Known problems: import upload/task state is not durable across backend restart; current apply guarantee is conflict preflight plus atomic file publication rather than all-model transaction rollback. UI refreshes existing provider discovery after success; live runtime readiness is intentionally not exercised in automated tests.
+- Next action: inspect staged diff and create the focused Stage 3 checkpoint, then run Stage 4 baseline/full safe suite and documentation-impact cleanup.
+- Latest Git checkpoint: `2072be1` — Add model transfer settings UI.
 
 ## Continuation Prompt
-Continue work on `model-transfer` using `docs/progress/model-transfer-progress.md`. Read the progress file, current Git status, `docs/MODEL_TRANSFER_SPEC.md`, and latest checkpoint commit first. Current status: Stage 1 in progress; no source implementation has started yet. Completed: required analysis/docs review and final product decisions. Confirmed UX: System Settings contains adjacent export/import actions; export selects individual/all complete models and downloads one uncompressed ZIP64 `.localgpt-models` file; import chooses that file through the browser and uploads it for validation/application. Explicitly excluded: backend destination paths, volume/removable-drive discovery, filesystem-format policy, exFAT/FAT32 concerns, Shared model drive, and transport-method ownership. Remaining: revise the ТЗ and complete Stages 1–4 with validation, focused checkpoint commits, affected documentation, and final progress cleanup. Preserve configured provider paths, strict archive validation, provider-unit atomicity, discovery-based readiness, streamed/spooled I/O, and no live heavy workloads by default. Latest checkpoint: `2619842`. Perform next: revise `docs/MODEL_TRANSFER_SPEC.md`, implement Stage 1 contract/inventory/tests, validate, explicitly add this ignored file with `git add -f`, inspect the staged diff, and create the Stage 1 checkpoint. Update the progress file before and after the next meaningful stage.
+Continue `model-transfer` from `docs/progress/model-transfer-progress.md`. Read this file, `git status`, and checkpoint `2072be1`. Scope is one browser-downloaded/uploaded uncompressed ZIP64 `.localgpt-models`; do not reintroduce volumes, destination paths, filesystem-format policy, Shared model drive, or real-model tests. Stages 1–2 are checkpointed. Stage 3 implementation and validation are complete but uncommitted: opaque staged upload, confirm-time revalidation, conflict preflight, identical skip, staged hash/copy, configured-root atomic publication, Ollama manifest-last ordering, shared-file manifest correction, explicit UI confirmation/apply, provider refresh, upload discard, and 10 passing targeted tests. Next inspect staged diff and commit Stage 3, record its hash, then perform Stage 4 baseline/full safe tests, affected permanent docs, truthful manual UI checks, and terminal progress cleanup. Preserve `docs/progress/asr-analysis-modes-progress.md`.

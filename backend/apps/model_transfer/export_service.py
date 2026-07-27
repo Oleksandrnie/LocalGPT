@@ -35,12 +35,14 @@ def _run(task_id: str, selected: list[str]) -> None:
         staging.mkdir(parents=True, exist_ok=True)
         archive = staging / f"{task_id}.localgpt-models"
         files: dict[str, tuple[dict[str, Any], Path]] = {}
+        model_files: dict[str, list[str]] = {unit["id"]: [] for unit in units}
         for unit in units:
             for path in unit["_files"]:
-                files.setdefault(_entry_path(unit, path).casefold(), (unit, path))
+                entry = _entry_path(unit, path)
+                files.setdefault(entry.casefold(), (unit, path))
+                model_files[unit["id"]].append(entry)
         task.update(total_bytes=sum(path.stat().st_size for _, path in files.values()), total_files=len(files))
         manifest_files = []
-        model_files: dict[str, list[str]] = {unit["id"]: [] for unit in units}
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as bundle:
             for unit, path in files.values():
                 if _CANCEL[task_id].is_set():
@@ -50,7 +52,6 @@ def _run(task_id: str, selected: list[str]) -> None:
                 bundle.write(path, entry)
                 size = path.stat().st_size
                 manifest_files.append({"path": entry, "size": size, "sha256": digest})
-                model_files[unit["id"]].append(entry)
                 task["processed_bytes"] += size
                 task["processed_files"] += 1
                 task["current_file"] = path.name
