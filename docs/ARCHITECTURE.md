@@ -1,0 +1,141 @@
+# Архитектура LocalGPT
+
+## Обзор
+
+LocalGPT — монолитный локальный runtime с feature-oriented backend mini-apps, общей FastAPI-композицией, статическим Web UI и локальным хранением данных. Целевая граница — `backend/apps/<feature>/`; shared и transitional код пока остаётся в `app/`.
+
+```mermaid
+flowchart LR
+    Browser["Static Web UI"] --> API["FastAPI backend.server:app"]
+    API --> Shared["app/: config, DB, profiles, storage"]
+    API --> Apps["backend/apps/"]
+    Apps --> Chat["Chat / Ollama"]
+    Apps --> ASR["ASR / whisper.cpp / faster-whisper"]
+    Apps --> TTS["TTS / Piper"]
+    Apps --> OCR["OCR / Tesseract"]
+    Apps --> RAG["RAG / local-hash-v1"]
+    Apps --> Plugins["Plugin Registry / trusted handlers"]
+    Shared --> SQLite["SQLite"]
+    Apps --> Models["Project-scoped models/"]
+    RAG --> Sources["rag_sources/profile-*"]
+```
+
+## Runtime и точки входа
+
+- `run_localgpt.py` выполняет bootstrap, создаёт `venv/`, устанавливает `app/requirements.txt`, проверяет Ollama, выбирает порт и запускает `uvicorn backend.server:app`.
+- `backend/server.py` создаёт FastAPI app, подключает CORS, регистрирует shared и feature routers, монтирует `web_ui/` на `/ui` и перенаправляет `/` на UI.
+- `app/server.py` импортирует `backend.server:app` и существует как compatibility shim.
+- `web_ui/gui_html.html` — активная HTML-точка входа; она подключает `css/style.css` и ES module `js/app.js`.
+
+## Слои и ответственность
+
+### Composition layer
+
+`backend/server.py` знает обо всех routers, но не содержит бизнес-логику. Новая feature-функциональность должна регистрироваться через свой mini-app router.
+
+### Feature layer
+
+`backend/apps/` содержит:
+
+- `chat/` — подготовка prompt, Ollama runtime, model routing, tasks, SSE и chat API;
+- `asr/` — транскрибация, whisper backends, модели, история и transcript pipeline;
+- `tts/` — provider contract, Piper, generation tasks, history и audio post-processing;
+- `ocr/` — image-to-text pipeline;
+- `rag/` — profile sources, indexing, retrieval и context assembly;
+- `plugins/` — manifest registry, enabled state, docs API и trusted handlers.
+
+### Shared / transitional layer
+
+`app/` пока владеет:
+
+- `config.py` — environment parsing, paths, model catalog и defaults;
+- `db.py` — SQLite schema, migrations и repositories;
+- `routes/` — profiles, sessions, models, storage, health/runtime и criteria;
+- `services/` — shared model/storage/UI-support logic;
+- `schemas/` — общие Pydantic contracts;
+- `roles.py` и `prompts/` — base system prompt.
+
+Старые feature imports в `app/` могут оставаться для совместимости, но новая реализация должна предпочитать `backend/apps/`.
+
+## Основные data flows
+
+### Chat
+
+1. UI отправляет запрос в `POST /chat/tasks`.
+2. Backend проверяет профиль, session и выбранную модель.
+3. Для Auto Router `qwen3:0.6b` классифицирует запрос; backend валидирует/корректирует target model.
+4. При включённом RAG выполняется profile-scoped search и собирается context.
+5. Prompt строится из base system prompt, profile prompt/context, summary memory, RAG, transcript/criteria, короткой истории и текущего запроса.
+6. Assistant message создаётся в SQLite до генерации и проходит состояния `generating`, `streaming`, `completed`, `failed` или `cancelled`.
+7. `stream=true` отдаёт lifecycle и `delta` через SSE; non-streaming использует тот же persisted lifecycle без `delta`.
+
+### ASR
+
+1. `POST /transcribe` или `/transcribe/tasks` получает audio/video.
+2. Конфигурация выбирает whisper.cpp или faster-whisper.
+3. Результат может быть сохранён как transcript.
+4. Pipeline actions `summary`, `smart_summary`, `tasks`, `clean` и `full` запускают только разрешённые stages.
+5. `full` блокируется, пока profile setting явно не разрешит полный анализ.
+6. `Сохранить в контекст` создаёт `asr_context`, индексируемый RAG отдельно от обычного файла.
+
+### TTS
+
+UI обращается к `/tts/*`; service выбирает provider, валидирует голос, создаёт task, пишет output/history и при необходимости применяет изменение скорости. Текущий concrete provider — Piper.
+
+### OCR
+
+`POST /ocr/extract` принимает изображение, вызывает Tesseract, подбирает доступные языки и применяет эвристики очистки UI-noise. PDF OCR не реализован.
+
+### RAG
+
+Файлы профиля сканируются, Markdown при необходимости получает structured JSON companion, текст разбивается на chunks, а deterministic embeddings пишутся в SQLite. Chat получает top-k chunks только активного профиля.
+
+### Plugins
+
+Registry читает `plugins/*/plugin.json` как данные. Код из `plugins/` не импортируется. Поведение trusted plugins реализуется только в `backend/apps/plugins/`.
+
+## Storage
+
+| Данные | Канонический путь | Git |
+| --- | --- | --- |
+| SQLite | `app/db/localgpt.db` | ignored |
+| Chat/Ollama models | `models/ollama/` | ignored |
+| ASR models | `models/whisper/`, `models/whisper_cpp/` | ignored |
+| TTS models | `models/tts/piper/` | ignored |
+| Caches | `models/hf_cache/`, `models/ctranslate2_cache/` | ignored |
+| Profile RAG sources | `rag_sources/profile-<id>/` | ignored |
+| TTS data | `app/data/tts/` | ignored except placeholders |
+| Logs | `tmp_logs/` | ignored except `.gitkeep` |
+
+SQLite содержит profiles, sessions, messages, transcripts, model settings, pipeline runs, summary memory и RAG documents/chunks/embeddings. Database reset удаляет profile-owned DB data и profile RAG folders, но не локальные модели.
+
+## Networking и security boundaries
+
+- Default bind — `127.0.0.1`; прямой public exposure отсутствует.
+- CORS по умолчанию ограничен localhost и private/local address ranges.
+- LAN launcher оставляет backend на localhost и проксирует его через Caddy HTTPS.
+- Tailscale handler выполняет только read-only status checks и возвращает manual command/address metadata.
+- Registry не исполняет plugin code и не делает untrusted plugin effectively enabled.
+- LocalGPT не включает Funnel, port forwarding или public tunnels.
+
+Подробности: [networking](knowledge/networking.md) и [plugins](knowledge/plugins.md).
+
+## Runtime prompt
+
+Канонический base prompt — [`app/prompts/system_base.md`](../app/prompts/system_base.md). `app/roles.py` читает его при построении system prompt и применяет fallback только при ошибке/пустом файле. Копии этого файла в документации не являются runtime-источником и не нужны.
+
+## Legacy и transitional architecture
+
+- `app/server.py` и feature wrappers в `app/` — compatibility surface.
+- `LTrnsrb.*` — legacy launcher aliases; основной naming — `LocalGPT` / `start_localgpt*`.
+- `compare-branch/` — read-only reference, не импортируется runtime и удаляется только после отдельного parity review.
+- Большие `web_ui/js/app.js` и `web_ui/css/style.css` остаются рабочим frontend; их модульный рефакторинг — отдельная задача.
+
+## Подробности
+
+- [Backend](knowledge/backend.md)
+- [Providers](knowledge/providers.md)
+- [Plugins](knowledge/plugins.md)
+- [RAG](knowledge/rag.md)
+- [Web UI](knowledge/ui.md)
+- [Networking](knowledge/networking.md)

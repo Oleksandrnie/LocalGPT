@@ -97,7 +97,7 @@ Current dirty files:
 - `app/config.py`
 - `app/db.py`
 - `app/routes/profiles.py`
-- `documentation/progress/asr-analysis-modes-progress.md`
+- `docs/progress/asr-analysis-modes-progress.md`
 - `web_ui/css/style.css`
 - `web_ui/gui_html.html`
 - `web_ui/js/app.js`
@@ -525,7 +525,7 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
 - Не хардкодить домены, поддомены, маркетплейсы, YML, email-файлы, имена, бизнес-контекст или специальные правила под один transcript.
 - Все улучшения summary должны быть универсальными.
 - User settings имеют абсолютный приоритет над режимом анализа: если stage `enabled=false`, backend не должен запускать эту стадию ни в каком режиме.
-- Progress-файл `documentation/progress/asr-analysis-modes-progress.md` нужно актуализировать по ходу работы и не удалять до полного завершения и подтверждения пользователя.
+- Progress-файл `docs/progress/asr-analysis-modes-progress.md` нужно актуализировать по ходу работы и не удалять до полного завершения и подтверждения пользователя.
 
 Последний коммит:
 
@@ -599,7 +599,7 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
   - `web_ui/css/style.css`;
   - `web_ui/gui_html.html`;
   - `web_ui/js/app.js`;
-  - `documentation/progress/asr-analysis-modes-progress.md`.
+  - `docs/progress/asr-analysis-modes-progress.md`.
 
 Что пользователь сообщил по качеству:
 
@@ -627,5 +627,5 @@ Use this prompt if continuing in another chat. Do not include a hardcoded projec
 
 - Не запускать реальные ASR/LLM/Ollama summary тесты.
 - Не добавлять специальные словари/правила под конкретную встречу.
-- Не удалять `documentation/progress/asr-analysis-modes-progress.md`.
+- Не удалять `docs/progress/asr-analysis-modes-progress.md`.
 ```

@@ -202,3 +202,7 @@ rag_sources/**
 !.cache/**/.gitkeep
 !ollama_models/**/.gitkeep
 !venv/.gitkeep
+
+# Temporary task tracking
+/docs/progress/*
+!/docs/progress/.gitkeep
