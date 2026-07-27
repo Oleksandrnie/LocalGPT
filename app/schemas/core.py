@@ -121,6 +121,14 @@ class RagSearchRequest(BaseModel):
     top_k: int | None = None
 
 
+class VisionContextExportRequest(BaseModel):
+    profile_id: int
+    session_id: str
+    message_id: int
+    title: str | None = None
+    text: str
+
+
 class ModelSettingsReset(BaseModel):
     profile_id: int
     model_name: str

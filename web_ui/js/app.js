@@ -342,6 +342,13 @@ const els = {
   confirmCancelButton: document.getElementById("confirmCancelButton"),
   confirmDismissButton: document.getElementById("confirmDismissButton"),
   confirmApproveButton: document.getElementById("confirmApproveButton"),
+  visionRagBackdrop: document.getElementById("visionRagBackdrop"),
+  visionRagCloseButton: document.getElementById("visionRagCloseButton"),
+  visionRagCancelButton: document.getElementById("visionRagCancelButton"),
+  visionRagSaveButton: document.getElementById("visionRagSaveButton"),
+  visionRagTitleInput: document.getElementById("visionRagTitleInput"),
+  visionRagTextInput: document.getElementById("visionRagTextInput"),
+  visionRagStatus: document.getElementById("visionRagStatus"),
   toastStack: document.getElementById("toastStack"),
   toastNotice: document.getElementById("toastNotice"),
   toastTitle: document.getElementById("toastTitle"),
@@ -460,6 +467,7 @@ const state = {
   asrHistoryContextMenuTranscriptId: null,
   messages: [],
   messageAttachments: {},
+  visionRagSourceMessageId: null,
   installedModels: [],
   recommendedModels: [],
   utilityModels: [],
@@ -1140,6 +1148,7 @@ function syncMobileScrollLock() {
     els.ocrBackdrop,
     els.ragBackdrop,
     els.confirmBackdrop,
+    els.visionRagBackdrop,
   ].some(isOverlayOpen);
   const toolOpen = [
     els.asrToolWindow,
@@ -3791,6 +3800,72 @@ function renderTranscriptStrip() {
   renderContextSummary();
 }
 
+function visionSourceUserMessageForIndex(messageIndex) {
+  for (let index = Number(messageIndex) - 1; index >= 0; index -= 1) {
+    const message = state.messages[index];
+    if (message?.role !== "user") continue;
+    return (state.messageAttachments[String(message.id)] || []).length ? message : null;
+  }
+  return null;
+}
+
+function closeVisionRagDialog() {
+  state.visionRagSourceMessageId = null;
+  if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = true;
+  syncMobileScrollLock();
+}
+
+function openVisionRagDialog(messageIndex) {
+  const index = Number(messageIndex);
+  const assistantMessage = Number.isFinite(index) ? state.messages[index] : null;
+  const sourceMessage = visionSourceUserMessageForIndex(index);
+  if (!assistantMessage || !sourceMessage || !String(assistantMessage.content || "").trim()) {
+    setFooter("Для этого ответа нет image-контекста для экспорта.", "warning");
+    return;
+  }
+  state.visionRagSourceMessageId = Number(sourceMessage.id);
+  if (els.visionRagTitleInput) {
+    els.visionRagTitleInput.value = String(sourceMessage.content || "Vision context").trim().slice(0, 160);
+  }
+  if (els.visionRagTextInput) {
+    els.visionRagTextInput.value = String(assistantMessage.content || "").trim();
+  }
+  setInlineStatus(els.visionRagStatus, "Проверьте и при необходимости отредактируйте производный текст.", "warning");
+  if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = false;
+  syncMobileScrollLock();
+  window.setTimeout(() => els.visionRagTextInput?.focus(), 0);
+}
+
+async function saveVisionContextToRag() {
+  const messageId = Number(state.visionRagSourceMessageId || 0);
+  const text = String(els.visionRagTextInput?.value || "").trim();
+  if (!messageId || !state.activeProfileId || !state.currentSessionId || !text) {
+    setInlineStatus(els.visionRagStatus, "Нужен непустой текст и активный чат.", "warning");
+    return;
+  }
+  els.visionRagSaveButton.disabled = true;
+  setInlineStatus(els.visionRagStatus, "Индексирую только текстовый контекст…", "warning");
+  try {
+    await request("/rag/vision-contexts", {
+      method: "POST",
+      body: {
+        profile_id: state.activeProfileId,
+        session_id: state.currentSessionId,
+        message_id: messageId,
+        title: String(els.visionRagTitleInput?.value || "").trim(),
+        text,
+      },
+    });
+    await loadRagStatus();
+    closeVisionRagDialog();
+    setFooter("Текстовый vision-контекст сохранён в RAG.", "success");
+  } catch (error) {
+    setInlineStatus(els.visionRagStatus, `Не удалось сохранить: ${error.message || error}`, "error");
+  } finally {
+    els.visionRagSaveButton.disabled = false;
+  }
+}
+
 function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
@@ -3808,6 +3883,10 @@ function renderMessages() {
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
       const canCopy = role !== "user" && hasContent;
+      const canExportVision = role === "assistant"
+        && status === "completed"
+        && hasContent
+        && Boolean(visionSourceUserMessageForIndex(index));
       const body = (() => {
         if (role !== "assistant") return formatRichMessage(content);
         if (status === "failed") {
@@ -3858,9 +3937,10 @@ function renderMessages() {
             </div>
             ${attachmentsMarkup}
             <div class="message-card__body">${body}</div>
-            ${canCopy || (role === "assistant" && status === "failed")
+            ${canCopy || canExportVision || (role === "assistant" && status === "failed")
               ? `<div class="message-card__actions">
                   ${role === "assistant" && status === "failed" ? `<button class="message-copy-button" type="button" data-retry-message-index="${index}">Повторить</button>` : ""}
+                  ${canExportVision ? `<button class="message-copy-button" type="button" data-vision-rag-index="${index}">В RAG</button>` : ""}
                   ${canCopy ? `<button class="message-copy-button" type="button" data-copy-index="${index}">Скопировать</button>` : ""}
                 </div>`
               : ""}
@@ -9762,6 +9842,12 @@ function bindEvents() {
       return;
     }
 
+    const visionRagButton = event.target.closest("[data-vision-rag-index]");
+    if (visionRagButton) {
+      openVisionRagDialog(visionRagButton.dataset.visionRagIndex);
+      return;
+    }
+
     const copyButton = event.target.closest("[data-copy-index]");
     if (!copyButton) return;
     try {
@@ -9852,6 +9938,12 @@ function bindEvents() {
     if (event.target === els.confirmBackdrop) {
       resolveConfirmDialog(false);
     }
+  });
+  els.visionRagCloseButton?.addEventListener("click", closeVisionRagDialog);
+  els.visionRagCancelButton?.addEventListener("click", closeVisionRagDialog);
+  els.visionRagSaveButton?.addEventListener("click", saveVisionContextToRag);
+  els.visionRagBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.visionRagBackdrop) closeVisionRagDialog();
   });
 
   els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
@@ -10571,6 +10663,10 @@ function bindEvents() {
       closeAsrHistoryContextMenu();
       if (!els.confirmBackdrop?.hidden) {
         resolveConfirmDialog(false);
+        return;
+      }
+      if (!els.visionRagBackdrop?.hidden) {
+        closeVisionRagDialog();
         return;
       }
       if (!els.ragQuickMenu?.hidden) {

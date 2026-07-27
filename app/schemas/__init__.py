@@ -27,6 +27,7 @@ from .core import (
     TranscriptSummaryRequest,
     TranscriptUpdate,
     TtsPreferencesUpdate,
+    VisionContextExportRequest,
 )
 from .tts import (
     TTSGenerateRequest,
@@ -62,6 +63,7 @@ __all__ = [
     "TranscriptSummaryRequest",
     "TranscriptUpdate",
     "TtsPreferencesUpdate",
+    "VisionContextExportRequest",
     "TTSGenerateRequest",
     "TTSSpeedProcessRequest",
     "TTSVoiceDownloadRequest",

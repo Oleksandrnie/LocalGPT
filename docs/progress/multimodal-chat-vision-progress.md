@@ -86,23 +86,25 @@
 - Related files: profile schemas/routes/config, attachment endpoints/repository/storage, unit/API tests.
 - [x] Completed: Profile-owned validation/persistence for every vision setting and limit.
 - [x] Completed: Cache statistics, profile/orphan cleanup reporting and active-task protection.
-- [ ] Pending: Checkpoint commit.
+- [x] Completed: Checkpoint commit.
 - Architectural decisions: `max_images_per_message` range 1–10, default 1; cleanup возвращает deleted/skipped count и bytes; отдельный UI всех vision-настроек реализуется в Stage 7.5.
 - Problems: Нет.
 - Technical debt: Нет.
 - Next steps: Создать Stage 6 checkpoint и перейти к explicit text-only RAG export.
 - Validation: `venv/bin/python -m unittest tests.test_vision_settings tests.test_chat_attachments tests.test_pipeline_memory.LocalGPTPipelineMemoryTestCase.test_profile_preferences_persist_streaming_enabled -v` — 13 passed; compileall и diff-check passed.
-- Git checkpoint: pending
+- Git checkpoint: `531e16e` — Add vision settings and cache controls
 
 ### Stage 7 — Explicit Text-only RAG Export
 - Goal: Сохранять только редактируемый производный текст анализа как profile-scoped `vision_context`.
 - Related files: `backend/apps/rag/routes.py`, `backend/apps/rag/service.py`, DB source repository, chat UI action/dialog, RAG tests.
-- [ ] Pending: Implementation and validation.
+- [x] Completed: Explicit editable Vision → RAG dialog/action and profile/session/message ownership checks.
+- [x] Completed: Text-only `vision_context` indexing, safe reference metadata, binary data-URI rejection and independent deletion.
+- [ ] Pending: Checkpoint commit.
 - Architectural decisions: Auto-save запрещён; image binary/path не копируется в RAG content; metadata хранит attachment/message/session references.
 - Problems: Нет.
 - Technical debt: Нет.
-- Next steps: Начать после Stage 6 checkpoint.
-- Validation: pending
+- Next steps: Создать Stage 7 checkpoint и перейти к dedicated Vision settings/model tab.
+- Validation: `venv/bin/python -m unittest tests.test_vision_rag` + two existing RAG/ASR context regressions — 5 passed; `node tests/chat_attachments_ui.test.mjs` — 5 passed; markdown tests — 2 passed; compileall, JS syntax и diff-check passed.
 - Git checkpoint: pending
 
 ### Stage 7.5 — Dedicated Vision Models and Settings Tab
@@ -130,12 +132,12 @@
 ## Overall Status
 - Status: in progress
 - Completed: Request/TЗ analysis, DOCX text/layout review, documentation-impact review, repository/code boundary inspection, Stage 1 implementation and validation.
-- In progress: Stage 6 checkpoint.
+- In progress: Stage 7 checkpoint.
 - Pending: Stages 4–7.5, user model-download handoff, then Stage 8 final QA/docs/cleanup.
-- Changed files since latest checkpoint: config defaults, profile settings validator, attachment cache endpoint/service, settings/cache tests and this progress file.
+- Changed files since latest checkpoint: RAG schema/routes/service, Vision → RAG dialog/action, backend/UI tests and this progress file.
 - Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
 - Technical debt: Нет.
-- Next action: Inspect/stage/commit Stage 6, then implement Stage 7 explicit text-only RAG export; preserve the stop gate after Stage 7.5.
+- Next action: Inspect/stage/commit Stage 7, then implement Stage 7.5 dedicated Vision tab and stop for user download.
 - Latest Git checkpoint: `2a608a6` — Add vision model capability runtime.
 
 ## Continuation Prompt
