@@ -47,23 +47,25 @@
 - Goal: Реализовать capability resolver, direct Ollama multimodal payload, explicit fallback/error/resource policy и mocked tests.
 - Related files: `app/config.py`, `app/services/models.py`, `backend/apps/chat/services/ollama_runtime.py`, `vision_runtime.py`, `vision_context.py`, `tests/test_chat_vision_runtime.py`, `tests/test_model_router.py`.
 - [x] Completed: Implementation and validation.
-- [ ] Pending: Checkpoint commit.
+- [x] Completed: Checkpoint commit.
 - Architectural decisions: Images bypass LLM intent guessing; direct route разрешён только для подтверждённой vision capability; base64 существует только в transient Ollama request memory.
 - Problems: Ollama runtime сейчас недоступен и vision-модели в project storage нет; live inference не запускался по policy.
 - Technical debt: Нет.
 - Next steps: Создать Stage 3 checkpoint и перейти к persisted chat task/SSE lifecycle.
 - Validation: `venv/bin/python -m unittest tests.test_chat_vision_runtime tests.test_model_router -v` — 64 passed; `venv/bin/python -m unittest tests.test_chat_attachments -v` — 9 passed; compileall, JS syntax и diff-check passed. Проверены JSON/plain Ollama metadata, отдельный vision catalog, confirmed-only resolver, auto priority, text-only context route, byte limit, original-message immutability и native `/api/chat` images payload. Live inference/download intentionally not run.
-- Git checkpoint: pending
+- Git checkpoint: `2a608a6` — Add vision model capability runtime
 
 ### Stage 4 — Chat Task and Streaming Lifecycle
 - Goal: Связать attachments с persisted user message/chat task, добавить preparing/analyzing/loading_model/generating, refresh/reconnect и cancel cleanup.
 - Related files: `backend/apps/chat/routes.py`, `tasks.py`, vision services, DB repository, Web UI rendering, chat lifecycle tests.
-- [ ] Pending: Implementation and validation.
+- [x] Completed: Attachment preflight/ownership/limits, task-safe descriptors, persisted message/task binding, direct and text-model context routes, status/cancel/failure reconciliation and history thumbnails.
+- [x] Completed: Focused lifecycle tests and compatible chat-task regressions.
+- [ ] Pending: Checkpoint commit.
 - Architectural decisions: User message создаётся один раз; attachments валидируются до старта worker и передаются через task-safe serializable descriptors.
-- Problems: Process-local registry не является durable queue; refresh восстанавливается через persisted message/task reconciliation.
+- Problems: Process-local registry не является durable queue; refresh восстанавливается через persisted message/task reconciliation и помечает незавершённый task/attachments failed после restart.
 - Technical debt: Нет.
-- Next steps: Начать после Stage 3 checkpoint.
-- Validation: pending
+- Next steps: Создать Stage 4 checkpoint и перейти к OCR assist/degraded mode.
+- Validation: `venv/bin/python -m unittest tests.test_chat_vision_lifecycle -v` — 4 passed; `tests.test_chat_vision_runtime` + `tests.test_chat_attachments` — 22 passed; targeted existing chat worker/stream/recovery tests passed; compileall, JS syntax и diff-check passed. Полный `tests.test_pipeline_memory` после совместимого worker signature вернулся к двум ранее зафиксированным ASR failures (1 failure + 1 error), без chat regression.
 - Git checkpoint: pending
 
 ### Stage 5 — OCR Assist and Accuracy
@@ -124,13 +126,13 @@
 ## Overall Status
 - Status: in progress
 - Completed: Request/TЗ analysis, DOCX text/layout review, documentation-impact review, repository/code boundary inspection, Stage 1 implementation and validation.
-- In progress: Stage 3 checkpoint.
+- In progress: Stage 4 checkpoint.
 - Pending: Stages 4–7.5, user model-download handoff, then Stage 8 final QA/docs/cleanup.
-- Changed files since latest checkpoint: `app/config.py`, `app/services/models.py`, `backend/apps/chat/services/ollama_runtime.py`, `backend/apps/chat/services/vision_runtime.py`, `tests/test_chat_vision_runtime.py`, this progress file.
+- Changed files since latest checkpoint: `app/db.py`, chat attachment storage/routes/tasks, Web UI JS/CSS, `tests/test_chat_vision_lifecycle.py`, this progress file.
 - Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
 - Technical debt: Нет.
-- Next action: Commit Stage 3, then implement Stage 4 attachment/task/SSE lifecycle; preserve the new stop gate after Stage 7.5.
-- Latest Git checkpoint: `18db044` — Add chat image composer workflow.
+- Next action: Inspect/stage/commit Stage 4, then implement Stage 5 OCR assist; preserve the stop gate after Stage 7.5.
+- Latest Git checkpoint: `2a608a6` — Add vision model capability runtime.
 
 ## Continuation Prompt
-Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Read the progress file, current Git status, `AGENTS.md`, and latest checkpoint commit first. Current status: Stage 3 validated, checkpoint pending. Completed: Stage 1 `7b84d91`; Stage 2 `18db044`; Stage 3 confirmed capability parser/resolver, separate backend vision catalog, transient base64/native Ollama boundary, process-local concurrency 1 and 64+9 passing tests. Remaining: checkpoint Stage 3, Stages 4–7.5, then stop for user model download before Stage 8. Problems/blockers: broader pipeline-memory suite has pre-existing ASR summary failures; Ollama runtime is unavailable and no vision model exists in project storage; live inference/download must not run automatically. Decisions to preserve: dynamic confirmed-only capability detection, `vision_model=auto`; primary future controlled smoke candidate `qwen2.5vl:3b`, optional `qwen2.5vl:7b`/`gemma3:4b`; models live in a separate Vision tab with all vision settings/download controls in Stage 7.5; after that checkpoint notify user and do not start Stage 8 until download; base64 only transient; text-only selected models use derived context; OCR Studio independent; no image RAG auto-index; preserve active ASR progress. Perform next: inspect/stage/commit Stage 3, then implement Stage 4 persisted attachment/task/SSE lifecycle.
+Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Current status: Stage 4 implemented/validated, checkpoint pending. Completed checkpoints: Stage 1 `7b84d91`; Stage 2 `18db044`; Stage 3 `2a608a6`. Stage 4 adds attachment ownership/limit preflight, direct/context vision worker routes, persisted task/message linkage, vision statuses, cancellation/restart reconciliation and history thumbnails; focused lifecycle tests pass. Remaining: commit Stage 4, Stages 5–7.5, then stop for user model download before Stage 8. Problems/blockers: broader pipeline-memory suite retains two pre-existing ASR summary failures; Ollama runtime unavailable and no vision model exists; live inference/download must not run automatically. Preserve: confirmed-only capabilities, transient base64, explicit OCR/degraded behavior, no binary RAG ingest, dedicated Vision tab and user gate after Stage 7.5.

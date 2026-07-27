@@ -24,6 +24,8 @@ ATTACHMENT_STATUSES = {
     "attached",
     "preparing",
     "analyzing",
+    "loading_model",
+    "generating",
     "processing",
     "completed",
     "failed",

@@ -2218,6 +2218,48 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     overflow-wrap: anywhere;
 }
 
+.message-attachments {
+    display: flex;
+    gap: 10px;
+    margin: 4px 0 10px;
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 2px 2px 6px;
+}
+
+.message-attachment {
+    align-items: center;
+    background: rgba(10, 18, 32, 0.48);
+    border: 1px solid rgba(140, 160, 190, 0.22);
+    border-radius: 12px;
+    color: inherit;
+    display: grid;
+    flex: 0 0 116px;
+    gap: 6px;
+    padding: 6px;
+    text-decoration: none;
+}
+
+.message-attachment:hover,
+.message-attachment:focus-visible {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.message-attachment img {
+    aspect-ratio: 4 / 3;
+    border-radius: 8px;
+    object-fit: cover;
+    width: 100%;
+}
+
+.message-attachment span {
+    font-size: 0.72rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .message-card__body>* {
     margin: 0;
     min-width: 0;

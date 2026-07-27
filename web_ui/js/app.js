@@ -459,6 +459,7 @@ const state = {
   sessionContextMenuSessionId: null,
   asrHistoryContextMenuTranscriptId: null,
   messages: [],
+  messageAttachments: {},
   installedModels: [],
   recommendedModels: [],
   utilityModels: [],
@@ -2150,7 +2151,10 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   if (index < 0) return;
 
   const current = state.messages[index] || {};
-  const status = updates.status || current.status || "generating";
+  const requestedStatus = String(updates.status || "").toLowerCase();
+  const status = ["preparing", "analyzing", "loading_model"].includes(requestedStatus)
+    ? "generating"
+    : (updates.status || current.status || "generating");
   const nextContent = Object.prototype.hasOwnProperty.call(updates, "content")
     ? String(updates.content || "")
     : `${current.content || ""}${updates.delta || ""}`;
@@ -3829,6 +3833,19 @@ function renderMessages() {
         }
         return formatRichMessage(content);
       })();
+      const attachments = role === "user"
+        ? (state.messageAttachments[String(message.id)] || [])
+        : [];
+      const attachmentsMarkup = attachments.length
+        ? `<div class="message-attachments" role="list" aria-label="Прикреплённые изображения">
+            ${attachments.map((attachment) => `
+              <a class="message-attachment" role="listitem" href="${escapeHtml(attachment.media_url || "")}" target="_blank" rel="noreferrer">
+                <img src="${escapeHtml(attachment.thumbnail_url || "")}" alt="${escapeHtml(attachment.original_name || "Изображение")}" />
+                <span>${escapeHtml(attachment.original_name || "Изображение")}</span>
+              </a>
+            `).join("")}
+          </div>`
+        : "";
       return `
         <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}` : ""}">
           <article class="message-card">
@@ -3839,6 +3856,7 @@ function renderMessages() {
                 <span class="message-card__time">${escapeHtml(formatDateTime(message.created_at))}</span>
               </span>
             </div>
+            ${attachmentsMarkup}
             <div class="message-card__body">${body}</div>
             ${canCopy || (role === "assistant" && status === "failed")
               ? `<div class="message-card__actions">
@@ -8169,6 +8187,7 @@ async function openSession(sessionId) {
 
   if (!sessionId) {
     state.messages = [];
+    state.messageAttachments = {};
     state.latestTranscript = null;
     if (els.chatTitle) {
       els.chatTitle.textContent = "Новый чат";
@@ -8190,12 +8209,20 @@ async function openSession(sessionId) {
   applyCurrentSessionMeta();
 
   try {
-    const [messagesData, transcriptsData] = await Promise.all([
+    const [messagesData, transcriptsData, attachmentsData] = await Promise.all([
       request(`/sessions/${encodeURIComponent(sessionId)}/messages`),
       request(`/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
+      request(`/chat/attachments?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
     ]);
 
     state.messages = Array.isArray(messagesData?.messages) ? messagesData.messages : [];
+    state.messageAttachments = (Array.isArray(attachmentsData?.attachments) ? attachmentsData.attachments : [])
+      .reduce((groups, attachment) => {
+        const key = String(attachment?.message_id ?? "");
+        if (!key) return groups;
+        groups[key] = [...(groups[key] || []), attachment];
+        return groups;
+      }, {});
     const transcripts = Array.isArray(transcriptsData?.transcripts) ? transcriptsData.transcripts : [];
     state.latestTranscript = transcripts[0] || null;
     renderMessages();

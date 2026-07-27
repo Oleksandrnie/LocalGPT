@@ -13,7 +13,14 @@ from backend.apps.chat.services.image_preprocessing import ImagePreprocessingErr
 
 
 SUPPORTED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "application/octet-stream", ""}
-ACTIVE_ATTACHMENT_STATUSES = {"preparing", "analyzing", "processing"}
+ACTIVE_ATTACHMENT_STATUSES = {
+    "attached",
+    "preparing",
+    "analyzing",
+    "loading_model",
+    "generating",
+    "processing",
+}
 
 
 class AttachmentStorageError(Exception):
@@ -187,6 +194,107 @@ def get_owned_attachment(attachment_id: str, profile_id: int) -> dict[str, Any]:
             status_code=403,
         )
     return attachment
+
+
+def prepare_chat_attachments(
+    attachment_ids: Iterable[str],
+    *,
+    profile_id: int,
+    session_id: str,
+    settings: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate ready attachments and return task-safe descriptors.
+
+    Storage paths are resolved here, before the worker is spawned. They remain
+    internal task arguments and are never exposed by the public task contract.
+    """
+    normalized: list[str] = []
+    for raw_id in attachment_ids:
+        attachment_id = str(raw_id or "").strip()
+        if attachment_id and attachment_id not in normalized:
+            normalized.append(attachment_id)
+    if not normalized:
+        return []
+    if not bool(settings.get("chat_images_enabled", True)):
+        raise AttachmentStorageError(
+            "CHAT_IMAGES_DISABLED",
+            "Изображения в чате отключены.",
+            status_code=403,
+        )
+
+    _profile_or_error(profile_id)
+    _session_or_error(profile_id, session_id)
+    max_images = max(
+        1,
+        min(
+            10,
+            int(
+                settings.get("max_images_per_message")
+                or config.DEFAULT_RUNTIME_SETTINGS["max_images_per_message"]
+            ),
+        ),
+    )
+    if len(normalized) > max_images:
+        raise AttachmentStorageError(
+            "TOO_MANY_IMAGES",
+            f"Можно прикрепить не больше {max_images} изображений.",
+            details={"max_images_per_message": max_images},
+        )
+
+    descriptors: list[dict[str, Any]] = []
+    total_bytes = 0
+    max_total_bytes = int(
+        settings.get("chat_image_max_total_bytes")
+        or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+    )
+    for attachment_id in normalized:
+        record = get_owned_attachment(attachment_id, profile_id)
+        bound_session = str(record.get("session_id") or "").strip()
+        if bound_session and bound_session != str(session_id):
+            raise AttachmentStorageError(
+                "ATTACHMENT_OWNERSHIP_MISMATCH",
+                "Вложение принадлежит другой сессии.",
+                status_code=403,
+            )
+        if record.get("message_id") is not None or record.get("task_id"):
+            raise AttachmentStorageError(
+                "ATTACHMENT_ALREADY_USED",
+                "Вложение уже привязано к сообщению.",
+                status_code=409,
+            )
+        if str(record.get("status") or "") != "ready":
+            raise AttachmentStorageError(
+                "ATTACHMENT_NOT_READY",
+                "Вложение ещё не готово к анализу.",
+                status_code=409,
+                details={"attachment_id": attachment_id, "status": record.get("status")},
+            )
+        path = resolve_storage_path(str(record.get("storage_path") or ""))
+        if not path.is_file():
+            raise AttachmentStorageError(
+                "ATTACHMENT_FILE_MISSING",
+                "Файл вложения отсутствует в локальном хранилище.",
+                status_code=409,
+            )
+        size_bytes = int(record.get("size_bytes") or path.stat().st_size)
+        total_bytes += size_bytes
+        if total_bytes > max_total_bytes:
+            raise AttachmentStorageError(
+                "IMAGES_TOTAL_TOO_LARGE",
+                f"Общий размер изображений превышает лимит {max_total_bytes} байт.",
+                details={"max_total_bytes": max_total_bytes},
+            )
+        descriptors.append(
+            {
+                "id": attachment_id,
+                "path": str(path),
+                "mime_type": str(record.get("mime_type") or ""),
+                "size_bytes": size_bytes,
+                "width": int(record.get("width") or 0),
+                "height": int(record.get("height") or 0),
+            }
+        )
+    return descriptors
 
 
 def delete_attachment(attachment_id: str, profile_id: int, *, allow_active: bool = False) -> dict[str, Any]:
