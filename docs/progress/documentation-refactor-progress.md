@@ -9,10 +9,10 @@
 
 ## Current Status
 
-- Status: Stage 1 audit completed; checkpoint pending.
-- Completed: DOCX technical specification reviewed; repository and documentation inventory collected; runtime prompt lookup verified; source architecture sampled against active imports and routes.
-- In progress: recording the audit and migration decisions in this file.
-- Pending: target documentation skeleton, consolidation, agent workflow migration, validation, and cleanup.
+- Status: Stage 2 target architecture created; validation and checkpoint pending.
+- Completed: Stage 1 audit committed; target permanent documents and knowledge files created with explicit ownership; root `AGENTS.md` foundation added.
+- In progress: validating Stage 2 structure and relative links.
+- Pending: content consolidation, agent workflow completion, final validation, and cleanup.
 - Branch note: the specification names `update-documentation`, while the user explicitly selected `update_project_docs`; the explicit user choice is authoritative.
 
 ## Architecture Scope
@@ -103,13 +103,15 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 - [x] Classified the existing progress file as active.
 - [x] Confirmed no source-code change is part of this stage.
 - Validation: documentation/runtime inventory completed; runtime prompt reference verified; `git diff --check` passed; only Stage 1 tracking files changed.
-- Git checkpoint: pending — `stage 1: audit current documentation`.
+- Git checkpoint: `8a87bc2` — `stage 1: audit current documentation`.
 
 ### Stage 2 — Establish Documentation Architecture
 
-- [ ] Create the target `docs/` and `docs/knowledge/` files with non-overlapping ownership.
-- [ ] Create a root `AGENTS.md` foundation and documentation navigation.
-- [ ] Validate every relative link in the new skeleton.
+- [x] Created the target `docs/` and `docs/knowledge/` files with non-overlapping ownership.
+- [x] Created a root `AGENTS.md` foundation and documentation navigation.
+- [x] Validated every relative link in the new skeleton.
+- Architectural decisions: project-wide permanent docs live in `docs/`; component-owned README files remain beside their runtime/configuration directories; explicit `Pending migration` markers are temporary and must be removed by Stage 5.
+- Validation: 13 target/entry Markdown files checked; all relative targets exist; `git diff --check` passed; no project `skills/` directory; runtime prompt remains unchanged.
 - Git checkpoint: pending — `stage 2: establish documentation architecture`.
 
 ### Stage 3 — Consolidate and Rewrite Documentation
@@ -146,6 +148,18 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 ## Changed Files
 
 - `.gitignore`
+- `AGENTS.md`
+- `docs/README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/TESTING.md`
+- `docs/CHANGELOG.md`
+- `docs/BACKLOG.md`
+- `docs/knowledge/backend.md`
+- `docs/knowledge/providers.md`
+- `docs/knowledge/plugins.md`
+- `docs/knowledge/rag.md`
+- `docs/knowledge/ui.md`
+- `docs/knowledge/networking.md`
 - `docs/progress/.gitkeep`
 - `docs/progress/documentation-refactor-progress.md`
 
@@ -171,10 +185,10 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 
 ## Next Steps
 
-1. Run Stage 1 validation and create the exact Stage 1 checkpoint commit.
-2. Create the target documentation skeleton with explicit ownership and valid links.
-3. Fill the new documents from code-verified sources, then remove duplicates in later stages.
+1. Validate Stage 2 structure and all relative links.
+2. Create the exact Stage 2 checkpoint commit.
+3. Fill the new documents from code-verified sources, then remove duplicates in Stage 3.
 
 ## Continuation Prompt
 
-Continue the LocalGPT documentation refactor in branch `update_project_docs`. Read `docs/progress/documentation-refactor-progress.md`, `git status`, and the latest checkpoint first. Stage 1 audit is complete and the next action is to validate and commit it as `stage 1: audit current documentation`, then implement Stage 2 target-document skeleton and ownership rules. Preserve `app/prompts/system_base.md`, `compare-branch/`, plugin-local docs, `rag_sources/README.md`, and the active ASR progress record. Do not edit any AI Coding Retrieval Stack specification or create project skills.
+Continue the LocalGPT documentation refactor in branch `update_project_docs`. Read `docs/progress/documentation-refactor-progress.md`, `git status`, and commit `8a87bc2` first. Stage 2 target files and ownership rules are created; validate all relative links and commit them as `stage 2: establish documentation architecture`. Then implement Stage 3 by replacing every `Pending migration` marker with code-verified content and removing only fully replaced duplicate documents. Preserve `app/prompts/system_base.md`, `compare-branch/`, plugin-local docs, `rag_sources/README.md`, and the active ASR progress record. Do not edit any AI Coding Retrieval Stack specification or create project skills.
