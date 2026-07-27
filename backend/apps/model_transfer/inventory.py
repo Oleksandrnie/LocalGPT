@@ -121,8 +121,12 @@ def _piper_units() -> list[dict[str, Any]]:
     return result
 
 
+def export_units() -> list[dict[str, Any]]:
+    return [*_ollama_units(), *_asr_units(), *_piper_units()]
+
+
 def export_inventory() -> dict[str, Any]:
-    units = [*_ollama_units(), *_asr_units(), *_piper_units()]
+    units = export_units()
     public = [{key: value for key, value in unit.items() if not key.startswith("_")} for unit in units]
     unique_files = {str(path): path for unit in units if unit["complete"] for path in unit["_files"]}
     return {

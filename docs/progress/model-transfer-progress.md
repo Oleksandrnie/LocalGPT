@@ -39,20 +39,21 @@
 - Technical debt: current model/ASR/TTS task registries are separate and process-local; transfer coordination needs a narrow shared boundary without broad unrelated refactoring.
 - Next steps: create Stage 1 checkpoint, then implement streamed ZIP64 export task/download.
 - Validation: `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory -v` (6 passed); targeted `compileall` passed; `git diff --check` passed.
-- Git checkpoint: pending.
+- Git checkpoint: `31e79d2` — Add model transfer bundle contract; validation: 6 targeted tests, compileall, and diff check passed; changed tracked files: model-transfer contract/inventory/router, server registration, targeted tests, revised ТЗ, and progress record.
 
 ### Stage 2 — Safe Export
 - Goal: implement removable-volume allowlisting, streamed hash/copy, incomplete bundle journal, resume/cancel/report, final manifest/READY publication, export endpoints, and export UI.
 - Related files: `backend/apps/model_transfer/`, `backend/server.py`, `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, model task coordination points, targeted tests.
-- [ ] Pending: implement streamed uncompressed ZIP64 export download and file-picker import upload; do not add volume discovery, destination paths, filesystem-format policy, or Shared model drive.
+- [x] Completed: implement background uncompressed ZIP64 export task, SHA-256 manifest, unique payload entries, status/cancel endpoints, and ready-only download endpoint.
+- [ ] Pending: add System Settings selection/progress/download UI and stronger interruption/cleanup/task-persistence coverage.
 - [ ] Pending: implement exact provider artifact export, Ollama blob deduplication, free-space reserve, streamed SHA-256, resumable incomplete bundle, cancellation, and error mapping.
 - [ ] Pending: add export preview/task UI and targeted backend/static UI tests.
 - Architectural decisions: source model artifacts remain immutable; browser download destination and subsequent transport are outside LocalGPT; the archive contains strict manifest/checksums and provider payload only.
 - Problems: platform-specific discovery and eject behavior require test doubles plus later real-device checks.
 - Technical debt: none recorded yet.
 - Next steps: start only after Stage 1 validation/checkpoint.
-- Validation: pending.
-- Git checkpoint: pending.
+- Validation: `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export -v` (7 passed); targeted compileall and `git diff --check` passed; tests used temporary synthetic bytes only.
+- Git checkpoint: pending backend-export checkpoint.
 
 ### Stage 3 — Safe Import
 - Goal: implement read-only bundle inspect, explicit confirmation/conflict choices, staged provider-unit publication, post-import discovery validation, recovery, and import UI.
@@ -83,13 +84,13 @@
 ## Overall Status
 - Status: in progress
 - Completed: decisions, revised contract, Stage 1 manifest/inventory/preview implementation and targeted validation.
-- In progress: Stage 1 checkpoint preparation.
+- In progress: Stage 2 export backend checkpoint, then System Settings UI.
 - Pending: all implementation, validation, permanent documentation updates, checkpoint commits, and final cleanup.
 - Changed files: `backend/apps/model_transfer/__init__.py`, `manifest.py`, `inventory.py`, `router.py`, `backend/server.py`, two targeted test modules, `docs/MODEL_TRANSFER_SPEC.md`, and this progress file.
 - Known problems: simplified single-file browser transfer drops the original external-volume resume workflow; large-file streaming and temporary-space behavior must be explicit and tested.
 - Technical debt: separate provider task registries will require carefully scoped coordination.
-- Next action: commit Stage 1, record its hash in the next progress update, then implement Stage 2 export.
-- Latest Git checkpoint: `2619842` — Clean up model transfer spec tracking (pre-implementation specification cleanup).
+- Next action: commit export backend, record hash, then add System Settings export/import surface.
+- Latest Git checkpoint: `31e79d2` — Add model transfer bundle contract.
 
 ## Continuation Prompt
 Continue work on `model-transfer` using `docs/progress/model-transfer-progress.md`. Read the progress file, current Git status, `docs/MODEL_TRANSFER_SPEC.md`, and latest checkpoint commit first. Current status: Stage 1 in progress; no source implementation has started yet. Completed: required analysis/docs review and final product decisions. Confirmed UX: System Settings contains adjacent export/import actions; export selects individual/all complete models and downloads one uncompressed ZIP64 `.localgpt-models` file; import chooses that file through the browser and uploads it for validation/application. Explicitly excluded: backend destination paths, volume/removable-drive discovery, filesystem-format policy, exFAT/FAT32 concerns, Shared model drive, and transport-method ownership. Remaining: revise the ТЗ and complete Stages 1–4 with validation, focused checkpoint commits, affected documentation, and final progress cleanup. Preserve configured provider paths, strict archive validation, provider-unit atomicity, discovery-based readiness, streamed/spooled I/O, and no live heavy workloads by default. Latest checkpoint: `2619842`. Perform next: revise `docs/MODEL_TRANSFER_SPEC.md`, implement Stage 1 contract/inventory/tests, validate, explicitly add this ignored file with `git add -f`, inspect the staged diff, and create the Stage 1 checkpoint. Update the progress file before and after the next meaningful stage.
