@@ -24,4 +24,5 @@ test("UI performs preview, export, inspect, confirmation, and apply", () => {
     assert.ok(js.includes(contract), `missing ${contract}`);
   }
   assert.match(css, /\.model-transfer__item/);
+  assert.match(css, /\.model-transfer \[hidden\]/);
 });

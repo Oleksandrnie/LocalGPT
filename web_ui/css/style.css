@@ -4206,6 +4206,10 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     overflow: auto;
 }
 
+.model-transfer [hidden] {
+    display: none !important;
+}
+
 .model-transfer__item {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
