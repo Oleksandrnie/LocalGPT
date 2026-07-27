@@ -23,7 +23,7 @@
 - использует fallback при invalid JSON или низкой confidence;
 - не выбирает Local Calculator автоматически.
 
-Model discovery и install state принадлежат `app/services/models.py`. Состояния различают configured, installed, active, downloading, partial и missing; наличие orphan partial blob не равно установленной runtime-модели.
+Model discovery и install state принадлежат `app/services/models.py`. Состояния различают configured, installed, active, downloading, partial и missing; наличие orphan partial blob не равно установленной runtime-модели. Загрузка модели предпочитает native `POST /api/pull` со stream-NDJSON прогрессом. Если endpoint отсутствует, используется совместимый CLI fallback `ollama pull <model>` без `--json`: этот флаг не является аргументом `ollama pull`, поэтому отсутствие флага не означает старую версию Ollama. Для диагностики задача загрузки логирует путь CLI из `PATH`, его версию, безопасно отредактированный endpoint, transport и stderr/error.
 
 ### Vision-модели
 
