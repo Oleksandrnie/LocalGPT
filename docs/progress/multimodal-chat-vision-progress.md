@@ -113,13 +113,13 @@
 - [x] Completed: Dedicated Vision tab, separate three-model library and explicit download/update/delete/primary actions.
 - [x] Completed: Declared vs runtime-confirmed capability display, all profile-owned Vision controls and cache stats/cleanup UI.
 - [x] Completed: Static/unit/application-route validation and fresh local model-state audit.
-- [ ] Pending: Checkpoint commit.
+- [x] Completed: Checkpoint commit.
 - Architectural decisions: `qwen2.5vl:3b`, `qwen2.5vl:7b` и `gemma3:4b` не смешиваются с обычной chat library; tab показывает declared и runtime-confirmed capabilities отдельно; download/update/delete остаются явными действиями пользователя; в tab находятся `chat_images_enabled`, primary vision model/auto, fallback route, OCR assist, image count/byte/pixel/side limits, cache stats и cleanup.
 - Problems: Все три модели сейчас `runtime_installed=false`, `storage_present=false`, `capabilities_confirmed=false`; Ollama CLI найден в `/opt/homebrew/bin/ollama`, но server/app не запущен.
 - Technical debt: Нет.
-- Next steps: Создать Stage 7.5 checkpoint и сообщить пользователю: сначала запустить Ollama, затем скачать `qwen2.5vl:3b` через Vision tab; опционально `qwen2.5vl:7b` и `gemma3:4b`. Stage 8 не начинать до подтверждения.
+- Next steps: Сообщить пользователю: сначала запустить Ollama, затем скачать `qwen2.5vl:3b` через Vision tab; опционально `qwen2.5vl:7b` и `gemma3:4b`. Stage 8 не начинать до подтверждения.
 - Validation: `node tests/chat_attachments_ui.test.mjs` — 6 passed; `node tests/markdown_rendering.test.mjs` — 2 passed; combined multimodal/model-router Python suite — 87 passed; compileall, JS syntax, diff-check and backend route import audit passed. Fresh model audit: 0/3 installed, 0/3 in storage, 0/3 runtime-confirmed; Ollama server unavailable. Live download/inference intentionally not run.
-- Git checkpoint: pending
+- Git checkpoint: `7f30c44` — Add dedicated Vision settings tab
 
 ### Stage 8 — Regression, Documentation and Cleanup
 - Goal: После загрузки vision-моделей пользователем выполнить controlled live smoke, закрыть static/unit/API/manual regression, обновить affected docs и удалить текущий progress-файл в terminal cleanup commit.
@@ -134,13 +134,13 @@
 
 ## Overall Status
 - Status: in progress
-- Completed: Request/TЗ analysis and checkpoints for Stages 1–7; Stage 7.5 implementation/validation is ready for checkpoint.
-- In progress: Stage 7.5 checkpoint and user download handoff.
-- Pending: Stage 7.5 checkpoint, user model-download handoff, then Stage 8 controlled live QA/docs/cleanup.
-- Changed files since latest checkpoint: Vision catalog size metadata, dedicated Settings tab/UI logic, static UI contract test and this progress file.
+- Completed: Request/TЗ analysis and checkpoints for Stages 1–7.5.
+- In progress: User download handoff; implementation intentionally paused before Stage 8.
+- Pending: User model-download handoff, then Stage 8 controlled live QA/docs/cleanup.
+- Changed files since latest checkpoint: This progress checkpoint metadata only.
 - Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
 - Technical debt: Нет.
-- Next action: Inspect/stage/commit Stage 7.5, report exact user download steps and stop. Do not start Stage 8 until user confirms downloaded models.
+- Next action: Report exact user download steps and stop. Do not start Stage 8 until user confirms downloaded models.
 - Latest Git checkpoint: `2a608a6` — Add vision model capability runtime.
 
 ## Continuation Prompt
