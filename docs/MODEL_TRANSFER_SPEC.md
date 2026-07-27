@@ -4,20 +4,20 @@
 
 Статус: согласованное ТЗ для реализации, функциональность пока не реализована.
 
-Нужно дать пользователю LocalGPT безопасный способ перенести установленные модели между независимыми профилями macOS и Windows. Перенос должен выполняться из интерфейса LocalGPT через подключённый внешний носитель, не требовать ручного поиска runtime-папок и не оставлять принимающий профиль в состоянии «модель видна, но не запускается».
+Нужно дать пользователю LocalGPT простой способ перенести установленные модели между независимыми профилями macOS и Windows. Перенос выполняется из интерфейса LocalGPT как скачивание одного bundle-файла и последующий импорт этого файла; способ передачи между компьютерами выбирает пользователь.
 
 Основной пользовательский сценарий:
 
-1. В профиле-источнике пользователь открывает Settings → Models → «Перенос моделей», выбирает установленные модели и внешний диск.
-2. LocalGPT создаёт переносимый пакет, проверяет каждый записанный файл и показывает его размер и результат.
-3. В профиле-получателе пользователь подключает диск, открывает «Импорт», выбирает готовый пакет, видит предварительный план и подтверждает импорт.
+1. В профиле-источнике пользователь открывает Settings → System, нажимает «Экспорт моделей» и выбирает установленные модели либо «Выбрать все».
+2. LocalGPT создаёт один переносимый `.localgpt-models` файл, проверяет включённые файлы и отдаёт его браузеру как download.
+3. В профиле-получателе пользователь нажимает соседнюю кнопку «Импорт моделей», выбирает bundle обычным file picker, видит предварительный план и подтверждает импорт.
 4. LocalGPT проверяет пакет и место, устанавливает модели в configured model paths этого профиля и повторно проверяет их штатными discovery-процедурами.
 
 ## Важное ограничение
 
 Архив не может уменьшить физически необходимое место: веса LLM, GGML и ONNX уже в основном сжаты. Экспорт занимает не меньше суммы уникальных выбранных файлов плюс небольшой служебный overhead. Дедупликация общих Ollama blobs уменьшает размер только тогда, когда несколько выбранных тегов используют один и тот же blob.
 
-Если флешка не вмещает пакет, корректные варианты — внешний SSD/HDD достаточного объёма или будущий режим **Shared model drive**, в котором оба профиля используют один каталог моделей на внешнем SSD и модели не копируются вовсе. Этот режим не входит в MVP импорта/экспорта и требует отдельного UX для подключения storage path и межпрофильной блокировки. Носитель для кроссплатформенного переноса должен быть отформатирован в exFAT: FAT32 не подходит, потому что один model blob может быть больше 4 GiB.
+LocalGPT не определяет способ транспортировки, тип носителя или формат файловой системы. Bundle можно сохранить и передать любым доступным пользователю способом. Shared model drive, volume discovery и filesystem-format policy полностью исключены из scope.
 
 ## Scope
 
@@ -34,7 +34,7 @@
 
 ### Не входит в MVP
 
-- Загрузка моделей через браузер в память/HTTP upload и передача package по LAN.
+- Загрузка всего bundle в память браузера или backend; download/upload должны использовать потоковый либо spooled disk I/O.
 - SQLite, profiles, sessions, prompts, RAG sources, chat attachments, TTS history, logs, `.env`, API keys и пользовательские настройки.
 - Partial downloads, Ollama runners, binary `whisper-cli`, Python virtualenv, arbitrary executable files и неизвестные caches.
 - Автоматическое удаление исходной модели после экспорта или удаление уже установленной модели при конфликте.
@@ -53,19 +53,17 @@
 
 ## Решение: LocalGPT Model Bundle v1
 
-### Почему bundle-directory, а не ZIP по умолчанию
+### Один несжатый ZIP64 bundle
 
-MVP использует один переносимый каталог с расширением `.localgpt-models`, например `LocalGPT-models-2026-07-27.localgpt-models`. Он записывается напрямую на выбранный внешний том без промежуточной копии в домашнюю папку и без сжатия.
+MVP использует один ZIP64-контейнер с расширением `.localgpt-models`, например `LocalGPT-models-2026-07-27.localgpt-models`. Entries записываются в режиме `stored` без сжатия: веса уже сжаты, а ZIP64 поддерживает файлы больше 4 GiB.
 
-Это уменьшает потребность во временном свободном месте, позволяет возобновлять copy по файлам и не тратит часы CPU на практически бесполезное сжатие моделей. Опциональный read-only export в PAX tar допускается позднее только как transport wrapper вокруг готового bundle; импорт сначала распаковывает/проверяет wrapper и применяет те же правила bundle v1.
+Browser download и import upload не должны загружать весь bundle в память. Упрощённый MVP не обещает resume оборванной сетевой передачи одного archive-файла; пользователь повторяет download/upload.
 
 ### Структура пакета
 
 ```text
-<name>.localgpt-models/
-  manifest.json                 # write last; schema/model inventory/checksums
-  READY                         # zero-byte final completion marker
-  .transfer-state.json          # temporary, удаляется при успехе
+<name>.localgpt-models          # ZIP64, compression=stored
+  manifest.json
   payload/
     ollama/
       manifests/<original relative path>
@@ -77,18 +75,18 @@ MVP использует один переносимый каталог с ра�
 
 `manifest.json` — UTF-8 JSON, schema `localgpt-model-bundle`, version `1`. Он содержит только переносимые metadata: bundle ID, время создания, минимальную версию LocalGPT, producer platform (diagnostic only), выбранные model IDs, family, provider metadata, список payload files, их POSIX-relative path, byte size и SHA-256. Для Ollama он содержит model name/tag, относительный путь manifest и список digest каждого required blob. Никаких исходных absolute paths, drive letters, токенов, profile IDs, user names или содержимого БД в manifest нет. Manifest paths обязаны быть уникальны также при case-insensitive сравнении, чтобы package одинаково работал на default macOS и Windows filesystems.
 
-`READY` создаётся только после fsync всех payload files и записи manifest. Пакет без корректных `manifest.json` и `READY` считается незавершённым и не импортируется; UI предлагает только «возобновить экспорт» на исходном профиле или удалить incomplete package после явного подтверждения.
+Центральный каталог ZIP, `manifest.json`, допустимый entry set, размеры и SHA-256 должны быть корректны. Оборванный или недописанный archive не импортируется.
 
 ### Правила создания
 
 1. Перед стартом service получает process-wide model-transfer lock. В это время pull, delete, prepare/update, preload и новый model export/import получают контролируемую ошибку `model_transfer_in_progress`.
 2. Активные model tasks должны завершиться, быть отменены пользователем либо быть выгружены штатным runtime lifecycle. Экспорт не читает артефакты, пока соответствующая загрузка/обновление в progress.
-3. UI показывает точный прогноз уникальных байтов, требуемый reserve (metadata + 2%), доступное место destination volume и предупреждает, если места недостаточно.
-4. Service принимает не raw absolute path, а opaque ID подключённого removable volume и user-provided folder name. Он canonicalizes destination, разрешает путь только под выбранным volume root и отказывает symlink/path traversal. Platform adapter определяет volume root: `/Volumes/<name>` на macOS и root assigned removable drive (например, `E:\\`) на Windows. Для MVP допустимы только смонтированные внешние/removable volumes в exFAT.
+3. UI показывает точный прогноз уникальных байтов и предупреждает, что browser download потребует соответствующее свободное место.
+4. Service не принимает destination path и не обнаруживает volumes: место сохранения download выбирает браузер/ОС.
 5. Каждый source path должен быть regular file внутри допустимого provider root. Симлинки, sockets, hidden temporary artifacts, `*-partial*` и неизвестные executable files отклоняются и включаются в отчёт как excluded.
-6. Файлы копируются в `<bundle>.incomplete` с ограниченным буфером; для каждого вычисляются size и SHA-256 во время записи. Возобновление сравнивает уже записанный размер и digest; совпадающий файл не копируется заново, несовпадающий перезаписывается только внутри incomplete bundle.
+6. Файлы потоково записываются в ZIP64; для каждого вычисляются size и SHA-256. Временный archive backend удаляется после завершения download task либо при cleanup.
 7. Для Ollama export сначала строит dependency graph из manifest-ов и включает каждый digest один раз. Экспорт невозможен, если выбранный model manifest не парсится или хотя бы один required blob отсутствует.
-8. После успешной проверки incomplete directory атомарно переименовывается в final bundle, затем создаются `manifest.json` и `READY` в указанном порядке. Исходные модели остаются неизменными.
+8. Только полностью закрытый и проверенный ZIP публикуется как downloadable result. Исходные модели остаются неизменными.
 
 ## Импорт
 
@@ -96,8 +94,8 @@ MVP использует один переносимый каталог с ра�
 
 `inspect` не пишет в model storage. Он:
 
-- находит только готовые `.localgpt-models` под выбранным external volume;
-- проверяет schema version, `READY`, syntax manifest, allowed family/path set, уникальность путей и отсутствие symlink;
+- принимает выбранный пользователем `.localgpt-models` файл через upload;
+- проверяет ZIP64 structure, schema version, syntax manifest, allowed family/path set и уникальность путей;
 - сверяет наличие, byte size и SHA-256 всех payload files;
 - сравнивает inventory с целевым storage и показывает по каждой модели один из статусов: `new`, `already_identical`, `tag_conflict`, `invalid`, `runtime_incompatible`;
 - рассчитывает необходимое место на целевом томе и явно отделяет free-space failure от package corruption.
@@ -129,16 +127,16 @@ MVP использует один переносимый каталог с ра�
 ### Export UI
 
 - cards/таблица с type, model/voice name, размером, complete/partial state; partial недоступны для выбора с объяснением;
-- выбор external volume, имя bundle и моделей; доступны «Выбрать все готовые» и индивидуальная выборка; default — все complete models, но пользователь может снять выбор;
-- до запуска: total unique size, volume free space, excluded artifacts, предупреждение о том, что export не удаляет источник;
+- имя bundle и выбор моделей; доступны «Выбрать все готовые» и индивидуальная выборка; default — все complete models, но пользователь может снять выбор;
+- до запуска: total unique size, excluded artifacts, предупреждение о необходимом свободном месте и о том, что export не удаляет источник;
 - progress: current artifact, bytes/files, speed, elapsed, cancel, recoverable «диск отключён»;
 - успех: точное имя bundle, checksum summary, действие «Показать безопасные инструкции для второго профиля».
 
-Если не нужно или невозможно перенести всю библиотеку за раз, пользователь создаёт несколько независимых bundles с разными selection и импортирует их по очереди. MVP не делит один blob между несколькими носителями: один выбранный model unit должен целиком помещаться на используемый exFAT drive, иначе операция не начинается. Это сохраняет resume, checksum и import atomicity простыми и проверяемыми.
+Если не нужно переносить всю библиотеку за раз, пользователь создаёт несколько независимых bundles с разными selection и импортирует их по очереди.
 
 ### Import UI
 
-- выбор подключённого external volume и готового bundle; запрещено вводить серверный произвольный путь;
+- выбор готового `.localgpt-models` через browser file picker;
 - preview/inspect до кнопки import, с model-by-model action и enough-space result;
 - tag replacement — отдельный чекбокс + confirmation с точным model name;
 - progress и итоговый report: imported/skipped/conflicted/failed, никаких ложных success toast;
@@ -146,26 +144,25 @@ MVP использует один переносимый каталог с ра�
 
 ### API contract v1
 
-Все endpoints находятся в feature router `backend/apps/model_transfer/`, а `backend/server.py` только регистрирует router. Transfer logic, platform volume adapter, filesystem allowlist, manifest parsing и transaction journal живут в service/repository, а не в HTTP router.
+Все endpoints находятся в feature router `backend/apps/model_transfer/`, а `backend/server.py` только регистрирует router. Transfer logic, archive validation, manifest parsing и transaction journal живут в service/repository, а не в HTTP router.
 
 | Endpoint | Назначение |
 | --- | --- |
-| `GET /model-transfer/volumes` | список допустимых внешних volumes: opaque ID, display name, filesystem, free/total bytes, availability |
 | `GET /model-transfer/export-preview` | inventory и unique-size plan для выбранных installed models |
-| `POST /model-transfer/exports` | создать/resume export task по volume ID, folder name и explicit selection |
+| `POST /model-transfer/exports` | создать export task по explicit selection |
+| `GET /model-transfer/exports/{task_id}/download` | скачать готовый `.localgpt-models` |
 | `GET /model-transfer/tasks/{task_id}` | persisted progress/report task |
 | `POST /model-transfer/tasks/{task_id}/cancel` | запросить безопасную отмену |
-| `GET /model-transfer/bundles?volume_id=...` | только готовые bundles этого volume |
-| `POST /model-transfer/import-inspect` | validate/plan готового bundle без записи |
+| `POST /model-transfer/import-inspect` | загрузить bundle, validate/plan без записи в model storage |
 | `POST /model-transfer/imports` | подтверждённый import по bundle ID и explicit conflict decisions |
 
-Transfer endpoints, которые перечисляют external volumes или читают/пишут файлы, доступны только loopback request или при валидном admin token. CORS не является контролем доступа. В LAN-сессии UI должен показать, что операцию нужно открыть локально на компьютере, где подключён диск, если token не настроен. Service не принимает raw paths от браузера и не следует symbolic links.
+Transfer API не принимает filesystem paths. Export response является download, import принимает только выбранный file payload; archive entries проходят строгую path validation.
 
-Task state сохраняется в SQLite с типом, phase, progress, resumable/error code, safe report metadata и terminal state. Он не хранит manifest contents с абсолютными путями. После restart backend незавершённая задача reconciliation-ом становится `interrupted`; пользователь может повторно выбрать тот же volume, и export resume проверит existing incomplete files.
+Task state сохраняется в SQLite с типом, phase, progress, error code, safe report metadata и terminal state. Он не хранит manifest contents с абсолютными путями. После restart backend незавершённая задача reconciliation-ом становится `interrupted`; пользователь повторяет оборванный download/upload.
 
 ## Ошибки и сообщения
 
-Стабильные error codes: `external_volume_missing`, `insufficient_destination_space`, `bundle_incomplete`, `bundle_invalid`, `bundle_checksum_mismatch`, `unsupported_bundle_version`, `unsafe_bundle_path`, `source_model_partial`, `source_model_busy`, `target_conflict`, `model_transfer_in_progress`, `provider_validation_failed`, `task_interrupted`.
+Стабильные error codes: `insufficient_destination_space`, `bundle_incomplete`, `bundle_invalid`, `bundle_checksum_mismatch`, `unsupported_bundle_version`, `unsafe_bundle_path`, `source_model_partial`, `source_model_busy`, `target_conflict`, `model_transfer_in_progress`, `provider_validation_failed`, `task_interrupted`.
 
 Сообщение пользователю должно называть модель и действие: например, «Не импортировано `qwen3:8b`: тег уже указывает на другую версию. Существующая модель не изменена.» Нельзя сводить checksum conflict, отсутствие места и неисправный runtime к одному общему «импорт не удался».
 
@@ -176,11 +173,11 @@ Task state сохраняется в SQLite с типом, phase, progress, resu
 - Разрешены только regular files и POSIX-relative paths без `..`, absolute root, NUL и path separators, не соответствующих текущей OS.
 - Export/import не запускает package content, не восстанавливает permissions/executable bit, не применяет `.env` и не изменяет profile settings.
 - Логи и task reports не должны содержать исходные user-home paths, token или полный directory inventory.
-- До реализации надо проверить macOS access rules для `/Volumes`, Windows removable-drive discovery/ACL/locked files, exFAT на обеих ОС, APFS/NTFS как non-portable storage, FAT32 file-size failure, диски с недостаточными правами и eject в середине copy.
+- Upload/download используют bounded memory; временные файлы создаются только в backend-owned staging и удаляются после terminal state/cleanup.
 
 ## Acceptance criteria
 
-1. Пользователь может перенести выбранную complete Ollama, faster-whisper, whisper.cpp или Piper модель между двумя профилями macOS и/или Windows через внешний exFAT drive, не копируя руками provider directories.
+1. Пользователь может скачать выбранные complete Ollama, faster-whisper, whisper.cpp или Piper модели одним bundle и импортировать его в другом профиле macOS/Windows, не копируя руками provider directories.
 2. Export никогда не включает partial blobs/downloads, user data, secrets, executables или произвольные cache files.
 3. Импорт битого/неполного/подменённого package не меняет target model storage.
 4. Для каждого copied file проверены size и SHA-256; Ollama model не становится discoverable до publication всех referenced blobs и manifest.
@@ -189,7 +186,7 @@ Task state сохраняется в SQLite с типом, phase, progress, resu
 7. Operation доступна из активного `web_ui/gui_html.html` / `web_ui/js/app.js`, имеет keyboard-accessible controls, focus/error state, dark/light и desktop/mobile check.
 8. Transfer router не принимает arbitrary filesystem paths и не становится файловым API для LAN client без loopback/admin-token protection.
 9. После import UI показывает только модели, прошедшие existing provider discovery/runtime validation.
-10. Документация описывает, что package не решает физическую нехватку места; для этого определён отдельный future Shared model drive decision.
+10. Документация явно говорит, что bundle не сжимает веса существенно и требует места, сопоставимого с выбранными уникальными файлами.
 
 ## План реализации
 
@@ -202,9 +199,9 @@ Task state сохраняется в SQLite с типом, phase, progress, resu
 
 ### Stage 2 — Export
 
-- Реализовать volume discovery/allowlist, incomplete bundle, streamed copy/hash, resume/cancel/report и `READY` semantics.
+- Реализовать streamed ZIP64 export/hash, browser download, cancel/report и cleanup временного archive.
 - Добавить export endpoints и minimal UI preview/progress.
-- Tests: exact export inventory for all four families, insufficient space, disconnect/interruption simulation, resume, byte/hash mismatch, no unwanted files.
+- Tests: exact export inventory for all four families, insufficient temporary space, interruption simulation, byte/hash mismatch, no unwanted files.
 
 ### Stage 3 — Import
 
@@ -214,15 +211,15 @@ Task state сохраняется в SQLite с типом, phase, progress, resu
 
 ### Stage 4 — QA, documentation and future decision
 
-- Провести baseline/static tests, targeted backend tests и manual UI matrix: desktop/mobile, dark/light, keyboard, cancellation, mounted exFAT drive на macOS и Windows; дополнительно проверить APFS/NTFS как local-only storage и понятный отказ для FAT32 file-size limit.
+- Провести baseline/static tests, targeted backend tests и manual UI matrix: desktop/mobile, dark/light, keyboard, cancellation и большие browser download/upload на macOS и Windows.
 - Обновить `README.md`, `docs/ARCHITECTURE.md`, `docs/knowledge/providers.md`, `docs/knowledge/backend.md`, `docs/knowledge/ui.md`, `docs/TESTING.md`, `docs/CHANGELOG.md` только если фактическая реализация делает эти документы неполными.
-- Отдельно принять/отклонить design for Shared model drive; не добавлять его неявно в export/import stage.
+- Не добавлять volume discovery, filesystem-format policy или Shared model drive.
 
-## Open decisions before coding
+## Resolved decisions
 
-1. **MVP destination policy:** ограничиться внешними exFAT volumes, обнаруженными platform adapter (`/Volumes/<external>` на macOS, removable drive roots на Windows; рекомендуется), или разрешить user-selected local directories. Первый вариант безопаснее для LAN threat model и лучше соответствует use case.
-2. **Runtime check:** будет ли import требовать установленный и запущенный Ollama сразу, либо допустит byte-valid import с `runtime_incompatible` status. Рекомендуется второе: пакет можно перенести офлайн, но UI не утверждает, что chat готов до `ollama list/show`.
-3. **Shared model drive:** делать отдельным follow-up после MVP или расширить project storage settings. Рекомендуется follow-up: это меняет ownership и locking path, а не просто transport.
+1. Export/import uses one uncompressed ZIP64 `.localgpt-models` file through browser download/upload; backend destination paths and volume discovery are absent.
+2. Byte-valid offline import is allowed, but UI reports `runtime_incompatible` until Ollama discovery confirms readiness.
+3. Shared model drive and filesystem-format policy are excluded entirely.
 
 ## Progress Tracking Requirement
 

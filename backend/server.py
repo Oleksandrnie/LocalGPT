@@ -18,6 +18,7 @@ from backend.apps.chat import attachments as chat_attachments
 from backend.apps.ocr import routes as ocr
 from backend.apps.plugins import routes as plugins
 from backend.apps.rag import routes as rag
+from backend.apps.model_transfer import router as model_transfer
 from backend.apps.tts import router as tts
 
 logging.basicConfig(level=logging.INFO)
@@ -55,6 +56,7 @@ app.include_router(chat.router)
 app.include_router(storage.router)
 app.include_router(tts.router)
 app.include_router(plugins.router)
+app.include_router(model_transfer.router)
 
 app.mount("/ui", StaticFiles(directory=config.UI_DIR, html=True), name="ui")
 
