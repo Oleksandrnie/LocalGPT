@@ -161,7 +161,7 @@ app/data/transcripts/*.json
 !app/data/transcripts/.gitkeep
 app/data/chat_tasks/*.json
 !app/data/chat_tasks/.gitkeep
-app/data/chat_attachments/*
+app/data/chat_attachments/**
 !app/data/chat_attachments/.gitkeep
 app/data/transcribe_tasks/*.json
 !app/data/transcribe_tasks/.gitkeep
