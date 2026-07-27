@@ -47,6 +47,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | OCR heuristics | `venv/bin/python -m unittest tests.test_ocr_service -v` |
 | Plugin Registry и Tailscale handler | `venv/bin/python -m unittest tests.test_plugin_registry -v` |
 | Model installation state | `venv/bin/python -m unittest tests.test_model_install_state -v` |
+| Ollama pull API/CLI compatibility | `venv/bin/python -m unittest tests.test_ollama_pull -v` |
 
 Tests используют `unittest`; отдельные cases создают temporary SQLite/files и patch внешние процессы. Перед live-запуском всё равно проверяйте конкретный test body на обращение к локальным моделям/CLI.
 

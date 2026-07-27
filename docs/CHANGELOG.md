@@ -6,6 +6,7 @@
 
 ### Changed
 
+- Загрузка Ollama-моделей использует потоковый native `/api/pull`; CLI fallback больше не передаёт неподдерживаемый `ollama pull --json` и логирует фактический CLI/runtime transport при ошибках.
 - Документация сведена к корневому `README.md`, `AGENTS.md`, постоянному набору `docs/` и component-owned README.
 - Архитектура, тестирование и knowledge base разделены по зонам ответственности.
 - Канонический путь временного tracking изменён на `docs/progress/<task-name>-progress.md`.

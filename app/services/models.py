@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -11,6 +12,9 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 from fastapi import HTTPException
 
@@ -19,15 +23,65 @@ from .. import config
 LOGGER = logging.getLogger(__name__)
 MODEL_PULLS: dict[str, dict[str, Any]] = {}
 MODEL_PULL_PROCS: dict[str, subprocess.Popen] = {}
+MODEL_PULL_STREAMS: dict[str, Any] = {}
+MODEL_PULL_CANCEL_EVENTS: dict[str, threading.Event] = {}
 MODEL_PULL_LOCK = threading.Lock()
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 PULL_LOG_TAIL_LIMIT = 80
+OLLAMA_API_PULL_TIMEOUT_SECONDS = 15
 
 
 def _size_gb(size: Any) -> float | None:
     if not isinstance(size, (int, float)):
         return None
     return round(float(size) / (1024**3), 2)
+
+
+def _native_ollama_base_url() -> str:
+    """Return the native Ollama API base for an OpenAI-compatible base URL."""
+    base = str(config.SETTINGS.base_url or "http://localhost:11434/v1").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    return base or "http://localhost:11434"
+
+
+def _redact_ollama_endpoint(endpoint: str) -> str:
+    """Avoid writing credentials from a custom endpoint into application logs."""
+    try:
+        parsed = urlsplit(endpoint)
+    except ValueError:
+        return "<invalid Ollama endpoint>"
+    if not parsed.scheme or not parsed.hostname:
+        return "<invalid Ollama endpoint>"
+    host = parsed.hostname
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+
+
+def _ollama_cli_info() -> dict[str, str | None]:
+    """Resolve the CLI actually visible to this backend without making it required."""
+    cli_path = shutil.which("ollama")
+    if not cli_path:
+        return {"path": None, "version": None, "error": "not found in PATH"}
+    try:
+        result = subprocess.run(
+            [cli_path, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+            env=config.OLLAMA_ENV,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"path": cli_path, "version": None, "error": str(exc)}
+    if result.returncode != 0:
+        return {
+            "path": cli_path,
+            "version": None,
+            "error": (result.stderr or result.stdout or f"exit {result.returncode}").strip(),
+        }
+    return {"path": cli_path, "version": (result.stdout or result.stderr or "").strip(), "error": None}
 
 
 def _file_modified_at(path: Path) -> str | None:
@@ -602,121 +656,189 @@ def _list_local_models() -> list[dict[str, Any]]:
     return models
 
 
+def _update_pull_progress(task_id: str, payload: dict[str, Any], progress: dict[str, float]) -> None:
+    """Apply one streamed `/api/pull` progress event to a download task."""
+    status_text = str(payload.get("status") or payload.get("digest") or "").strip()
+    error_text = str(payload.get("error") or payload.get("message") or "").strip()
+    total = payload.get("total")
+    completed = payload.get("completed")
+    fields: dict[str, Any] = {"state": "running", "message": status_text or error_text or "Загрузка модели…"}
+    if isinstance(total, (int, float)) and isinstance(completed, (int, float)) and total > 0:
+        now = time.time()
+        previous_completed = progress["completed"]
+        delta_bytes = completed - previous_completed
+        delta_time = max(now - progress["timestamp"], 1e-3)
+        speed_mbps = None
+        eta_seconds = None
+        if delta_bytes > 0:
+            bytes_per_second = delta_bytes / delta_time
+            speed_mbps = round(bytes_per_second / (1024 * 1024), 2)
+            eta_seconds = round((total - completed) / bytes_per_second) if bytes_per_second else None
+        progress["completed"] = float(completed)
+        progress["timestamp"] = now
+        fields.update(
+            completed=completed,
+            total=total,
+            percent=round(100 * completed / total, 2),
+            speed_mbps=speed_mbps,
+            eta_seconds=eta_seconds,
+            _last_completed=completed,
+            _last_ts=now,
+        )
+    _update_pull(task_id, **fields)
+
+
+def _pull_was_canceled(task_id: str) -> bool:
+    with MODEL_PULL_LOCK:
+        entry = MODEL_PULLS.get(task_id, {})
+        cancel_event = MODEL_PULL_CANCEL_EVENTS.get(task_id)
+    return entry.get("state") == "canceled" or bool(cancel_event and cancel_event.is_set())
+
+
+def _run_api_model_pull(task_id: str, model: str) -> bool:
+    """Run a native Ollama `/api/pull` stream. Return False only when CLI fallback is safe."""
+    endpoint = f"{_native_ollama_base_url()}/api/pull"
+    body = json.dumps({"name": model, "stream": True}).encode("utf-8")
+    request = Request(endpoint, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    _update_pull(task_id, transport="api", command="POST /api/pull", endpoint=_redact_ollama_endpoint(endpoint))
+    LOGGER.info("Ollama pull task %s using HTTP API POST %s", task_id, _redact_ollama_endpoint(endpoint))
+
+    try:
+        response = urlopen(request, timeout=OLLAMA_API_PULL_TIMEOUT_SECONDS)
+    except HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace")
+        message = _extract_pull_error_message(body_text, str(exc)) or f"Ollama API error {exc.code}"
+        LOGGER.error("Ollama pull API request failed (%s): %s", exc.code, message)
+        if exc.code in {404, 405, 501}:
+            return False
+        _update_pull(task_id, state="error", message=message, reason=message, finished_at=time.time(), stderr=body_text)
+        return True
+    except (URLError, OSError) as exc:
+        LOGGER.warning("Ollama pull API is unavailable at %s: %s", _redact_ollama_endpoint(endpoint), exc)
+        return False
+
+    progress = {"completed": 0.0, "timestamp": time.time()}
+    last_error = ""
+    try:
+        with MODEL_PULL_LOCK:
+            MODEL_PULL_STREAMS[task_id] = response
+        for raw_line in response:
+            if _pull_was_canceled(task_id):
+                break
+            line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
+            if not line:
+                continue
+            _append_pull_output(task_id, line)
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                last_error = line
+                continue
+            if not isinstance(payload, dict):
+                last_error = line
+                continue
+            if payload.get("error"):
+                last_error = str(payload["error"])
+                break
+            _update_pull_progress(task_id, payload, progress)
+    except (HTTPError, URLError, OSError) as exc:
+        if not _pull_was_canceled(task_id):
+            last_error = str(exc)
+            LOGGER.error("Ollama pull API stream failed: %s", exc)
+    finally:
+        try:
+            response.close()
+        except OSError:
+            pass
+        with MODEL_PULL_LOCK:
+            MODEL_PULL_STREAMS.pop(task_id, None)
+
+    finished = time.time()
+    if _pull_was_canceled(task_id):
+        _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=finished)
+        return True
+    if last_error:
+        message = _extract_pull_error_message(last_error) or "Не удалось скачать модель через Ollama API."
+        LOGGER.error("Ollama pull API error: %s", message)
+        _update_pull(task_id, state="error", message=message, reason=message, finished_at=finished, stderr=last_error)
+        return True
+    _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
+    return True
+
+
+def _run_cli_model_pull(task_id: str, model: str, cli_path: str) -> None:
+    """Compatible fallback for servers without `/api/pull`; never pass unsupported `--json`."""
+    command = [cli_path, "pull", model]
+    _update_pull(task_id, transport="cli", command=" ".join(command))
+    LOGGER.info("Ollama pull task %s using CLI command: %s", task_id, " ".join(command))
+    last_output_line = ""
+    try:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=config.OLLAMA_ENV
+        )
+        with MODEL_PULL_LOCK:
+            MODEL_PULL_PROCS[task_id] = process
+        stdout, stderr = process.communicate()
+        combined_lines = [line.strip() for line in f"{stdout}\n{stderr}".splitlines() if line.strip()]
+        for line in combined_lines[-PULL_LOG_TAIL_LIMIT:]:
+            _append_pull_output(task_id, line)
+        last_output_line = combined_lines[-1] if combined_lines else ""
+    except FileNotFoundError:
+        _update_pull(task_id, state="error", message="Ollama не установлена", finished_at=time.time())
+        return
+    except (OSError, subprocess.SubprocessError) as exc:
+        message = str(exc)
+        LOGGER.error("Ollama CLI pull failed before completion: %s", message)
+        _update_pull(task_id, state="error", message=message, reason=message, finished_at=time.time(), stderr=message)
+        return
+    finally:
+        with MODEL_PULL_LOCK:
+            MODEL_PULL_PROCS.pop(task_id, None)
+
+    finished = time.time()
+    if _pull_was_canceled(task_id):
+        _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=finished)
+    elif process.returncode == 0:
+        _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
+    else:
+        message = _extract_pull_error_message(last_output_line) or "Не удалось скачать модель через Ollama CLI."
+        stderr_text = (stderr or "").strip()
+        LOGGER.error("Ollama CLI pull failed (exit %s): %s; stderr: %s", process.returncode, message, stderr_text)
+        _update_pull(task_id, state="error", message=message, reason=message, finished_at=finished, stderr=stderr_text)
+
+
 def _run_model_pull(task_id: str, model: str) -> None:
     start_ts = time.time()
-    _update_pull(task_id, state="running", started_at=start_ts)
-
-    def _run(cmd: list[str], parse_json: bool) -> tuple[int, str | None]:
-        nonlocal start_ts
-        last_completed = 0
-        last_ts = start_ts
-        raw_error = None
-        last_output_line = ""
-        try:
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=config.OLLAMA_ENV
-            )
-            with MODEL_PULL_LOCK:
-                MODEL_PULL_PROCS[task_id] = process
-        except FileNotFoundError:
-            _update_pull(task_id, state="error", message="Ollama не установлена", finished_at=time.time())
-            return 1, "Ollama не установлена"
-        except Exception as exc:  # pragma: no cover - зависит от окружения
-            _update_pull(task_id, state="error", message=str(exc), finished_at=time.time())
-            return 1, str(exc)
-
-        try:
-            assert process.stdout is not None
-            for raw_line in process.stdout:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                _append_pull_output(task_id, line)
-                last_output_line = line
-                with MODEL_PULL_LOCK:
-                    if MODEL_PULLS.get(task_id, {}).get("state") == "canceled":
-                        process.terminate()
-                        break
-                if parse_json:
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError:
-                        if "unknown flag: --json" in line.lower():
-                            raw_error = "unknown flag: --json"
-                            break
-                        raw_error = line
-                        continue
-
-                    status_text = payload.get("status") or payload.get("digest") or ""
-                    error_text = payload.get("error") or payload.get("message") or ""
-                    total = payload.get("total")
-                    completed = payload.get("completed")
-
-                    percent = None
-                    speed_mbps = None
-                    eta_seconds = None
-
-                    if isinstance(total, (int, float)) and isinstance(completed, (int, float)) and total > 0:
-                        percent = round(100 * completed / total, 2)
-                        now = time.time()
-                        delta_bytes = completed - last_completed
-                        delta_time = max(now - last_ts, 1e-3)
-                        if delta_bytes > 0:
-                            speed_mbps = round(delta_bytes / delta_time / (1024 * 1024), 2)
-                            remaining = total - completed
-                            eta_seconds = round(remaining / (delta_bytes / delta_time)) if delta_bytes else None
-                        last_completed = completed
-                        last_ts = now
-
-                        _update_pull(
-                            task_id,
-                            state="running",
-                            message=status_text or error_text or line,
-                            completed=completed,
-                            total=total,
-                            percent=percent,
-                            speed_mbps=speed_mbps,
-                            eta_seconds=eta_seconds,
-                            _last_completed=last_completed,
-                            _last_ts=last_ts,
-                        )
-                else:
-                    _update_pull(task_id, state="running", message=line)
-
-            process.wait()
-            finished = time.time()
-            with MODEL_PULL_LOCK:
-                current_state = MODEL_PULLS.get(task_id, {}).get("state")
-            if current_state == "canceled":
-                _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=finished)
-                return process.returncode, raw_error
-            if process.returncode == 0:
-                _update_pull(task_id, state="completed", message="Готово", finished_at=finished)
-            else:
-                error_message = _extract_pull_error_message(raw_error, last_output_line)
-                if not error_message:
-                    error_message = (
-                        "Не удалось скачать модель. Проверьте подключение к интернету, "
-                        "доступность Ollama и корректность тега модели."
-                    )
-                _update_pull(
-                    task_id,
-                    state="error",
-                    message=error_message,
-                    reason=error_message,
-                    finished_at=finished,
-                )
-            return process.returncode, _extract_pull_error_message(raw_error, last_output_line)
-        finally:
-            with MODEL_PULL_LOCK:
-                if task_id in MODEL_PULLS:
-                    MODEL_PULLS[task_id]["finished_at"] = MODEL_PULLS[task_id].get("finished_at") or time.time()
-                MODEL_PULL_PROCS.pop(task_id, None)
-
-    rc, err = _run(["ollama", "pull", model, "--json"], parse_json=True)
-    if err and "unknown flag: --json" in err.lower():
-        _update_pull(task_id, state="running", message="Старая версия Ollama, включён текстовый прогресс")
-        _run(["ollama", "pull", model], parse_json=False)
+    cli_info = _ollama_cli_info()
+    _update_pull(
+        task_id,
+        state="running",
+        started_at=start_ts,
+        cli_path=cli_info["path"],
+        cli_version=cli_info["version"],
+    )
+    LOGGER.info(
+        "Ollama pull task %s: cli_path=%s cli_version=%s endpoint=%s",
+        task_id,
+        cli_info["path"] or "<not found>",
+        cli_info["version"] or cli_info["error"] or "<unknown>",
+        _redact_ollama_endpoint(_native_ollama_base_url()),
+    )
+    if _pull_was_canceled(task_id):
+        _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=time.time())
+        return
+    api_handled = _run_api_model_pull(task_id, model)
+    if not api_handled:
+        cli_path = cli_info["path"]
+        if cli_path:
+            _run_cli_model_pull(task_id, model, cli_path)
+        else:
+            message = "Ollama API недоступен, а бинарник Ollama не найден в PATH."
+            _update_pull(task_id, state="error", message=message, reason=message, finished_at=time.time())
+    with MODEL_PULL_LOCK:
+        if task_id in MODEL_PULLS:
+            MODEL_PULLS[task_id]["finished_at"] = MODEL_PULLS[task_id].get("finished_at") or time.time()
+        MODEL_PULL_CANCEL_EVENTS.pop(task_id, None)
 
 
 def start_model_pull(model: str) -> dict[str, Any]:
@@ -731,6 +853,7 @@ def start_model_pull(model: str) -> dict[str, Any]:
         "completed": None,
         "total": None,
         "output_tail": [],
+        "transport": None,
     }
     with MODEL_PULL_LOCK:
         active = next(
@@ -744,6 +867,7 @@ def start_model_pull(model: str) -> dict[str, Any]:
         if active:
             return _public_pull_status(active)
         MODEL_PULLS[task_id] = entry
+        MODEL_PULL_CANCEL_EVENTS[task_id] = threading.Event()
 
     thread = threading.Thread(target=_run_model_pull, args=(task_id, model), daemon=True)
     thread.start()
@@ -754,12 +878,21 @@ def cancel_model_pull(task_id: str) -> dict[str, Any]:
     with MODEL_PULL_LOCK:
         entry = MODEL_PULLS.get(task_id)
         process = MODEL_PULL_PROCS.get(task_id)
+        stream = MODEL_PULL_STREAMS.get(task_id)
+        cancel_event = MODEL_PULL_CANCEL_EVENTS.get(task_id)
     if not entry:
         raise HTTPException(status_code=404, detail="task_not_found")
     if entry.get("state") in {"completed", "error", "canceled"}:
         return _public_pull_status(entry)
 
     _update_pull(task_id, state="canceled", message="Остановлено пользователем", finished_at=time.time())
+    if cancel_event:
+        cancel_event.set()
+    if stream:
+        try:
+            stream.close()
+        except OSError:
+            pass
     if process and process.poll() is None:
         try:
             process.terminate()
@@ -780,6 +913,11 @@ def pause_model_pull(task_id: str) -> dict[str, Any]:
         process = MODEL_PULL_PROCS.get(task_id)
     if not entry:
         raise HTTPException(status_code=404, detail="task_not_found")
+    if entry.get("transport") == "api":
+        raise HTTPException(
+            status_code=409,
+            detail="Пауза недоступна для потоковой загрузки через Ollama API; остановите и возобновите загрузку позже.",
+        )
     if entry.get("state") not in {"running"} or process is None:
         return _public_pull_status(entry)
     try:
