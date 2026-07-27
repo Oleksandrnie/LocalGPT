@@ -124,24 +124,27 @@
 ### Stage 8 — Regression, Documentation and Cleanup
 - Goal: После загрузки vision-моделей пользователем выполнить controlled live smoke, закрыть static/unit/API/manual regression, обновить affected docs и удалить текущий progress-файл в terminal cleanup commit.
 - Related files: affected docs, tests, runtime artifacts, `docs/progress/multimodal-chat-vision-progress.md`.
-- [ ] Pending: User model download handoff, live QA, docs, `docs/CHANGELOG.md`, cleanup.
+- [x] Completed: User model download handoff and runtime capability verification.
+- [x] Completed: Controlled direct live smoke for Qwen2.5-VL 3B/7B and isolated end-to-end attachment/task smoke for 3B.
+- [x] Completed: Proportional regression, runtime artifact audit and affected permanent documentation/changelog.
+- [~] In progress: Stage checkpoint and terminal progress cleanup commit.
 - Architectural decisions: Controlled live vision smoke выполняется только отдельно и осознанно; отсутствие запуска фиксируется как manual external validation, а не как passed.
-- Problems: Нет.
+- Problems: Installed Ollama version rejects `ollama show --json`; LocalGPT plain-text metadata fallback works and confirms `completion, vision` for both downloaded models. Полный `tests.test_pipeline_memory` сохраняет два pre-existing ASR дефекта: `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers` failure и `test_pipeline_tasks_are_normalized_for_transcript_record` error.
 - Technical debt: Нет.
-- Next steps: Начинать только после Stage 7.5 checkpoint и подтверждения пользователя, что выбранные vision-модели скачаны.
-- Validation: pending
+- Next steps: Review diff, create Stage 8 documentation/QA checkpoint, remove this completed progress file in a terminal cleanup commit and confirm clean status.
+- Validation: `ollama list` confirms `qwen2.5vl:3b` (3.2 GB) and `qwen2.5vl:7b` (6.0 GB); plain `ollama show` and `app.services.models.list_models()` confirm `runtime_installed=true`, `capabilities=[completion, vision]`, `capabilities_confirmed=true` for both. Direct bounded smoke (`temperature=0`, `max_tokens=100`, `keep_alive=0`, CPU fallback disabled) correctly read `LOCALGPT VISION 42`, blue square and red circle: 3B in 11.80 s, 7B in 18.29 s. Isolated real upload → `/chat/tasks` → worker flow completed through `preparing`, `generating`, `completed`; user/assistant persisted once, attachment completed and linked, messages contained no binary/base64 or storage paths. `ollama ps` empty after smoke; all created `/tmp` artifacts moved to Trash; project attachment storage contains only `.gitkeep`. Static baseline passed; Node UI suite — 6 passed; combined attachment/vision/router Python suite — 87 passed; full `tests.test_pipeline_memory` — 61 passed with the same 1 pre-existing failure + 1 pre-existing error.
 - Git checkpoint: pending
 
 ## Overall Status
-- Status: in progress
-- Completed: Request/TЗ analysis and checkpoints for Stages 1–7.5.
-- In progress: User download handoff; implementation intentionally paused before Stage 8.
-- Pending: User model-download handoff, then Stage 8 controlled live QA/docs/cleanup.
-- Changed files since latest checkpoint: This progress checkpoint metadata only.
-- Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
+- Status: cleanup pending
+- Completed: Request/TЗ analysis, implementation Stages 1–7.5, Stage 8 live QA, regression and affected permanent documentation.
+- In progress: Stage 8 checkpoint and terminal progress cleanup.
+- Pending: Two focused commits and final clean-status verification.
+- Changed files since latest checkpoint: `README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CHANGELOG.md`, affected `docs/knowledge/*.md` and this progress update.
+- Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama JSON metadata is unsupported by the installed CLI, but the tested plain fallback confirms both models.
 - Technical debt: Нет.
-- Next action: Report exact user download steps and stop. Do not start Stage 8 until user confirms downloaded models.
-- Latest Git checkpoint: `2a608a6` — Add vision model capability runtime.
+- Next action: Review diff and commit Stage 8 documentation/QA checkpoint, then delete this progress file.
+- Latest Git checkpoint: `7f30c44` — Add dedicated Vision settings tab (`4bc29ca` progress metadata).
 
 ## Continuation Prompt
-Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Current status: Stages 1–7 checkpointed; Stage 7.5 implemented/validated and checkpoint pending. Dedicated Vision tab contains separate `qwen2.5vl:3b`, `qwen2.5vl:7b`, `gemma3:4b` cards with download/update/delete/primary actions, declared/runtime capabilities, all profile settings and cache controls. Combined relevant suite: 87 Python + 8 Node tests passed. Fresh audit: none of the three models is installed or present in storage; Ollama CLI exists but server/app is not running. Next: commit Stage 7.5, tell user to start Ollama and download at least `qwen2.5vl:3b`, then stop. Do not begin Stage 8 until user confirms downloads. Preserve active `docs/progress/asr-analysis-modes-progress.md`; do not delete this progress file until final Stage 8 cleanup.
+Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Stages 1–8 implementation, live QA, regression and affected docs are complete. Qwen2.5-VL 3B/7B both passed deterministic direct smoke; isolated real attachment/task flow passed with 3B; `ollama ps` is empty and created temp artifacts are gone. Static checks, 6 Node UI tests and 87 relevant Python tests passed; full pipeline-memory retains only the two recorded pre-existing ASR failures. Next: inspect the staged scope, commit Stage 8 docs/QA, then remove only this progress file in a terminal cleanup commit and verify clean status. Preserve `docs/progress/asr-analysis-modes-progress.md`.

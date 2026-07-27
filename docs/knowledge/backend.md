@@ -38,7 +38,7 @@ app/
 
 | Feature | Основные файлы | Ответственность |
 | --- | --- | --- |
-| Chat | `backend/apps/chat/routes.py`, `service.py`, `tasks.py`, `services/` | request preparation, prompt, routing, Ollama, persisted tasks/SSE |
+| Chat | `backend/apps/chat/routes.py`, `attachments.py`, `service.py`, `tasks.py`, `services/` | request preparation, image attachments, text/vision routing, Ollama, persisted tasks/SSE |
 | ASR | `backend/apps/asr/routes.py`, `pipeline.py`, `transcripts.py`, `whisper*.py` | transcription, history, model management, analysis pipeline |
 | TTS | `backend/apps/tts/router.py`, `service.py`, `providers/` | provider abstraction, generation, voice library, history |
 | OCR | `backend/apps/ocr/routes.py`, `service.py` | image OCR и cleanup |
@@ -52,6 +52,16 @@ Shared routers:
 - `app/routes/profiles.py` — profiles, sessions, messages и model settings;
 - `app/routes/storage.py` — model/storage path settings;
 - `app/routes/criteria.py` — criteria parsing.
+
+Chat attachment HTTP boundary:
+
+- `POST /chat/attachments` — profile-owned upload и preprocessing PNG/JPEG/WebP;
+- `GET /chat/attachments` — session/message attachment metadata;
+- `GET /chat/attachments/{id}` и `/thumbnail` — ownership-checked media;
+- `DELETE /chat/attachments/{id}` — удаление неактивного attachment;
+- `GET /chat/attachments/cache` и `POST /chat/attachments/cleanup` — статистика и явная очистка cache.
+
+`POST /chat/tasks` принимает только attachment ids. Router до запуска worker проверяет profile/session ownership, status, count и общий размер, связывает записи с единственным persisted user message/task и передаёт task-safe descriptors без публикации filesystem paths.
 
 ## API boundaries
 
@@ -69,7 +79,7 @@ Routers отвечают за HTTP validation/serialization и вызывают 
 
 `app/db.py` управляет schema и migrations без внешнего migration framework. Основные таблицы:
 
-- `profiles`, `chat_sessions`, `chat_messages`;
+- `profiles`, `chat_sessions`, `chat_messages`, `chat_attachments`;
 - `transcripts`, `transcript_pipeline_runs`, `session_summaries`;
 - `model_settings`, `app_settings`;
 - `source_documents`, `document_chunks`, `document_embeddings`.
@@ -78,9 +88,11 @@ Repository functions возвращают обычные dict. Runtime path бе
 
 Message lifecycle поля включают `status`, `model`, `error`, `task_id`, timestamps и `is_partial`. Legacy rows мигрируют в завершённое состояние.
 
+`chat_attachments` хранит ownership, MIME/dimensions/size, backend-owned относительные storage/thumbnail paths, связи с message/task и lifecycle status. Binary/base64 не пишутся в таблицу или message content.
+
 ## Tasks и cancellation
 
-Chat, transcription и TTS имеют in-process task registries. Runtime shutdown/reset сначала отменяет активные tasks. Эти registries не являются durable queue: после process loss backend восстанавливает пользовательское состояние через persisted records и reconciliation rules, а не продолжает Python thread.
+Chat, transcription и TTS имеют in-process task registries. Runtime shutdown/reset сначала отменяет активные tasks. Эти registries не являются durable queue: после process loss backend восстанавливает пользовательское состояние через persisted records и reconciliation rules, а не продолжает Python thread. Для image chat reconciliation также переводит незавершённые attachment records в terminal failed/cancelled state; cleanup не удаляет attachment активной задачи.
 
 ## Добавление модуля
 

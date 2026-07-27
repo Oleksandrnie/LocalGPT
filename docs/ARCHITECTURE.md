@@ -9,7 +9,7 @@ flowchart LR
     Browser["Static Web UI"] --> API["FastAPI backend.server:app"]
     API --> Shared["app/: config, DB, profiles, storage"]
     API --> Apps["backend/apps/"]
-    Apps --> Chat["Chat / Ollama"]
+    Apps --> Chat["Chat / Ollama text + vision"]
     Apps --> ASR["ASR / whisper.cpp / faster-whisper"]
     Apps --> TTS["TTS / Piper"]
     Apps --> OCR["OCR / Tesseract"]
@@ -17,6 +17,7 @@ flowchart LR
     Apps --> Plugins["Plugin Registry / trusted handlers"]
     Shared --> SQLite["SQLite"]
     Apps --> Models["Project-scoped models/"]
+    Chat --> Attachments["chat_attachments/profile-*"]
     RAG --> Sources["rag_sources/profile-*"]
 ```
 
@@ -37,7 +38,7 @@ flowchart LR
 
 `backend/apps/` содержит:
 
-- `chat/` — подготовка prompt, Ollama runtime, model routing, tasks, SSE и chat API;
+- `chat/` — подготовка prompt, text/vision Ollama runtime, model routing, image attachments, tasks, SSE и chat API;
 - `asr/` — транскрибация, whisper backends, модели, история и transcript pipeline;
 - `tts/` — provider contract, Piper, generation tasks, history и audio post-processing;
 - `ocr/` — image-to-text pipeline;
@@ -69,6 +70,10 @@ flowchart LR
 6. Assistant message создаётся в SQLite до генерации и проходит состояния `generating`, `streaming`, `completed`, `failed` или `cancelled`.
 7. `stream=true` отдаёт lifecycle и `delta` через SSE; non-streaming использует тот же persisted lifecycle без `delta`.
 
+Если к сообщению приложены изображения, UI сначала загружает их через `POST /chat/attachments`. Backend валидирует ownership и лимиты, декодирует/нормализует PNG, JPEG или WebP, создаёт thumbnail и передаёт worker только internal descriptors. Модель с подтверждённой Ollama capability `vision` получает изображения напрямую через native `/api/chat`; при выбранной text-only модели vision-анализ создаёт производный текстовый context для конечного ответа. Base64 существует только в transient Ollama request и не сохраняется в chat messages, SQLite или RAG.
+
+Attachment связан с profile, session, user message и task. Его persisted status следует стадиям `preparing`, `analyzing`, `loading_model`, `generating`, `completed`, `failed` и `cancelled`; после process loss reconciliation завершает оборванное состояние как failed. Удаление session/profile и database reset очищает принадлежащие им файлы.
+
 ### ASR
 
 1. `POST /transcribe` или `/transcribe/tasks` получает audio/video.
@@ -90,6 +95,8 @@ UI обращается к `/tts/*`; service выбирает provider, вали
 
 Файлы профиля сканируются, Markdown при необходимости получает structured JSON companion, текст разбивается на chunks, а deterministic embeddings пишутся в SQLite. Chat получает top-k chunks только активного профиля.
 
+Vision-ответ не индексируется автоматически. Пользователь может открыть редактируемый export и явно создать source type `vision_context`; в index попадает только производный текст и безопасные ссылки на message/session/attachment ids, без image binary и storage paths.
+
 ### Plugins
 
 Registry читает `plugins/*/plugin.json` как данные. Код из `plugins/` не импортируется. Поведение trusted plugins реализуется только в `backend/apps/plugins/`.
@@ -104,10 +111,11 @@ Registry читает `plugins/*/plugin.json` как данные. Код из `
 | TTS models | `models/tts/piper/` | ignored |
 | Caches | `models/hf_cache/`, `models/ctranslate2_cache/` | ignored |
 | Profile RAG sources | `rag_sources/profile-<id>/` | ignored |
+| Chat image attachments | `app/data/chat_attachments/profile-<id>/` | ignored except placeholder |
 | TTS data | `app/data/tts/` | ignored except placeholders |
 | Logs | `tmp_logs/` | ignored except `.gitkeep` |
 
-SQLite содержит profiles, sessions, messages, transcripts, model settings, pipeline runs, summary memory и RAG documents/chunks/embeddings. Database reset удаляет profile-owned DB data и profile RAG folders, но не локальные модели.
+SQLite содержит profiles, sessions, messages, chat attachment metadata, transcripts, model settings, pipeline runs, summary memory и RAG documents/chunks/embeddings. Database reset удаляет profile-owned DB data, attachment files и profile RAG folders, но не локальные модели.
 
 ## Networking и security boundaries
 

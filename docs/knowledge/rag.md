@@ -84,6 +84,12 @@ Transcript с `labels.origin=asr_context` индексируется как от
 
 Это отличается от сохранения текстового файла в profile folder.
 
+## Vision context
+
+Завершённый image chat сам по себе не изменяет RAG. `POST /rag/vision-contexts` создаёт `vision_context` только после явного действия пользователя и проверяет, что profile, session, user message и связанные attachments принадлежат одному scope.
+
+В index передаётся редактируемый производный текст размером до 100 000 символов. Metadata может содержать только безопасные references (`message_id`, `session_id`, `attachment_ids`) и отмечает source как `derived_context`; base64 data URI отклоняется, image files и backend storage paths не копируются. Удаление `vision_context` независимо от chat attachment и не удаляет исходное изображение.
+
 ## Storage
 
 SQLite:
@@ -111,6 +117,7 @@ Force ingest нужен только для намеренной полной п
 - unsupported suffix;
 - пустой или выходящий за source root path;
 - пустой ASR context;
+- пустой, несвязанный или содержащий image data URI Vision context;
 - отсутствующий context/file при удалении;
 - выбран неправильный profile;
 - RAG выключен в effective settings;
@@ -124,6 +131,7 @@ Force ingest нужен только для намеренной полной п
 - deterministic search на известной marker строке;
 - presence в debug prompt;
 - delete/reindex cleanup;
+- explicit Vision export и независимое удаление text source без изменения attachment;
 - сравнение source metadata с profile directory.
 
 Команды: [TESTING.md](../TESTING.md).

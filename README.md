@@ -4,13 +4,13 @@ LocalGPT — локальное приложение для чата, транс
 
 ## Возможности
 
-- чат с профилями, историей, streaming-ответами и локальными Ollama-моделями;
+- чат с профилями, историей, streaming-ответами, image attachments и локальными text/vision Ollama-моделями;
 - Auto / Smart Router для выбора chat-модели по типу запроса;
 - ASR Studio и быстрый voice-to-input через whisper.cpp или faster-whisper;
 - анализ транскриптов: быстрое саммари, умное саммари и явно разрешаемый полный pipeline;
 - Voice Studio на базе Piper с локальной библиотекой голосов и историей;
 - OCR изображений через Tesseract;
-- profile-scoped RAG для `.txt`, `.md` и `.json`, включая ASR context;
+- profile-scoped RAG для `.txt`, `.md` и `.json`, включая ASR context и явно сохраняемый text-only Vision context;
 - Plugin Registry v0 с trusted backend handlers;
 - локальный, LAN и private-tailnet доступ.
 
@@ -103,6 +103,7 @@ LAN launcher оставляет backend на localhost и поднимает Cad
 - `models/hf_cache/` и `models/ctranslate2_cache/` — кэши;
 - `app/db/localgpt.db` — SQLite;
 - `rag_sources/profile-<id>/` — документы профиля;
+- `app/data/chat_attachments/profile-<id>/` — оригиналы и thumbnails chat-изображений;
 - `app/data/tts/` и `tmp_logs/` — runtime-артефакты.
 
 Эти данные игнорируются Git. Пустая `LOCAL_MODEL` допустима: приложение запускается без chat-модели, а загрузка выполняется только по явному действию пользователя.

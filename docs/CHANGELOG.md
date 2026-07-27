@@ -20,6 +20,9 @@
 ### Added
 
 - Кнопка перехода к последнему сообщению с сохранением streaming auto-scroll поведения.
+- Multimodal chat для PNG/JPEG/WebP: picker/paste/drop, локальные originals/thumbnails, persisted attachment/task lifecycle и direct Ollama vision route.
+- Отдельный Settings tab `Vision` с библиотекой Qwen2.5-VL/Gemma 3, runtime-confirmed capabilities, profile limits, OCR assist и cache cleanup.
+- Явный редактируемый Vision → RAG export производного текста без image binary.
 
 ### Changed
 

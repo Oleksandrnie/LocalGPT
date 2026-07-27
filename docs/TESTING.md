@@ -38,6 +38,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Подсистема | Команда |
 | --- | --- |
 | Chat routing, Ollama lifecycle, SSE и RAG integration | `venv/bin/python -m unittest tests.test_model_router -v` |
+| Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
 | TTS routes | `venv/bin/python -m unittest tests.test_tts_routes -v` |
@@ -76,6 +77,17 @@ Smoke считается пройденным, если `/health` возвращ
 - non-streaming сохраняет тот же assistant lifecycle;
 - RAG context попадает в prompt только активного профиля;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
+- PNG/JPEG/WebP upload проверяет profile ownership, count/byte/pixel/side limits и не сохраняет binary в message/RAG;
+- direct image route доступен только при runtime-confirmed `vision`, а text-only model использует явный context route;
+- attachment lifecycle связан с persisted user message/task, refresh/cancel и cleanup не оставляют active record в неверном terminal state.
+
+Static UI contract для attachment composer, Vision tab и explicit RAG export:
+
+```bash
+node tests/chat_attachments_ui.test.mjs
+```
+
+Контролируемый live vision smoke запускается отдельно после явной установки модели. Используйте маленькое детерминированное изображение, `temperature=0`, ограниченный `max_tokens`, последовательный запуск и `keep_alive=0`; проверьте точный текст/формы, отсутствие CPU fallback, terminal task/attachment state, отсутствие binary/path в messages и пустой `ollama ps` после теста. Не загружайте 3B и 7B одновременно на 16 GB машине.
 
 ### ASR
 
@@ -128,6 +140,8 @@ Smoke считается пройденным, если `/health` возвращ
 - streaming и refresh/reconnect;
 - ASR/TTS/OCR tool docks;
 - RAG panel и context section;
+- image picker/paste/drop, attachment preview/remove/history и Vision → RAG dialog;
+- Vision settings/library, runtime capability state и cache cleanup;
 - Plugins и network-address menu;
 - keyboard focus, aria states и reduced-motion-sensitive flows.
 
@@ -151,5 +165,6 @@ Smoke считается пройденным, если `/health` возвращ
 
 - автоматизированного end-to-end browser suite в репозитории нет;
 - live ASR/LLM/TTS/OCR зависит от установленных binaries, моделей и hardware;
+- vision output зависит от модели; smoke должен проверять заранее известные признаки изображения, а не точную формулировку ответа;
 - LAN/Tailscale требуют проверки в реальной сети;
 - manual accessibility и mobile regression остаются обязательными для заметных UI-изменений.
