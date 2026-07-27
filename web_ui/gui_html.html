@@ -194,6 +194,8 @@
                 aria-label="Перейти к последнему сообщению" title="Перейти к последнему сообщению">↓</button>
 
             <form class="composer" id="composerForm">
+                <div class="composer-attachments" id="composerAttachments" role="list"
+                    aria-label="Изображения к сообщению" aria-live="polite" hidden></div>
                 <div class="composer__tools">
                     <div class="composer-menu">
                         <button class="composer-menu__trigger" id="composerMenuButton" type="button"
@@ -201,12 +203,14 @@
                             <span aria-hidden="true">+</span>
                         </button>
                         <div class="composer-menu__dropdown" id="composerMenu" hidden>
-                            <button class="composer-menu__item" id="fileMenuItem" type="button">Фото (OCR)</button>
+                            <button class="composer-menu__item" id="imageMenuItem" type="button">Изображение</button>
+                            <button class="composer-menu__item" id="fileMenuItem" type="button">Фото в текст (OCR)</button>
                             <button class="composer-menu__item" id="transcribeMenuItem"
                                 type="button">Транскрибировать</button>
                             <button class="composer-menu__item" id="speakMenuItem" type="button">Озвучить</button>
                         </div>
                     </div>
+                    <input id="chatImageInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
                     <input id="transcribeInput" type="file" accept="audio/*,video/*" hidden />
                     <input id="ocrImageInput" type="file" accept="image/*" hidden />
                 </div>

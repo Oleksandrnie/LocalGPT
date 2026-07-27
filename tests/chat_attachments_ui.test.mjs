@@ -1,0 +1,36 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const html = readFileSync(new URL("../web_ui/gui_html.html", import.meta.url), "utf8");
+const javascript = readFileSync(new URL("../web_ui/js/app.js", import.meta.url), "utf8");
+const css = readFileSync(new URL("../web_ui/css/style.css", import.meta.url), "utf8");
+
+test("composer exposes a dedicated multi-image input without replacing OCR", () => {
+  assert.match(html, /id="chatImageInput"[^>]+accept="image\/png,image\/jpeg,image\/webp"[^>]+multiple/);
+  assert.match(html, /id="imageMenuItem"[^>]*>Изображение</);
+  assert.match(html, /id="fileMenuItem"[^>]*>Фото в текст \(OCR\)</);
+  assert.match(html, /id="composerAttachments"[^>]+aria-live="polite"/);
+});
+
+test("composer validates, uploads, removes, and submits server attachment ids", () => {
+  assert.match(javascript, /const CHAT_IMAGE_MIME_TYPES = new Set\(\["image\/png", "image\/jpeg", "image\/jpg", "image\/webp"\]\)/);
+  assert.match(javascript, /await request\("\/chat\/attachments"/);
+  assert.match(javascript, /method: "DELETE"/);
+  assert.match(javascript, /payload\.attachment_ids = normalizedAttachmentIds/);
+  assert.match(javascript, /consumeComposerAttachments: true/);
+});
+
+test("paste and multi-image drop share the attachment ingestion flow", () => {
+  assert.match(javascript, /addEventListener\("paste"/);
+  assert.match(javascript, /await addChatImageFiles\(imageFiles\)/);
+  assert.match(javascript, /files\.every\(\(file\) => classifyFileKind\(file\) === "image"\)/);
+  assert.match(javascript, /await addChatImageFiles\(files\)/);
+});
+
+test("attachment strip has theme, focus, error, and mobile styles", () => {
+  assert.match(css, /\.composer-attachment\[data-status="error"\]/);
+  assert.match(css, /\.composer-attachment__remove:focus-visible/);
+  assert.match(css, /body\.theme-light \.composer-attachment/);
+  assert.match(css, /@media[\s\S]+\.composer-attachments \{/);
+});

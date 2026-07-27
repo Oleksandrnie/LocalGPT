@@ -2409,6 +2409,104 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     background: transparent;
 }
 
+.composer-attachments {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+    padding: 2px 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+.composer-attachments[hidden] {
+    display: none;
+}
+
+.composer-attachment {
+    position: relative;
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) 30px;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 min(280px, calc(100vw - 48px));
+    min-width: 0;
+    min-height: 66px;
+    padding: 7px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: rgba(25, 31, 38, 0.94);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
+}
+
+.composer-attachment[data-status="uploading"],
+.composer-attachment[data-status="queued"] {
+    border-color: rgba(124, 92, 255, 0.44);
+}
+
+.composer-attachment[data-status="error"] {
+    border-color: rgba(240, 108, 108, 0.54);
+}
+
+.composer-attachment__preview {
+    width: 52px;
+    height: 52px;
+    border-radius: 11px;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.composer-attachment__body {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.composer-attachment__name,
+.composer-attachment__status {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.composer-attachment__name {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.composer-attachment__status {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.composer-attachment[data-status="error"] .composer-attachment__status {
+    color: #f0b4b4;
+}
+
+.composer-attachment__remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+}
+
+.composer-attachment__remove:hover {
+    background: rgba(240, 108, 108, 0.14);
+    color: #f0b4b4;
+}
+
+.composer-attachment__remove:focus-visible {
+    outline: 2px solid rgba(159, 124, 255, 0.62);
+    outline-offset: 2px;
+}
+
 .composer__tools {
     display: flex;
     align-items: center;
@@ -5595,6 +5693,16 @@ body.theme-light .composer__input-wrap {
     box-shadow: 0 16px 44px rgba(31, 41, 55, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.82);
 }
 
+body.theme-light .composer-attachment {
+    background: rgba(255, 255, 255, 0.78);
+    border-color: rgba(31, 41, 55, 0.09);
+    box-shadow: 0 12px 30px rgba(31, 41, 55, 0.09);
+}
+
+body.theme-light .composer-attachment__remove {
+    background: rgba(31, 41, 55, 0.05);
+}
+
 body.theme-light .composer__input-wrap:focus-within {
     border-color: rgba(124, 92, 255, 0.55);
     box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.16), 0 18px 46px rgba(124, 92, 255, 0.12);
@@ -6132,6 +6240,21 @@ body.theme-light .tool-window__resize::before {
         gap: 8px;
         width: calc(100% - (var(--mobile-composer-gutter) * 2) - var(--safe-area-left) - var(--safe-area-right));
         margin-bottom: calc(var(--mobile-composer-bottom) + var(--safe-area-bottom));
+    }
+
+    .composer-attachments {
+        grid-column: 1 / -1;
+        gap: 8px;
+    }
+
+    .composer-attachment {
+        grid-template-columns: 52px minmax(0, 1fr) 44px;
+        flex-basis: min(250px, calc(100vw - 40px));
+    }
+
+    .composer-attachment__remove {
+        width: 44px;
+        height: 44px;
     }
 
     .composer__input-wrap {

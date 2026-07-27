@@ -23,23 +23,24 @@
 - Related files: `app/schemas/`, `app/db.py`, `app/config.py`, `app/routes/profiles.py`, `backend/apps/chat/attachments.py`, `backend/apps/chat/services/attachment_storage.py`, `backend/apps/chat/services/image_preprocessing.py`, delete/reset flows, `tests/test_chat_attachments.py`, `app/requirements.txt`.
 - [x] Completed: ТЗ, обязательная документация и текущие entry points проверены; DOCX отрендерен и просмотрен (17 страниц).
 - [x] Completed: Contract/storage foundation, API tests and compatible model-router regression.
-- [ ] Pending: Checkpoint commit.
+- [x] Completed: Checkpoint commit.
 - Architectural decisions: Binary files хранятся project-scoped под `app/data/chat_attachments/profile-*`; DB хранит только backend-owned относительные paths/metadata; Pillow используется для decode/orientation/thumbnail; backend limit является source of truth; normal runtime shutdown/restart сохраняет attachments, а database reset удаляет и DB rows, и files.
 - Problems: Полный `tests.test_pipeline_memory` не является чистым baseline: один assertion failure и один `IndexError` в ASR summary normalization не связаны с chat attachment diff; ошибочно запрошенного модуля `tests.test_profiles` в репозитории нет.
 - Technical debt: Нет.
 - Next steps: Создать Stage 1 checkpoint и перейти к composer UI.
 - Validation: `venv/bin/python -m compileall -q app backend tests` passed; `git diff --check` passed; `venv/bin/python -m unittest tests.test_chat_attachments -v` — 9 passed; `venv/bin/python -m unittest tests.test_model_router tests.test_chat_attachments -v` — 60 passed. broader `tests.test_pipeline_memory` — 61 passed, 1 unrelated failure, 2 errors (один error — отсутствующий запрошенный test module).
-- Git checkpoint: pending
+- Git checkpoint: `7b84d91` — Add chat attachment storage foundation
 
 ### Stage 2 — Composer Input and Preview
 - Goal: Реализовать paste, multi-file drag-and-drop, picker, preview/remove/upload state и UI limit.
 - Related files: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, frontend tests/manual matrix.
-- [ ] Pending: Implementation and validation.
+- [x] Completed: Implementation and validation.
+- [ ] Pending: Checkpoint commit.
 - Architectural decisions: Clipboard image обрабатывается только при наличии image item; обычная text paste сохраняется; thumbnails используются вместо originals.
-- Problems: Автоматизированного browser E2E suite нет.
+- Problems: Полноценного browser E2E suite нет; добавлен static UI contract test и выполнена ручная проверка живого localhost UI.
 - Technical debt: Нет.
-- Next steps: Начать после Stage 1 checkpoint.
-- Validation: pending
+- Next steps: Создать Stage 2 checkpoint и перейти к capability/runtime boundary.
+- Validation: `node --check web_ui/js/app.js` passed; `node tests/chat_attachments_ui.test.mjs` — 4 passed; `node tests/markdown_rendering.test.mjs` — 2 passed; `venv/bin/python -m unittest tests.test_chat_attachments -v` — 9 passed; compileall/diff-check passed. Manual localhost Browser: desktop 1280×720 dark and mobile 390×844 light; dedicated picker advertises `multiple`; upload/thumbnail/ready/delete passed; image-only paste passed; mixed text+image paste preserved text; mobile card stayed inside viewport with horizontal overflow and 44×44 remove target; focus reached native remove button. All test uploads/DB rows/temp files were removed; theme/viewport/clipboard restored.
 - Git checkpoint: pending
 
 ### Stage 3 — Vision Capability and Runtime Boundary
@@ -111,13 +112,13 @@
 ## Overall Status
 - Status: in progress
 - Completed: Request/TЗ analysis, DOCX text/layout review, documentation-impact review, repository/code boundary inspection, Stage 1 implementation and validation.
-- In progress: Stage 1 checkpoint.
-- Pending: Stages 2–8, final docs and cleanup commit.
-- Changed files: `.gitignore`, `app/config.py`, `app/db.py`, `app/requirements.txt`, `app/routes/meta.py`, `app/routes/profiles.py`, `app/schemas/core.py`, `app/data/chat_attachments/.gitkeep`, `backend/apps/chat/attachments.py`, `backend/apps/chat/schemas.py`, `backend/apps/chat/services/attachment_storage.py`, `backend/apps/chat/services/image_preprocessing.py`, `backend/apps/chat/routes.py`, `backend/server.py`, `tests/test_chat_attachments.py`, this progress file.
-- Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; live vision smoke не разрешён в обычной validation.
+- In progress: Stage 2 checkpoint.
+- Pending: Stages 3–8, final docs and cleanup commit.
+- Changed files since latest checkpoint: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, `tests/chat_attachments_ui.test.mjs`, this progress file.
+- Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
 - Technical debt: Нет.
-- Next action: Commit Stage 1, then implement Stage 2 composer attachment UI.
-- Latest Git checkpoint: `067eb0c` — baseline before task.
+- Next action: Commit Stage 2, then implement Stage 3 capability/runtime boundary with mocked tests.
+- Latest Git checkpoint: `7b84d91` — Add chat attachment storage foundation.
 
 ## Continuation Prompt
-Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Read the progress file, current Git status, `AGENTS.md`, and latest checkpoint commit first. Current status: Stage 1 implementation validated, checkpoint pending. Completed: full ТЗ/DOCX and mandatory docs review; attachment schemas/DB/storage/preprocessing/upload/media/delete/cleanup foundation; 9 focused tests and 60 combined chat/model-router tests passed. Remaining: checkpoint Stage 1 and Stages 2–8. Problems/blockers: broader pipeline-memory suite has pre-existing ASR summary failures; live vision model smoke must not run automatically. Decisions to preserve: Chat owns v1; OCR Studio stays independent; images never auto-index into RAG; normal shutdown preserves attachments; database reset deletes them; use `docs/progress/` and `docs/CHANGELOG.md`; preserve the active ASR progress file. Latest checkpoint: `067eb0c`. Perform next: inspect/stage/commit Stage 1, record hash, then implement Stage 2 composer attachments. Update the progress file before and after the next meaningful stage.
+Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Read the progress file, current Git status, `AGENTS.md`, and latest checkpoint commit first. Current status: Stage 2 implementation validated, checkpoint pending. Completed: Stage 1 checkpoint `7b84d91`; composer strip, dedicated picker, PNG/JPEG/WebP frontend limits, upload/error/remove states, multi-image drop, image-only and mixed clipboard paste, attachment-only submit, desktop/mobile/theme/focus manual validation and 4 static UI tests. Remaining: checkpoint Stage 2 and Stages 3–8. Problems/blockers: broader pipeline-memory suite has pre-existing ASR summary failures; Ollama runtime is unavailable and no vision model exists in project storage; live inference/download must not run automatically. Decisions to preserve: dynamic capability detection, `vision_model=auto`; primary future controlled smoke candidate `qwen2.5vl:3b`, optional `qwen2.5vl:7b`/`gemma3:4b`; Chat owns v1; OCR Studio stays independent; images never auto-index into RAG; normal shutdown preserves attachments; database reset deletes them; preserve active ASR progress. Perform next: inspect/stage/commit Stage 2, record hash, then implement Stage 3 capability resolver and transient Ollama image payload with mocked tests.

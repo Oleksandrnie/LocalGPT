@@ -163,6 +163,8 @@ const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
+const CHAT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
+const CHAT_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
 const MEDIA_FILE_EXTENSIONS = new Set([
   "mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus", "aiff", "aif", "wma",
   "mp4", "mov", "m4v", "avi", "mkv", "webm", "mpeg", "mpg", "ts", "mts", "m2ts",
@@ -206,15 +208,18 @@ const els = {
   messageScrollEnd: document.getElementById("messageScrollEnd"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
+  composerAttachments: document.getElementById("composerAttachments"),
   promptInput: document.getElementById("promptInput"),
   voiceRecordButton: document.getElementById("voiceRecordButton"),
   voiceModelMenu: document.getElementById("voiceModelMenu"),
   sendButton: document.getElementById("sendButton"),
   composerMenuButton: document.getElementById("composerMenuButton"),
   composerMenu: document.getElementById("composerMenu"),
+  imageMenuItem: document.getElementById("imageMenuItem"),
   fileMenuItem: document.getElementById("fileMenuItem"),
   transcribeMenuItem: document.getElementById("transcribeMenuItem"),
   speakMenuItem: document.getElementById("speakMenuItem"),
+  chatImageInput: document.getElementById("chatImageInput"),
   transcribeInput: document.getElementById("transcribeInput"),
   ocrImageInput: document.getElementById("ocrImageInput"),
   scrollTopButton: document.getElementById("scrollTopButton"),
@@ -486,6 +491,7 @@ const state = {
   chatTaskStreamAbort: null,
   chatTaskReplay: null,
   chatTypingStreams: new Map(),
+  chatAttachments: [],
   isSpeaking: false,
   autoScrollPinned: true,
   messageScrollEndObserver: null,
@@ -2777,6 +2783,8 @@ function autoResizePrompt() {
 function updateSendButtonState() {
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
+  const hasReadyAttachments = state.chatAttachments.some((item) => item.status === "ready" && item.server?.id);
+  const hasBlockedAttachments = state.chatAttachments.some((item) => item.status !== "ready");
   const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
   const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
   const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
@@ -2789,7 +2797,9 @@ function updateSendButtonState() {
       ? "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения."
       : (!selectedModel ? "Выберите модель, чтобы отправлять сообщения." : "Напишите сообщение…");
   }
-  els.sendButton.disabled = state.isSending ? false : (!hasText || !selectedInstalled);
+  els.sendButton.disabled = state.isSending
+    ? false
+    : ((!hasText && !hasReadyAttachments) || hasBlockedAttachments || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
   els.sendButton.classList.toggle("send-button--stopping", state.isSending);
   els.sendButton.setAttribute("aria-label", state.isSending ? "Остановить генерацию" : "Отправить сообщение");
@@ -2991,11 +3001,17 @@ function classifyDraggedPayload(dataTransfer) {
   if (hasDirectoryInDataTransfer(dataTransfer)) return "directory";
 
   const files = Array.from(dataTransfer.files || []);
-  if (files.length > 1) return "multiple";
+  if (files.length > 1) {
+    return files.every((file) => classifyFileKind(file) === "image") ? "images" : "multiple";
+  }
   if (files.length === 1) return classifyFileKind(files[0]);
 
   const fileItems = Array.from(dataTransfer.items || []).filter((item) => item.kind === "file");
-  if (fileItems.length > 1) return "multiple";
+  if (fileItems.length > 1) {
+    return fileItems.every((item) => String(item?.type || "").toLowerCase().startsWith("image/"))
+      ? "images"
+      : "multiple";
+  }
   if (!fileItems.length) return "none";
   const mimeType = String(fileItems[0]?.type || "").toLowerCase();
   if (mimeType.startsWith("image/")) return "image";
@@ -3022,11 +3038,11 @@ function extractDroppedFile(dataTransfer) {
 
 function getDropOverlayContent(zone, payloadKind) {
   if (zone === "chat") {
-    if (payloadKind === "image") {
+    if (payloadKind === "image" || payloadKind === "images") {
       return {
         tone: "accent",
-        title: "Отпустите изображение для OCR",
-        meta: "В чате для изображений сейчас доступно только OCR-распознавание текста.",
+        title: payloadKind === "images" ? "Добавить изображения в чат" : "Добавить изображение в чат",
+        meta: "PNG, JPEG и WebP будут загружены локально и появятся над полем ввода.",
       };
     }
     if (payloadKind === "media") {
@@ -3049,8 +3065,8 @@ function getDropOverlayContent(zone, payloadKind) {
   if (payloadKind === "multiple") {
     return {
       tone: "warning",
-      title: "Только один файл за раз",
-      meta: "Пока можно перетаскивать по одному файлу.",
+      title: "Нельзя смешивать типы файлов",
+      meta: "Перетащите несколько изображений либо один аудио/видеофайл.",
     };
   }
 
@@ -3145,6 +3161,229 @@ function activeProfileStreamingEnabled() {
   const preferences = getActiveProfilePreferences();
   const value = preferences?.settings?.streaming_enabled;
   return value === undefined || value === null ? true : Boolean(value);
+}
+
+function activeChatImageSettings() {
+  const settings = getActiveProfilePreferences()?.settings || {};
+  const maxImages = Number.parseInt(settings.max_images_per_message, 10);
+  const maxFileBytes = Number.parseInt(settings.chat_image_max_file_bytes, 10);
+  const maxTotalBytes = Number.parseInt(settings.chat_image_max_total_bytes, 10);
+  return {
+    enabled: settings.chat_images_enabled !== false,
+    maxImages: Math.min(10, Math.max(1, Number.isFinite(maxImages) ? maxImages : 1)),
+    maxFileBytes: Number.isFinite(maxFileBytes) && maxFileBytes > 0 ? maxFileBytes : 20 * 1024 * 1024,
+    maxTotalBytes: Number.isFinite(maxTotalBytes) && maxTotalBytes > 0 ? maxTotalBytes : 40 * 1024 * 1024,
+  };
+}
+
+function isSupportedChatImage(file) {
+  const mimeType = String(file?.type || "").trim().toLowerCase();
+  const extension = fileExtension(file?.name || "");
+  return CHAT_IMAGE_MIME_TYPES.has(mimeType) || (!mimeType && CHAT_IMAGE_EXTENSIONS.has(extension));
+}
+
+function formatChatAttachmentBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
+  }
+  return formatBytes(bytes);
+}
+
+function chatAttachmentStatusText(item) {
+  if (item.status === "queued") return "Ожидает загрузки";
+  if (item.status === "uploading") return "Загрузка…";
+  if (item.status === "ready") {
+    const size = formatChatAttachmentBytes(item.server?.size_bytes || item.file?.size);
+    return size ? `Готово • ${size}` : "Готово";
+  }
+  if (item.status === "error") return item.error || "Не удалось загрузить";
+  return "Подготовка…";
+}
+
+function renderChatAttachments() {
+  if (!els.composerAttachments) return;
+  els.composerAttachments.replaceChildren();
+  els.composerAttachments.hidden = state.chatAttachments.length === 0;
+
+  state.chatAttachments.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "composer-attachment";
+    card.dataset.status = item.status;
+    card.setAttribute("role", "listitem");
+
+    const preview = document.createElement("img");
+    preview.className = "composer-attachment__preview";
+    preview.src = item.previewUrl || item.server?.thumbnail_url || "";
+    preview.alt = "";
+
+    const body = document.createElement("div");
+    body.className = "composer-attachment__body";
+    const name = document.createElement("span");
+    name.className = "composer-attachment__name";
+    name.textContent = item.file?.name || item.server?.original_name || "Изображение";
+    name.title = name.textContent;
+    const status = document.createElement("span");
+    status.className = "composer-attachment__status";
+    status.textContent = chatAttachmentStatusText(item);
+    status.title = status.textContent;
+    body.append(name, status);
+
+    const remove = document.createElement("button");
+    remove.className = "composer-attachment__remove";
+    remove.type = "button";
+    remove.dataset.chatAttachmentRemove = item.localId;
+    remove.setAttribute("aria-label", `Удалить изображение ${name.textContent}`);
+    remove.title = "Удалить изображение";
+    remove.textContent = "×";
+    remove.disabled = state.isSending;
+
+    card.append(preview, body, remove);
+    els.composerAttachments.append(card);
+  });
+  updateSendButtonState();
+}
+
+function releaseChatAttachmentPreview(item) {
+  if (!item?.previewIsObjectUrl || !item.previewUrl) return;
+  URL.revokeObjectURL(item.previewUrl);
+  item.previewIsObjectUrl = false;
+}
+
+async function uploadChatAttachment(item) {
+  if (!item || !state.chatAttachments.some((candidate) => candidate.localId === item.localId)) return;
+  item.status = "uploading";
+  const controller = new AbortController();
+  item.controller = controller;
+  renderChatAttachments();
+
+  const formData = new FormData();
+  formData.append("file", item.file, item.file.name || "clipboard-image");
+  formData.append("profile_id", String(item.profileId));
+  if (item.sessionId) {
+    formData.append("session_id", item.sessionId);
+  }
+
+  try {
+    const serverAttachment = await request("/chat/attachments", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    const current = state.chatAttachments.find((candidate) => candidate.localId === item.localId);
+    if (!current || current.profileId !== state.activeProfileId) {
+      await request(serverAttachment.media_url, { method: "DELETE" }).catch(() => {});
+      return;
+    }
+    releaseChatAttachmentPreview(current);
+    current.previewUrl = serverAttachment.thumbnail_url;
+    current.server = serverAttachment;
+    current.status = "ready";
+    current.error = "";
+  } catch (error) {
+    const current = state.chatAttachments.find((candidate) => candidate.localId === item.localId);
+    if (!current || isAbortError(error)) return;
+    current.status = "error";
+    current.error = error?.message || "Не удалось загрузить изображение";
+    setFooter(`Изображение не загружено: ${current.error}`, "error");
+  } finally {
+    const current = state.chatAttachments.find((candidate) => candidate.localId === item.localId);
+    if (current) {
+      current.controller = null;
+      renderChatAttachments();
+    }
+  }
+}
+
+async function addChatImageFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (!state.activeProfileId) {
+    showToast("Сначала выберите профиль.", "warning");
+    return;
+  }
+
+  const settings = activeChatImageSettings();
+  if (!settings.enabled) {
+    showToast("Изображения в чате отключены в настройках профиля.", "warning");
+    return;
+  }
+
+  const accepted = [];
+  let totalBytes = state.chatAttachments.reduce((sum, item) => sum + Number(item.file?.size || item.server?.size_bytes || 0), 0);
+  let availableSlots = Math.max(0, settings.maxImages - state.chatAttachments.length);
+  for (const file of files) {
+    if (!availableSlots) {
+      showToast(`Можно прикрепить не больше ${settings.maxImages} изображений.`, "warning");
+      break;
+    }
+    if (!isSupportedChatImage(file)) {
+      showToast(`${file.name || "Файл"}: поддерживаются только PNG, JPEG и WebP.`, "warning");
+      continue;
+    }
+    if (Number(file.size || 0) > settings.maxFileBytes) {
+      showToast(`${file.name || "Файл"} превышает лимит ${formatBytes(settings.maxFileBytes)}.`, "warning");
+      continue;
+    }
+    if (totalBytes + Number(file.size || 0) > settings.maxTotalBytes) {
+      showToast(`Общий размер изображений превышает ${formatBytes(settings.maxTotalBytes)}.`, "warning");
+      break;
+    }
+
+    const item = {
+      localId: globalThis.crypto?.randomUUID?.() || `chat-image-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      profileId: state.activeProfileId,
+      sessionId: state.currentSessionId,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      previewIsObjectUrl: true,
+      status: "queued",
+      error: "",
+      server: null,
+      controller: null,
+    };
+    state.chatAttachments.push(item);
+    accepted.push(item);
+    totalBytes += Number(file.size || 0);
+    availableSlots -= 1;
+  }
+
+  renderChatAttachments();
+  await Promise.all(accepted.map((item) => uploadChatAttachment(item)));
+}
+
+async function removeChatAttachment(localId, { deleteRemote = true } = {}) {
+  const index = state.chatAttachments.findIndex((item) => item.localId === localId);
+  if (index < 0) return;
+  const [item] = state.chatAttachments.splice(index, 1);
+  item.controller?.abort();
+  releaseChatAttachmentPreview(item);
+  renderChatAttachments();
+  if (deleteRemote && item.server?.media_url) {
+    try {
+      await request(item.server.media_url, { method: "DELETE" });
+    } catch (error) {
+      setFooter(`Не удалось удалить изображение из кэша: ${error.message || error}`, "error");
+    }
+  }
+}
+
+async function clearChatAttachments({ deleteRemote = true } = {}) {
+  const items = [...state.chatAttachments];
+  state.chatAttachments = [];
+  items.forEach((item) => {
+    item.controller?.abort();
+    releaseChatAttachmentPreview(item);
+  });
+  renderChatAttachments();
+  if (deleteRemote) {
+    await Promise.all(items.map((item) => (
+      item.server?.media_url
+        ? request(item.server.media_url, { method: "DELETE" }).catch(() => {})
+        : Promise.resolve()
+    )));
+  }
 }
 
 function asrFullAnalysisEnabled() {
@@ -6498,19 +6737,7 @@ async function sendOcrTextToChat() {
 async function handleChatDroppedFile(file) {
   const fileKind = classifyFileKind(file);
   if (fileKind === "image") {
-    const approved = await openConfirmDialog({
-      eyebrow: "Drag & Drop",
-      title: "OCR для изображения",
-      message: "Для изображений сейчас доступно только OCR-распознавание текста.",
-      confirmLabel: "Распознать OCR",
-      cancelLabel: "Отмена",
-      returnFocus: els.promptInput,
-    });
-    if (!approved) {
-      showToast("Действие отменено пользователем.", "warning");
-      return;
-    }
-    await runOcrForImage(file);
+    await addChatImageFiles([file]);
     return;
   }
 
@@ -6557,9 +6784,16 @@ async function handleAsrToolDroppedFile(file) {
 }
 
 async function handleDroppedDataTransfer(zone, dataTransfer) {
+  if (zone === "chat" && !hasDirectoryInDataTransfer(dataTransfer)) {
+    const files = Array.from(dataTransfer?.files || []);
+    if (files.length > 1 && files.every((file) => classifyFileKind(file) === "image")) {
+      await addChatImageFiles(files);
+      return;
+    }
+  }
   const { file, error } = extractDroppedFile(dataTransfer);
   if (error === "multiple") {
-    showToast("Пока можно перетаскивать по одному файлу.", "warning");
+    showToast("Перетащите несколько изображений либо один аудио/видеофайл.", "warning");
     return;
   }
   if (!file) {
@@ -7927,6 +8161,9 @@ async function refreshAsrPipelineSettings({ silent = false } = {}) {
 }
 
 async function openSession(sessionId) {
+  if (state.currentSessionId !== (sessionId || null) && state.chatAttachments.length) {
+    await clearChatAttachments({ deleteRemote: true });
+  }
   state.currentSessionId = sessionId || null;
   writeStored(STORAGE_KEYS.activeSessionId, state.currentSessionId || "");
 
@@ -7998,6 +8235,9 @@ async function loadSessions({ preferredSessionId = null } = {}) {
 }
 
 async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
+  if (state.activeProfileId && state.activeProfileId !== (profileId || null) && state.chatAttachments.length) {
+    await clearChatAttachments({ deleteRemote: true });
+  }
   state.activeProfileId = profileId || null;
   state.profileManagementMode = "edit";
   writeStored(STORAGE_KEYS.activeProfileId, state.activeProfileId || "");
@@ -8469,8 +8709,15 @@ async function ensureModelInstalled(modelName) {
   return false;
 }
 
-async function sendPromptText(rawQuery, { clearInput = false } = {}) {
-  const query = String(rawQuery || "").trim();
+async function sendPromptText(
+  rawQuery,
+  { clearInput = false, attachmentIds = [], consumeComposerAttachments = false } = {},
+) {
+  const normalizedAttachmentIds = Array.from(new Set(
+    (Array.isArray(attachmentIds) ? attachmentIds : []).map((item) => String(item || "").trim()).filter(Boolean),
+  ));
+  const query = String(rawQuery || "").trim()
+    || (normalizedAttachmentIds.length ? "Проанализируй прикреплённое изображение." : "");
   if (state.isSending) {
     await cancelCurrentChatGeneration();
     return;
@@ -8492,6 +8739,7 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
   const controller = new AbortController();
   state.chatTaskStartController = controller;
   updateSendButtonState();
+  renderChatAttachments();
   if (clearInput && els.promptInput) {
     els.promptInput.value = "";
     autoResizePrompt();
@@ -8507,12 +8755,18 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
       model_name: selectedModel,
       stream: activeProfileStreamingEnabled(),
     };
+    if (normalizedAttachmentIds.length) {
+      payload.attachment_ids = normalizedAttachmentIds;
+    }
 
     if (state.currentSessionId) {
       payload.session_id = state.currentSessionId;
     }
 
     const task = await request("/chat/tasks", { method: "POST", body: payload, signal: controller.signal });
+    if (consumeComposerAttachments && normalizedAttachmentIds.length) {
+      await clearChatAttachments({ deleteRemote: false });
+    }
     activeTaskId = task?.id || task?.task_id || "";
     state.chatTaskStartController = null;
     state.chatTaskId = task?.id || null;
@@ -8577,13 +8831,21 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     clearChatTypingStreams(activeTaskId);
     state.isSending = false;
     updateSendButtonState();
+    renderChatAttachments();
     scrollMessagesToBottom({ force: true });
   }
 }
 
 async function sendCurrentPrompt() {
   const query = (els.promptInput?.value || "").trim();
-  await sendPromptText(query, { clearInput: true });
+  const attachmentIds = state.chatAttachments
+    .filter((item) => item.status === "ready" && item.server?.id)
+    .map((item) => item.server.id);
+  await sendPromptText(query, {
+    clearInput: true,
+    attachmentIds,
+    consumeComposerAttachments: true,
+  });
 }
 
 async function handleTranscription(file) {
@@ -9338,10 +9600,22 @@ function bindEvents() {
   els.promptInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (!state.isSending) {
+      if (!state.isSending && !els.sendButton?.disabled) {
         sendCurrentPrompt();
       }
     }
+  });
+  els.promptInput?.addEventListener("paste", async (event) => {
+    const clipboard = event.clipboardData;
+    const imageFiles = Array.from(clipboard?.items || [])
+      .filter((item) => item.kind === "file" && String(item.type || "").toLowerCase().startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    if (!imageFiles.length) return;
+    if (!String(clipboard?.getData("text/plain") || "")) {
+      event.preventDefault();
+    }
+    await addChatImageFiles(imageFiles);
   });
 
   els.voiceRecordButton?.addEventListener("click", async () => {
@@ -9399,6 +9673,10 @@ function bindEvents() {
     toggleComposerMenu();
   });
 
+  els.imageMenuItem?.addEventListener("click", () => {
+    toggleComposerMenu(false);
+    els.chatImageInput?.click();
+  });
   els.fileMenuItem?.addEventListener("click", () => {
     toggleComposerMenu(false);
     els.ocrImageInput?.click();
@@ -9411,6 +9689,13 @@ function bindEvents() {
     toggleComposerMenu(false);
     await openTtsTool({ focusText: true });
   });
+  els.chatImageInput?.addEventListener("change", async () => {
+    const files = Array.from(els.chatImageInput.files || []);
+    if (files.length) {
+      await addChatImageFiles(files);
+    }
+    els.chatImageInput.value = "";
+  });
   els.transcribeInput?.addEventListener("change", async () => {
     const file = els.transcribeInput.files?.[0];
     if (file) {
@@ -9422,6 +9707,12 @@ function bindEvents() {
     if (file) {
       await runOcrForImage(file);
     }
+  });
+  els.composerAttachments?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-chat-attachment-remove]");
+    if (!button || button.disabled) return;
+    await removeChatAttachment(button.dataset.chatAttachmentRemove || "");
+    els.promptInput?.focus();
   });
 
   els.messageList?.addEventListener("click", async (event) => {
