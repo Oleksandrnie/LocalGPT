@@ -397,3 +397,30 @@ def cleanup_attachments(*, profile_id: int, scope: str, temporary_ttl_seconds: i
         records = filtered
     result = _delete_records(records, allow_active=False)
     return {"scope": scope, "profile_id": int(profile_id), **result}
+
+
+def attachment_cache_stats(*, profile_id: int) -> dict[str, Any]:
+    _profile_or_error(profile_id)
+    records = db.list_chat_attachments(profile_id=int(profile_id))
+    status_counts: dict[str, int] = {}
+    total_bytes = 0
+    thumbnail_bytes = 0
+    for record in records:
+        status = str(record.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        total_bytes += int(record.get("size_bytes") or 0)
+        thumbnail_path = str(record.get("thumbnail_path") or "")
+        if thumbnail_path:
+            try:
+                thumbnail_bytes += resolve_storage_path(thumbnail_path).stat().st_size
+            except OSError:
+                pass
+    return {
+        "profile_id": int(profile_id),
+        "attachment_count": len(records),
+        "image_bytes": total_bytes,
+        "thumbnail_bytes": thumbnail_bytes,
+        "total_bytes": total_bytes + thumbnail_bytes,
+        "active_count": sum(status_counts.get(status, 0) for status in ACTIVE_ATTACHMENT_STATUSES),
+        "status_counts": status_counts,
+    }

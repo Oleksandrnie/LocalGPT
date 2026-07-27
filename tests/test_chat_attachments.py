@@ -190,6 +190,28 @@ class ChatAttachmentApiTestCase(unittest.TestCase):
         self.assertEqual(result["skipped_active_count"], 0)
         self.assertEqual(db.list_chat_attachments(profile_id=self.profile_id), [])
 
+    def test_cache_stats_and_cleanup_protect_active_attachments(self) -> None:
+        item = self._upload().json()
+        db.update_chat_attachment(item["id"], status="analyzing")
+
+        stats = self.client.get(
+            "/chat/attachments/cache",
+            params={"profile_id": self.profile_id},
+        )
+        cleanup = self.client.post(
+            "/chat/attachments/cleanup",
+            json={"scope": "profile", "profile_id": self.profile_id},
+        )
+
+        self.assertEqual(stats.status_code, 200, stats.text)
+        self.assertEqual(stats.json()["attachment_count"], 1)
+        self.assertEqual(stats.json()["image_bytes"], item["size_bytes"])
+        self.assertEqual(stats.json()["active_count"], 1)
+        self.assertEqual(cleanup.status_code, 200, cleanup.text)
+        self.assertEqual(cleanup.json()["deleted_count"], 0)
+        self.assertEqual(cleanup.json()["skipped_active_count"], 1)
+        self.assertIsNotNone(db.get_chat_attachment(item["id"]))
+
     def test_storage_path_resolution_rejects_traversal(self) -> None:
         with self.assertRaises(attachment_storage.AttachmentStorageError) as raised:
             attachment_storage.resolve_storage_path("../../outside.png")

@@ -704,6 +704,18 @@ def start_chat_task(req: ChatRequest):
                     configured_vision_model=str(effective_settings.get("vision_model") or "auto"),
                     installed_models=installed_records,
                 )
+                if (
+                    plan.mode == "vision_context"
+                    and str(effective_settings.get("vision_fallback") or "vision_context") == "error"
+                ):
+                    raise vision_runtime.VisionRuntimeError(
+                        "VISION_TEXT_MODEL_FALLBACK_DISABLED",
+                        "Выбранная chat-модель не поддерживает изображения, а vision-context fallback отключён.",
+                        details={
+                            "response_model": plan.response_model,
+                            "vision_model": plan.vision_model,
+                        },
+                    )
                 vision_route = plan.to_dict()
                 target_model = plan.response_model
             prepared["target_model"] = target_model

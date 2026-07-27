@@ -73,23 +73,25 @@
 - Related files: `backend/apps/chat/services/vision_context.py`, OCR adapter/service boundary, task/UI error/status flows, `tests/test_ocr_service.py`.
 - [x] Completed: `auto`/`on`/`off` auxiliary OCR evidence, per-image labeling and explicit `ocr_only` degraded route.
 - [x] Completed: OCR failure/error semantics and focused tests without changing OCR Studio routes.
-- [ ] Pending: Checkpoint commit.
+- [x] Completed: Checkpoint commit.
 - Architectural decisions: OCR output не подменяет vision молча; degraded mode маркируется явно.
 - Problems: Live Tesseract/model workload не входит в обычный suite.
 - Technical debt: Нет.
 - Next steps: Создать Stage 5 checkpoint и перейти к profile-owned settings/cache API.
 - Validation: `venv/bin/python -m unittest tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime -v` — 21 passed; compileall и diff-check passed. Tesseract/live image OCR не запускались: adapter проверен mocked tests.
-- Git checkpoint: pending
+- Git checkpoint: `0928e45` — Add OCR assist to vision chat
 
 ### Stage 6 — Settings, Limits and Cache Cleanup
 - Goal: Добавить backend profile-owned settings contract, effective limits, cache stats/cleanup и active-task protection.
 - Related files: profile schemas/routes/config, attachment endpoints/repository/storage, unit/API tests.
-- [ ] Pending: Implementation and validation.
+- [x] Completed: Profile-owned validation/persistence for every vision setting and limit.
+- [x] Completed: Cache statistics, profile/orphan cleanup reporting and active-task protection.
+- [ ] Pending: Checkpoint commit.
 - Architectural decisions: `max_images_per_message` range 1–10, default 1; cleanup возвращает deleted/skipped count и bytes; отдельный UI всех vision-настроек реализуется в Stage 7.5.
 - Problems: Нет.
 - Technical debt: Нет.
-- Next steps: Начать после Stage 5 checkpoint.
-- Validation: pending
+- Next steps: Создать Stage 6 checkpoint и перейти к explicit text-only RAG export.
+- Validation: `venv/bin/python -m unittest tests.test_vision_settings tests.test_chat_attachments tests.test_pipeline_memory.LocalGPTPipelineMemoryTestCase.test_profile_preferences_persist_streaming_enabled -v` — 13 passed; compileall и diff-check passed.
 - Git checkpoint: pending
 
 ### Stage 7 — Explicit Text-only RAG Export
@@ -128,12 +130,12 @@
 ## Overall Status
 - Status: in progress
 - Completed: Request/TЗ analysis, DOCX text/layout review, documentation-impact review, repository/code boundary inspection, Stage 1 implementation and validation.
-- In progress: Stage 5 checkpoint.
+- In progress: Stage 6 checkpoint.
 - Pending: Stages 4–7.5, user model-download handoff, then Stage 8 final QA/docs/cleanup.
-- Changed files since latest checkpoint: chat task OCR integration, `vision_context.py`, OCR/context tests and this progress file.
+- Changed files since latest checkpoint: config defaults, profile settings validator, attachment cache endpoint/service, settings/cache tests and this progress file.
 - Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
 - Technical debt: Нет.
-- Next action: Inspect/stage/commit Stage 5, then implement Stage 6 settings/cache contract; preserve the stop gate after Stage 7.5.
+- Next action: Inspect/stage/commit Stage 6, then implement Stage 7 explicit text-only RAG export; preserve the stop gate after Stage 7.5.
 - Latest Git checkpoint: `2a608a6` — Add vision model capability runtime.
 
 ## Continuation Prompt

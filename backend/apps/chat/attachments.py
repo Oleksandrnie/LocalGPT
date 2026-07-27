@@ -100,6 +100,14 @@ def list_chat_attachments(
     return ChatAttachmentListResponse(attachments=[_public_attachment(record) for record in records])
 
 
+@router.get("/chat/attachments/cache")
+def get_chat_attachment_cache(profile_id: int) -> dict[str, Any]:
+    try:
+        return attachment_storage.attachment_cache_stats(profile_id=profile_id)
+    except attachment_storage.AttachmentStorageError as exc:
+        _raise_storage_error(exc)
+
+
 def _owned_path(attachment_id: str, profile_id: int, field: str) -> tuple[dict[str, Any], Path]:
     try:
         record = attachment_storage.get_owned_attachment(attachment_id, profile_id)

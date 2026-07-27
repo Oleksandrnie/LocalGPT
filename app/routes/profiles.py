@@ -201,8 +201,31 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "heavy_model_keep_alive",
         "router_keep_alive",
         "show_router_thinking_toggle",
+        "chat_images_enabled",
+        "max_images_per_message",
+        "chat_image_max_file_bytes",
+        "chat_image_max_total_bytes",
+        "chat_image_max_pixels",
+        "chat_image_max_side",
+        "vision_model",
+        "vision_fallback",
+        "ocr_assist",
+        "ocr_language",
     }
     cleaned = {key: value[key] for key in allowed if key in value}
+    if "max_images_per_message" in cleaned:
+        try:
+            raw_max_images = int(cleaned["max_images_per_message"])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_max_images_per_message", "message": "Лимит изображений должен быть от 1 до 10."},
+            ) from exc
+        if raw_max_images < 1 or raw_max_images > 10:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_max_images_per_message", "message": "Лимит изображений должен быть от 1 до 10."},
+            )
     preset = cleaned.get("default_pipeline_preset")
     if preset is not None and str(preset).strip().lower() not in {"fast", "balanced", "deep"}:
         raise HTTPException(
@@ -219,11 +242,23 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "rag_top_k",
         "rag_max_context_chars",
         "max_resident_target_models",
+        "max_images_per_message",
+        "chat_image_max_file_bytes",
+        "chat_image_max_total_bytes",
+        "chat_image_max_pixels",
+        "chat_image_max_side",
     ):
         if key in cleaned and cleaned[key] is not None:
             try:
                 parsed = max(1, int(cleaned[key]))
-                cleaned[key] = min(5, parsed) if key == "max_resident_target_models" else parsed
+                if key == "max_resident_target_models":
+                    cleaned[key] = min(5, parsed)
+                elif key == "max_images_per_message":
+                    if parsed > 10:
+                        raise ValueError
+                    cleaned[key] = parsed
+                else:
+                    cleaned[key] = parsed
             except (TypeError, ValueError) as exc:
                 raise HTTPException(
                     status_code=422,
@@ -237,9 +272,52 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "single_large_target_model",
         "preload_model_on_manual_select",
         "show_router_thinking_toggle",
+        "chat_images_enabled",
     ):
         if key in cleaned and cleaned[key] is not None:
             cleaned[key] = _normalize_bool_setting(cleaned[key])
+    if "vision_model" in cleaned:
+        vision_model = str(cleaned["vision_model"] or "auto").strip() or "auto"
+        allowed_vision_models = {
+            "auto",
+            *(str(item.get("id") or "") for item in getattr(config, "VISION_MODEL_CATALOG", [])),
+        }
+        if vision_model not in allowed_vision_models:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_vision_model", "message": "Выберите Auto или модель из Vision-каталога."},
+            )
+        cleaned["vision_model"] = vision_model
+    if "vision_fallback" in cleaned:
+        fallback = str(cleaned["vision_fallback"] or "").strip().lower()
+        if fallback not in {"vision_context", "error"}:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_vision_fallback", "message": "vision_fallback must be vision_context or error."},
+            )
+        cleaned["vision_fallback"] = fallback
+    if "ocr_assist" in cleaned:
+        ocr_assist = str(cleaned["ocr_assist"] or "").strip().lower()
+        if ocr_assist not in {"auto", "on", "off", "ocr_only"}:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_ocr_assist", "message": "ocr_assist must be auto, on, off or ocr_only."},
+            )
+        cleaned["ocr_assist"] = ocr_assist
+    if "ocr_language" in cleaned:
+        cleaned["ocr_language"] = str(cleaned["ocr_language"] or "").strip()[:120]
+    if (
+        "chat_image_max_file_bytes" in cleaned
+        and "chat_image_max_total_bytes" in cleaned
+        and int(cleaned["chat_image_max_file_bytes"]) > int(cleaned["chat_image_max_total_bytes"])
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_chat_image_byte_limits",
+                "message": "Лимит одного изображения не может превышать общий лимит.",
+            },
+        )
     for key in (
         "auto_target_keep_alive",
         "manual_keep_alive",
@@ -337,6 +415,18 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
 
     runtime_settings = _normalize_runtime_settings(req.settings)
     if runtime_settings:
+        current_settings = (_get_profile_or_404(profile_id).get("preferences") or {}).get("settings") or {}
+        merged_runtime_settings = {**current_settings, **runtime_settings}
+        if int(merged_runtime_settings.get("chat_image_max_file_bytes") or 0) > int(
+            merged_runtime_settings.get("chat_image_max_total_bytes") or 0
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_chat_image_byte_limits",
+                    "message": "Лимит одного изображения не может превышать общий лимит.",
+                },
+            )
         updates["settings"] = runtime_settings
 
     if not updates:
