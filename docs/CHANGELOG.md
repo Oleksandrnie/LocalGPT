@@ -29,6 +29,7 @@
 
 - Завершён responsive mobile pass для chat composer, settings и ASR/TTS/OCR tools.
 - Проверен ASR context lifecycle: сохранение как `asr_context`, RAG retrieval, включение в chat prompt и связанное удаление.
+- Пользовательский live smoke multimodal chat принят: Qwen2.5-VL image flow и настройка Vision context работают штатно.
 
 ## 2026-05
 
