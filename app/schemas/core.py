@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     title: str | None = None
     role: str | None = None
     stream: bool = False
+    attachment_ids: list[str] | None = None
 
 
 class ModelPullRequest(BaseModel):

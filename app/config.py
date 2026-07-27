@@ -22,6 +22,7 @@ PIPELINE_LOG_FILE = LOG_DIR / "pipeline.log"
 TRANSCRIBE_LOG_FILE = LOG_DIR / "transcribe.log"
 ASR_DIAGNOSTICS_DIR = LOG_DIR / "asr_diagnostics"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
+CHAT_ATTACHMENTS_DIR = DATA_DIR / "chat_attachments"
 RAG_SOURCE_DIR = PROJECT_ROOT / "rag_sources"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
 DEFAULT_CORS_ALLOW_ORIGIN_REGEX = (
@@ -392,6 +393,14 @@ DEFAULT_RUNTIME_SETTINGS = {
     "summary_memory_limit": 5,
     "rag_top_k": 5,
     "rag_max_context_chars": 6000,
+    "chat_images_enabled": True,
+    "max_images_per_message": 1,
+    "chat_image_max_file_bytes": 20 * 1024 * 1024,
+    "chat_image_max_total_bytes": 40 * 1024 * 1024,
+    "chat_image_max_pixels": 16_000_000,
+    "chat_image_max_side": 4096,
+    "vision_model": "auto",
+    "ocr_assist": "auto",
     "ollama_think": "auto",
     "show_router_thinking_toggle": False,
     "pipeline": DEFAULT_PIPELINE,
@@ -552,7 +561,15 @@ TTS_OUTPUT_DIR = _resolve_path(os.getenv("TTS_OUTPUT_DIR"), TTS_DATA_DIR / "outp
 TTS_HISTORY_DIR = _resolve_path(os.getenv("TTS_HISTORY_DIR"), TTS_DATA_DIR / "history")
 TTS_TEMP_DIR = _resolve_path(os.getenv("TTS_TEMP_DIR"), TTS_DATA_DIR / "temp")
 
-for path in (DATA_DIR, RAG_SOURCE_DIR, TTS_DATA_DIR, TTS_OUTPUT_DIR, TTS_HISTORY_DIR, TTS_TEMP_DIR):
+for path in (
+    DATA_DIR,
+    CHAT_ATTACHMENTS_DIR,
+    RAG_SOURCE_DIR,
+    TTS_DATA_DIR,
+    TTS_OUTPUT_DIR,
+    TTS_HISTORY_DIR,
+    TTS_TEMP_DIR,
+):
     path.mkdir(parents=True, exist_ok=True)
 SETTINGS.whisper_cpp_models_dir.mkdir(parents=True, exist_ok=True)
 

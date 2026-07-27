@@ -21,6 +21,7 @@ from ..schemas import (
 from ..services import criteria as criteria_service
 from ..services.chat import normalize_model_name, session_title_hint
 from backend.apps.rag import service as rag_service
+from backend.apps.chat.services import attachment_storage
 
 router = APIRouter()
 CHAT_ROLE = "chat"
@@ -358,6 +359,7 @@ def delete_profile(profile_id: int):
             detail={"code": "cannot_delete_last_profile", "message": "Нельзя удалить единственный профиль"},
         )
     rag_service.delete_profile_source_dir(profile_id)
+    attachment_storage.delete_profile_attachments(profile_id)
     _sync_asr_diagnostics_dir(profile_id, False)
     db.delete_profile(profile_id)
     db.ensure_default_profile()
@@ -388,6 +390,7 @@ def delete_chat_session(session_id: str):
     session = db.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="session_not_found")
+    attachment_storage.delete_session_attachments(session_id)
     db.delete_session(session_id)
     return {"deleted": session_id}
 

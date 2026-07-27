@@ -26,6 +26,7 @@ from backend.apps.chat.service import (
     session_title_hint,
 )
 from backend.apps.chat.services import local_calculator, model_residency, model_router
+from backend.apps.chat.services import attachment_storage
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
@@ -826,5 +827,6 @@ def reset_session(req: ResetRequest):
     if config.SETTINGS.admin_token and req.admin_token != config.SETTINGS.admin_token:
         raise HTTPException(status_code=403, detail="forbidden")
     sid = req.session_id.strip()
+    attachment_storage.delete_session_attachments(sid)
     db.reset_session(sid)
     return {"ok": True}
