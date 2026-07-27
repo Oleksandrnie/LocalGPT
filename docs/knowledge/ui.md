@@ -83,6 +83,10 @@ CSS содержит отдельные ranges для узких телефон�
 - длинные сообщения и streaming;
 - touch targets.
 
+## Model transfer
+
+Settings → System содержит `Экспорт моделей` и `Импорт моделей`. Export preview выбирает complete units и показывает unique size; задача отображает progress и скачивает `.localgpt-models`. Import использует file picker, checksum preview и отдельный confirmation dialog; success report разделяет опубликованные и уже идентичные файлы.
+
 ## Navigation и state
 
 - sidebar open state — `sidebar_open`;

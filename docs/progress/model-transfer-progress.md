@@ -53,28 +53,33 @@
 - [x] Implemented explicit accessible confirmation UI, apply endpoint, provider inventory refresh after success, concrete imported/skipped report, and cancellation before storage mutation.
 - [x] Added staged-upload discard endpoint and cleanup test.
 - [x] Added synthetic clean import, identical reimport, target conflict/no-overwrite, and upload discard tests.
-- [ ] Pending: checkpoint after staged-diff review.
+- [x] Completed: focused Stage 3 checkpoint created after staged-diff review.
 - Validation: JS syntax check and targeted compileall passed; 10 model-transfer tests passed; `git diff --check` passed. All import tests used temporary synthetic files and patched configured roots.
-- Git checkpoint: pending.
+- Git checkpoint: `4633393` — Implement confirmed model bundle import.
 
 ### Stage 4 — QA, Permanent Documentation and Cleanup
 - Goal: complete proportional validation, update only affected docs, and remove this temporary file in a terminal cleanup commit.
-- [ ] Pending: baseline static checks and full safe unit suite.
+- [x] Completed: baseline static checks, 10 targeted model-transfer tests, and 2 static UI contract tests.
+- [x] Completed: full safe unit suite executed (213 tests); 210 passed and 3 unrelated existing ASR/plugin tests failed identically when rerun in isolation.
 - [ ] Pending: desktop/mobile, dark/light, keyboard/focus/error-state UI checks without real export/import.
 - [ ] Pending: user-controlled later smoke with real models; do not claim it has run.
-- [ ] Pending: affected permanent docs and `docs/CHANGELOG.md`.
+- [x] Completed: affected architecture/backend/providers/UI/testing/spec/changelog documents updated.
 - [ ] Pending: final cleanup commit removing this progress file while preserving `docs/progress/.gitkeep` and the unrelated active ASR progress file.
-- Git checkpoint: pending.
+- Validation: `git diff --check`, compileall, JS syntax, Markdown/UI Node tests passed; targeted model-transfer Python tests 10/10 passed; full suite 210/213 with isolated unrelated failures:
+  - `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers` — expected phrase absent;
+  - `test_pipeline_tasks_are_normalized_for_transcript_record` — empty tasks list;
+  - `test_get_plugin_doc_reads_manifest_doc_only` — temporary DB lacks `app_settings`.
+- Git checkpoint: pending documentation/QA checkpoint.
 
 ## Overall Status
 - Status: in progress
 - Completed: current product decisions, bundle contract/inventory, export backend, System Settings export UI, upload inspect, and initial import-apply core.
-- In progress: Stage 3 checkpoint preparation.
-- Pending: Stage 4 validation/docs/cleanup.
-- Current uncommitted files: export shared-file manifest correction, import service/router, confirmation UI, import tests, and this refreshed progress file.
+- In progress: Stage 4 documentation/QA checkpoint.
+- Pending: manual mobile/light/keyboard check, later user-controlled real-model smoke, and terminal progress cleanup.
+- Current uncommitted files: affected permanent docs, model-transfer UI contract test, and this progress update.
 - Known problems: import upload/task state is not durable across backend restart; current apply guarantee is conflict preflight plus atomic file publication rather than all-model transaction rollback. UI refreshes existing provider discovery after success; live runtime readiness is intentionally not exercised in automated tests.
-- Next action: inspect staged diff and create the focused Stage 3 checkpoint, then run Stage 4 baseline/full safe suite and documentation-impact cleanup.
-- Latest Git checkpoint: `2072be1` — Add model transfer settings UI.
+- Next action: create documentation/QA checkpoint, then perform remaining manual UI matrix. Keep progress until user-controlled real-model smoke is either accepted or explicitly deferred.
+- Latest Git checkpoint: `4633393` — Implement confirmed model bundle import.
 
 ## Continuation Prompt
 Continue `model-transfer` from `docs/progress/model-transfer-progress.md`. Read this file, `git status`, and checkpoint `2072be1`. Scope is one browser-downloaded/uploaded uncompressed ZIP64 `.localgpt-models`; do not reintroduce volumes, destination paths, filesystem-format policy, Shared model drive, or real-model tests. Stages 1–2 are checkpointed. Stage 3 implementation and validation are complete but uncommitted: opaque staged upload, confirm-time revalidation, conflict preflight, identical skip, staged hash/copy, configured-root atomic publication, Ollama manifest-last ordering, shared-file manifest correction, explicit UI confirmation/apply, provider refresh, upload discard, and 10 passing targeted tests. Next inspect staged diff and commit Stage 3, record its hash, then perform Stage 4 baseline/full safe tests, affected permanent docs, truthful manual UI checks, and terminal progress cleanup. Preserve `docs/progress/asr-analysis-modes-progress.md`.

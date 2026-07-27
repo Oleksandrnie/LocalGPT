@@ -94,6 +94,8 @@ Message lifecycle поля включают `status`, `model`, `error`, `task_id
 
 Chat, transcription и TTS имеют in-process task registries. Runtime shutdown/reset сначала отменяет активные tasks. Эти registries не являются durable queue: после process loss backend восстанавливает пользовательское состояние через persisted records и reconciliation rules, а не продолжает Python thread. Для image chat reconciliation также переводит незавершённые attachment records в terminal failed/cancelled state; cleanup не удаляет attachment активной задачи.
 
+Model export также использует process-local task registry: start, status/cancel и ready-only download. Import upload получает opaque `upload_id`; confirm endpoint повторно валидирует bundle перед записью. Browser не передаёт destination/source paths.
+
 ## Добавление модуля
 
 - Создать `backend/apps/<feature>/` с `__init__.py`, router и service boundaries.
