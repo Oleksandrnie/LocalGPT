@@ -11,3 +11,9 @@
 - Result: Mobile UI work was completed and user-verified across the implemented responsive flows; the remaining progress record is closed.
 - Key files: `web_ui/gui_html.html`, `web_ui/css/style.css`, `web_ui/js/app.js`
 - Verification: user-confirmed QA and previously recorded viewport/theme checks.
+
+## 2026-07-27 — ASR/RAG context verification
+- Scope: ASR context persistence, RAG retrieval, deletion, and chat prompt assembly.
+- Result: `TEST_ASR_CONTEXT_123` was saved as a separate `asr_context` source, retrieved, included in the actual debug prompt with RAG enabled, and deleted together with its transcript record.
+- Key files: `backend/apps/asr/transcripts.py`, `backend/apps/rag/service.py`, `backend/apps/chat/routes.py`, `backend/apps/chat/service.py`
+- Verification: isolated TestClient check; live API check on `127.0.0.1:8000`; two existing regression tests passed.
