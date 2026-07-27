@@ -218,7 +218,7 @@ def _chat_worker(
                         analysis_messages,
                         image_paths,
                         max_total_bytes=max_total_bytes,
-                        **service._runtime_kwargs(vision_model, settings),
+                        **service._runtime_kwargs(vision_model, settings, vision=True),
                     )
                 )
                 completion_model = response_model
@@ -255,7 +255,7 @@ def _chat_worker(
                         settings.get("chat_image_max_total_bytes")
                         or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
                     ),
-                    **service._runtime_kwargs(completion_model, settings),
+                    **service._runtime_kwargs(completion_model, settings, vision=True),
                 )
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
@@ -289,7 +289,7 @@ def _chat_worker(
                             settings.get("chat_image_max_total_bytes")
                             or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
                         ),
-                        **service._runtime_kwargs(completion_model, settings),
+                        **service._runtime_kwargs(completion_model, settings, vision=True),
                     )
                 )
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":

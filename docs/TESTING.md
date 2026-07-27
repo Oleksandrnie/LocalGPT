@@ -79,6 +79,7 @@ Smoke считается пройденным, если `/health` возвращ
 - profile prompt, memory, criteria и language policy сохраняют порядок.
 - PNG/JPEG/WebP upload проверяет profile ownership, count/byte/pixel/side limits и не сохраняет binary в message/RAG;
 - direct image route доступен только при runtime-confirmed `vision`, а text-only model использует явный context route;
+- Vision context size сохраняется в profile settings и уходит в native Ollama как `options.num_ctx` для direct/streaming inference;
 - attachment lifecycle связан с persisted user message/task, refresh/cancel и cleanup не оставляют active record в неверном terminal state.
 
 Static UI contract для attachment composer, Vision tab и explicit RAG export:
@@ -88,6 +89,8 @@ node tests/chat_attachments_ui.test.mjs
 ```
 
 Контролируемый live vision smoke запускается отдельно после явной установки модели. Используйте маленькое детерминированное изображение, `temperature=0`, ограниченный `max_tokens`, последовательный запуск и `keep_alive=0`; проверьте точный текст/формы, отсутствие CPU fallback, terminal task/attachment state, отсутствие binary/path в messages и пустой `ollama ps` после теста. Не загружайте 3B и 7B одновременно на 16 GB машине.
+
+Если Ollama сообщает `request (...) exceeds the available context size (4096)`, откройте Settings → Vision → `Vision context, токены`, сохраните 8192 (для более длинной истории — 16384) и повторите запрос. Значение применяется к следующему vision task.
 
 ### ASR
 

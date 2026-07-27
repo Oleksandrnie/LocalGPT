@@ -7,6 +7,7 @@
 `backend/apps/chat/services/ollama_runtime.py` — низкоуровневый клиент локального Ollama:
 
 - normal, streaming и native multimodal `/api/chat`;
+- передаёт `temperature`, `num_predict` и явный `options.num_ctx`, чтобы Ollama не использовал неявный default context 4096;
 - model load/unload и active runners;
 - `keep_alive`, `think` и Metal→CPU fallback;
 - принудительная остановка зависших runners в ограниченных recovery flows.
@@ -46,6 +47,8 @@ Catalog capability — декларация UI, но direct image route разр
 - возвращает явную ошибку, если fallback запрещён или подходящей vision-модели нет.
 
 OCR assist (`auto`, `on`, `off`) добавляет помеченные per-image evidence; `ocr_only` — отдельный явно degraded route, а не скрытая замена vision.
+
+Для image chat profile setting `vision_num_ctx` применяется к direct vision analysis/generation. Значение по умолчанию — 8192, допустимый диапазон — 4096–131072; text-only response в `vision_context` fallback использует обычный model `num_ctx`. Больший context помогает вместить визуальные токены и историю, но увеличивает расход памяти.
 
 ## ASR backends
 

@@ -881,6 +881,12 @@
                             </select>
                         </label>
                         <label class="field">
+                            <span class="field__label">Vision context, токены</span>
+                            <input id="visionNumCtxInput" class="field__control" type="number"
+                                min="4096" max="131072" step="1024" />
+                            <small>Рекомендуется 8192. Больший context уменьшает риск ошибки, но требует больше памяти.</small>
+                        </label>
+                        <label class="field">
                             <span class="field__label">OCR assist</span>
                             <select id="visionOcrAssistSelect" class="field__control">
                                 <option value="auto">Auto — optional evidence</option>

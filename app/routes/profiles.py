@@ -208,6 +208,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "chat_image_max_pixels",
         "chat_image_max_side",
         "vision_model",
+        "vision_num_ctx",
         "vision_fallback",
         "ocr_assist",
         "ocr_language",
@@ -288,6 +289,26 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 detail={"code": "invalid_vision_model", "message": "Выберите Auto или модель из Vision-каталога."},
             )
         cleaned["vision_model"] = vision_model
+    if "vision_num_ctx" in cleaned:
+        try:
+            vision_num_ctx = int(cleaned["vision_num_ctx"])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_vision_num_ctx",
+                    "message": "Vision context должен быть целым числом от 4096 до 131072.",
+                },
+            ) from exc
+        if vision_num_ctx < 4096 or vision_num_ctx > 131072:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_vision_num_ctx",
+                    "message": "Vision context должен быть целым числом от 4096 до 131072.",
+                },
+            )
+        cleaned["vision_num_ctx"] = vision_num_ctx
     if "vision_fallback" in cleaned:
         fallback = str(cleaned["vision_fallback"] or "").strip().lower()
         if fallback not in {"vision_context", "error"}:

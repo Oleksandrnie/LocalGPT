@@ -445,6 +445,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "chat_image_max_pixels": 16_000_000,
     "chat_image_max_side": 4096,
     "vision_model": "auto",
+    "vision_num_ctx": 8192,
     "vision_fallback": "vision_context",
     "ocr_assist": "auto",
     "ocr_language": "",

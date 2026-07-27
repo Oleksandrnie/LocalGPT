@@ -57,6 +57,7 @@ Settings tab `Vision` не смешан с обычной chat library. Он п�
 
 - enable image chat и primary model/auto;
 - text-model fallback (`vision_context` или error);
+- Vision context size в токенах (4096–131072, default 8192);
 - OCR assist/language;
 - max images, file/total bytes, pixels и side;
 - attachment cache statistics и cleanup.

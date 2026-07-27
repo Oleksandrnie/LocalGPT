@@ -309,11 +309,11 @@ class ChatService:
         except Exception as exc:  # pragma: no cover - лог только для диагностики
             LOGGER.warning("Failed to write chat log: %s", exc)
 
-    def _runtime_kwargs(self, model: str, settings: dict) -> dict[str, Any]:
+    def _runtime_kwargs(self, model: str, settings: dict, *, vision: bool = False) -> dict[str, Any]:
         request_settings = dict(settings or {})
         request_settings["num_ctx_requested"] = request_settings.get("num_ctx")
-        request_settings["num_ctx_applied"] = False
-        request_settings["num_ctx_apply_method"] = "openai_compatible_not_supported"
+        request_settings["num_ctx_applied"] = request_settings.get("num_ctx") is not None
+        request_settings["num_ctx_apply_method"] = "native_ollama_options"
         keep_alive = ollama_runtime.resolve_keep_alive(model, request_settings)
         raw_num_gpu = request_settings.get("ollama_num_gpu", request_settings.get("num_gpu"))
         num_gpu = None
@@ -327,6 +327,13 @@ class ChatService:
             "max_tokens": request_settings.get("max_tokens", config.SETTINGS.max_tokens),
             "keep_alive": keep_alive,
         }
+        context_key = "vision_num_ctx" if vision else "num_ctx"
+        raw_num_ctx = request_settings.get(context_key)
+        if raw_num_ctx is not None:
+            try:
+                runtime_kwargs["num_ctx"] = max(1, int(raw_num_ctx))
+            except (TypeError, ValueError):
+                pass
         if num_gpu is not None:
             runtime_kwargs["num_gpu"] = num_gpu
         if "ollama_allow_cpu_fallback" in request_settings:

@@ -266,6 +266,25 @@ class VisionOllamaPayloadTestCase(unittest.TestCase):
         self.assertEqual(base64.b64decode(payload["messages"][0]["images"][0]), self.first_path.read_bytes())
         self.assertNotIn("images", original[0])
 
+    def test_native_ollama_payload_contains_requested_context_size(self) -> None:
+        original = [{"role": "user", "content": "what is shown?"}]
+
+        with patch.object(
+            ollama_runtime,
+            "_post_json",
+            return_value={"message": {"content": "native answer"}},
+        ) as post_json:
+            vision_runtime.chat_completion(
+                "qwen2.5vl:3b",
+                original,
+                [self.first_path],
+                num_ctx=16384,
+                allow_cpu_fallback=False,
+            )
+
+        payload = post_json.call_args.args[1]
+        self.assertEqual(payload["options"]["num_ctx"], 16384)
+
 
 if __name__ == "__main__":
     unittest.main()

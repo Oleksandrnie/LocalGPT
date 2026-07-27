@@ -369,6 +369,7 @@ const els = {
   chatImagesEnabledToggle: document.getElementById("chatImagesEnabledToggle"),
   visionModelSelect: document.getElementById("visionModelSelect"),
   visionFallbackSelect: document.getElementById("visionFallbackSelect"),
+  visionNumCtxInput: document.getElementById("visionNumCtxInput"),
   visionOcrAssistSelect: document.getElementById("visionOcrAssistSelect"),
   visionOcrLanguageInput: document.getElementById("visionOcrLanguageInput"),
   visionMaxImagesInput: document.getElementById("visionMaxImagesInput"),
@@ -4214,6 +4215,7 @@ function visionSettingsValues() {
   return {
     chat_images_enabled: settings.chat_images_enabled !== false,
     vision_model: String(settings.vision_model || "auto"),
+    vision_num_ctx: Math.min(131072, Math.max(4096, Number(settings.vision_num_ctx) || 8192)),
     vision_fallback: String(settings.vision_fallback || "vision_context"),
     ocr_assist: String(settings.ocr_assist || "auto"),
     ocr_language: String(settings.ocr_language || ""),
@@ -4293,6 +4295,7 @@ function renderVisionSettings() {
   if (els.chatImagesEnabledToggle) els.chatImagesEnabledToggle.checked = values.chat_images_enabled;
   if (els.visionModelSelect) els.visionModelSelect.value = values.vision_model;
   if (els.visionFallbackSelect) els.visionFallbackSelect.value = values.vision_fallback;
+  if (els.visionNumCtxInput) els.visionNumCtxInput.value = String(values.vision_num_ctx);
   if (els.visionOcrAssistSelect) els.visionOcrAssistSelect.value = values.ocr_assist;
   if (els.visionOcrLanguageInput) els.visionOcrLanguageInput.value = values.ocr_language;
   if (els.visionMaxImagesInput) els.visionMaxImagesInput.value = String(values.max_images_per_message);
@@ -4304,6 +4307,7 @@ function renderVisionSettings() {
     els.chatImagesEnabledToggle,
     els.visionModelSelect,
     els.visionFallbackSelect,
+    els.visionNumCtxInput,
     els.visionOcrAssistSelect,
     els.visionOcrLanguageInput,
     els.visionMaxImagesInput,
@@ -4337,6 +4341,7 @@ async function saveVisionSettingsFlow(settingsOverride = null) {
   const settings = settingsOverride || {
     chat_images_enabled: Boolean(els.chatImagesEnabledToggle?.checked),
     vision_model: String(els.visionModelSelect?.value || "auto"),
+    vision_num_ctx: Number(els.visionNumCtxInput?.value || 8192),
     vision_fallback: String(els.visionFallbackSelect?.value || "vision_context"),
     ocr_assist: String(els.visionOcrAssistSelect?.value || "auto"),
     ocr_language: String(els.visionOcrLanguageInput?.value || "").trim(),
@@ -4360,6 +4365,7 @@ async function resetVisionSettingsFlow() {
   await saveVisionSettingsFlow({
     chat_images_enabled: true,
     vision_model: "auto",
+    vision_num_ctx: 8192,
     vision_fallback: "vision_context",
     ocr_assist: "auto",
     ocr_language: "",

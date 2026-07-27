@@ -46,10 +46,12 @@ test("vision context export is explicit, editable, and text-only", () => {
 test("settings expose a dedicated Vision tab with catalog, controls, and cache actions", () => {
   assert.match(html, /data-settings-tab="vision">Vision</);
   assert.match(html, /data-settings-tab-panel="vision"/);
+  assert.match(html, /id="visionNumCtxInput"[^>]+min="4096"[^>]+max="131072"/);
   [
     "visionModelLibrary",
     "chatImagesEnabledToggle",
     "visionModelSelect",
+    "visionNumCtxInput",
     "visionFallbackSelect",
     "visionOcrAssistSelect",
     "visionOcrLanguageInput",
@@ -65,6 +67,7 @@ test("settings expose a dedicated Vision tab with catalog, controls, and cache a
   assert.match(html, /gemma3:4b/);
   assert.match(javascript, /state\.visionModels = Array\.isArray\(data\?\.vision_catalog\)/);
   assert.match(javascript, /Runtime confirmed:/);
+  assert.match(javascript, /vision_num_ctx/);
   assert.match(javascript, /data-vision-model-action="download"/);
   assert.match(javascript, /saveActiveProfilePreferences\(\{ settings \}\)/);
   assert.match(javascript, /\/chat\/attachments\/cache\?profile_id=/);

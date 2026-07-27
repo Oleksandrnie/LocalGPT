@@ -224,6 +224,7 @@ def chat_completion(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    num_ctx: int | None = None,
     keep_alive: str | None = None,
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
@@ -234,6 +235,8 @@ def chat_completion(
         options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = int(max_tokens)
+    if num_ctx is not None:
+        options["num_ctx"] = int(num_ctx)
     if num_gpu is not None:
         options["num_gpu"] = int(num_gpu)
 
@@ -268,6 +271,7 @@ def chat_completion_stream(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    num_ctx: int | None = None,
     keep_alive: str | None = None,
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
@@ -278,6 +282,8 @@ def chat_completion_stream(
         options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = int(max_tokens)
+    if num_ctx is not None:
+        options["num_ctx"] = int(num_ctx)
     if num_gpu is not None:
         options["num_gpu"] = int(num_gpu)
 

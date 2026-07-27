@@ -169,6 +169,38 @@ class ModelRouterTestCase(unittest.TestCase):
             keep_alive="45s",
         )
 
+    def test_chat_completion_passes_num_ctx_to_native_ollama_request(self):
+        service = ChatService()
+        messages = [{"role": "user", "content": "hello"}]
+
+        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+            reply = service.chat_completion(
+                "qwen2.5vl:3b",
+                messages,
+                settings={"temperature": 0.1, "max_tokens": 5, "num_ctx": 8192},
+            )
+
+        self.assertEqual(reply, "ok")
+        native_chat.assert_called_once_with(
+            "qwen2.5vl:3b",
+            messages=messages,
+            temperature=0.1,
+            max_tokens=5,
+            num_ctx=8192,
+            keep_alive="5m",
+        )
+
+    def test_vision_runtime_kwargs_use_vision_num_ctx(self):
+        service = ChatService()
+
+        kwargs = service._runtime_kwargs(
+            "qwen2.5vl:3b",
+            {"temperature": 0.1, "max_tokens": 5, "num_ctx": 32768, "vision_num_ctx": 16384},
+            vision=True,
+        )
+
+        self.assertEqual(kwargs["num_ctx"], 16384)
+
     def test_chat_completion_passes_think_setting_to_native_ollama_request(self):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
@@ -232,6 +264,7 @@ class ModelRouterTestCase(unittest.TestCase):
                     messages=messages,
                     temperature=0.1,
                     max_tokens=5,
+                    num_ctx=8192,
                     keep_alive="45s",
                 )
             )
@@ -243,6 +276,7 @@ class ModelRouterTestCase(unittest.TestCase):
         self.assertEqual(payload["messages"], messages)
         self.assertEqual(payload["options"]["temperature"], 0.1)
         self.assertEqual(payload["options"]["num_predict"], 5)
+        self.assertEqual(payload["options"]["num_ctx"], 8192)
         self.assertEqual(payload["keep_alive"], "45s")
 
     def test_ollama_chat_passes_think_false_to_native_chat_payload(self):

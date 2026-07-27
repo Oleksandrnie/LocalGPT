@@ -1586,8 +1586,8 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
         _merge_dict(pipeline, overrides["pipeline"])
         effective["pipeline"] = pipeline
     effective["num_ctx_requested"] = effective.get("num_ctx")
-    effective["num_ctx_applied"] = False
-    effective["num_ctx_apply_method"] = "openai_compatible_not_supported"
+    effective["num_ctx_applied"] = effective.get("num_ctx") is not None
+    effective["num_ctx_apply_method"] = "native_ollama_options"
     profile_runtime_keys = (
         "mem_turns",
         "streaming_enabled",
