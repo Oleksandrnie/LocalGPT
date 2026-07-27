@@ -4199,6 +4199,23 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     color: #f0b4b4;
 }
 
+.model-transfer__list {
+    display: grid;
+    gap: 8px;
+    max-height: 280px;
+    overflow: auto;
+}
+
+.model-transfer__item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
 .tool-dock {
     display: flex;
     flex: 0 0 auto;

@@ -474,6 +474,13 @@ const els = {
   resetDatabaseButton: document.getElementById("resetDatabaseButton"),
   databaseStatus: document.getElementById("databaseStatus"),
   downloadList: document.getElementById("downloadList"),
+  refreshModelTransferButton: document.getElementById("refreshModelTransferButton"),
+  modelTransferList: document.getElementById("modelTransferList"),
+  exportModelsButton: document.getElementById("exportModelsButton"),
+  importModelsButton: document.getElementById("importModelsButton"),
+  importModelsInput: document.getElementById("importModelsInput"),
+  cancelModelTransferButton: document.getElementById("cancelModelTransferButton"),
+  modelTransferStatus: document.getElementById("modelTransferStatus"),
 };
 
 const VOICE_RECORD_ICON = els.voiceRecordButton?.innerHTML || "";
@@ -592,6 +599,9 @@ const state = {
   activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
   appRuntimeBusy: false,
+  modelTransferModels: [],
+  modelTransferTaskId: null,
+  modelTransferBusy: false,
   asrToolIsOpen: false,
   asrToolIsMinimized: false,
   asrToolBounds: null,
@@ -7777,6 +7787,92 @@ function renderAppRuntimeMaintenance() {
   }
 }
 
+function renderModelTransfer() {
+  if (!els.modelTransferList) return;
+  const models = state.modelTransferModels || [];
+  els.modelTransferList.innerHTML = models.length
+    ? models.map((item) => `
+        <label class="model-transfer__item">
+          <input type="checkbox" data-model-transfer-id="${escapeHtml(item.id)}" ${item.selectable ? "checked" : "disabled"} />
+          <span><strong>${escapeHtml(item.model_id)}</strong><br><small>${escapeHtml(item.family)}${item.reason ? ` • ${escapeHtml(item.reason)}` : ""}</small></span>
+          <span>${formatBytes(item.size || 0)}</span>
+        </label>`).join("")
+    : '<p class="subtle">Готовые локальные модели не найдены.</p>';
+  if (els.exportModelsButton) els.exportModelsButton.disabled = state.modelTransferBusy || !models.some((item) => item.selectable);
+  if (els.importModelsButton) els.importModelsButton.disabled = state.modelTransferBusy;
+  if (els.refreshModelTransferButton) els.refreshModelTransferButton.disabled = state.modelTransferBusy;
+  if (els.cancelModelTransferButton) els.cancelModelTransferButton.hidden = !state.modelTransferTaskId;
+}
+
+async function loadModelTransferPreview() {
+  setInlineStatus(els.modelTransferStatus, "Проверяю локальные модели…", "warning");
+  try {
+    const data = await request("/model-transfer/export-preview");
+    state.modelTransferModels = data.models || [];
+    renderModelTransfer();
+    setInlineStatus(els.modelTransferStatus, `Готово моделей: ${data.complete_count || 0}. Общий уникальный размер: ${formatBytes(data.total_unique_size || 0)}.`, "success");
+  } catch (error) {
+    setInlineStatus(els.modelTransferStatus, `Не удалось получить модели: ${error.message || error}`, "error");
+  }
+}
+
+async function pollModelTransferTask(taskId) {
+  const task = await request(`/model-transfer/tasks/${encodeURIComponent(taskId)}`);
+  if (task.status === "running") {
+    setInlineStatus(els.modelTransferStatus, `Упаковка: ${task.processed_files || 0}/${task.total_files || "?"} файлов, ${formatBytes(task.processed_bytes || 0)}.`, "warning");
+    window.setTimeout(() => void pollModelTransferTask(taskId), 500);
+    return;
+  }
+  state.modelTransferBusy = false;
+  state.modelTransferTaskId = null;
+  renderModelTransfer();
+  if (task.status === "completed") {
+    setInlineStatus(els.modelTransferStatus, "Bundle готов. Начинаю скачивание…", "success");
+    window.location.assign(`/model-transfer/exports/${encodeURIComponent(taskId)}/download`);
+  } else {
+    setInlineStatus(els.modelTransferStatus, task.status === "cancelled" ? "Экспорт отменён." : `Ошибка экспорта: ${task.error_code || "unknown"}`, "error");
+  }
+}
+
+async function startModelExport() {
+  const selected = Array.from(els.modelTransferList?.querySelectorAll("[data-model-transfer-id]:checked") || [])
+    .map((input) => input.getAttribute("data-model-transfer-id"));
+  if (!selected.length) {
+    setInlineStatus(els.modelTransferStatus, "Выберите хотя бы одну готовую модель.", "warning");
+    return;
+  }
+  state.modelTransferBusy = true;
+  renderModelTransfer();
+  try {
+    const task = await request("/model-transfer/exports", { method: "POST", body: { models: selected } });
+    state.modelTransferTaskId = task.task_id;
+    renderModelTransfer();
+    await pollModelTransferTask(task.task_id);
+  } catch (error) {
+    state.modelTransferBusy = false;
+    renderModelTransfer();
+    setInlineStatus(els.modelTransferStatus, `Не удалось начать экспорт: ${error.message || error}`, "error");
+  }
+}
+
+async function inspectModelImport(file) {
+  const form = new FormData();
+  form.append("bundle", file);
+  state.modelTransferBusy = true;
+  renderModelTransfer();
+  setInlineStatus(els.modelTransferStatus, `Проверяю ${file.name}…`, "warning");
+  try {
+    const result = await request("/model-transfer/import-inspect", { method: "POST", body: form });
+    setInlineStatus(els.modelTransferStatus, `Bundle исправен: ${result.models?.length || 0} моделей, ${formatBytes(result.total_size || 0)}. Применение импорта будет доступно после подтверждения на следующем этапе.`, "success");
+  } catch (error) {
+    setInlineStatus(els.modelTransferStatus, `Bundle не принят: ${error.message || error}`, "error");
+  } finally {
+    state.modelTransferBusy = false;
+    if (els.importModelsInput) els.importModelsInput.value = "";
+    renderModelTransfer();
+  }
+}
+
 function setSettingsTab(tabName, { persist = true, render = true } = {}) {
   const allowed = new Set(["profile", "models", "vision", "asr", "tts", "plugins", "system"]);
   const next = allowed.has(tabName) ? tabName : "profile";
@@ -7830,6 +7926,7 @@ function renderSettings() {
   renderPlugins();
   renderDatabaseMaintenance();
   renderAppRuntimeMaintenance();
+  renderModelTransfer();
 
   if (els.modelsDirInput && !els.modelsDirInput.value && state.modelsDir) {
     els.modelsDirInput.value = state.modelsDir;
@@ -10895,6 +10992,19 @@ function bindEvents() {
 
   els.moveModelsDirButton?.addEventListener("click", async () => {
     await saveModelsDir(true);
+  });
+
+  els.refreshModelTransferButton?.addEventListener("click", () => void loadModelTransferPreview());
+  els.exportModelsButton?.addEventListener("click", () => void startModelExport());
+  els.importModelsButton?.addEventListener("click", () => els.importModelsInput?.click());
+  els.importModelsInput?.addEventListener("change", () => {
+    const file = els.importModelsInput?.files?.[0];
+    if (file) void inspectModelImport(file);
+  });
+  els.cancelModelTransferButton?.addEventListener("click", async () => {
+    if (state.modelTransferTaskId) {
+      await request(`/model-transfer/tasks/${encodeURIComponent(state.modelTransferTaskId)}/cancel`, { method: "POST" });
+    }
   });
 
   document.addEventListener("pointerover", (event) => {

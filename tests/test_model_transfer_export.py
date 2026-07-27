@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from backend.apps.model_transfer import export_service
 from backend.apps.model_transfer.manifest import BundleManifest
+from backend.apps.model_transfer.import_service import inspect_archive
 
 
 class ModelTransferExportTests(unittest.TestCase):
@@ -44,6 +45,9 @@ class ModelTransferExportTests(unittest.TestCase):
                     manifest = BundleManifest.parse(bundle.read("manifest.json"))
                     self.assertEqual(manifest.models[0]["id"], unit["id"])
                     self.assertEqual(bundle.read(manifest.files[0].path), b"model bytes")
+                inspected = inspect_archive(archive)
+                self.assertTrue(inspected["valid"])
+                self.assertEqual(inspected["models"][0]["id"], unit["id"])
 
 
 if __name__ == "__main__":

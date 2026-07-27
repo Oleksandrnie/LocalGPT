@@ -46,6 +46,8 @@
 - Related files: `backend/apps/model_transfer/`, `backend/server.py`, `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, model task coordination points, targeted tests.
 - [x] Completed: implement background uncompressed ZIP64 export task, SHA-256 manifest, unique payload entries, status/cancel endpoints, and ready-only download endpoint.
 - [ ] Pending: add System Settings selection/progress/download UI and stronger interruption/cleanup/task-persistence coverage.
+- [x] Completed: add active System Settings transfer panel with model selection, refresh, export progress/cancel/download, import file picker, and checksum inspection status.
+- [ ] Pending: import application/confirmation remains Stage 3; current import button validates and previews only, with explicit UI wording.
 - [ ] Pending: implement exact provider artifact export, Ollama blob deduplication, free-space reserve, streamed SHA-256, resumable incomplete bundle, cancellation, and error mapping.
 - [ ] Pending: add export preview/task UI and targeted backend/static UI tests.
 - Architectural decisions: source model artifacts remain immutable; browser download destination and subsequent transport are outside LocalGPT; the archive contains strict manifest/checksums and provider payload only.
@@ -53,7 +55,7 @@
 - Technical debt: none recorded yet.
 - Next steps: start only after Stage 1 validation/checkpoint.
 - Validation: `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export -v` (7 passed); targeted compileall and `git diff --check` passed; tests used temporary synthetic bytes only.
-- Git checkpoint: pending backend-export checkpoint.
+- Git checkpoint: `cc1910e` — Implement model bundle export tasks; UI/inspect checkpoint pending.
 
 ### Stage 3 — Safe Import
 - Goal: implement read-only bundle inspect, explicit confirmation/conflict choices, staged provider-unit publication, post-import discovery validation, recovery, and import UI.
@@ -84,12 +86,12 @@
 ## Overall Status
 - Status: in progress
 - Completed: decisions, revised contract, Stage 1 manifest/inventory/preview implementation and targeted validation.
-- In progress: Stage 2 export backend checkpoint, then System Settings UI.
+- In progress: Stage 2 System Settings UI and import-inspect checkpoint.
 - Pending: all implementation, validation, permanent documentation updates, checkpoint commits, and final cleanup.
 - Changed files: `backend/apps/model_transfer/__init__.py`, `manifest.py`, `inventory.py`, `router.py`, `backend/server.py`, two targeted test modules, `docs/MODEL_TRANSFER_SPEC.md`, and this progress file.
 - Known problems: simplified single-file browser transfer drops the original external-volume resume workflow; large-file streaming and temporary-space behavior must be explicit and tested.
 - Technical debt: separate provider task registries will require carefully scoped coordination.
-- Next action: commit export backend, record hash, then add System Settings export/import surface.
+- Next action: checkpoint UI/import inspect, then implement Stage 3 confirmed import application.
 - Latest Git checkpoint: `31e79d2` — Add model transfer bundle contract.
 
 ## Continuation Prompt

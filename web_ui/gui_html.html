@@ -1125,6 +1125,27 @@
                     <p class="inline-status" id="pluginsStatus"></p>
                 </section>
 
+                <section class="settings-group model-transfer" data-settings-tab-panel="system">
+                    <div class="settings-group__header">
+                        <div>
+                            <p class="eyebrow">Перенос</p>
+                            <h4>Экспорт и импорт моделей</h4>
+                        </div>
+                        <button class="button button--ghost" id="refreshModelTransferButton" type="button">Обновить</button>
+                    </div>
+                    <p class="subtle">Создайте один файл <code>.localgpt-models</code> и перенесите его на другой компьютер любым способом.</p>
+                    <div id="modelTransferList" class="model-transfer__list">
+                        <p class="subtle">Нажмите «Обновить», чтобы получить список моделей.</p>
+                    </div>
+                    <div class="button-row">
+                        <button class="button button--primary" id="exportModelsButton" type="button">Экспорт моделей</button>
+                        <button class="button button--ghost" id="importModelsButton" type="button">Импорт моделей</button>
+                        <input id="importModelsInput" type="file" accept=".localgpt-models" hidden />
+                        <button class="button button--ghost" id="cancelModelTransferButton" type="button" hidden>Отменить</button>
+                    </div>
+                    <p class="inline-status" id="modelTransferStatus" aria-live="polite"></p>
+                </section>
+
                 <section class="settings-group" data-settings-tab-panel="system">
                     <div class="settings-group__header">
                         <div>
