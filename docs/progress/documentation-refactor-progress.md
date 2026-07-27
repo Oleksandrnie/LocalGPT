@@ -9,10 +9,10 @@
 
 ## Current Status
 
-- Status: Stage 2 target architecture created; validation and checkpoint pending.
-- Completed: Stage 1 audit committed; target permanent documents and knowledge files created with explicit ownership; root `AGENTS.md` foundation added.
-- In progress: validating Stage 2 structure and relative links.
-- Pending: content consolidation, agent workflow completion, final validation, and cleanup.
+- Status: Stage 3 consolidation implemented; validation and checkpoint pending.
+- Completed: Stages 1–2 committed; root README rewritten; architecture/testing/changelog/backlog and six knowledge files filled from code-verified sources; replaced hub copies removed.
+- In progress: completing Stage 3 validation and recording pre-existing test-suite failures.
+- Pending: agent workflow migration, final validation, cleanup, and documentation-refactor progress removal.
 - Branch note: the specification names `update-documentation`, while the user explicitly selected `update_project_docs`; the explicit user choice is authoritative.
 
 ## Architecture Scope
@@ -112,14 +112,16 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 - [x] Validated every relative link in the new skeleton.
 - Architectural decisions: project-wide permanent docs live in `docs/`; component-owned README files remain beside their runtime/configuration directories; explicit `Pending migration` markers are temporary and must be removed by Stage 5.
 - Validation: 13 target/entry Markdown files checked; all relative targets exist; `git diff --check` passed; no project `skills/` directory; runtime prompt remains unchanged.
-- Git checkpoint: pending — `stage 2: establish documentation architecture`.
+- Git checkpoint: `39ba7a5` — `stage 2: establish documentation architecture`.
 
 ### Stage 3 — Consolidate and Rewrite Documentation
 
-- [ ] Rewrite the root README and fill target documents from code-verified sources.
-- [ ] Remove only fully replaced duplicate documents.
-- [ ] Preserve runtime and component-owned documentation.
-- [ ] Run safe application smoke and documentation checks.
+- [x] Rewrote the root README and filled target documents from code-verified sources.
+- [x] Removed only fully replaced duplicate documents.
+- [x] Preserved runtime prompt, dependency manifest, plugin-owned docs, RAG folder docs, active ASR progress, and `compare-branch/`.
+- [x] Ran safe application smoke and documentation checks.
+- Architectural decisions: root README contains only product overview/startup; project-wide subsystem details live in `docs/knowledge/`; manifest-owned plugin docs and runtime-folder RAG docs remain canonical locally.
+- Validation: all 27 project Markdown files have valid relative targets; isolated `/health` + `/ui/gui_html.html` smoke passed on a temporary SQLite DB; `node --check web_ui/js/app.js` and both Markdown renderer tests passed; full Python suite ran 160 tests with 157 passing and three pre-existing failures recorded below; `git diff --check` and runtime-preservation checks passed.
 - Git checkpoint: pending — `stage 3: consolidate project documentation`.
 
 ### Stage 4 — Migrate Agent Documentation Workflow
@@ -181,14 +183,19 @@ No repository file matching an AI Coding Retrieval Stack specification was found
 
 ## Regression Issues
 
-- None found during Stage 1; no source code changed.
+- Documentation changes introduced no source-code regression.
+- Full Python discovery currently reports:
+  - `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers`: mocked responses no longer match current full-pipeline stage/validation behavior.
+  - `test_pipeline_tasks_are_normalized_for_transcript_record`: mocked task payload no longer reaches the expected normalized task list.
+  - `test_get_plugin_doc_reads_manifest_doc_only`: passes in isolation, but fails after the full suite because restored DB state lacks `app_settings`.
+- The two ASR failures reproduce in isolation; the plugin-doc failure does not. These issues predate and are unrelated to documentation-only changes, so they were added to `docs/BACKLOG.md` rather than fixed outside scope.
 
 ## Next Steps
 
-1. Validate Stage 2 structure and all relative links.
-2. Create the exact Stage 2 checkpoint commit.
-3. Fill the new documents from code-verified sources, then remove duplicates in Stage 3.
+1. Complete scoped link validation and isolated backend smoke.
+2. Create the exact Stage 3 checkpoint commit.
+3. Finish `AGENTS.md`, move the active ASR progress file, and remove old GPT instruction copies in Stage 4.
 
 ## Continuation Prompt
 
-Continue the LocalGPT documentation refactor in branch `update_project_docs`. Read `docs/progress/documentation-refactor-progress.md`, `git status`, and commit `8a87bc2` first. Stage 2 target files and ownership rules are created; validate all relative links and commit them as `stage 2: establish documentation architecture`. Then implement Stage 3 by replacing every `Pending migration` marker with code-verified content and removing only fully replaced duplicate documents. Preserve `app/prompts/system_base.md`, `compare-branch/`, plugin-local docs, `rag_sources/README.md`, and the active ASR progress record. Do not edit any AI Coding Retrieval Stack specification or create project skills.
+Continue the LocalGPT documentation refactor in branch `update_project_docs`. Read `docs/progress/documentation-refactor-progress.md`, `git status`, and commits `8a87bc2` / `39ba7a5` first. Stage 3 content and deletions are implemented. Complete scoped link validation and isolated backend smoke, then commit as `stage 3: consolidate project documentation`. Known unrelated test issues: two ASR pipeline tests fail in isolation and one plugin-doc test fails only after full-suite DB-state leakage; they are recorded in `docs/BACKLOG.md`. Next implement Stage 4: complete `AGENTS.md`, move active ASR progress to `docs/progress/`, and remove old GPT instruction variants. Preserve `app/prompts/system_base.md`, `compare-branch/`, plugin-local docs, and `rag_sources/README.md`. Do not edit any AI Coding Retrieval Stack specification or create project skills.

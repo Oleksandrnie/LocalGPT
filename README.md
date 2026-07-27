@@ -1,691 +1,118 @@
 # LocalGPT
 
-Локальный unified-проект для `chat + ASR + TTS + OCR + LAN + RAG` без внешних облачных API.
-Основной runtime работает на `FastAPI + Ollama + faster-whisper + Piper + Tesseract + SQLite`.
+LocalGPT — локальное приложение для чата, транскрибации, синтеза речи, OCR и RAG. Данные, модели и runtime-артефакты остаются на компьютере; основной интерфейс доступен в браузере через FastAPI.
 
-## Что уже есть
+## Возможности
 
-- `backend/apps/*` mini-app layout для chat/asr/tts/ocr (transitional migration от legacy `app/...`);
-- локальный чат с историей, профилями и model settings;
-- запуск приложения без загруженной LLM-модели:
-  чат показывает состояние отсутствующей модели, а загрузка Ollama-модели выполняется только по явному действию пользователя;
-- создание профиля сразу с названием, описанием и необязательным system prompt в настройках;
-- очистка SQLite из настроек: мягкая очистка мусора после удалённых чатов и полная очистка БД без удаления локальных моделей;
-- profile-scoped RAG:
-  отдельная папка документов на каждый профиль, ручная индексация, JSON как source of truth, Markdown как пояснение;
-- profile-level system prompt, который подмешивается в prompt только для активного профиля;
-- summary memory для длинных диалогов:
-  старое raw history не обязано целиком попадать в prompt, `mem_turns` остаётся short-term window;
-- `ASR Studio` для отдельной транскрибации файлов:
-  история, редактирование, pipeline-обработка, роли, summary, tasks, сохранение context;
-- быстрый voice-to-input сценарий через микрофон внутри поля ввода;
-- `Voice Studio` для локальной озвучки:
-  история, выбор голоса, скорость, скачивание, очистка истории;
-- `OCR v1` через `+ -> Файл`:
-  загрузка изображения, локальное распознавание текста, правка и отправка в чат;
-- OCR-пайплайн улучшен для мультиязычных UI-скриншотов (авто-очистка/нормализация извлечённого текста);
-- drag-and-drop файлов в chat/ASR и более устойчивое поведение адаптивного UI;
-- обновлённый static Web UI:
-  collapsible sidebar, toast-уведомления под topbar, единый `AppSelect`, мягкие карточки сообщений, RAG status button, переключатель dark/light theme;
-- запуск по локальной сети с телефона через Caddy;
-- Plugin Registry v0: `Settings -> Plugins`, metadata-only manifests, trusted backend handlers и безопасное включение официальных/internal plugins;
-- secure remote access через Tailscale private tailnet: официальный/internal `tailscale` plugin, read-only status checks и ручной `tailscale serve`;
-- единое хранение моделей и кэшей только внутри `/models`.
+- чат с профилями, историей, streaming-ответами и локальными Ollama-моделями;
+- Auto / Smart Router для выбора chat-модели по типу запроса;
+- ASR Studio и быстрый voice-to-input через whisper.cpp или faster-whisper;
+- анализ транскриптов: быстрое саммари, умное саммари и явно разрешаемый полный pipeline;
+- Voice Studio на базе Piper с локальной библиотекой голосов и историей;
+- OCR изображений через Tesseract;
+- profile-scoped RAG для `.txt`, `.md` и `.json`, включая ASR context;
+- Plugin Registry v0 с trusted backend handlers;
+- локальный, LAN и private-tailnet доступ.
 
-## Последние изменения (по свежим коммитам)
+## Стек
 
-- **2026-05-26** — LLM model state reconciled with the configured project-scoped Ollama runtime: `/models` now separates `configured`, `installed`, `active`, `downloading`, `partial` and `missing`, shows the active `OLLAMA_HOST`/store in diagnostics, and does not treat orphan partial blobs in `~/.ollama` as installed app models.
-- **2026-05-22** — LAN runtime синхронизирован с `.env`: `LOCALGPT_PORT`/`LAN_HTTPS_PORT` теперь учитываются launcher-ами, CORS по умолчанию ограничен private/local-origin regex вместо `*`.
-- **2026-05-22** — добавлен Plugin Registry v0 и Tailscale private-tailnet remote access: plugins disabled by default, `plugins/` metadata-only, trusted handler для `tailscale`, меню копирования LAN/Tailscale адресов и security docs.
-- **2026-05-07** — chat UI получил typewriter-buffer для SSE `delta`: ответ модели отображается более плавно, а скорость печати регулируется константами `STREAM_TYPEWRITER_*` в `web_ui/js/app.js`.
-- **2026-05-07** — нормальный chat lifecycle стал тише: старт генерации, streaming-progress, completed state и autorouter confidence/model selection больше не показываются toast-уведомлениями; статус остаётся внутри assistant-card.
-- **2026-05-07** — загрузка LLM-моделей стала тихой: `/models/pull` после подтверждения обновляет карточку прогресса без success/progress toast, повторный клик по активной загрузке не спамит, а ещё не установленная модель не выбирается автоматически для чата.
-- **2026-05-07** — настройка `Стриминг ответов` поднята в начало вкладки Settings → `Чат / LLM`, новые профили получают `streaming_enabled=true` по умолчанию, а reset возвращает default вместо принудительного выключения.
-- **2026-05-06** — завершён verification pass для persistent generation state + SSE: покрыты `stream=true`, `stream=false`, stale-task recovery, missing-model failure, autorouter non-streaming selection и backend/UI smoke-запуск.
-- **2026-05-06** — live Ollama SSE smoke подтверждён на локальной `qwen2.5:3b-instruct`; дополнительно усилен Metal-to-CPU retry: перед CPU fallback модель выгружается повторно и для streaming, и для full-response paths.
-- **2026-05-06** — настройка `Стриминг ответов` вынесена в заметную Generation-card и теперь сохраняется сразу при переключении, чтобы следующее сообщение не ушло случайно с `stream=false`.
-- **2026-05-06** — chat UI восстанавливает активную генерацию при открытии чата после переключения или refresh: находит active assistant-message с `task_id`, переподписывается на SSE/polling и не дублирует уже сохранённый partial content.
-- **2026-05-06** — chat UI начал рендерить persistent assistant-message статусы (`generating`, `streaming`, `completed`, `failed`, `cancelled`) и использовать SSE `delta` при включённом стриминге.
-- **2026-05-06** — в Settings → `Чат / LLM` добавлен checkbox `Стриминг ответов`; значение хранится в profile preferences как `streaming_enabled` и отправляется в chat generation как `stream`.
-- **2026-05-06** — закреплён non-streaming fallback: если `stream` не передан или равен `false`, backend ждёт полный ответ Ollama, не создаёт `delta`, но сохраняет persistent assistant-message lifecycle.
-- **2026-05-06** — подключён Ollama streaming для финальной answer-модели: `stream=true` в chat request включает запись partial content в SQLite и передачу `delta` через SSE.
-- **2026-05-06** — добавлен backend SSE endpoint `GET /chat/tasks/{task_id}/events` для lifecycle-событий chat generation (`status`, `model_selected`, `done`, `error`, `cancelled`).
-- **2026-05-06** — `POST /chat/tasks` подключён к persistent lifecycle: сразу сохраняет user-message и assistant-message `status=generating`, возвращает `user_message_id` / `assistant_message_id`, а завершение task обновляет это assistant-сообщение.
-- **2026-05-06** — добавлен storage-слой persistent message lifecycle: `chat_messages` хранит `status`, `model`, `updated_at`, `error`, `task_id`, partial-state и timestamps генерации; старые сообщения мигрируют в `completed`.
-- **2026-05-06** — проведён audit текущего chat runtime перед rollout persistent generation state и SSE: активный UI живёт в `web_ui/js/app.js`, чат уже использует `POST /chat/tasks`, но сейчас это polling-only flow без persistent assistant lifecycle.
-- **2026-04-28** — старт проекта больше не выбирает fallback LLM и не запускает `ollama pull`; чат блокирует отправку без локальной модели и показывает toast.
-- **2026-04-28** — в настройках добавлена очистка БД: удаление осиротевших данных и полный сброс профилей/чатов/RAG-индекса.
-- **2026-04-27** — добавлена светлая тема UI с `ThemeToggle`, сохранением в `localStorage`, light tokens и glass-слоями для topbar/sidebar/cards/modals/tools.
-- **2026-04-27** — добавлен общий guardrail форматирования расчётов: без LaTeX/MathML/markdown-формул и без запятых как разделителя тысяч в ценах.
-- **2026-04-27** — доработан UI v2: floating topbar, collapsible sidebar, toast system, unified `AppSelect`, RAG ON/OFF dot, мягкие message cards и compact composer.
-- **2026-04-26** — добавлен ASR pipeline, summary memory, debug endpoints, profile-scoped RAG и UX отсутствующих моделей.
-- **2026-04-26** — RAG переведён на отдельные папки профилей, добавлена загрузка файлов из UI и авто-JSON для `.md`.
-- **2026-04-26** — настройки профилей разделены на режим редактирования существующего профиля и создание нового профиля.
-- **2026-04-22** — улучшен OCR для мультиязычных UI-скриншотов, обновлён drag-and-drop сценарий для чата/ASR.
-- **2026-04-22** — переход к `backend/apps/*`, обновление роутов и адаптивного UI.
-- **2026-04-20** — упрощён UX `Voice Studio`.
-- **2026-04-20** — стабилизация OCR-извлечения для скриншотов, нормализация ссылок/путей и служебных мета-данных.
+- Python, FastAPI, Uvicorn, SQLite;
+- Ollama / OpenAI-compatible API для chat-моделей;
+- whisper.cpp и faster-whisper для ASR;
+- Piper для TTS;
+- Tesseract для OCR;
+- статический Web UI на HTML, CSS и JavaScript;
+- Caddy для LAN HTTPS;
+- Tailscale Serve для опционального private-tailnet доступа.
 
-## Техническая документация
+## Требования
 
-Для инженерного обсуждения архитектуры и планирования развития добавлен отдельный технический документ:
+Обязательно:
 
-- [`TECHNICAL_README.md`](TECHNICAL_README.md) — память (`mem_turns`), сборка контекста, токены на вход/выход, текущие ограничения и roadmap-пункты.
+- Python 3;
+- достаточно свободного диска под выбранные модели;
+- Ollama для LLM-функций.
 
-## Текущий Chat Runtime
+По используемым функциям:
 
-Перед внедрением streaming-аудит зафиксировал текущий flow:
-
-- активный chat UI подключён через [`web_ui/gui_html.html`](web_ui/gui_html.html) и [`web_ui/js/app.js`](web_ui/js/app.js); старые модульные файлы `web_ui/js/chat.js`, `web_ui/js/main.js`, `web_ui/js/api.js`, `web_ui/js/sessions.js` не подключены к текущей странице;
-- отправка сообщения идёт через `POST /chat/tasks`, а состояние task можно читать через polling `GET /chat/tasks/{task_id}` или lifecycle SSE `GET /chat/tasks/{task_id}/events`;
-- storage уже поддерживает persistent statuses `generating`, `streaming`, `completed`, `failed`, `cancelled`, partial content и связь сообщения с `task_id`;
-- backend task flow сразу создаёт user-message и assistant-message `status=generating`, возвращает `task_id`, `user_message_id`, `assistant_message_id`, а финализация обновляет тот же assistant-message;
-- настройка `Стриминг ответов` живёт первой карточкой в Settings → `Чат / LLM`, сохраняется сразу при переключении в profile preferences как `streaming_enabled` и применяется к следующей отправке; для новых/неинициализированных профилей default — `true`;
-- при `stream=true` backend вызывает streaming API Ollama только для финальной answer-модели, пишет partial content в SQLite и отдаёт `delta` через SSE; autorouter остаётся lifecycle/selection этапом без token delta;
-- при `stream=false` или отсутствии поля `stream` backend использует full-response fallback без `delta`, но assistant-message всё равно живёт в persistent lifecycle;
-- UI рендерит карточки assistant по persistent `status`; `Генерирую ответ...` больше не живёт только в локальном optimistic placeholder;
-- при включённом streaming UI подписывается на `GET /chat/tasks/{task_id}/events`, складывает `delta` в typewriter-buffer и плавно допечатывает ответ; скорость регулируется в `web_ui/js/app.js` через `STREAM_TYPEWRITER_INTERVAL_MS`, `STREAM_TYPEWRITER_MIN_CHARS`, `STREAM_TYPEWRITER_MAX_CHARS`, `STREAM_TYPEWRITER_BACKLOG_STEP`, `STREAM_TYPEWRITER_FINAL_FLUSH_CHARS`;
-- обычный путь chat generation не показывает toast на start/streaming/completed и не выводит пользователю autorouter confidence/model-selection; backend не заполняет user-facing `router_notice` для normal-success routing, а toast остаётся для ошибок, отмены и degraded recovery вроде обрыва SSE;
-- при открытии чата UI перечитывает messages, ищет active assistant-message с `task_id` и восстанавливает наблюдение за task; если backend task уже потерян, связанное сообщение переводится в `failed`.
-
-Verification snapshot для этого flow:
-
-- `node --check web_ui/js/app.js`;
-- `python -m py_compile` для chat/backend/test файлов;
-- `python -m unittest tests.test_pipeline_memory tests.test_model_router -q`;
-- smoke-запуск `uvicorn backend.server:app` + `/health` + `/ui/gui_html.html`;
-- API-smoke на временной SQLite-базе для `stream=true`, `stream=false`, refresh-state, stale-task и missing-model paths;
-- live Ollama smoke на локальной модели с реальными SSE `delta` и финальным persisted assistant-message;
-- контроль отсутствия запрещённого AI-флага и realtime-транспорта вне `compare-branch/`.
-
-## Архитектурный принцип
-
-`compare-branch/` сейчас остаётся внутри проекта как `read-only reference`.
-Runtime не должен зависеть от кода внутри `compare-branch`: это только база для переноса и сверки решений.
-
-Целевая схема проекта:
-
-- `chat` — диалоги, профили, сообщения, Ollama-модели;
-- `asr` — диктовка в input и `ASR Studio`;
-- `tts` — `Voice Studio`, Piper-голоса и аудиоистория;
-- `ocr` — извлечение текста из изображений;
-- `rag` — локальные документы, chunks/embeddings, профильная изоляция;
-- `plugins` — metadata-only manifests, trusted backend handlers, Settings -> Plugins и network address providers;
-- `models` — единый корень для всех model-artifacts и кэшей;
-- `runtime/LAN` — launcher, Caddy, LAN URL, shutdown-flow;
-- `runtime/Tailscale` — private-tailnet remote access через ручной Tailscale Serve без Funnel/public exposure.
+- `ffmpeg` — конвертация аудио и часть ASR/TTS сценариев;
+- `whisper-cli` и GGML-модель — для backend `whisper_cpp`;
+- Tesseract — для OCR;
+- Caddy — для штатного LAN HTTPS launcher на macOS;
+- Tailscale — только для private-tailnet доступа.
 
 ## Быстрый запуск
 
-Требования:
+1. При необходимости создайте локальную конфигурацию:
 
-- Python 3.10+
-- Ollama
-- ffmpeg
-- Tesseract OCR
+   ```bash
+   cp .env.example .env
+   ```
 
-Основной запуск из корня:
+2. Запустите приложение:
 
-```bash
-python3 run_localgpt.py
-```
+   macOS / Linux:
 
-Wrapper-скрипты:
+   ```bash
+   ./start_localgpt.sh
+   ```
 
-```bash
-./start_localgpt.sh
-./start_localgpt_lan.sh
-```
+   Windows:
 
-macOS double-click:
+   ```bat
+   start_localgpt.bat
+   ```
 
-```text
-start_localgpt.command
-start_localgpt_lan.command
-```
+   macOS `.command`:
 
-Windows:
+   ```text
+   start_localgpt.command
+   ```
 
-```text
-start_localgpt.bat
-```
+Launcher создаёт `venv/`, устанавливает `app/requirements.txt`, проверяет Ollama, выбирает свободный backend-порт и запускает `backend.server:app`. По умолчанию UI открывается на `http://127.0.0.1:8000/ui/gui_html.html`; если порт занят, launcher выбирает следующий свободный.
 
-Legacy alias для LAN-запуска сохранён:
-
-```text
-LTrnsrb.command
-```
-
-Он остаётся только для backward compatibility и теперь просто вызывает `start_localgpt_lan.sh`.
-
-## Что делает launcher
-
-`run_localgpt.py`:
-
-- создаёт `venv`, если его нет;
-- ставит зависимости из `app/requirements.txt`, если они изменились;
-- проверяет и при необходимости запускает Ollama;
-- выводит список локальных Ollama-моделей без выбора fallback и без загрузки модели;
-- поднимает backend на `8000` или на следующем свободном порту, если `8000` занят;
-- читает `LOCALGPT_HOST` и `LOCALGPT_PORT` из `.env`, если они заданы;
-- открывает локальный UI.
-
-Launcher не делает `ollama pull`, не подставляет `qwen2.5:3b` и не блокирует запуск, если chat-моделей нет. Зависимости, директории и лёгкие health-check операции при первом запуске остаются частью bootstrap.
-
-Локальный UI:
-
-```text
-http://127.0.0.1:<фактический-порт>/ui/gui_html.html
-```
-
-Фактический URL печатается в терминал как `UI URL`. Если нужен строгий запуск именно на выбранном порту, используйте `--strict-port`.
-
-## Запуск с телефона по LAN
-
-Основной LAN entrypoint:
+Полезные варианты:
 
 ```bash
-./start_localgpt_lan.sh
+python3 run_localgpt.py --no-browser
+python3 run_localgpt.py --no-reload
+python3 run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 ```
 
-или на macOS:
+Параметры окружения, model paths, CORS и ASR/TTS настройки перечислены в [`.env.example`](.env.example).
+
+## LAN и Tailscale
+
+Для доступа в одной локальной сети на macOS:
 
 ```text
 start_localgpt_lan.command
 ```
 
-Что делает LAN launcher:
+LAN launcher оставляет backend на localhost и поднимает Caddy HTTPS на локальном адресе. Подробности и диагностика: [networking](docs/knowledge/networking.md).
 
-- запускает backend в фоне на `127.0.0.1:<LOCALGPT_PORT>` или переиспользует уже запущенный LocalGPT backend;
-- определяет LAN IP;
-- поднимает Caddy на HTTPS `https://<lan-ip>:<LAN_HTTPS_PORT>`;
-- открывает unified UI по LAN URL;
-- пишет runtime-логи во временную директорию пользователя.
+Для удалённого доступа используйте только private Tailscale tailnet. LocalGPT не запускает `tailscale serve` автоматически и не рекомендует Funnel или прямую публикацию backend-порта. Инструкция находится в [Tailscale plugin](plugins/tailscale/README.md).
 
-LAN launcher держит FastAPI backend локальным и отдаёт доступ в сеть через Caddy reverse proxy. Если локальный запуск выбрал не `8000`, а следующий свободный порт, например `8002`, LAN launcher находит живой backend через `/health`, пишет фактический порт в runtime-файл и генерирует Caddy reverse proxy уже на этот порт.
-Caddy не требует второго backend: перед стартом launcher обнаруживает текущий LocalGPT port и генерирует proxy на один актуальный upstream. На macOS Caddy запускается через пользовательский LaunchAgent `local.localgpt.caddy`, поэтому он продолжает слушать `LAN_HTTPS_PORT` после завершения wrapper-скрипта.
+## Данные и модели
 
-Исправленная диагностика LAN:
+Основные локальные пути:
 
-- `LOCALGPT_PORT` / legacy `LOCALGPT_BACKEND_PORT` читаются из shell env или `.env`;
-- `LAN_HTTPS_PORT` / `LOCALGPT_LAN_HTTPS_PORT` читаются из shell env или `.env`;
-- Caddyfile для LAN генерируется во временной runtime-директории под текущий LAN IP;
-- если backend уже запущен на `127.0.0.1:<LOCALGPT_PORT>`, LAN launcher переиспользует его и не поднимает второй backend;
-- если локальный launcher выбрал другой порт, например `8002`, LAN launcher находит живой backend и проксирует Caddy на фактический порт;
-- Caddy получает один актуальный upstream, поэтому не нужно держать второй backend только ради LAN;
-- Caddy запускается как user LaunchAgent `local.localgpt.caddy`; macOS может показать уведомление, что `caddy` может работать в фоне;
-- backend отдаёт `lan_url` в `/health` только когда LAN HTTPS port реально слушает, чтобы UI не копировал мёртвый URL;
-- статический `Caddyfile.lan` в корне является только fallback-примером и не содержит старого hardcoded IP;
-- UI делает API-запросы same-origin, поэтому chat task polling работает через LAN URL так же, как через localhost.
+- `models/ollama/` — chat-модели;
+- `models/whisper/` и `models/whisper_cpp/` — ASR;
+- `models/tts/piper/` — Piper voices;
+- `models/hf_cache/` и `models/ctranslate2_cache/` — кэши;
+- `app/db/localgpt.db` — SQLite;
+- `rag_sources/profile-<id>/` — документы профиля;
+- `app/data/tts/` и `tmp_logs/` — runtime-артефакты.
 
-Проверка LAN:
+Эти данные игнорируются Git. Пустая `LOCAL_MODEL` допустима: приложение запускается без chat-модели, а загрузка выполняется только по явному действию пользователя.
 
-```bash
-./start_localgpt_lan.sh
-curl -k https://<lan-ip>:8443/health
-```
+## Документация
 
-Если локальный UI открыт, например, как:
+- [Индекс документации](docs/README.md)
+- [Архитектура](docs/ARCHITECTURE.md)
+- [Тестирование](docs/TESTING.md)
+- [Backlog](docs/BACKLOG.md)
+- [Инструкции для coding-агентов](AGENTS.md)
 
-```text
-http://127.0.0.1:8002/ui/gui_html.html
-```
-
-это нормально: `8002` — локальный backend-порт на MacBook. Для телефона URL остаётся на Caddy HTTPS-порту:
-
-```text
-https://<lan-ip>:8443/ui/gui_html.html
-```
-
-Кнопка `LAN URL` в UI становится полезной только когда Caddy реально слушает `LAN_HTTPS_PORT`. Если Caddy не запущен, `/health` возвращает `lan_url: null`, а UI должен показывать LAN URL как недоступный вместо копирования мёртвой ссылки.
-
-Диагностика, если LAN URL не открывается:
-
-```bash
-lsof -nP -iTCP:8443 -sTCP:LISTEN
-curl -fsS http://127.0.0.1:<local-port>/health
-curl -kfsS https://<lan-ip>:8443/health
-```
-
-Первый `curl` проверяет локальный backend, второй — LAN reverse proxy через Caddy. Если локальный backend отвечает, а `8443` не слушает, нужно запускать именно LAN entrypoint `./start_localgpt_lan.sh`, а не только обычный `run_localgpt.py`.
-
-Что нужно отдельно:
-
-- `brew install caddy`
-- Mac и телефон в одной Wi-Fi сети
-- если нужен Safari/iPhone, нужно доверить локальный сертификат Caddy
-
-Полезные LAN файлы:
-
-- `tools/LTrnsrb.sh`
-- `start_localgpt_lan.sh`
-- `start_localgpt_lan.command`
-- `Caddyfile.lan`
-
-## Доступ через Tailscale private tailnet
-
-Tailscale remote access реализован как официальный/internal plugin, а не как произвольный plugin runtime.
-
-Ключевые правила безопасности:
-
-```text
-Do not expose LocalGPT directly to the public internet.
-Do not enable Tailscale Funnel unless you fully understand the risk.
-Preferred mode: Tailscale private tailnet only.
-```
-
-Что есть:
-
-- `plugins/tailscale/plugin.json` — metadata-only manifest;
-- `backend/apps/plugins/tailscale.py` — trusted backend-owned handler;
-- `Settings -> Plugins` — включение/выключение plugin и read-only статус;
-- `GET /plugins/network-addresses` — backend-provided LAN/Tailscale адреса для UI;
-- topbar address button:
-  - один доступный адрес копируется сразу;
-  - несколько адресов открывают меню выбора;
-  - frontend не hardcode-ит Tailscale URL.
-
-Что не делается автоматически:
-
-- `tailscale serve` не запускается приложением;
-- Tailscale Funnel не включается;
-- public/router ports не открываются;
-- код из `plugins/` не импортируется и не исполняется.
-
-Ручная команда на MacBook, где запущен LocalGPT:
-
-```bash
-tailscale serve --bg http://127.0.0.1:<LOCALGPT_PORT>
-```
-
-Если LocalGPT запущен на стандартном порту:
-
-```bash
-tailscale serve --bg http://127.0.0.1:8000
-```
-
-MacBook запускает LocalGPT/model runtime, iPhone является только browser client. Оба устройства должны быть в одном tailnet, MacBook должен быть awake/online, а Tailscale Serve должен указывать на активный LocalGPT backend port.
-
-Документация:
-
-- [`documentation/remote-access-tailscale.md`](documentation/remote-access-tailscale.md)
-- [`documentation/how-to-use-tailscale-mode.md`](documentation/how-to-use-tailscale-mode.md)
-- [`documentation/plugin-architecture.md`](documentation/plugin-architecture.md)
-- [`documentation/backlog.md`](documentation/backlog.md)
-
-## UI сценарии
-
-### Профили
-
-- в настройках есть selector профиля с существующими профилями и пунктом `Создать новый профиль`;
-- при выборе существующего профиля он становится активным, а в настройках редактируются его описание и system prompt;
-- при выборе `Создать новый профиль` поля создания очищаются;
-- название нового профиля обязательно, описание и system prompt необязательны;
-- после создания новый профиль автоматически становится активным, появляется в левом сайдбаре и остаётся выбранным в настройках.
-
-### Чат
-
-- диалоги слева;
-- сообщения по центру;
-- настройки и модели в отдельной панели;
-- меню `+` рядом с полем ввода;
-- микрофон внутри поля ввода;
-- LAN URL в topbar;
-- правый клик по чату в sidebar открывает контекстное меню для переименования.
-
-### UI / темы
-
-- topbar сделан как floating glass-панель без жёсткого разделителя;
-- sidebar можно свернуть/развернуть центральной pill-кнопкой;
-- состояние sidebar сохраняется в `localStorage.sidebar_open`;
-- горячая клавиша `Cmd+B` на macOS и `Ctrl+B` на Windows/Linux открывает или закрывает sidebar;
-- системные статусы показываются toast-уведомлениями под topbar по центру, но обычный chat lifecycle отображается внутри карточек сообщений без дополнительных toast;
-- нижняя зона оставлена только под ввод сообщения;
-- icon-only RAG в topbar показывает состояние активного профиля:
-  OFF без dot/glow, ON с фиолетовым dot и glow;
-- `Thinking` в topbar управляет Ollama thinking для выбранной chat-модели, если модель его поддерживает; пункт остаётся визуально стабильным, а включение отмечается лёгким фиолетовым свечением;
-- `ThemeToggle` в topbar переключает dark/light theme;
-- тема сохраняется в `localStorage` через ключ `localgpt_simple_theme`;
-- светлая тема использует мягкий фон `#F6F7FB`, radial-пятна, glass-слои, blur и тени;
-- кастомный `AppSelect` используется как единый видимый select-компонент.
-
-UI component guide:
-
-- [`docs/ui-components.md`](docs/ui-components.md)
-
-### `+` меню
-
-- `Файл` — OCR v1 для изображений;
-- `Транскрибировать` — открывает `ASR Studio`;
-- `Озвучить` — открывает `Voice Studio`.
-
-### `ASR Studio`
-
-- отдельная транскрибация аудио/видео;
-- история транскриптов;
-- редактирование текста;
-- selector `Режим анализа` с вариантами `Быстрое саммари`, `Умное саммари`, `Полный анализ`;
-- ручная операция `Очистить`, отдельно от обычных режимов анализа;
-- speaker role editor с ручными overrides;
-- пересборка summary с учётом исправленных ролей;
-- summary/tasks сохраняются в записи транскрибации и используются для названия записи в истории;
-- сохранение processed context в текущий чат;
-- удаление записи;
-- очистка всей истории;
-- вставка processed context в prompt;
-- отправка processed context прямо в чат;
-- остановка активной ASR Studio обработки из интерфейса.
-
-Базовые настройки ASR Studio рассчитаны на длинные русскоязычные встречи: Whisper `large-v3-turbo`, русский prompt, `beam_size=5`, `threads=4`. Pipeline по умолчанию использует:
-
-- cleaner: `qwen2.5:7b-instruct`, `temperature=0`, `max_tokens=9000`;
-- segmenter: `qwen2.5:7b-instruct`, `temperature=0.05`, `max_tokens=8000`;
-- speaker resolver: `qwen2.5:7b-instruct`, `temperature=0.1`, `max_tokens=4000`;
-- structurer: `qwen3:8b`, `temperature=0.1`, `max_tokens=8000`;
-- summary: `qwen3:8b`, `temperature=0.1`, `max_tokens=8000`.
-
-`qwen2.5:3b-instruct` больше не основной качественный вариант для cleaner/segmenter; он оставлен как быстрый fallback, когда важнее скорость. ASR pipeline settings сохраняются отдельно от выбранной chat-модели под служебным ключом `__asr_pipeline__`; чат и ASR используют общий каталог моделей, но не общий набор runtime-настроек. Сохранённые ASR custom-настройки остаются приоритетнее default preset.
-
-В ASR Studio используется один selector `Режим анализа`:
-
-- `Быстрое саммари`: raw transcript -> summary. Минимальная нагрузка, без cleaner/segmenter/speaker resolver/structurer.
-- `Умное саммари`: raw transcript/chunks -> structurer -> summary. Это рекомендованный режим для встреч: он использует chunk/merge, coverage QA, `Контекст анализа` профиля и правило, что повтор важной мысли разными словами является сигналом важности. Cleaner и speaker resolver здесь не запускаются.
-- `Полный анализ`: raw transcript/chunks -> segmenter -> speaker resolver -> structurer -> summary. Тяжёлый режим закрыт настройкой `Разрешить полный анализ`, выключенной по умолчанию; включение требует подтверждения warning о CPU/GPU-нагрузке, температуре Mac и занятости Ollama.
-
-Cleaner не является обязательной стадией ни для одного режима. Он оставлен как ручная/опциональная стадия, потому что автоматическая очистка может удалить повторные акценты и детали, важные для summary.
-
-В настройках стадий пункт `Не использовать` сохраняет stage как `enabled=false`; temp/max tokens визуально отключаются, а backend пропускает стадию во всех режимах. User settings имеют приоритет над режимом анализа: режим не включает выключенную стадию обратно. Если выключен `structurer`, `Умное саммари` деградирует до обычного summary с warning; если выключен `summary`, режимы, которым нужен итоговый summary, возвращают понятную ошибку.
-
-`Язык summary` управляет языком ASR analysis output: `Авто` выбирает язык по transcript, `Русский` и `English` задают результат вручную. Эта настройка, как и `Контекст анализа`, влияет на structurer/summary/retry, но не на Whisper transcription.
-
-На Apple Silicon ASR pipeline по умолчанию передаёт высокий `ollama_num_gpu`, чтобы Ollama offload-ил LLM-стадии в Metal вместо CPU-only генерации. Если нужен штатный auto-режим Ollama, задайте `OLLAMA_PIPELINE_NUM_GPU=auto`; если нужен принудительный CPU-only режим, задайте `OLLAMA_PIPELINE_NUM_GPU=0`. ASR pipeline не использует silent CPU fallback при ошибке Metal, чтобы тяжёлый режим не начинал незаметно греть CPU.
-
-Для ASR LLM-стадий thinking по умолчанию выключен (`think:false` для native Ollama `/api/chat`), потому что structurer/summary pipeline требует форматированного результата, а не reasoning trace. В настройках анализа можно явно выбрать `Включено`, `Выключено` или `Авто Ollama`; chat-модель на главной странице имеет отдельный быстрый переключатель `Thinking`.
-
-Чекбокс `Вести ASR-логи` включает профильную папку diagnostics для ASR pipeline. При выключении чекбокса эта папка профиля удаляется; обычный режим не пишет расширенную ASR-диагностику.
-
-Длинные transcript не обрезаются перед summary: `max_transcript_chars` используется как размер chunk. В `Умном саммари` и `Полном анализе` structured outputs merge-ятся, и final summary строится по merged evidence. Warning `raw_transcript_chunked:<N>` означает штатную chunked-обработку полной встречи. `summary_topic_coverage_missing:<N>` запускает повторную генерацию summary с пропущенными темами и merged evidence; retry считается успешным только если темы раскрыты смыслово, а не упомянуты одним ключевым словом. Если retry не закрыл покрытие, итог явно получает блок `Неполное summary: не удалось покрыть следующие темы`. Старый `raw_transcript_truncated` теперь должен считаться диагностикой неполной обработки, а не нормальным режимом качественного summary.
-
-Structurer и summary дополнительно разделяют `current_state` и `target_state`, чтобы не смешивать текущее устройство процесса/архитектуры с целевой схемой. Подозрительные ASR-термины технических артефактов не исправляются словарём; summary prompt требует выносить спорные термины в вопросы для уточнения. Неподтверждённые действия не должны попадать в `Ключевые решения`: без явных маркеров подтверждения они переносятся в предложения/варианты.
-
-Для длинных встреч локальный pipeline может делать больше последовательных model calls: chunks проходят несколько стадий, а coverage QA может добавить один summary retry. `Умное саммари` по умолчанию использует `qwen3:8b` и для structurer, и для summary, чтобы не грузить две большие модели подряд. `Полный анализ` особенно дорогой, потому что добавляет segmenter/speaker resolver/structurer перед summary. При ручных тестах на ноутбуке стоит закрыть лишние LLM/ASR процессы и смотреть `warnings`/`stage_timings`, если машина уходит в перегрев.
-
-Кнопка `Остановить` в ASR Studio отменяет активные transcription task processes, просит pipeline остановиться перед следующей LLM-стадией и выгружает активные pipeline-модели из Ollama. Если модель уже выполняет текущий LLM-вызов, остановка может стать видимой после возврата/ошибки этого вызова; следующая стадия не должна стартовать.
-
-Быстрый voice-to-input при этом остаётся отдельным UX и не смешивается с `ASR Studio`.
-
-### Данные и очистка БД
-
-- удаление профиля полностью удаляет его чаты, сообщения, транскрипты, model settings и RAG-индекс; профильная RAG-папка тоже удаляется;
-- удаление отдельного чата удаляет сам chat session и сообщения, а связанные транскрипты/индексные артефакты могут стать осиротевшими `session_id=NULL`;
-- кнопка `Очистить мусор` в секции `Whisper модели` удаляет такие осиротевшие chat-данные и запускает `VACUUM`;
-- `ASR Studio` история и ручные RAG-файлы `manual_file` мягкой очисткой не удаляются;
-- кнопка `Полная очистка` удаляет профили, чаты, сообщения, транскрипты, RAG-индекс и профильные RAG-папки, затем создаёт новый профиль `Default`;
-- загруженные LLM/ASR/TTS модели при очистке БД не удаляются.
-
-### `Voice Studio`
-
-- выбор Piper-голоса;
-- выбор скорости;
-- генерация локального WAV;
-- история генераций;
-- скачивание записи;
-- удаление записи;
-- очистка всей истории.
-
-### OCR v1
-
-- принимает изображения;
-- локально извлекает текст через Tesseract;
-- открывает OCR-редактор;
-- позволяет поправить текст;
-- позволяет вставить его в prompt или сразу отправить в чат.
-
-### RAG
-
-- icon-only кнопка RAG в topbar открывает компактную панель документов;
-- каждый профиль имеет свою папку `rag_sources/profile_<id>_<name>`;
-- новый профиль стартует с пустой RAG-папкой;
-- при удалении профиля его RAG-папка удаляется;
-- файлы добавляются через `Добавить файлы`;
-- после добавления или правки файлов нужно нажать `Индексировать`;
-- `Обновить список` перечитывает файлы и статистику без индексации;
-- файлы можно удалить из списка кнопкой `×` рядом с названием;
-- если галочка RAG включена, backend пытается подмешивать RAG-контекст в каждый chat prompt активного профиля;
-- переиндексация нужна только после добавления/изменения файлов, не перед каждым сообщением;
-- поддерживаются `.md`, `.json`, `.txt`;
-- если рядом с `.md` нет `.json`, LocalGPT создаёт базовый structured JSON;
-- ручной `.json` не перезаписывается и считается source of truth;
-- авто-JSON с `generated_by: localgpt_auto_structurer` может быть пересобран кнопкой `Индексировать`.
-
-Подробная инструкция по подготовке RAG-документов:
-
-- [`rag_sources/README.md`](rag_sources/README.md)
-
-Практическое правило:
-
-- `.md` — объяснение для человека и модели;
-- `.json` — точные факты, таблицы, тарифы, SLA, ограничения;
-- при конфликте JSON считается правым.
-
-## Пути моделей
-
-Все модели и кэши должны жить только внутри `/models`.
-
-Базовая структура:
-
-```text
-models/
-├── ollama/
-├── whisper/
-├── whisper_cpp/
-├── tts/
-│   └── piper/
-├── hf_cache/
-└── ctranslate2_cache/
-```
-
-`.env` и `.env.example` поддерживают переносимые относительные пути.
-
-Пример:
-
-```env
-MODELS_DIR=models
-OLLAMA_MODELS_DIR=models/ollama
-WHISPER_MODELS_DIR=models/whisper
-WHISPER_CPP_MODELS_DIR=models/whisper_cpp
-TTS_MODELS_DIR=models/tts
-PIPER_MODELS_DIR=models/tts/piper
-HF_CACHE_DIR=models/hf_cache
-CTRANSLATE2_CACHE_DIR=models/ctranslate2_cache
-
-LOCAL_BASE_URL=http://localhost:11434/v1
-LOCAL_API_KEY=LOCAL-KEY
-LOCAL_MODEL=
-
-LOCALGPT_HOST=127.0.0.1
-LOCALGPT_PORT=8000
-LOCALGPT_REMOTE_ACCESS=false
-LOCALGPT_REMOTE_ACCESS_MODE=local
-LAN_ACCESS_URL=
-LAN_HTTPS_PORT=8443
-LOCALGPT_CORS_ALLOW_ORIGINS=
-LOCALGPT_CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}|[a-z0-9.-]+\.local)(:[0-9]+)?$
-```
-
-Штатный Web UI работает same-origin, поэтому CORS почти не нужен для обычного localhost/LAN запуска. По умолчанию backend больше не отвечает `Access-Control-Allow-Origin: *`; local/private origins (`localhost`, LAN RFC1918, Tailscale CGNAT `100.64.0.0/10`, `.local`) разрешены, а для отдельного dev frontend можно явно задать `LOCALGPT_CORS_ALLOW_ORIGINS`.
-
-## LLM-модели и загрузка
-
-Приложение запускается без LLM-модели. Если локальных Ollama chat-моделей нет, UI показывает состояние `Нет доступных моделей` / `Модель не загружена`.
-
-Состояние LLM-моделей определяется по Ollama runtime из `.env`: `OLLAMA_HOST`/`LOCAL_BASE_URL` и `OLLAMA_MODELS_DIR`. Если приложение использует project-scoped `models/ollama` на отдельном host/port, обычный `ollama list` в терминале без этих переменных может показывать другой default-store (`~/.ollama`) и не совпадать с UI. Для thinking-capable моделей UI сохраняет отдельную настройку `Thinking` на уровне профиля/модели и передаёт её в native Ollama как top-level `think`.
-
-`/models` различает `configured`, `installed`, `active`, `downloading`, `partial` и `missing`. Partial blobs в другом storage показываются как диагностика, но не отменяют `installed`, если configured runtime уже видит модель через `ollama list`.
-
-Поведение без модели:
-
-- поле ввода остаётся активным;
-- кнопка отправки недоступна, пока нет выбранной установленной модели;
-- сообщение не добавляется в историю;
-- backend-запрос к LLM не выполняется;
-- при попытке отправки показывается toast: `Нет доступных моделей. Загрузите модель и повторите отправку.`
-
-Загрузка Ollama-модели выполняется только по явному действию пользователя: ввод имени модели, выбор рекомендованной модели или кнопка `Загрузить` в библиотеке LLM. Перед запуском `/models/pull` UI просит подтверждение.
-
-Загрузка Ollama-моделей идёт через `/models/pull`.
-UI показывает stderr/stdout tail от `ollama pull` и человекочитаемое сообщение.
-Нормальный progress загрузки отображается только в карточке `download-card`: UI не показывает toast `загрузка началась`/`уже выполняется`, не выбирает незагруженную модель в чат автоматически и включает модель для чата только после появления в локальном списке.
-Список моделей больше не запускает auto-pull: если chat-моделей нет, composer остаётся доступен для ввода, но отправка отключена; ASR/TTS/OCR остаются доступны.
-
-## ASR и разгрузка CPU на Mac
-
-По умолчанию проект ожидает `whisper.cpp`, чтобы разгружать CPU на Apple Silicon:
-
-```env
-WHISPER_BACKEND=whisper_cpp
-WHISPER_MODEL_SIZE=large-v3-turbo
-WHISPER_CPP_BINARY=models/whisper_cpp/bin/whisper-cli
-WHISPER_CPP_MODELS_DIR=models/whisper_cpp
-WHISPER_CPP_MODEL_PATH=models/whisper_cpp/ggml-{model}.bin
-WHISPER_BEAM_SIZE=5
-WHISPER_CPP_THREADS=4
-TRANSCRIBE_LOG_MAX_BYTES=2097152
-```
-
-Для этого нужен отдельный `whisper-cli`, собранный с Metal/CoreML, и GGML-модель в `models/whisper_cpp`.
-Фактический запуск ASR пишется в `tmp_logs/transcribe.log`; лог ротируется по `TRANSCRIBE_LOG_MAX_BYTES` и держит один backup `transcribe.log.1`. Значение `0` отключает запись.
-
-Для macOS есть проектный setup-скрипт:
-
-```bash
-tools/setup_whisper_cpp_macos.sh large-v3-turbo
-```
-
-Он клонирует `whisper.cpp` в `models/whisper_cpp/source`, собирает `whisper-cli` с Metal/CoreML, создаёт `models/whisper_cpp/bin/whisper-cli` и скачивает `models/whisper_cpp/ggml-large-v3-turbo.bin` вместе с CoreML encoder, если он доступен.
-При `WHISPER_BACKEND=whisper_cpp` штатная подготовка ASR-модели (`/whisper/models/prepare`) также скачивает GGML/CoreML файлы в `models/whisper_cpp`, а не faster-whisper snapshot.
-
-Если нужно временно вернуться к старому CPU-based пути:
-
-```env
-WHISPER_BACKEND=faster_whisper
-WHISPER_DEVICE=cpu
-WHISPER_COMPUTE_TYPE=int8
-```
-
-Поведение:
-
-- `whisper_cpp` требует `whisper.cpp` и возвращает понятную ошибку, если binary или модель отсутствуют;
-- `auto` использует `whisper.cpp`, только если найден `whisper-cli` и файл модели для выбранного имени (`ggml-large-v3-turbo.bin`, `ggml-medium.bin` и т.п.), иначе переходит на `faster-whisper`;
-- `faster_whisper` оставлен как совместимый fallback, но на Mac обычно грузит CPU.
-
-Для `mistral:7b` важно:
-
-- тег валиден;
-- модель может не быть установлена локально;
-- исторический сбой мог быть вызван сетевой ошибкой или проблемой доступа к Ollama;
-- такие ошибки теперь должны surfaced как человекочитаемое сообщение, а не только `ollama pull вернул код 1`.
-
-## Форматирование ответов
-
-Chat runtime добавляет общий system guardrail для оформления расчётов и цен:
-
-- не использовать LaTeX, MathML, markdown-формулы и синтаксис вида `\[...\]`, `\( ... \)`, `\text{...}`;
-- не использовать запятую как разделитель тысяч:
-  неправильно `35,690 ₽`, правильно `35 690 ₽`;
-- суммы выводить обычным человекочитаемым текстом.
-
-Дополнительно `sanitize_reply()` чистит типичный LaTeX-мусор из ответа модели и нормализует записи вроде `23,730 \, \text{₽}` в `23 730 ₽`.
-
-## Структура проекта
-
-```text
-LocalGPT/
-├── app/
-│   ├── routes/
-│   ├── routers/
-│   ├── services/
-│   ├── providers/
-│   ├── prompts/
-│   ├── data/
-│   └── db/
-├── web_ui/
-├── models/
-├── rag_sources/
-├── compare-branch/          # reference-only, не runtime
-│   ├── chat/
-│   ├── asr/
-│   ├── tts/
-│   └── ocr/
-├── run_localgpt.py
-├── start_localgpt.sh
-├── start_localgpt.command
-├── start_localgpt_lan.sh
-├── start_localgpt_lan.command
-├── LTrnsrb.command          # legacy alias
-├── tools/LTrnsrb.sh         # LAN launcher implementation
-├── .env
-└── .env.example
-```
-
-## Ключевые файлы
-
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/server.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/chat/routes.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/chat/service.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/asr/pipeline.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/rag/service.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/backend/apps/rag/routes.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcribe.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/transcripts.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/ocr.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routers/tts.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/routes/meta.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/services/ocr.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/app/services/models.py`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/gui_html.html`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/js/app.js`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/web_ui/css/style.css`
-- `/Users/oleksandrniemchenko/my_personal_files/LocalGPT/docs/ui-components.md`
-
-## Диагностика
-
-Health:
-
-```bash
-curl -s http://127.0.0.1:8000/health
-```
-
-Если в UI нет карточки `Стриминг ответов`, сначала проверьте, из какой папки запущен активный backend на том порту, который открыт в браузере:
-
-```bash
-lsof -p $(lsof -tiTCP:<port> -sTCP:LISTEN | head -1) | grep cwd
-```
-
-Runtime должен быть запущен из текущего checkout LocalGPT; старый процесс из другой копии проекта будет отдавать устаревший `web_ui/gui_html.html`.
-
-Prompt debug:
-
-```bash
-curl -s http://127.0.0.1:8000/chat/debug/prompt
-```
-
-Pipeline debug:
-
-```bash
-curl -s 'http://127.0.0.1:8000/chat/debug/pipeline?run_id=<id>'
-```
-
-Полезные файлы:
-
-- `ollama.log`
-- `tmp_logs/chat.log`
-- `tmp_logs/pipeline.log`
-- `tmp_logs/transcribe.log`
-- runtime-логи launcher в `${TMPDIR}/LocalGPT-<uid>/`
-
-## Текущее ограничение
-
-`compare-branch/` пока не удаляется.
-Сейчас внутри него лежат reference-папки `chat / asr / tts / ocr`.
-Удаление reference-папок выносится в отдельную cleanup-задачу после полной parity-проверки unified проекта.
+Подробности подсистем находятся в [`docs/knowledge/`](docs/knowledge/). Runtime prompt остаётся рядом с кодом: [`app/prompts/system_base.md`](app/prompts/system_base.md).

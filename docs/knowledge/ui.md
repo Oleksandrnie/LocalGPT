@@ -1,26 +1,103 @@
 # Web UI
 
-Активный static Web UI: layout, component conventions, themes, responsive strategy, navigation, accessibility и regression considerations.
-
-> Pending migration: активные assets и component contracts будут проверены по `web_ui/gui_html.html`, `web_ui/js/` и `web_ui/css/` на Stage 3.
-
 ## Активный frontend
 
-## Layout и navigation
+FastAPI отдаёт статические assets из `web_ui/`.
 
-## Components
+- HTML: `web_ui/gui_html.html`;
+- CSS entry: `web_ui/css/style.css`;
+- JavaScript entry: `web_ui/js/app.js`;
+- Markdown renderer: `web_ui/js/markdown.mjs`;
+- изображения/иконки: `web_ui/img/`, `favicon.svg`.
+
+`gui_html.html` не подключает `js/main.js`; старый modular graph (`main.js`, `chat.js`, `sessions.js` и др.) не является активным runtime, пока entry point явно не мигрирован.
+
+## Layout
+
+Основные зоны:
+
+- sidebar и chat/session navigation;
+- floating topbar;
+- message scroll/list и scroll-to-latest;
+- composer с `+` actions;
+- settings/modal surfaces;
+- ASR, TTS и OCR tool docks;
+- RAG и plugin/network panels;
+- toast layer.
+
+State частично хранится в profile preferences/backend, частично — в `localStorage` для чисто UI-настроек.
+
+## Component conventions
+
+### Buttons
+
+- текстовое действие — обычная кнопка с понятным label;
+- icon-only действие обязано иметь `aria-label` и `title`, если hover-help полезен;
+- toggle синхронизирует `aria-pressed`, `aria-expanded`, `aria-selected` или `aria-checked`.
+
+### Select
+
+Видимый select использует `AppSelect`/custom picker. Native `<select>` может оставаться скрытым backing state, но не должен давать второй видимый control.
+
+### Toast
+
+Системные уведомления показываются под topbar. Normal chat lifecycle и download progress не должны спамить success/progress toast; ошибки, отмена и degraded recovery остаются заметными.
+
+### Chat messages
+
+Assistant card рендерится из persisted `message.status`. Optimistic placeholder не является источником истины. Markdown проходит через `markdown.mjs`; raw model HTML не вставляется напрямую.
+
+### Model state
+
+Если chat-модель отсутствует, composer остаётся доступным для ввода, но отправка блокируется с понятным сообщением. Загрузка модели требует явного подтверждения.
 
 ## Themes
 
+Dark/light theme переключается topbar control и сохраняется в `localStorage`. Новые компоненты должны использовать существующие CSS tokens и проверяться в обеих темах, включая hover, focus, disabled, warning и overlay states.
+
 ## Responsive strategy
 
-## Mobile breakpoints
+CSS содержит отдельные ranges для узких телефонов, 391–430, 431–480, tablet/mobile до 768, landscape-height и более широких layout transitions. Не добавляйте breakpoint только под один screenshot; сначала используйте общие mobile constraints.
+
+Проверять:
+
+- composer и клавиатуру;
+- safe-area/viewport height;
+- sidebar/drawers;
+- settings forms;
+- tool docks/history;
+- menus у краёв экрана;
+- длинные сообщения и streaming;
+- touch targets.
+
+## Navigation и state
+
+- sidebar open state — `sidebar_open`;
+- theme, active profile/session, tool panels и selected settings сохраняются под `localgpt_simple_*` keys;
+- backend остаётся source of truth для profiles, sessions, messages, model settings и task states;
+- refresh должен восстановить active assistant task по persisted `task_id`.
 
 ## Accessibility
 
+Текущий UI использует aria labels/states, menu roles и keyboard-friendly buttons, но изменения требуют ручной проверки:
+
+- focus visibility и order;
+- Escape/close behavior;
+- dialog/menu expanded states;
+- icon labels;
+- color contrast в обеих темах;
+- keyboard-only navigation;
+- reduced motion и streaming readability.
+
+Не скрывайте интерактивный элемент только визуально без корректного `hidden`, focus или aria state.
+
 ## Regression considerations
 
-## Связанные документы
+- SSE `delta` дедуплицируется по sequence; pagehide/close переходит к polling fallback.
+- Scroll-to-latest не должен ломать auto-scroll пользователя, который читает историю.
+- RAG indicator отражает active profile.
+- Network address button: 0 адресов disabled, 1 копируется, 2+ открывают menu.
+- ASR full analysis остаётся явно разрешаемым и предупреждает о нагрузке.
+- Удаление ASR context должно синхронно обновлять RAG section.
 
-- [Архитектура](../ARCHITECTURE.md)
-- [Тестирование](../TESTING.md)
+Матрица проверок: [TESTING.md](../TESTING.md).
