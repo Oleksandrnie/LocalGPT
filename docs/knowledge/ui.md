@@ -85,7 +85,7 @@ CSS содержит отдельные ranges для узких телефон�
 
 ## Model transfer
 
-Settings → System содержит `Экспорт моделей` и `Импорт моделей`. Export preview выбирает complete units и показывает unique size; задача отображает progress и скачивает `.localgpt-models`. Import использует file picker, checksum preview и отдельный confirmation dialog; success report разделяет опубликованные и уже идентичные файлы.
+Settings → System содержит компактные соседние действия `Экспорт моделей` и `Импорт моделей`. Экспорт открывает отдельную модалку со списком complete units, выбором всех/отдельных моделей, количеством выбранных и unique size полного набора; только подтверждение в этой модалке запускает задачу, отображающую progress и скачивающую `.localgpt-models`. Import использует file picker, checksum preview и отдельный confirmation dialog; success report разделяет опубликованные и уже идентичные файлы.
 
 ## Navigation и state
 

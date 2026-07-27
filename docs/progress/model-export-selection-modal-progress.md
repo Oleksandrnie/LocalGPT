@@ -32,33 +32,33 @@
 - Architectural decisions: keep `/model-transfer/export-preview` and `/model-transfer/exports` unchanged; fetch inventory automatically and present it only when export is requested.
 - Problems: none.
 - Technical debt: none identified.
-- Next steps: create the Stage 1 checkpoint, then update affected documentation and run the final baseline.
+- Next steps: completed.
 - Validation: `node --check web_ui/js/app.js` passed; `node --test tests/model_transfer_ui.test.mjs` passed 4/4; `git diff --check` passed. Live `:8001` checks passed at 1280×720 and 390×844 in dark/light themes: 12 models, no horizontal overflow, select-all/individual selection, disabled empty confirmation, Escape close and focus return. No export was started.
-- Git checkpoint: pending.
+- Git checkpoint: `da040c2` — Move model export selection into modal.
 
 ### Stage 2 — QA, Documentation & Cleanup
 - Goal: verify live behavior without starting an export, update affected docs, and remove this file.
 - Related files: `docs/knowledge/ui.md`, `docs/CHANGELOG.md`.
 - [x] Completed: desktop/mobile, dark/light and keyboard checks.
-- [ ] Pending: permanent documentation update.
+- [x] Completed: updated `docs/knowledge/ui.md` and the canonical `docs/CHANGELOG.md`.
 - [ ] Pending: final cleanup commit removing this progress file.
 - Architectural decisions: none yet.
 - Problems: none.
 - Technical debt: none.
-- Next steps: checkpoint Stage 1, update UI docs/changelog, run final validation, remove progress file.
-- Validation: pending.
+- Next steps: create the documentation checkpoint, then remove this completed progress file.
+- Validation: final baseline passed: Python compileall; JS syntax; model-transfer UI tests 4/4; Markdown tests 2/2; `git diff --check`. Earlier live UI matrix remains passed; no real export was started.
 - Git checkpoint: pending.
 
 ## Overall Status
-- Status: in progress.
-- Completed: request analysis, documentation-impact review, modal implementation and live UI QA.
-- In progress: Stage 1 checkpoint preparation.
-- Pending: permanent documentation, final validation and cleanup.
-- Changed files: `docs/progress/model-export-selection-modal-progress.md`, `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, `tests/model_transfer_ui.test.mjs`.
+- Status: ready for completion.
+- Completed: request analysis, modal implementation, automated and live UI QA, permanent documentation.
+- In progress: final cleanup.
+- Pending: documentation checkpoint and progress-file removal.
+- Changed files: `docs/progress/model-export-selection-modal-progress.md`, `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, `tests/model_transfer_ui.test.mjs`, `docs/knowledge/ui.md`, `docs/CHANGELOG.md`.
 - Known problems: none.
 - Technical debt: none.
-- Next action: create the Stage 1 checkpoint commit.
-- Latest Git checkpoint: `17f8b88` — Load model export inventory automatically.
+- Next action: commit documentation, then delete this completed progress file in a cleanup commit.
+- Latest Git checkpoint: `da040c2` — Move model export selection into modal.
 
 ## Continuation Prompt
-Continue work on `model-export-selection-modal` using `docs/progress/model-export-selection-modal-progress.md`. Read the progress file, current Git status, and latest checkpoint commit first. Current status: modal implementation and live QA are complete, awaiting the Stage 1 checkpoint. Completed: compact System card, export-selection modal, select-all/individual selection, responsive and keyboard checks. Remaining: checkpoint, UI docs/changelog, final validation and cleanup. Problems/blockers: none. Decisions to preserve: backend API remains unchanged; no real export during QA; use the existing project changelog instead of creating a duplicate change index. Latest checkpoint: `17f8b88`. Perform next: commit Stage 1, then finish Stage 2.
+Continue work on `model-export-selection-modal` using `docs/progress/model-export-selection-modal-progress.md`. Read the progress file, current Git status, and latest checkpoint commit first. Current status: implementation, QA and permanent documentation are complete. Completed: compact System card, export-selection modal, select-all/individual selection, responsive/keyboard checks and final baseline. Remaining: documentation checkpoint followed by cleanup deletion of this progress file. Problems/blockers: none. Decisions to preserve: backend API remains unchanged; no real export during QA; `docs/CHANGELOG.md` is the canonical compact change index. Latest checkpoint: `da040c2`. Perform next: commit docs/progress, then remove the progress file in the terminal cleanup commit.

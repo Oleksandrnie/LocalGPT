@@ -10,6 +10,7 @@
 
 ### Changed
 
+- Выбор моделей для экспорта перенесён из развёрнутого списка Settings → System в отдельную responsive-модалку с select-all, счётчиком и явным подтверждением.
 - Загрузка Ollama-моделей использует потоковый native `/api/pull`; CLI fallback больше не передаёт неподдерживаемый `ollama pull --json` и логирует фактический CLI/runtime transport при ошибках.
 - Документация сведена к корневому `README.md`, `AGENTS.md`, постоянному набору `docs/` и component-owned README.
 - Архитектура, тестирование и knowledge base разделены по зонам ответственности.
