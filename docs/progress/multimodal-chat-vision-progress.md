@@ -35,23 +35,24 @@
 - Goal: Реализовать paste, multi-file drag-and-drop, picker, preview/remove/upload state и UI limit.
 - Related files: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, frontend tests/manual matrix.
 - [x] Completed: Implementation and validation.
-- [ ] Pending: Checkpoint commit.
+- [x] Completed: Checkpoint commit.
 - Architectural decisions: Clipboard image обрабатывается только при наличии image item; обычная text paste сохраняется; thumbnails используются вместо originals.
 - Problems: Полноценного browser E2E suite нет; добавлен static UI contract test и выполнена ручная проверка живого localhost UI.
 - Technical debt: Нет.
 - Next steps: Создать Stage 2 checkpoint и перейти к capability/runtime boundary.
 - Validation: `node --check web_ui/js/app.js` passed; `node tests/chat_attachments_ui.test.mjs` — 4 passed; `node tests/markdown_rendering.test.mjs` — 2 passed; `venv/bin/python -m unittest tests.test_chat_attachments -v` — 9 passed; compileall/diff-check passed. Manual localhost Browser: desktop 1280×720 dark and mobile 390×844 light; dedicated picker advertises `multiple`; upload/thumbnail/ready/delete passed; image-only paste passed; mixed text+image paste preserved text; mobile card stayed inside viewport with horizontal overflow and 44×44 remove target; focus reached native remove button. All test uploads/DB rows/temp files were removed; theme/viewport/clipboard restored.
-- Git checkpoint: pending
+- Git checkpoint: `18db044` — Add chat image composer workflow
 
 ### Stage 3 — Vision Capability and Runtime Boundary
 - Goal: Реализовать capability resolver, direct Ollama multimodal payload, explicit fallback/error/resource policy и mocked tests.
 - Related files: `app/config.py`, `app/services/models.py`, `backend/apps/chat/services/ollama_runtime.py`, `vision_runtime.py`, `vision_context.py`, `tests/test_chat_vision_runtime.py`, `tests/test_model_router.py`.
-- [ ] Pending: Implementation and validation.
+- [x] Completed: Implementation and validation.
+- [ ] Pending: Checkpoint commit.
 - Architectural decisions: Images bypass LLM intent guessing; direct route разрешён только для подтверждённой vision capability; base64 существует только в transient Ollama request memory.
-- Problems: Конкретный live model/API smoke запрещён без осознанного запуска.
+- Problems: Ollama runtime сейчас недоступен и vision-модели в project storage нет; live inference не запускался по policy.
 - Technical debt: Нет.
-- Next steps: Начать после Stage 2 checkpoint.
-- Validation: pending
+- Next steps: Создать Stage 3 checkpoint и перейти к persisted chat task/SSE lifecycle.
+- Validation: `venv/bin/python -m unittest tests.test_chat_vision_runtime tests.test_model_router -v` — 64 passed; `venv/bin/python -m unittest tests.test_chat_attachments -v` — 9 passed; compileall, JS syntax и diff-check passed. Проверены JSON/plain Ollama metadata, отдельный vision catalog, confirmed-only resolver, auto priority, text-only context route, byte limit, original-message immutability и native `/api/chat` images payload. Live inference/download intentionally not run.
 - Git checkpoint: pending
 
 ### Stage 4 — Chat Task and Streaming Lifecycle
@@ -77,10 +78,10 @@
 - Git checkpoint: pending
 
 ### Stage 6 — Settings, Limits and Cache Cleanup
-- Goal: Добавить profile-owned controls, effective limits, cache stats/cleanup и active-task protection.
-- Related files: profile schemas/routes/config, attachment endpoints/repository/storage, Settings HTML/JS/CSS, unit/API tests.
+- Goal: Добавить backend profile-owned settings contract, effective limits, cache stats/cleanup и active-task protection.
+- Related files: profile schemas/routes/config, attachment endpoints/repository/storage, unit/API tests.
 - [ ] Pending: Implementation and validation.
-- Architectural decisions: `max_images_per_message` range 1–10, default 1; cleanup возвращает deleted/skipped count и bytes.
+- Architectural decisions: `max_images_per_message` range 1–10, default 1; cleanup возвращает deleted/skipped count и bytes; отдельный UI всех vision-настроек реализуется в Stage 7.5.
 - Problems: Нет.
 - Technical debt: Нет.
 - Next steps: Начать после Stage 5 checkpoint.
@@ -98,27 +99,38 @@
 - Validation: pending
 - Git checkpoint: pending
 
+### Stage 7.5 — Dedicated Vision Models and Settings Tab
+- Goal: Перед финальным live QA собрать отдельный Settings tab для vision model library и всех vision-owned controls, затем остановиться и передать пользователю точный download handoff.
+- Related files: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, model catalog/routes, profile settings/cache endpoints, UI/static/manual tests.
+- [ ] Pending: Implementation and validation.
+- Architectural decisions: `qwen2.5vl:3b`, `qwen2.5vl:7b` и `gemma3:4b` не смешиваются с обычной chat library; tab показывает declared и runtime-confirmed capabilities отдельно; download/update/delete остаются явными действиями пользователя; в tab находятся `chat_images_enabled`, primary vision model/auto, fallback route, OCR assist, image count/byte/pixel/side limits, cache stats и cleanup.
+- Problems: Vision-моделей сейчас нет в project storage, Ollama runtime недоступен.
+- Technical debt: Нет.
+- Next steps: Выполнить после Stage 7, создать checkpoint и сообщить пользователю, что можно скачать модели; Stage 8 не начинать до пользовательского handoff.
+- Validation: pending
+- Git checkpoint: pending
+
 ### Stage 8 — Regression, Documentation and Cleanup
-- Goal: Закрыть static/unit/API/manual regression, обновить affected docs и удалить текущий progress-файл в terminal cleanup commit.
+- Goal: После загрузки vision-моделей пользователем выполнить controlled live smoke, закрыть static/unit/API/manual regression, обновить affected docs и удалить текущий progress-файл в terminal cleanup commit.
 - Related files: affected docs, tests, runtime artifacts, `docs/progress/multimodal-chat-vision-progress.md`.
-- [ ] Pending: QA, docs, `docs/CHANGELOG.md`, cleanup.
+- [ ] Pending: User model download handoff, live QA, docs, `docs/CHANGELOG.md`, cleanup.
 - Architectural decisions: Controlled live vision smoke выполняется только отдельно и осознанно; отсутствие запуска фиксируется как manual external validation, а не как passed.
 - Problems: Нет.
 - Technical debt: Нет.
-- Next steps: После Stage 7 выполнить полный безопасный suite и manual UI matrix.
+- Next steps: Начинать только после Stage 7.5 checkpoint и подтверждения пользователя, что выбранные vision-модели скачаны.
 - Validation: pending
 - Git checkpoint: pending
 
 ## Overall Status
 - Status: in progress
 - Completed: Request/TЗ analysis, DOCX text/layout review, documentation-impact review, repository/code boundary inspection, Stage 1 implementation and validation.
-- In progress: Stage 2 checkpoint.
-- Pending: Stages 3–8, final docs and cleanup commit.
-- Changed files since latest checkpoint: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, `tests/chat_attachments_ui.test.mjs`, this progress file.
+- In progress: Stage 3 checkpoint.
+- Pending: Stages 4–7.5, user model-download handoff, then Stage 8 final QA/docs/cleanup.
+- Changed files since latest checkpoint: `app/config.py`, `app/services/models.py`, `backend/apps/chat/services/ollama_runtime.py`, `backend/apps/chat/services/vision_runtime.py`, `tests/test_chat_vision_runtime.py`, this progress file.
 - Known problems: Existing ASR pipeline-memory assertions are not a clean baseline; Ollama runtime сейчас недоступен; в project storage нет vision model; live vision smoke не разрешён в обычной validation.
 - Technical debt: Нет.
-- Next action: Commit Stage 2, then implement Stage 3 capability/runtime boundary with mocked tests.
-- Latest Git checkpoint: `7b84d91` — Add chat attachment storage foundation.
+- Next action: Commit Stage 3, then implement Stage 4 attachment/task/SSE lifecycle; preserve the new stop gate after Stage 7.5.
+- Latest Git checkpoint: `18db044` — Add chat image composer workflow.
 
 ## Continuation Prompt
-Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Read the progress file, current Git status, `AGENTS.md`, and latest checkpoint commit first. Current status: Stage 2 implementation validated, checkpoint pending. Completed: Stage 1 checkpoint `7b84d91`; composer strip, dedicated picker, PNG/JPEG/WebP frontend limits, upload/error/remove states, multi-image drop, image-only and mixed clipboard paste, attachment-only submit, desktop/mobile/theme/focus manual validation and 4 static UI tests. Remaining: checkpoint Stage 2 and Stages 3–8. Problems/blockers: broader pipeline-memory suite has pre-existing ASR summary failures; Ollama runtime is unavailable and no vision model exists in project storage; live inference/download must not run automatically. Decisions to preserve: dynamic capability detection, `vision_model=auto`; primary future controlled smoke candidate `qwen2.5vl:3b`, optional `qwen2.5vl:7b`/`gemma3:4b`; Chat owns v1; OCR Studio stays independent; images never auto-index into RAG; normal shutdown preserves attachments; database reset deletes them; preserve active ASR progress. Perform next: inspect/stage/commit Stage 2, record hash, then implement Stage 3 capability resolver and transient Ollama image payload with mocked tests.
+Continue work on `multimodal-chat-vision` using `docs/progress/multimodal-chat-vision-progress.md`. Read the progress file, current Git status, `AGENTS.md`, and latest checkpoint commit first. Current status: Stage 3 validated, checkpoint pending. Completed: Stage 1 `7b84d91`; Stage 2 `18db044`; Stage 3 confirmed capability parser/resolver, separate backend vision catalog, transient base64/native Ollama boundary, process-local concurrency 1 and 64+9 passing tests. Remaining: checkpoint Stage 3, Stages 4–7.5, then stop for user model download before Stage 8. Problems/blockers: broader pipeline-memory suite has pre-existing ASR summary failures; Ollama runtime is unavailable and no vision model exists in project storage; live inference/download must not run automatically. Decisions to preserve: dynamic confirmed-only capability detection, `vision_model=auto`; primary future controlled smoke candidate `qwen2.5vl:3b`, optional `qwen2.5vl:7b`/`gemma3:4b`; models live in a separate Vision tab with all vision settings/download controls in Stage 7.5; after that checkpoint notify user and do not start Stage 8 until download; base64 only transient; text-only selected models use derived context; OCR Studio independent; no image RAG auto-index; preserve active ASR progress. Perform next: inspect/stage/commit Stage 3, then implement Stage 4 persisted attachment/task/SSE lifecycle.

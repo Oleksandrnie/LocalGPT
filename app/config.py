@@ -329,6 +329,48 @@ MODEL_CATALOG = [
     },
 ]
 
+VISION_MODEL_CATALOG = [
+    {
+        "id": "qwen2.5vl:3b",
+        "title": "Qwen 2.5 VL 3B",
+        "category": "vision",
+        "weight": "light_medium",
+        "recommended": True,
+        "experimental": False,
+        "capabilities": ["text", "vision"],
+        "description": (
+            "Основная локальная vision-модель для изображений, документов, схем и интерфейсов. "
+            "Рекомендуемый первый вариант для M1 Pro 16GB; загружается только по явному действию пользователя."
+        ),
+    },
+    {
+        "id": "qwen2.5vl:7b",
+        "title": "Qwen 2.5 VL 7B",
+        "category": "vision_quality",
+        "weight": "medium_heavy",
+        "recommended": False,
+        "experimental": False,
+        "capabilities": ["text", "vision"],
+        "description": (
+            "Более качественный vision-профиль для сложных документов и диаграмм. "
+            "Требует больше памяти и не выбирается автоматически, пока 3B доступна."
+        ),
+    },
+    {
+        "id": "gemma3:4b",
+        "title": "Gemma 3 4B Vision",
+        "category": "vision_alt",
+        "weight": "light_medium",
+        "recommended": False,
+        "experimental": True,
+        "capabilities": ["text", "vision"],
+        "description": (
+            "Альтернативная multimodal-модель для сравнительной проверки качества. "
+            "Не загружается и не выбирается автоматически без явного действия пользователя."
+        ),
+    },
+]
+
 UTILITY_MODEL_CATALOG = [
     {
         "id": "qwen3:0.6b",

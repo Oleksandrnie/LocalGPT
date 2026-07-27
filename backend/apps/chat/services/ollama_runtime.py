@@ -220,7 +220,7 @@ def _post_json_stream(path: str, payload: dict[str, Any], *, timeout: float | No
 
 def chat_completion(
     model_name: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
@@ -264,7 +264,7 @@ def chat_completion(
 
 def chat_completion_stream(
     model_name: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
