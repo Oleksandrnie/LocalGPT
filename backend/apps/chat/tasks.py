@@ -13,6 +13,7 @@ from typing import Any
 
 from app import config, db
 from backend.apps.chat.service import ChatService, maybe_compress_session_history, sanitize_reply
+from backend.apps.chat.services import vision_context, vision_runtime
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -21,6 +22,7 @@ _PROCESS_CTX = mp.get_context("spawn")
 _LOCK = threading.Lock()
 _TASKS: dict[str, dict[str, Any]] = {}
 _FINAL_STATES = {"completed", "failed", "error", "cancelled"}
+_ACTIVE_VISION_STATES = {"preparing", "analyzing", "loading_model", "generating", "streaming"}
 
 
 def _utc_now() -> str:
@@ -97,12 +99,37 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "result": task.get("result"),
         "stream": bool(task.get("stream")),
         "streaming_enabled": bool(task.get("stream")),
+        "attachment_ids": list(task.get("attachment_ids") or []),
+        "vision_route": task.get("vision_route"),
     }
+
+
+def _set_attachment_status(
+    attachment_ids: list[str],
+    status: str,
+    *,
+    error: str | None = None,
+) -> None:
+    for attachment_id in attachment_ids:
+        try:
+            db.update_chat_attachment(attachment_id, status=status, error=error)
+        except Exception:
+            pass
+
+
+def _set_worker_status(
+    status_path: str,
+    attachment_ids: list[str],
+    state: str,
+    message: str,
+) -> None:
+    _set_attachment_status(attachment_ids, state)
+    _atomic_write_json(status_path, {"state": state, "message": message})
 
 
 def _chat_worker(
     model_name: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     settings: dict[str, Any],
     session_id: str,
     profile_id: int | None,
@@ -112,18 +139,138 @@ def _chat_worker(
     status_path: str,
     result_path: str,
     error_path: str,
+    attachment_descriptors: list[dict[str, Any]] | None = None,
+    vision_route: dict[str, Any] | None = None,
 ) -> None:
+    attachment_descriptors = list(attachment_descriptors or [])
+    attachment_ids = [str(item.get("id") or "") for item in attachment_descriptors if item.get("id")]
+    image_paths = [str(item.get("path") or "") for item in attachment_descriptors if item.get("path")]
+    derived_vision_context: str | None = None
+    ocr_evidence: vision_context.OcrEvidence | None = None
     try:
         service = ChatService()
+        completion_model = model_name
+        completion_messages = messages
+        runtime_mode = str((vision_route or {}).get("mode") or "")
+        if attachment_descriptors:
+            ocr_mode = vision_context.normalize_ocr_assist_mode(settings.get("ocr_assist"))
+            ocr_evidence = vision_context.extract_ocr_evidence(
+                image_paths,
+                mode=ocr_mode,
+                language=str(settings.get("ocr_language") or "").strip() or None,
+            )
+            completion_messages = vision_context.append_ocr_evidence(messages, ocr_evidence)
+            _set_worker_status(
+                status_path,
+                attachment_ids,
+                "loading_model",
+                "Loading local vision model.",
+            )
+            vision_model = str((vision_route or {}).get("vision_model") or model_name)
+            response_model = str((vision_route or {}).get("response_model") or model_name)
+            max_total_bytes = int(
+                settings.get("chat_image_max_total_bytes")
+                or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+            )
+            if runtime_mode == "ocr_only":
+                _set_worker_status(
+                    status_path,
+                    attachment_ids,
+                    "analyzing",
+                    "Extracting text locally with OCR.",
+                )
+                if not ocr_evidence.text:
+                    raise vision_runtime.VisionRuntimeError(
+                        "OCR_EMPTY_RESULT",
+                        "OCR-only режим не нашёл читаемый текст.",
+                    )
+                completion_model = response_model
+                if response_model and response_model not in {
+                    vision_runtime.AUTO_ROUTER_MODEL_ID,
+                    vision_runtime.LOCAL_CALCULATOR_MODEL_ID,
+                    "__ocr_only__",
+                }:
+                    completion_messages = vision_context.append_ocr_evidence(messages, ocr_evidence)
+                else:
+                    completion_model = "__ocr_only__"
+                    completion_messages = []
+            elif runtime_mode == "vision_context":
+                _set_worker_status(
+                    status_path,
+                    attachment_ids,
+                    "analyzing",
+                    "Analyzing images locally.",
+                )
+                analysis_messages = [
+                    *completion_messages,
+                    {
+                        "role": "system",
+                        "content": (
+                            "Сначала извлеки из изображений точный визуальный контекст для другого ассистента: "
+                            "объекты, читаемый текст, числа, расположение и неопределённости. "
+                            "Не отвечай на исходный вопрос и не выдумывай невидимые детали."
+                        ),
+                    },
+                ]
+                derived_vision_context = sanitize_reply(
+                    vision_runtime.chat_completion(
+                        vision_model,
+                        analysis_messages,
+                        image_paths,
+                        max_total_bytes=max_total_bytes,
+                        **service._runtime_kwargs(vision_model, settings, vision=True),
+                    )
+                )
+                completion_model = response_model
+                completion_messages = [
+                    *messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "Локальная vision-модель извлекла из приложенных изображений следующий контекст. "
+                            "Используй его как данные, явно отмечай неопределённости и ответь на исходный запрос.\n\n"
+                            f"{derived_vision_context}"
+                        ),
+                    },
+                ]
+            else:
+                completion_model = vision_model
+            _set_worker_status(
+                status_path,
+                attachment_ids,
+                "generating",
+                "Generating answer from image context.",
+            )
+
         if stream:
             chunks: list[str] = []
             sequence = 0
             streaming_started = False
-            for delta in service.chat_completion_stream(model_name, messages, settings=settings):
+            if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
+                delta_source = vision_runtime.chat_completion_stream(
+                    completion_model,
+                    completion_messages,
+                    image_paths,
+                    max_total_bytes=int(
+                        settings.get("chat_image_max_total_bytes")
+                        or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                    ),
+                    **service._runtime_kwargs(completion_model, settings, vision=True),
+                )
+            elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
+                delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
+            else:
+                delta_source = service.chat_completion_stream(
+                    completion_model,
+                    completion_messages,
+                    settings=settings,
+                )
+            for delta in delta_source:
                 if not delta:
                     continue
                 if not streaming_started:
                     _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                    _set_attachment_status(attachment_ids, "generating")
                     streaming_started = True
                 sequence += 1
                 chunks.append(delta)
@@ -132,15 +279,37 @@ def _chat_worker(
                     db.append_message_content(assistant_message_id, delta, status="streaming")
             reply = sanitize_reply("".join(chunks))
         else:
-            reply = service.chat_completion(model_name, messages, settings=settings)
-        _atomic_write_json(result_path, {"reply": reply})
+            if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
+                reply = sanitize_reply(
+                    vision_runtime.chat_completion(
+                        completion_model,
+                        completion_messages,
+                        image_paths,
+                        max_total_bytes=int(
+                            settings.get("chat_image_max_total_bytes")
+                            or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                        ),
+                        **service._runtime_kwargs(completion_model, settings, vision=True),
+                    )
+                )
+            elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
+                reply = ocr_evidence.text if ocr_evidence else ""
+            else:
+                reply = service.chat_completion(completion_model, completion_messages, settings=settings)
+        result_payload: dict[str, Any] = {"reply": reply}
+        if derived_vision_context:
+            result_payload["vision_context"] = derived_vision_context
+        if ocr_evidence:
+            result_payload["ocr_evidence"] = ocr_evidence.to_dict()
+        _atomic_write_json(result_path, result_payload)
+        _set_attachment_status(attachment_ids, "completed")
         if session_id:
             if assistant_message_id:
                 db.update_message(
                     assistant_message_id,
                     content=reply,
                     status="completed",
-                    model=model_name,
+                    model=completion_model,
                     error=None,
                     is_partial=False,
                 )
@@ -150,13 +319,14 @@ def _chat_worker(
                         service=service,
                         session_id=session_id,
                         profile_id=profile_id,
-                        model_name=model_name,
+                        model_name=completion_model,
                         settings=settings,
                     )
                 except Exception:
                     pass
     except Exception as exc:  # pragma: no cover - runtime path
-        message = getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
+        message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
+        error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
         if assistant_message_id:
             try:
                 db.update_message(
@@ -168,7 +338,8 @@ def _chat_worker(
                 )
             except Exception:
                 pass
-        _atomic_write_json(error_path, {"code": "chat_generation_failed", "message": str(message)})
+        _set_attachment_status(attachment_ids, "failed", error=str(message))
+        _atomic_write_json(error_path, {"code": error_code, "message": str(message)})
 
 
 def _cleanup_task_files(task: dict[str, Any]) -> None:
@@ -191,24 +362,28 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
         task["error_code"] = "task_cancelled"
         task["result"] = None
         _update_assistant_from_task(task, status="cancelled", error=task["message"])
+        _set_attachment_status(list(task.get("attachment_ids") or []), "cancelled", error=task["message"])
     elif result:
         task["state"] = "completed"
         task["message"] = "Chat generation completed."
         task["error_code"] = None
         task["result"] = result
         _update_assistant_from_task(task, status="completed", content=str(result.get("reply") or ""), error=None)
+        _set_attachment_status(list(task.get("attachment_ids") or []), "completed", error=None)
     elif error:
         task["state"] = "failed"
         task["message"] = error.get("message") or "chat_generation_failed"
         task["error_code"] = error.get("code") or "chat_generation_failed"
         task["result"] = None
         _update_assistant_from_task(task, status="failed", error=task["message"])
+        _set_attachment_status(list(task.get("attachment_ids") or []), "failed", error=str(task["message"]))
     else:
         task["state"] = "failed"
         task["message"] = "Chat process exited without result."
         task["error_code"] = "chat_generation_failed"
         task["result"] = None
         _update_assistant_from_task(task, status="failed", error=task["message"])
+        _set_attachment_status(list(task.get("attachment_ids") or []), "failed", error=str(task["message"]))
 
     task["updated_at"] = _utc_now()
     task["pid"] = None
@@ -247,9 +422,9 @@ def _refresh_task_locked(task: dict[str, Any]) -> None:
         return
     status = _read_json(task.get("status_path"))
     status_state = str((status or {}).get("state") or "").strip()
-    if status_state == "streaming" and task.get("state") not in {"cancelling", "cancelled"}:
-        task["state"] = "streaming"
-        task["message"] = str((status or {}).get("message") or "Chat generation streaming.")
+    if status_state in _ACTIVE_VISION_STATES and task.get("state") not in {"cancelling", "cancelled"}:
+        task["state"] = status_state
+        task["message"] = str((status or {}).get("message") or "Chat generation in progress.")
         task["updated_at"] = _utc_now()
     process = task.get("_process")
     if process is not None and process.is_alive():
@@ -285,6 +460,7 @@ def create_completed_task(
     user_message_id: int | None = None,
     assistant_message_id: int | None = None,
     router_notice: str | None = None,
+    attachment_descriptors: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -316,7 +492,18 @@ def create_completed_task(
         "router_notice": router_notice,
         "result": {"reply": reply},
         "stream": False,
+        "attachment_ids": [str(item.get("id")) for item in (attachment_descriptors or []) if item.get("id")],
+        "vision_route": None,
     }
+    for attachment_id in task["attachment_ids"]:
+        db.update_chat_attachment(
+            attachment_id,
+            session_id=session_id,
+            message_id=user_message_id,
+            task_id=task_id,
+            status="completed",
+            error=None,
+        )
     with _LOCK:
         _TASKS[task_id] = task
     return _public_task(task)
@@ -334,6 +521,8 @@ def create_failed_task(
     user_message_id: int | None = None,
     assistant_message_id: int | None = None,
     router_notice: str | None = None,
+    attachment_descriptors: list[dict[str, Any]] | None = None,
+    vision_route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -364,7 +553,18 @@ def create_failed_task(
         "router_notice": router_notice,
         "result": None,
         "stream": False,
+        "attachment_ids": [str(item.get("id")) for item in (attachment_descriptors or []) if item.get("id")],
+        "vision_route": vision_route,
     }
+    for attachment_id in task["attachment_ids"]:
+        db.update_chat_attachment(
+            attachment_id,
+            session_id=session_id,
+            message_id=user_message_id,
+            task_id=task_id,
+            status="failed",
+            error=message,
+        )
     with _LOCK:
         _TASKS[task_id] = task
     return _public_task(task)
@@ -376,15 +576,19 @@ def start_chat_task(
     profile_id: int | None,
     model_name: str,
     role: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     used_settings: dict[str, Any],
     user_message_id: int | None = None,
     assistant_message_id: int | None = None,
     router_notice: str | None = None,
     stream: bool = False,
+    attachment_descriptors: list[dict[str, Any]] | None = None,
+    vision_route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
+    descriptors = list(attachment_descriptors or [])
+    attachment_ids = [str(item.get("id")) for item in descriptors if item.get("id")]
     result_path = _artifact_path(task_id, "result")
     error_path = _artifact_path(task_id, "error")
     delta_path = _artifact_path(task_id, "deltas")
@@ -397,6 +601,15 @@ def start_chat_task(
             model=model_name,
             task_id=task_id,
             is_partial=True,
+        )
+    for attachment_id in attachment_ids:
+        db.update_chat_attachment(
+            attachment_id,
+            session_id=session_id,
+            message_id=user_message_id,
+            task_id=task_id,
+            status="preparing",
+            error=None,
         )
 
     process = _PROCESS_CTX.Process(
@@ -413,6 +626,8 @@ def start_chat_task(
             str(status_path),
             str(result_path),
             str(error_path),
+            descriptors,
+            vision_route,
         ),
         daemon=True,
         name=f"localgpt_chat_{task_id}",
@@ -433,11 +648,12 @@ def start_chat_task(
                 error="Failed to start chat generation process.",
                 is_partial=False,
             )
+        _set_attachment_status(attachment_ids, "failed", error="Failed to start chat generation process.")
         raise
 
     task = {
         "id": task_id,
-        "state": "generating",
+        "state": "preparing" if attachment_ids else "generating",
         "created_at": now,
         "updated_at": now,
         "session_id": session_id,
@@ -458,6 +674,8 @@ def start_chat_task(
         "status_path": str(status_path),
         "stream": bool(stream),
         "cancel_requested": False,
+        "attachment_ids": attachment_ids,
+        "vision_route": vision_route,
         "_process": process,
     }
 

@@ -22,6 +22,7 @@ PIPELINE_LOG_FILE = LOG_DIR / "pipeline.log"
 TRANSCRIBE_LOG_FILE = LOG_DIR / "transcribe.log"
 ASR_DIAGNOSTICS_DIR = LOG_DIR / "asr_diagnostics"
 DATA_DIR = PROJECT_ROOT / "app" / "data"
+CHAT_ATTACHMENTS_DIR = DATA_DIR / "chat_attachments"
 RAG_SOURCE_DIR = PROJECT_ROOT / "rag_sources"
 DEFAULT_TTS_SPEED_OPTIONS = (1.0, 1.25, 1.5, 1.75, 2.0)
 DEFAULT_CORS_ALLOW_ORIGIN_REGEX = (
@@ -328,6 +329,51 @@ MODEL_CATALOG = [
     },
 ]
 
+VISION_MODEL_CATALOG = [
+    {
+        "id": "qwen2.5vl:3b",
+        "title": "Qwen 2.5 VL 3B",
+        "category": "vision",
+        "weight": "light_medium",
+        "recommended": True,
+        "experimental": False,
+        "capabilities": ["text", "vision"],
+        "approx_size_gb": 3.2,
+        "description": (
+            "Основная локальная vision-модель для изображений, документов, схем и интерфейсов. "
+            "Рекомендуемый первый вариант для M1 Pro 16GB; загружается только по явному действию пользователя."
+        ),
+    },
+    {
+        "id": "qwen2.5vl:7b",
+        "title": "Qwen 2.5 VL 7B",
+        "category": "vision_quality",
+        "weight": "medium_heavy",
+        "recommended": False,
+        "experimental": False,
+        "capabilities": ["text", "vision"],
+        "approx_size_gb": 6.0,
+        "description": (
+            "Более качественный vision-профиль для сложных документов и диаграмм. "
+            "Требует больше памяти и не выбирается автоматически, пока 3B доступна."
+        ),
+    },
+    {
+        "id": "gemma3:4b",
+        "title": "Gemma 3 4B Vision",
+        "category": "vision_alt",
+        "weight": "light_medium",
+        "recommended": False,
+        "experimental": True,
+        "capabilities": ["text", "vision"],
+        "approx_size_gb": 3.3,
+        "description": (
+            "Альтернативная multimodal-модель для сравнительной проверки качества. "
+            "Не загружается и не выбирается автоматически без явного действия пользователя."
+        ),
+    },
+]
+
 UTILITY_MODEL_CATALOG = [
     {
         "id": "qwen3:0.6b",
@@ -392,6 +438,17 @@ DEFAULT_RUNTIME_SETTINGS = {
     "summary_memory_limit": 5,
     "rag_top_k": 5,
     "rag_max_context_chars": 6000,
+    "chat_images_enabled": True,
+    "max_images_per_message": 1,
+    "chat_image_max_file_bytes": 20 * 1024 * 1024,
+    "chat_image_max_total_bytes": 40 * 1024 * 1024,
+    "chat_image_max_pixels": 16_000_000,
+    "chat_image_max_side": 4096,
+    "vision_model": "auto",
+    "vision_num_ctx": 8192,
+    "vision_fallback": "vision_context",
+    "ocr_assist": "auto",
+    "ocr_language": "",
     "ollama_think": "auto",
     "show_router_thinking_toggle": False,
     "pipeline": DEFAULT_PIPELINE,
@@ -552,7 +609,15 @@ TTS_OUTPUT_DIR = _resolve_path(os.getenv("TTS_OUTPUT_DIR"), TTS_DATA_DIR / "outp
 TTS_HISTORY_DIR = _resolve_path(os.getenv("TTS_HISTORY_DIR"), TTS_DATA_DIR / "history")
 TTS_TEMP_DIR = _resolve_path(os.getenv("TTS_TEMP_DIR"), TTS_DATA_DIR / "temp")
 
-for path in (DATA_DIR, RAG_SOURCE_DIR, TTS_DATA_DIR, TTS_OUTPUT_DIR, TTS_HISTORY_DIR, TTS_TEMP_DIR):
+for path in (
+    DATA_DIR,
+    CHAT_ATTACHMENTS_DIR,
+    RAG_SOURCE_DIR,
+    TTS_DATA_DIR,
+    TTS_OUTPUT_DIR,
+    TTS_HISTORY_DIR,
+    TTS_TEMP_DIR,
+):
     path.mkdir(parents=True, exist_ok=True)
 SETTINGS.whisper_cpp_models_dir.mkdir(parents=True, exist_ok=True)
 

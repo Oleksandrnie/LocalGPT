@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, Query, UploadFile
 
-from app.schemas import RagIngestRequest, RagSearchRequest
+from app.schemas import RagIngestRequest, RagSearchRequest, VisionContextExportRequest
 from backend.apps.rag import service
 
 router = APIRouter()
@@ -30,7 +30,18 @@ def rag_delete_file(profile_id: int = Query(...), path: str = Query(...)) -> dic
 
 @router.delete("/rag/contexts")
 def rag_delete_context(profile_id: int = Query(...), source_id: str = Query(...)) -> dict[str, object]:
-    return service.delete_asr_context_source(profile_id, source_id)
+    return service.delete_context_source(profile_id, source_id)
+
+
+@router.post("/rag/vision-contexts")
+def rag_export_vision_context(req: VisionContextExportRequest) -> dict[str, object]:
+    return service.index_vision_context(
+        profile_id=req.profile_id,
+        session_id=req.session_id,
+        message_id=req.message_id,
+        title=req.title,
+        text=req.text,
+    )
 
 
 @router.post("/rag/migrate-legacy")

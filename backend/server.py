@@ -14,6 +14,7 @@ from backend.apps.asr import pipeline_routes as asr_pipeline
 from backend.apps.asr import routes as transcribe
 from backend.apps.asr import transcripts
 from backend.apps.chat import routes as chat
+from backend.apps.chat import attachments as chat_attachments
 from backend.apps.ocr import routes as ocr
 from backend.apps.plugins import routes as plugins
 from backend.apps.rag import routes as rag
@@ -49,6 +50,7 @@ app.include_router(asr_pipeline.router)
 app.include_router(transcribe.router)
 app.include_router(ocr.router)
 app.include_router(rag.router)
+app.include_router(chat_attachments.router)
 app.include_router(chat.router)
 app.include_router(storage.router)
 app.include_router(tts.router)

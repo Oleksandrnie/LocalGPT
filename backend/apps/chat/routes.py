@@ -25,7 +25,14 @@ from backend.apps.chat.service import (
     prompt_blocks,
     session_title_hint,
 )
-from backend.apps.chat.services import local_calculator, model_residency, model_router
+from backend.apps.chat.services import (
+    attachment_storage,
+    local_calculator,
+    model_residency,
+    model_router,
+    vision_context,
+    vision_runtime,
+)
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
@@ -151,6 +158,12 @@ def _mark_missing_chat_task_failed(task_id: str) -> None:
         error="Задача генерации ответа не найдена. Возможно, backend был перезапущен во время генерации.",
         is_partial=False,
     )
+    for attachment in db.list_chat_attachments(task_id=task_id):
+        db.update_chat_attachment(
+            str(attachment["id"]),
+            status="failed",
+            error="Задача генерации ответа не найдена после перезапуска backend.",
+        )
 
 
 async def _chat_task_event_stream(task_id: str, request: Request) -> AsyncIterator[str]:
@@ -556,6 +569,14 @@ def chat(req: ChatRequest):
         chat_service.log_chat_event(payload)
 
     try:
+        if getattr(req, "attachment_ids", None):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "VISION_TASK_ENDPOINT_REQUIRED",
+                    "message": "Запросы с изображениями выполняются через /chat/tasks.",
+                },
+            )
         prepared = _apply_auto_router(_prepare_chat_request(req))
         session_id = prepared["session_id"]
         profile_id = prepared["profile_id"]
@@ -643,6 +664,79 @@ def start_chat_task(req: ChatRequest):
     prompt_warnings = prepared.get("prompt_warnings") or []
     stream_requested = bool(getattr(req, "stream", False))
     effective_settings = {**effective_settings, "streaming_enabled": stream_requested}
+    attachment_ids = list(dict.fromkeys(str(item or "").strip() for item in (req.attachment_ids or []) if str(item or "").strip()))
+    attachment_descriptors: list[dict[str, object]] = []
+    vision_route: dict[str, object] | None = None
+    preflight_error: HTTPException | None = None
+    if attachment_ids:
+        try:
+            attachment_descriptors = attachment_storage.prepare_chat_attachments(
+                attachment_ids,
+                profile_id=int(profile_id),
+                session_id=str(session_id),
+                settings=effective_settings,
+            )
+            model_state = model_service.list_models()
+            ocr_mode = vision_context.normalize_ocr_assist_mode(effective_settings.get("ocr_assist"))
+            installed_records = model_state.get("installed") or []
+            installed_names = {
+                str(item.get("name") or "")
+                for item in installed_records
+                if isinstance(item, dict) and item.get("name")
+            }
+            if ocr_mode == "ocr_only":
+                response_model = (
+                    target_model
+                    if target_model in installed_names
+                    else "__ocr_only__"
+                )
+                vision_route = {
+                    "mode": "ocr_only",
+                    "vision_model": "",
+                    "response_model": response_model,
+                    "reason": "explicit_ocr_only_degraded_mode",
+                    "capabilities": ["ocr"],
+                }
+                target_model = response_model
+            else:
+                plan = vision_runtime.resolve_vision_route(
+                    selected_model=target_model,
+                    configured_vision_model=str(effective_settings.get("vision_model") or "auto"),
+                    installed_models=installed_records,
+                )
+                if (
+                    plan.mode == "vision_context"
+                    and str(effective_settings.get("vision_fallback") or "vision_context") == "error"
+                ):
+                    raise vision_runtime.VisionRuntimeError(
+                        "VISION_TEXT_MODEL_FALLBACK_DISABLED",
+                        "Выбранная chat-модель не поддерживает изображения, а vision-context fallback отключён.",
+                        details={
+                            "response_model": plan.response_model,
+                            "vision_model": plan.vision_model,
+                        },
+                    )
+                vision_route = plan.to_dict()
+                target_model = plan.response_model
+            prepared["target_model"] = target_model
+            prepared["vision_route"] = vision_route
+            prepared["effective_settings"] = {
+                **effective_settings,
+                "vision_route": vision_route,
+                "vision_attachment_count": len(attachment_descriptors),
+                "vision_total_bytes": sum(int(item.get("size_bytes") or 0) for item in attachment_descriptors),
+            }
+            effective_settings = prepared["effective_settings"]
+        except attachment_storage.AttachmentStorageError as exc:
+            preflight_error = HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": exc.message, **exc.details},
+            )
+        except vision_runtime.VisionRuntimeError as exc:
+            preflight_error = HTTPException(
+                status_code=424,
+                detail={"code": exc.code, "message": exc.message, **exc.details},
+            )
 
     user_message = db.add_message(session_id, "user", user_query) if session_id else {}
     assistant_message = (
@@ -669,14 +763,20 @@ def start_chat_task(req: ChatRequest):
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             router_notice=prepared.get("router_notice"),
+            attachment_descriptors=attachment_descriptors,
+            vision_route=vision_route,
         )
         task["warnings"] = prompt_warnings
         return task
 
-    try:
-        prepared = _apply_auto_router(prepared)
-    except HTTPException as exc:
-        return _failed_task_from_http(exc)
+    if preflight_error is not None:
+        return _failed_task_from_http(preflight_error)
+
+    if not attachment_descriptors:
+        try:
+            prepared = _apply_auto_router(prepared)
+        except HTTPException as exc:
+            return _failed_task_from_http(exc)
 
     target_model = prepared["target_model"]
     effective_settings = prepared["effective_settings"]
@@ -699,12 +799,14 @@ def start_chat_task(req: ChatRequest):
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             router_notice=router_notice,
+            attachment_descriptors=attachment_descriptors,
         )
 
-    try:
-        _ensure_chat_model_available(target_model)
-    except HTTPException as exc:
-        return _failed_task_from_http(exc)
+    if not attachment_descriptors:
+        try:
+            _ensure_chat_model_available(target_model)
+        except HTTPException as exc:
+            return _failed_task_from_http(exc)
 
     try:
         task = chat_tasks.start_chat_task(
@@ -718,6 +820,8 @@ def start_chat_task(req: ChatRequest):
             assistant_message_id=assistant_message_id,
             router_notice=router_notice,
             stream=stream_requested,
+            attachment_descriptors=attachment_descriptors,
+            vision_route=vision_route,
         )
         task["warnings"] = prompt_warnings
         return task
@@ -733,6 +837,8 @@ def start_chat_task(req: ChatRequest):
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
             router_notice=router_notice,
+            attachment_descriptors=attachment_descriptors,
+            vision_route=vision_route,
         )
         task["warnings"] = prompt_warnings
         return task
@@ -826,5 +932,6 @@ def reset_session(req: ResetRequest):
     if config.SETTINGS.admin_token and req.admin_token != config.SETTINGS.admin_token:
         raise HTTPException(status_code=403, detail="forbidden")
     sid = req.session_id.strip()
+    attachment_storage.delete_session_attachments(sid)
     db.reset_session(sid)
     return {"ok": True}

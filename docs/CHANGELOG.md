@@ -20,11 +20,16 @@
 ### Added
 
 - Кнопка перехода к последнему сообщению с сохранением streaming auto-scroll поведения.
+- Multimodal chat для PNG/JPEG/WebP: picker/paste/drop, локальные originals/thumbnails, persisted attachment/task lifecycle и direct Ollama vision route.
+- Отдельный Settings tab `Vision` с библиотекой Qwen2.5-VL/Gemma 3, runtime-confirmed capabilities, profile limits, OCR assist и cache cleanup.
+- Явный редактируемый Vision → RAG export производного текста без image binary.
+- Настройка `Vision context, токены` в profile-owned Vision tab; значение передаётся в native Ollama `options.num_ctx` и устраняет зависимость от default 4096.
 
 ### Changed
 
 - Завершён responsive mobile pass для chat composer, settings и ASR/TTS/OCR tools.
 - Проверен ASR context lifecycle: сохранение как `asr_context`, RAG retrieval, включение в chat prompt и связанное удаление.
+- Пользовательский live smoke multimodal chat принят: Qwen2.5-VL image flow и настройка Vision context работают штатно.
 
 ## 2026-05
 

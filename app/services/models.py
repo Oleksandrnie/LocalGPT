@@ -234,29 +234,82 @@ def _partial_models_by_name(partials: list[dict[str, Any]]) -> dict[str, dict[st
     return result
 
 
-def _show_model_details(model_name: str) -> dict[str, Any]:
-    target = str(model_name or "").strip()
-    if not target:
-        return {}
-    try:
-        result = subprocess.run(
-            ["ollama", "show", target],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=20,
-            env=config.OLLAMA_ENV,
-        )
-    except (FileNotFoundError, subprocess.SubprocessError, OSError):
-        return {}
-    if result.returncode != 0:
-        return {}
+def _normalize_capabilities(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_items = re.split(r"[\s,]+", value)
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = value
+    else:
+        raw_items = []
+    aliases = {"image": "vision", "images": "vision"}
+    result: list[str] = []
+    for item in raw_items:
+        normalized = str(item or "").strip().lower().replace("-", "_")
+        normalized = aliases.get(normalized, normalized)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
 
+
+def _show_json_details(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    model_info = payload.get("model_info") if isinstance(payload.get("model_info"), dict) else {}
     details: dict[str, Any] = {}
-    for line in (result.stdout or "").splitlines():
+
+    architecture = str(raw_details.get("family") or model_info.get("general.architecture") or "").strip()
+    parameters = str(raw_details.get("parameter_size") or "").strip()
+    quantization = str(raw_details.get("quantization_level") or "").strip()
+    if architecture:
+        details["architecture"] = architecture
+    if parameters:
+        details["parameters"] = parameters
+    if quantization:
+        details["quantization"] = quantization
+
+    context_length = next(
+        (
+            value
+            for key, value in model_info.items()
+            if str(key).endswith(".context_length") and isinstance(value, (int, float, str))
+        ),
+        None,
+    )
+    if context_length is not None:
+        details["context_length"] = str(context_length)
+
+    families = raw_details.get("families")
+    if isinstance(families, list):
+        normalized_families = [str(item).strip() for item in families if str(item or "").strip()]
+        if normalized_families:
+            details["families"] = normalized_families
+
+    capabilities = _normalize_capabilities(payload.get("capabilities") or raw_details.get("capabilities"))
+    if capabilities:
+        details["capabilities"] = capabilities
+        details["capabilities_confirmed"] = True
+    return details
+
+
+def _show_plain_details(stdout: str) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+    in_capabilities = False
+    capabilities: list[str] = []
+    for line in (stdout or "").splitlines():
         stripped = line.strip()
         if not stripped:
+            in_capabilities = False
             continue
+        if stripped.lower() == "capabilities":
+            in_capabilities = True
+            continue
+        if in_capabilities:
+            normalized = _normalize_capabilities(stripped)
+            if len(normalized) == 1:
+                capability = normalized[0]
+                if capability not in capabilities:
+                    capabilities.append(capability)
+                continue
+            in_capabilities = False
         key, _, value = stripped.partition(" ")
         normalized_key = key.strip().lower().replace(" ", "_")
         clean_value = value.strip()
@@ -266,7 +319,53 @@ def _show_model_details(model_name: str) -> dict[str, Any]:
             details["context_length"] = stripped.removeprefix("context length").strip()
         elif stripped.startswith("embedding length"):
             details["embedding_length"] = stripped.removeprefix("embedding length").strip()
+    if capabilities:
+        details["capabilities"] = capabilities
+        details["capabilities_confirmed"] = True
     return details
+
+
+def _show_model_details(model_name: str) -> dict[str, Any]:
+    target = str(model_name or "").strip()
+    if not target:
+        return {}
+    command = ["ollama", "show", target, "--json"]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+            env=config.OLLAMA_ENV,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return {}
+    if result.returncode == 0:
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            return _show_json_details(payload)
+
+    error_text = str(result.stderr or result.stdout or "").lower()
+    if result.returncode != 0 and "unknown flag" not in error_text and "unknown shorthand" not in error_text:
+        return {}
+    try:
+        plain = subprocess.run(
+            ["ollama", "show", target],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+            env=config.OLLAMA_ENV,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return {}
+    if plain.returncode != 0:
+        return {}
+    return _show_plain_details(plain.stdout or "")
 
 
 def _list_active_models() -> list[dict[str, Any]]:
@@ -483,6 +582,7 @@ def _list_local_models() -> list[dict[str, Any]]:
         runtime_details = _show_model_details(name)
         if runtime_details:
             details = {**details, **runtime_details}
+        capabilities = _normalize_capabilities(details.get("capabilities"))
         models.append(
             {
                 "name": name,
@@ -495,6 +595,8 @@ def _list_local_models() -> list[dict[str, Any]]:
                 "installed": True,
                 "runtime_installed": True,
                 "details": details,
+                "capabilities": capabilities,
+                "capabilities_confirmed": bool(details.get("capabilities_confirmed") and capabilities),
             }
         )
     return models
@@ -730,7 +832,11 @@ def list_models() -> dict[str, Any]:
     installed_names = set(installed_by_name)
     configured_ids = {
         item.get("id")
-        for item in [*config.MODEL_CATALOG, *getattr(config, "UTILITY_MODEL_CATALOG", [])]
+        for item in [
+            *config.MODEL_CATALOG,
+            *getattr(config, "VISION_MODEL_CATALOG", []),
+            *getattr(config, "UTILITY_MODEL_CATALOG", []),
+        ]
         if item.get("id")
     }
     download_by_model = {
@@ -763,6 +869,8 @@ def list_models() -> dict[str, Any]:
         partial_info = partial_by_model.get(model_id)
         storage_info = storage_by_model.get(model_id)
         runtime_installed = bool(installed_info)
+        declared_capabilities = _normalize_capabilities(item.get("capabilities"))
+        runtime_capabilities = _normalize_capabilities((installed_info or {}).get("capabilities"))
         active_now = model_id in active_names
         downloading_now = bool(download_info and download_info.get("state") in {"pending", "running", "paused"})
         partial_now = bool(partial_info and not runtime_installed)
@@ -796,18 +904,27 @@ def list_models() -> dict[str, Any]:
             "status": state,
             "status_label": _status_label(state),
             "runtime": installed_info,
+            "declared_capabilities": declared_capabilities,
+            "capabilities": runtime_capabilities or declared_capabilities,
+            "capabilities_confirmed": bool(
+                installed_info
+                and installed_info.get("capabilities_confirmed")
+                and runtime_capabilities
+            ),
             "download": download_info,
             "partial_info": partial_info,
             "storage": storage_info,
         }
 
     catalog = [_catalog_item(item) for item in config.MODEL_CATALOG]
+    vision_catalog = [_catalog_item(item) for item in getattr(config, "VISION_MODEL_CATALOG", [])]
     utility = [_catalog_item(item) for item in getattr(config, "UTILITY_MODEL_CATALOG", [])]
     return {
         "installed": installed,
         "models": [item.get("name") for item in installed if item.get("name")],
         "active": active,
         "catalog": catalog,
+        "vision_catalog": vision_catalog,
         "utility": utility,
         "recommended": catalog,
         "downloads": downloads,

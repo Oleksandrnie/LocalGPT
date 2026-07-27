@@ -19,7 +19,7 @@ FastAPI отдаёт статические assets из `web_ui/`.
 - sidebar и chat/session navigation;
 - floating topbar;
 - message scroll/list и scroll-to-latest;
-- composer с `+` actions;
+- composer с `+` actions, image picker и attachment strip;
 - settings/modal surfaces;
 - ASR, TTS и OCR tool docks;
 - RAG и plugin/network panels;
@@ -47,9 +47,22 @@ State частично хранится в profile preferences/backend, част
 
 Assistant card рендерится из persisted `message.status`. Optimistic placeholder не является источником истины. Markdown проходит через `markdown.mjs`; raw model HTML не вставляется напрямую.
 
+Image composer принимает PNG/JPEG/WebP через picker, paste и multi-file drop. До отправки карточка показывает thumbnail, upload/error state и отдельную keyboard-accessible кнопку удаления. Обычная text paste не перехватывается, а backend settings остаются источником истины для count/byte/pixel/side limits. История загружает attachment metadata отдельно и рендерит ownership-checked thumbnail/media URLs, не binary data URI.
+
 ### Model state
 
 Если chat-модель отсутствует, composer остаётся доступным для ввода, но отправка блокируется с понятным сообщением. Загрузка модели требует явного подтверждения.
+
+Settings tab `Vision` не смешан с обычной chat library. Он показывает cards `qwen2.5vl:3b`, `qwen2.5vl:7b`, `gemma3:4b`, отдельно declared и runtime-confirmed capabilities, а также явные download/update/delete/primary actions. В этом tab находятся:
+
+- enable image chat и primary model/auto;
+- text-model fallback (`vision_context` или error);
+- Vision context size в токенах (4096–131072, default 8192);
+- OCR assist/language;
+- max images, file/total bytes, pixels и side;
+- attachment cache statistics и cleanup.
+
+После завершённого анализа действие Vision → RAG открывает dialog с редактируемым title/text. Export выполняется только после подтверждения пользователя и не переносит image binary.
 
 ## Themes
 
@@ -99,5 +112,8 @@ CSS содержит отдельные ranges для узких телефон�
 - Network address button: 0 адресов disabled, 1 копируется, 2+ открывают menu.
 - ASR full analysis остаётся явно разрешаемым и предупреждает о нагрузке.
 - Удаление ASR context должно синхронно обновлять RAG section.
+- Image-only message, mixed text+image paste и multi-image drop используют один upload flow; отправка ждёт завершения uploads.
+- Refresh восстанавливает history thumbnails и persisted vision task state без повторного user message.
+- Attachment remove target и Vision tab controls проверяются с клавиатуры, в обеих темах и на mobile viewport.
 
 Матрица проверок: [TESTING.md](../TESTING.md).

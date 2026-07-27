@@ -9,3 +9,4 @@ python-multipart>=0.0.5
 openpyxl
 httpx
 huggingface_hub
+Pillow>=10.3.0

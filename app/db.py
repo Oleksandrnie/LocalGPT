@@ -18,7 +18,22 @@ if not DB_PATH.is_absolute():
 MESSAGE_STATUSES = {"generating", "streaming", "completed", "failed", "cancelled"}
 MESSAGE_ACTIVE_STATUSES = {"generating", "streaming"}
 MESSAGE_FINAL_STATUSES = {"completed", "failed", "cancelled"}
+ATTACHMENT_STATUSES = {
+    "temporary",
+    "ready",
+    "attached",
+    "preparing",
+    "analyzing",
+    "loading_model",
+    "generating",
+    "processing",
+    "completed",
+    "failed",
+    "cancelled",
+    "deleted",
+}
 _MESSAGE_UNSET = object()
+_ATTACHMENT_UNSET = object()
 TRANSCRIPT_NAME_MAX_LEN = 120
 
 
@@ -52,6 +67,18 @@ def _message_row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     data["status"] = _normalize_message_status(data.get("status"))
     data["updated_at"] = data.get("updated_at") or data.get("created_at")
     data["is_partial"] = bool(data.get("is_partial"))
+    return data
+
+
+def _attachment_row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    data = _row_dict(row)
+    if not data:
+        return None
+    data["profile_id"] = int(data["profile_id"])
+    data["message_id"] = int(data["message_id"]) if data.get("message_id") is not None else None
+    data["size_bytes"] = int(data.get("size_bytes") or 0)
+    data["width"] = int(data.get("width") or 0)
+    data["height"] = int(data.get("height") or 0)
     return data
 
 
@@ -351,6 +378,44 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created
             ON chat_messages (session_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS chat_attachments (
+                id TEXT PRIMARY KEY,
+                profile_id INTEGER NOT NULL,
+                session_id TEXT NULL,
+                message_id INTEGER NULL,
+                task_id TEXT NULL,
+                status TEXT NOT NULL DEFAULT 'temporary',
+                mime_type TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                thumbnail_path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                sha256 TEXT NULL,
+                error TEXT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
+                FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_attachments_profile_created
+            ON chat_attachments (profile_id, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_chat_attachments_session
+            ON chat_attachments (session_id, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_chat_attachments_message
+            ON chat_attachments (message_id);
+
+            CREATE INDEX IF NOT EXISTS idx_chat_attachments_task
+            ON chat_attachments (task_id);
+
+            CREATE INDEX IF NOT EXISTS idx_chat_attachments_status
+            ON chat_attachments (profile_id, status, updated_at);
 
             CREATE TABLE IF NOT EXISTS transcripts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -976,6 +1041,158 @@ def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[s
     return messages
 
 
+def create_chat_attachment(
+    *,
+    attachment_id: str,
+    profile_id: int,
+    session_id: str | None,
+    mime_type: str,
+    original_name: str,
+    storage_path: str,
+    thumbnail_path: str,
+    size_bytes: int,
+    width: int,
+    height: int,
+    sha256: str | None,
+    status: str = "ready",
+) -> dict[str, Any]:
+    clean_status = str(status or "ready").strip().lower()
+    if clean_status not in ATTACHMENT_STATUSES:
+        raise ValueError("invalid_attachment_status")
+    now = _utcnow()
+    with closing(_connect()) as conn:
+        conn.execute(
+            """
+            INSERT INTO chat_attachments (
+                id, profile_id, session_id, message_id, task_id, status, mime_type,
+                original_name, storage_path, thumbnail_path, size_bytes, width, height,
+                sha256, error, created_at, updated_at
+            )
+            VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                attachment_id,
+                int(profile_id),
+                session_id,
+                clean_status,
+                mime_type,
+                original_name,
+                storage_path,
+                thumbnail_path,
+                int(size_bytes),
+                int(width),
+                int(height),
+                sha256,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+    return get_chat_attachment(attachment_id) or {}
+
+
+def get_chat_attachment(attachment_id: str) -> dict[str, Any] | None:
+    target = str(attachment_id or "").strip()
+    if not target:
+        return None
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM chat_attachments WHERE id = ?", (target,)).fetchone()
+    return _attachment_row_dict(row)
+
+
+def list_chat_attachments(
+    *,
+    profile_id: int | None = None,
+    session_id: str | None = None,
+    message_id: int | None = None,
+    task_id: str | None = None,
+    statuses: Iterable[str] | None = None,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if profile_id is not None:
+        clauses.append("profile_id = ?")
+        params.append(int(profile_id))
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        params.append(str(session_id))
+    if message_id is not None:
+        clauses.append("message_id = ?")
+        params.append(int(message_id))
+    if task_id is not None:
+        clauses.append("task_id = ?")
+        params.append(str(task_id))
+    normalized_statuses = [
+        str(item or "").strip().lower()
+        for item in (statuses or [])
+        if str(item or "").strip().lower() in ATTACHMENT_STATUSES
+    ]
+    if normalized_statuses:
+        placeholders = ", ".join("?" for _ in normalized_statuses)
+        clauses.append(f"status IN ({placeholders})")
+        params.extend(normalized_statuses)
+    query = "SELECT * FROM chat_attachments"
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY created_at ASC, id ASC"
+    with closing(_connect()) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [item for row in rows if (item := _attachment_row_dict(row))]
+
+
+def update_chat_attachment(
+    attachment_id: str,
+    *,
+    session_id: Any = _ATTACHMENT_UNSET,
+    message_id: Any = _ATTACHMENT_UNSET,
+    task_id: Any = _ATTACHMENT_UNSET,
+    status: str | None = None,
+    error: Any = _ATTACHMENT_UNSET,
+) -> dict[str, Any] | None:
+    current = get_chat_attachment(attachment_id)
+    if not current:
+        return None
+    fields: list[str] = []
+    params: list[Any] = []
+    if session_id is not _ATTACHMENT_UNSET:
+        fields.append("session_id = ?")
+        params.append(session_id)
+    if message_id is not _ATTACHMENT_UNSET:
+        fields.append("message_id = ?")
+        params.append(message_id)
+    if task_id is not _ATTACHMENT_UNSET:
+        fields.append("task_id = ?")
+        params.append(task_id)
+    if status is not None:
+        clean_status = str(status or "").strip().lower()
+        if clean_status not in ATTACHMENT_STATUSES:
+            raise ValueError("invalid_attachment_status")
+        fields.append("status = ?")
+        params.append(clean_status)
+    if error is not _ATTACHMENT_UNSET:
+        fields.append("error = ?")
+        params.append(error)
+    if not fields:
+        return current
+    fields.append("updated_at = ?")
+    params.append(_utcnow())
+    params.append(str(attachment_id))
+    with closing(_connect()) as conn:
+        conn.execute(f"UPDATE chat_attachments SET {', '.join(fields)} WHERE id = ?", tuple(params))
+        conn.commit()
+    return get_chat_attachment(attachment_id)
+
+
+def delete_chat_attachment_record(attachment_id: str) -> bool:
+    target = str(attachment_id or "").strip()
+    if not target:
+        return False
+    with closing(_connect()) as conn:
+        cursor = conn.execute("DELETE FROM chat_attachments WHERE id = ?", (target,))
+        conn.commit()
+    return bool(cursor.rowcount)
+
+
 def save_session_criteria(session_id: str, criteria: list[str]) -> None:
     now = _utcnow()
     with closing(_connect()) as conn:
@@ -1369,8 +1586,8 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
         _merge_dict(pipeline, overrides["pipeline"])
         effective["pipeline"] = pipeline
     effective["num_ctx_requested"] = effective.get("num_ctx")
-    effective["num_ctx_applied"] = False
-    effective["num_ctx_apply_method"] = "openai_compatible_not_supported"
+    effective["num_ctx_applied"] = effective.get("num_ctx") is not None
+    effective["num_ctx_apply_method"] = "native_ollama_options"
     profile_runtime_keys = (
         "mem_turns",
         "streaming_enabled",
@@ -1816,6 +2033,7 @@ _RESET_TABLES = (
     "profiles",
     "chat_sessions",
     "chat_messages",
+    "chat_attachments",
     "transcripts",
     "transcript_pipeline_runs",
     "session_summaries",

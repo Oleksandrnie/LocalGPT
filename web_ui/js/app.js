@@ -163,6 +163,8 @@ const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
 const IMAGE_FILE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"]);
+const CHAT_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
+const CHAT_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
 const MEDIA_FILE_EXTENSIONS = new Set([
   "mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus", "aiff", "aif", "wma",
   "mp4", "mov", "m4v", "avi", "mkv", "webm", "mpeg", "mpg", "ts", "mts", "m2ts",
@@ -206,15 +208,18 @@ const els = {
   messageScrollEnd: document.getElementById("messageScrollEnd"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
+  composerAttachments: document.getElementById("composerAttachments"),
   promptInput: document.getElementById("promptInput"),
   voiceRecordButton: document.getElementById("voiceRecordButton"),
   voiceModelMenu: document.getElementById("voiceModelMenu"),
   sendButton: document.getElementById("sendButton"),
   composerMenuButton: document.getElementById("composerMenuButton"),
   composerMenu: document.getElementById("composerMenu"),
+  imageMenuItem: document.getElementById("imageMenuItem"),
   fileMenuItem: document.getElementById("fileMenuItem"),
   transcribeMenuItem: document.getElementById("transcribeMenuItem"),
   speakMenuItem: document.getElementById("speakMenuItem"),
+  chatImageInput: document.getElementById("chatImageInput"),
   transcribeInput: document.getElementById("transcribeInput"),
   ocrImageInput: document.getElementById("ocrImageInput"),
   scrollTopButton: document.getElementById("scrollTopButton"),
@@ -337,6 +342,13 @@ const els = {
   confirmCancelButton: document.getElementById("confirmCancelButton"),
   confirmDismissButton: document.getElementById("confirmDismissButton"),
   confirmApproveButton: document.getElementById("confirmApproveButton"),
+  visionRagBackdrop: document.getElementById("visionRagBackdrop"),
+  visionRagCloseButton: document.getElementById("visionRagCloseButton"),
+  visionRagCancelButton: document.getElementById("visionRagCancelButton"),
+  visionRagSaveButton: document.getElementById("visionRagSaveButton"),
+  visionRagTitleInput: document.getElementById("visionRagTitleInput"),
+  visionRagTextInput: document.getElementById("visionRagTextInput"),
+  visionRagStatus: document.getElementById("visionRagStatus"),
   toastStack: document.getElementById("toastStack"),
   toastNotice: document.getElementById("toastNotice"),
   toastTitle: document.getElementById("toastTitle"),
@@ -351,6 +363,27 @@ const els = {
   chatLibraryMeta: document.getElementById("chatLibraryMeta"),
   chatLibraryPanel: document.getElementById("chatLibraryPanel"),
   chatModelLibrary: document.getElementById("chatModelLibrary"),
+  visionModelLibrary: document.getElementById("visionModelLibrary"),
+  visionRuntimeSummary: document.getElementById("visionRuntimeSummary"),
+  refreshVisionButton: document.getElementById("refreshVisionButton"),
+  chatImagesEnabledToggle: document.getElementById("chatImagesEnabledToggle"),
+  visionModelSelect: document.getElementById("visionModelSelect"),
+  visionFallbackSelect: document.getElementById("visionFallbackSelect"),
+  visionNumCtxInput: document.getElementById("visionNumCtxInput"),
+  visionOcrAssistSelect: document.getElementById("visionOcrAssistSelect"),
+  visionOcrLanguageInput: document.getElementById("visionOcrLanguageInput"),
+  visionMaxImagesInput: document.getElementById("visionMaxImagesInput"),
+  visionMaxFileMbInput: document.getElementById("visionMaxFileMbInput"),
+  visionMaxTotalMbInput: document.getElementById("visionMaxTotalMbInput"),
+  visionMaxMegapixelsInput: document.getElementById("visionMaxMegapixelsInput"),
+  visionMaxSideInput: document.getElementById("visionMaxSideInput"),
+  saveVisionSettingsButton: document.getElementById("saveVisionSettingsButton"),
+  resetVisionSettingsButton: document.getElementById("resetVisionSettingsButton"),
+  visionSettingsStatus: document.getElementById("visionSettingsStatus"),
+  visionCacheSummary: document.getElementById("visionCacheSummary"),
+  refreshVisionCacheButton: document.getElementById("refreshVisionCacheButton"),
+  cleanupVisionOrphansButton: document.getElementById("cleanupVisionOrphansButton"),
+  cleanupVisionCacheButton: document.getElementById("cleanupVisionCacheButton"),
   activeProfileSummary: document.getElementById("activeProfileSummary"),
   profileManagementSelect: document.getElementById("profileManagementSelect"),
   profileNameField: document.getElementById("profileNameField"),
@@ -454,12 +487,17 @@ const state = {
   sessionContextMenuSessionId: null,
   asrHistoryContextMenuTranscriptId: null,
   messages: [],
+  messageAttachments: {},
+  visionRagSourceMessageId: null,
   installedModels: [],
   recommendedModels: [],
+  visionModels: [],
   utilityModels: [],
   downloads: [],
   modelDiagnostics: null,
   chatModelsError: null,
+  visionCache: null,
+  visionCacheBusy: false,
   selectedLlmModel: "",
   selectedChatWhisperModel: "medium",
   selectedWhisperModel: ASR_STUDIO_DEFAULT_MODEL,
@@ -486,6 +524,7 @@ const state = {
   chatTaskStreamAbort: null,
   chatTaskReplay: null,
   chatTypingStreams: new Map(),
+  chatAttachments: [],
   isSpeaking: false,
   autoScrollPinned: true,
   messageScrollEndObserver: null,
@@ -1133,6 +1172,7 @@ function syncMobileScrollLock() {
     els.ocrBackdrop,
     els.ragBackdrop,
     els.confirmBackdrop,
+    els.visionRagBackdrop,
   ].some(isOverlayOpen);
   const toolOpen = [
     els.asrToolWindow,
@@ -2144,7 +2184,10 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   if (index < 0) return;
 
   const current = state.messages[index] || {};
-  const status = updates.status || current.status || "generating";
+  const requestedStatus = String(updates.status || "").toLowerCase();
+  const status = ["preparing", "analyzing", "loading_model"].includes(requestedStatus)
+    ? "generating"
+    : (updates.status || current.status || "generating");
   const nextContent = Object.prototype.hasOwnProperty.call(updates, "content")
     ? String(updates.content || "")
     : `${current.content || ""}${updates.delta || ""}`;
@@ -2777,6 +2820,8 @@ function autoResizePrompt() {
 function updateSendButtonState() {
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
+  const hasReadyAttachments = state.chatAttachments.some((item) => item.status === "ready" && item.server?.id);
+  const hasBlockedAttachments = state.chatAttachments.some((item) => item.status !== "ready");
   const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
   const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
   const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
@@ -2789,7 +2834,9 @@ function updateSendButtonState() {
       ? "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения."
       : (!selectedModel ? "Выберите модель, чтобы отправлять сообщения." : "Напишите сообщение…");
   }
-  els.sendButton.disabled = state.isSending ? false : (!hasText || !selectedInstalled);
+  els.sendButton.disabled = state.isSending
+    ? false
+    : ((!hasText && !hasReadyAttachments) || hasBlockedAttachments || !selectedInstalled);
   els.sendButton.textContent = state.isSending ? "Стоп" : "Отправить";
   els.sendButton.classList.toggle("send-button--stopping", state.isSending);
   els.sendButton.setAttribute("aria-label", state.isSending ? "Остановить генерацию" : "Отправить сообщение");
@@ -2991,11 +3038,17 @@ function classifyDraggedPayload(dataTransfer) {
   if (hasDirectoryInDataTransfer(dataTransfer)) return "directory";
 
   const files = Array.from(dataTransfer.files || []);
-  if (files.length > 1) return "multiple";
+  if (files.length > 1) {
+    return files.every((file) => classifyFileKind(file) === "image") ? "images" : "multiple";
+  }
   if (files.length === 1) return classifyFileKind(files[0]);
 
   const fileItems = Array.from(dataTransfer.items || []).filter((item) => item.kind === "file");
-  if (fileItems.length > 1) return "multiple";
+  if (fileItems.length > 1) {
+    return fileItems.every((item) => String(item?.type || "").toLowerCase().startsWith("image/"))
+      ? "images"
+      : "multiple";
+  }
   if (!fileItems.length) return "none";
   const mimeType = String(fileItems[0]?.type || "").toLowerCase();
   if (mimeType.startsWith("image/")) return "image";
@@ -3022,11 +3075,11 @@ function extractDroppedFile(dataTransfer) {
 
 function getDropOverlayContent(zone, payloadKind) {
   if (zone === "chat") {
-    if (payloadKind === "image") {
+    if (payloadKind === "image" || payloadKind === "images") {
       return {
         tone: "accent",
-        title: "Отпустите изображение для OCR",
-        meta: "В чате для изображений сейчас доступно только OCR-распознавание текста.",
+        title: payloadKind === "images" ? "Добавить изображения в чат" : "Добавить изображение в чат",
+        meta: "PNG, JPEG и WebP будут загружены локально и появятся над полем ввода.",
       };
     }
     if (payloadKind === "media") {
@@ -3049,8 +3102,8 @@ function getDropOverlayContent(zone, payloadKind) {
   if (payloadKind === "multiple") {
     return {
       tone: "warning",
-      title: "Только один файл за раз",
-      meta: "Пока можно перетаскивать по одному файлу.",
+      title: "Нельзя смешивать типы файлов",
+      meta: "Перетащите несколько изображений либо один аудио/видеофайл.",
     };
   }
 
@@ -3147,6 +3200,229 @@ function activeProfileStreamingEnabled() {
   return value === undefined || value === null ? true : Boolean(value);
 }
 
+function activeChatImageSettings() {
+  const settings = getActiveProfilePreferences()?.settings || {};
+  const maxImages = Number.parseInt(settings.max_images_per_message, 10);
+  const maxFileBytes = Number.parseInt(settings.chat_image_max_file_bytes, 10);
+  const maxTotalBytes = Number.parseInt(settings.chat_image_max_total_bytes, 10);
+  return {
+    enabled: settings.chat_images_enabled !== false,
+    maxImages: Math.min(10, Math.max(1, Number.isFinite(maxImages) ? maxImages : 1)),
+    maxFileBytes: Number.isFinite(maxFileBytes) && maxFileBytes > 0 ? maxFileBytes : 20 * 1024 * 1024,
+    maxTotalBytes: Number.isFinite(maxTotalBytes) && maxTotalBytes > 0 ? maxTotalBytes : 40 * 1024 * 1024,
+  };
+}
+
+function isSupportedChatImage(file) {
+  const mimeType = String(file?.type || "").trim().toLowerCase();
+  const extension = fileExtension(file?.name || "");
+  return CHAT_IMAGE_MIME_TYPES.has(mimeType) || (!mimeType && CHAT_IMAGE_EXTENSIONS.has(extension));
+}
+
+function formatChatAttachmentBytes(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
+  }
+  return formatBytes(bytes);
+}
+
+function chatAttachmentStatusText(item) {
+  if (item.status === "queued") return "Ожидает загрузки";
+  if (item.status === "uploading") return "Загрузка…";
+  if (item.status === "ready") {
+    const size = formatChatAttachmentBytes(item.server?.size_bytes || item.file?.size);
+    return size ? `Готово • ${size}` : "Готово";
+  }
+  if (item.status === "error") return item.error || "Не удалось загрузить";
+  return "Подготовка…";
+}
+
+function renderChatAttachments() {
+  if (!els.composerAttachments) return;
+  els.composerAttachments.replaceChildren();
+  els.composerAttachments.hidden = state.chatAttachments.length === 0;
+
+  state.chatAttachments.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "composer-attachment";
+    card.dataset.status = item.status;
+    card.setAttribute("role", "listitem");
+
+    const preview = document.createElement("img");
+    preview.className = "composer-attachment__preview";
+    preview.src = item.previewUrl || item.server?.thumbnail_url || "";
+    preview.alt = "";
+
+    const body = document.createElement("div");
+    body.className = "composer-attachment__body";
+    const name = document.createElement("span");
+    name.className = "composer-attachment__name";
+    name.textContent = item.file?.name || item.server?.original_name || "Изображение";
+    name.title = name.textContent;
+    const status = document.createElement("span");
+    status.className = "composer-attachment__status";
+    status.textContent = chatAttachmentStatusText(item);
+    status.title = status.textContent;
+    body.append(name, status);
+
+    const remove = document.createElement("button");
+    remove.className = "composer-attachment__remove";
+    remove.type = "button";
+    remove.dataset.chatAttachmentRemove = item.localId;
+    remove.setAttribute("aria-label", `Удалить изображение ${name.textContent}`);
+    remove.title = "Удалить изображение";
+    remove.textContent = "×";
+    remove.disabled = state.isSending;
+
+    card.append(preview, body, remove);
+    els.composerAttachments.append(card);
+  });
+  updateSendButtonState();
+}
+
+function releaseChatAttachmentPreview(item) {
+  if (!item?.previewIsObjectUrl || !item.previewUrl) return;
+  URL.revokeObjectURL(item.previewUrl);
+  item.previewIsObjectUrl = false;
+}
+
+async function uploadChatAttachment(item) {
+  if (!item || !state.chatAttachments.some((candidate) => candidate.localId === item.localId)) return;
+  item.status = "uploading";
+  const controller = new AbortController();
+  item.controller = controller;
+  renderChatAttachments();
+
+  const formData = new FormData();
+  formData.append("file", item.file, item.file.name || "clipboard-image");
+  formData.append("profile_id", String(item.profileId));
+  if (item.sessionId) {
+    formData.append("session_id", item.sessionId);
+  }
+
+  try {
+    const serverAttachment = await request("/chat/attachments", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    const current = state.chatAttachments.find((candidate) => candidate.localId === item.localId);
+    if (!current || current.profileId !== state.activeProfileId) {
+      await request(serverAttachment.media_url, { method: "DELETE" }).catch(() => {});
+      return;
+    }
+    releaseChatAttachmentPreview(current);
+    current.previewUrl = serverAttachment.thumbnail_url;
+    current.server = serverAttachment;
+    current.status = "ready";
+    current.error = "";
+  } catch (error) {
+    const current = state.chatAttachments.find((candidate) => candidate.localId === item.localId);
+    if (!current || isAbortError(error)) return;
+    current.status = "error";
+    current.error = error?.message || "Не удалось загрузить изображение";
+    setFooter(`Изображение не загружено: ${current.error}`, "error");
+  } finally {
+    const current = state.chatAttachments.find((candidate) => candidate.localId === item.localId);
+    if (current) {
+      current.controller = null;
+      renderChatAttachments();
+    }
+  }
+}
+
+async function addChatImageFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (!state.activeProfileId) {
+    showToast("Сначала выберите профиль.", "warning");
+    return;
+  }
+
+  const settings = activeChatImageSettings();
+  if (!settings.enabled) {
+    showToast("Изображения в чате отключены в настройках профиля.", "warning");
+    return;
+  }
+
+  const accepted = [];
+  let totalBytes = state.chatAttachments.reduce((sum, item) => sum + Number(item.file?.size || item.server?.size_bytes || 0), 0);
+  let availableSlots = Math.max(0, settings.maxImages - state.chatAttachments.length);
+  for (const file of files) {
+    if (!availableSlots) {
+      showToast(`Можно прикрепить не больше ${settings.maxImages} изображений.`, "warning");
+      break;
+    }
+    if (!isSupportedChatImage(file)) {
+      showToast(`${file.name || "Файл"}: поддерживаются только PNG, JPEG и WebP.`, "warning");
+      continue;
+    }
+    if (Number(file.size || 0) > settings.maxFileBytes) {
+      showToast(`${file.name || "Файл"} превышает лимит ${formatBytes(settings.maxFileBytes)}.`, "warning");
+      continue;
+    }
+    if (totalBytes + Number(file.size || 0) > settings.maxTotalBytes) {
+      showToast(`Общий размер изображений превышает ${formatBytes(settings.maxTotalBytes)}.`, "warning");
+      break;
+    }
+
+    const item = {
+      localId: globalThis.crypto?.randomUUID?.() || `chat-image-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      profileId: state.activeProfileId,
+      sessionId: state.currentSessionId,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      previewIsObjectUrl: true,
+      status: "queued",
+      error: "",
+      server: null,
+      controller: null,
+    };
+    state.chatAttachments.push(item);
+    accepted.push(item);
+    totalBytes += Number(file.size || 0);
+    availableSlots -= 1;
+  }
+
+  renderChatAttachments();
+  await Promise.all(accepted.map((item) => uploadChatAttachment(item)));
+}
+
+async function removeChatAttachment(localId, { deleteRemote = true } = {}) {
+  const index = state.chatAttachments.findIndex((item) => item.localId === localId);
+  if (index < 0) return;
+  const [item] = state.chatAttachments.splice(index, 1);
+  item.controller?.abort();
+  releaseChatAttachmentPreview(item);
+  renderChatAttachments();
+  if (deleteRemote && item.server?.media_url) {
+    try {
+      await request(item.server.media_url, { method: "DELETE" });
+    } catch (error) {
+      setFooter(`Не удалось удалить изображение из кэша: ${error.message || error}`, "error");
+    }
+  }
+}
+
+async function clearChatAttachments({ deleteRemote = true } = {}) {
+  const items = [...state.chatAttachments];
+  state.chatAttachments = [];
+  items.forEach((item) => {
+    item.controller?.abort();
+    releaseChatAttachmentPreview(item);
+  });
+  renderChatAttachments();
+  if (deleteRemote) {
+    await Promise.all(items.map((item) => (
+      item.server?.media_url
+        ? request(item.server.media_url, { method: "DELETE" }).catch(() => {})
+        : Promise.resolve()
+    )));
+  }
+}
+
 function asrFullAnalysisEnabled() {
   const preferences = getActiveProfilePreferences();
   return Boolean(preferences?.settings?.asr_full_analysis_enabled);
@@ -3213,6 +3489,7 @@ function applyActiveProfilePreferences() {
   renderRagButton();
   renderWhisperControls();
   renderTtsControls();
+  renderVisionSettings();
 }
 
 function replaceProfileState(profile) {
@@ -3548,6 +3825,72 @@ function renderTranscriptStrip() {
   renderContextSummary();
 }
 
+function visionSourceUserMessageForIndex(messageIndex) {
+  for (let index = Number(messageIndex) - 1; index >= 0; index -= 1) {
+    const message = state.messages[index];
+    if (message?.role !== "user") continue;
+    return (state.messageAttachments[String(message.id)] || []).length ? message : null;
+  }
+  return null;
+}
+
+function closeVisionRagDialog() {
+  state.visionRagSourceMessageId = null;
+  if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = true;
+  syncMobileScrollLock();
+}
+
+function openVisionRagDialog(messageIndex) {
+  const index = Number(messageIndex);
+  const assistantMessage = Number.isFinite(index) ? state.messages[index] : null;
+  const sourceMessage = visionSourceUserMessageForIndex(index);
+  if (!assistantMessage || !sourceMessage || !String(assistantMessage.content || "").trim()) {
+    setFooter("Для этого ответа нет image-контекста для экспорта.", "warning");
+    return;
+  }
+  state.visionRagSourceMessageId = Number(sourceMessage.id);
+  if (els.visionRagTitleInput) {
+    els.visionRagTitleInput.value = String(sourceMessage.content || "Vision context").trim().slice(0, 160);
+  }
+  if (els.visionRagTextInput) {
+    els.visionRagTextInput.value = String(assistantMessage.content || "").trim();
+  }
+  setInlineStatus(els.visionRagStatus, "Проверьте и при необходимости отредактируйте производный текст.", "warning");
+  if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = false;
+  syncMobileScrollLock();
+  window.setTimeout(() => els.visionRagTextInput?.focus(), 0);
+}
+
+async function saveVisionContextToRag() {
+  const messageId = Number(state.visionRagSourceMessageId || 0);
+  const text = String(els.visionRagTextInput?.value || "").trim();
+  if (!messageId || !state.activeProfileId || !state.currentSessionId || !text) {
+    setInlineStatus(els.visionRagStatus, "Нужен непустой текст и активный чат.", "warning");
+    return;
+  }
+  els.visionRagSaveButton.disabled = true;
+  setInlineStatus(els.visionRagStatus, "Индексирую только текстовый контекст…", "warning");
+  try {
+    await request("/rag/vision-contexts", {
+      method: "POST",
+      body: {
+        profile_id: state.activeProfileId,
+        session_id: state.currentSessionId,
+        message_id: messageId,
+        title: String(els.visionRagTitleInput?.value || "").trim(),
+        text,
+      },
+    });
+    await loadRagStatus();
+    closeVisionRagDialog();
+    setFooter("Текстовый vision-контекст сохранён в RAG.", "success");
+  } catch (error) {
+    setInlineStatus(els.visionRagStatus, `Не удалось сохранить: ${error.message || error}`, "error");
+  } finally {
+    els.visionRagSaveButton.disabled = false;
+  }
+}
+
 function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
@@ -3565,6 +3908,10 @@ function renderMessages() {
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
       const canCopy = role !== "user" && hasContent;
+      const canExportVision = role === "assistant"
+        && status === "completed"
+        && hasContent
+        && Boolean(visionSourceUserMessageForIndex(index));
       const body = (() => {
         if (role !== "assistant") return formatRichMessage(content);
         if (status === "failed") {
@@ -3590,6 +3937,19 @@ function renderMessages() {
         }
         return formatRichMessage(content);
       })();
+      const attachments = role === "user"
+        ? (state.messageAttachments[String(message.id)] || [])
+        : [];
+      const attachmentsMarkup = attachments.length
+        ? `<div class="message-attachments" role="list" aria-label="Прикреплённые изображения">
+            ${attachments.map((attachment) => `
+              <a class="message-attachment" role="listitem" href="${escapeHtml(attachment.media_url || "")}" target="_blank" rel="noreferrer">
+                <img src="${escapeHtml(attachment.thumbnail_url || "")}" alt="${escapeHtml(attachment.original_name || "Изображение")}" />
+                <span>${escapeHtml(attachment.original_name || "Изображение")}</span>
+              </a>
+            `).join("")}
+          </div>`
+        : "";
       return `
         <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}` : ""}">
           <article class="message-card">
@@ -3600,10 +3960,12 @@ function renderMessages() {
                 <span class="message-card__time">${escapeHtml(formatDateTime(message.created_at))}</span>
               </span>
             </div>
+            ${attachmentsMarkup}
             <div class="message-card__body">${body}</div>
-            ${canCopy || (role === "assistant" && status === "failed")
+            ${canCopy || canExportVision || (role === "assistant" && status === "failed")
               ? `<div class="message-card__actions">
                   ${role === "assistant" && status === "failed" ? `<button class="message-copy-button" type="button" data-retry-message-index="${index}">Повторить</button>` : ""}
+                  ${canExportVision ? `<button class="message-copy-button" type="button" data-vision-rag-index="${index}">В RAG</button>` : ""}
                   ${canCopy ? `<button class="message-copy-button" type="button" data-copy-index="${index}">Скопировать</button>` : ""}
                 </div>`
               : ""}
@@ -3846,6 +4208,225 @@ function renderChatModelLibrary() {
       `;
     })
     .join("");
+}
+
+function visionSettingsValues() {
+  const settings = getActiveProfilePreferences()?.settings || {};
+  return {
+    chat_images_enabled: settings.chat_images_enabled !== false,
+    vision_model: String(settings.vision_model || "auto"),
+    vision_num_ctx: Math.min(131072, Math.max(4096, Number(settings.vision_num_ctx) || 8192)),
+    vision_fallback: String(settings.vision_fallback || "vision_context"),
+    ocr_assist: String(settings.ocr_assist || "auto"),
+    ocr_language: String(settings.ocr_language || ""),
+    max_images_per_message: Math.min(10, Math.max(1, Number(settings.max_images_per_message) || 1)),
+    chat_image_max_file_bytes: Number(settings.chat_image_max_file_bytes) || 20 * 1024 * 1024,
+    chat_image_max_total_bytes: Number(settings.chat_image_max_total_bytes) || 40 * 1024 * 1024,
+    chat_image_max_pixels: Number(settings.chat_image_max_pixels) || 16_000_000,
+    chat_image_max_side: Number(settings.chat_image_max_side) || 4096,
+  };
+}
+
+function renderVisionModelLibrary() {
+  if (!els.visionModelLibrary) return;
+  const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
+  const selectedVisionModel = visionSettingsValues().vision_model;
+  const models = Array.isArray(state.visionModels) ? state.visionModels : [];
+  if (!models.length) {
+    els.visionModelLibrary.innerHTML = '<p class="subtle">Vision-каталог недоступен.</p>';
+    return;
+  }
+  els.visionModelLibrary.innerHTML = models.map((item) => {
+    const name = getModelId(item);
+    const runtimeInfo = installedByName.get(name) || item.runtime || null;
+    const installed = isRuntimeModelInstalled(item, installedByName);
+    const confirmed = Boolean(installed && item.capabilities_confirmed);
+    const runtimeCapabilities = confirmed
+      ? (runtimeInfo?.capabilities || item.capabilities || [])
+      : [];
+    const task = getActiveChatDownload(name);
+    const selected = selectedVisionModel === name;
+    const stateLabel = task
+      ? String(task.state || "running")
+      : (confirmed ? "Vision подтверждён" : installed ? "Capability не подтверждён" : "Не загружена");
+    const tone = confirmed ? "success" : task ? "warning" : installed ? "warning" : "muted";
+    const declared = Array.isArray(item.declared_capabilities) ? item.declared_capabilities.join(", ") : "text, vision";
+    const runtime = runtimeCapabilities.length ? runtimeCapabilities.join(", ") : "не подтверждено";
+    const size = runtimeInfo?.size_gb
+      ? `${runtimeInfo.size_gb} GB runtime`
+      : item.approx_size_gb ? `≈ ${item.approx_size_gb} GB` : "";
+    return `
+      <article class="model-card${installed ? " model-card--installed" : ""}${selected ? " model-card--active" : ""}">
+        <div class="model-card__head">
+          <div>
+            <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
+            <p class="model-card__meta">${escapeHtml([`ID: ${name}`, size, item.weight].filter(Boolean).join(" • "))}</p>
+          </div>
+          <div class="model-card__badges">
+            <span class="status-badge status-badge--${tone}">${escapeHtml(stateLabel)}</span>
+            ${selected ? '<span class="status-badge status-badge--selected">Основная</span>' : ""}
+          </div>
+        </div>
+        <p class="model-card__note">${escapeHtml(item.description || "")}</p>
+        <p class="model-card__meta">Declared: ${escapeHtml(declared)} • Runtime confirmed: ${escapeHtml(runtime)}</p>
+        <div class="button-row">
+          <button class="button ${selected ? "button--primary" : "button--ghost"}" type="button" data-vision-model-action="select" data-vision-model="${escapeHtml(name)}">Основная</button>
+          ${installed ? "" : `<button class="button button--ghost" type="button" data-vision-model-action="download" data-vision-model="${escapeHtml(name)}">Загрузить</button>`}
+          <button class="button button--ghost" type="button" data-vision-model-action="update" data-vision-model="${escapeHtml(name)}">Обновить</button>
+          ${installed ? `<button class="button button--ghost" type="button" data-vision-model-action="delete" data-vision-model="${escapeHtml(name)}">Удалить</button>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderVisionSettings() {
+  const values = visionSettingsValues();
+  const profileDisabled = !state.activeProfileId;
+  const installedVision = state.visionModels.filter((item) => item.runtime_installed);
+  const confirmedVision = installedVision.filter((item) => item.capabilities_confirmed);
+  if (els.visionRuntimeSummary) {
+    els.visionRuntimeSummary.textContent = confirmedVision.length
+      ? `Готово: ${confirmedVision.map((item) => getModelId(item)).join(", ")}`
+      : installedVision.length
+        ? "Модель найдена, но Ollama ещё не подтвердил vision capability."
+        : "Vision-модели не установлены. Начните с Qwen2.5-VL 3B.";
+  }
+  if (els.chatImagesEnabledToggle) els.chatImagesEnabledToggle.checked = values.chat_images_enabled;
+  if (els.visionModelSelect) els.visionModelSelect.value = values.vision_model;
+  if (els.visionFallbackSelect) els.visionFallbackSelect.value = values.vision_fallback;
+  if (els.visionNumCtxInput) els.visionNumCtxInput.value = String(values.vision_num_ctx);
+  if (els.visionOcrAssistSelect) els.visionOcrAssistSelect.value = values.ocr_assist;
+  if (els.visionOcrLanguageInput) els.visionOcrLanguageInput.value = values.ocr_language;
+  if (els.visionMaxImagesInput) els.visionMaxImagesInput.value = String(values.max_images_per_message);
+  if (els.visionMaxFileMbInput) els.visionMaxFileMbInput.value = String(Math.round(values.chat_image_max_file_bytes / 1024 / 1024));
+  if (els.visionMaxTotalMbInput) els.visionMaxTotalMbInput.value = String(Math.round(values.chat_image_max_total_bytes / 1024 / 1024));
+  if (els.visionMaxMegapixelsInput) els.visionMaxMegapixelsInput.value = String(Math.round(values.chat_image_max_pixels / 1_000_000));
+  if (els.visionMaxSideInput) els.visionMaxSideInput.value = String(values.chat_image_max_side);
+  [
+    els.chatImagesEnabledToggle,
+    els.visionModelSelect,
+    els.visionFallbackSelect,
+    els.visionNumCtxInput,
+    els.visionOcrAssistSelect,
+    els.visionOcrLanguageInput,
+    els.visionMaxImagesInput,
+    els.visionMaxFileMbInput,
+    els.visionMaxTotalMbInput,
+    els.visionMaxMegapixelsInput,
+    els.visionMaxSideInput,
+    els.saveVisionSettingsButton,
+    els.resetVisionSettingsButton,
+  ].filter(Boolean).forEach((control) => {
+    control.disabled = profileDisabled;
+  });
+  if (els.visionCacheSummary) {
+    const cache = state.visionCache;
+    els.visionCacheSummary.textContent = cache
+      ? `${cache.attachment_count || 0} файлов • ${formatBytes(cache.total_bytes || 0)} • active: ${cache.active_count || 0}`
+      : "Нет данных";
+  }
+  [els.refreshVisionCacheButton, els.cleanupVisionOrphansButton, els.cleanupVisionCacheButton]
+    .filter(Boolean)
+    .forEach((button) => {
+      button.disabled = profileDisabled || state.visionCacheBusy;
+    });
+  renderVisionModelLibrary();
+  queueSyncAppSelects();
+}
+
+async function saveVisionSettingsFlow(settingsOverride = null) {
+  if (!state.activeProfileId) return;
+  const mb = 1024 * 1024;
+  const settings = settingsOverride || {
+    chat_images_enabled: Boolean(els.chatImagesEnabledToggle?.checked),
+    vision_model: String(els.visionModelSelect?.value || "auto"),
+    vision_num_ctx: Number(els.visionNumCtxInput?.value || 8192),
+    vision_fallback: String(els.visionFallbackSelect?.value || "vision_context"),
+    ocr_assist: String(els.visionOcrAssistSelect?.value || "auto"),
+    ocr_language: String(els.visionOcrLanguageInput?.value || "").trim(),
+    max_images_per_message: Number(els.visionMaxImagesInput?.value || 1),
+    chat_image_max_file_bytes: Number(els.visionMaxFileMbInput?.value || 20) * mb,
+    chat_image_max_total_bytes: Number(els.visionMaxTotalMbInput?.value || 40) * mb,
+    chat_image_max_pixels: Number(els.visionMaxMegapixelsInput?.value || 16) * 1_000_000,
+    chat_image_max_side: Number(els.visionMaxSideInput?.value || 4096),
+  };
+  setInlineStatus(els.visionSettingsStatus, "Сохраняю Vision-настройки…", "warning");
+  const updated = await saveActiveProfilePreferences({ settings });
+  if (!updated) {
+    setInlineStatus(els.visionSettingsStatus, "Не удалось сохранить Vision-настройки.", "error");
+    return;
+  }
+  renderVisionSettings();
+  setInlineStatus(els.visionSettingsStatus, "Vision-настройки сохранены для активного профиля.", "success");
+}
+
+async function resetVisionSettingsFlow() {
+  await saveVisionSettingsFlow({
+    chat_images_enabled: true,
+    vision_model: "auto",
+    vision_num_ctx: 8192,
+    vision_fallback: "vision_context",
+    ocr_assist: "auto",
+    ocr_language: "",
+    max_images_per_message: 1,
+    chat_image_max_file_bytes: 20 * 1024 * 1024,
+    chat_image_max_total_bytes: 40 * 1024 * 1024,
+    chat_image_max_pixels: 16_000_000,
+    chat_image_max_side: 4096,
+  });
+}
+
+async function loadVisionCache({ silent = false } = {}) {
+  if (!state.activeProfileId) {
+    state.visionCache = null;
+    renderVisionSettings();
+    return;
+  }
+  try {
+    state.visionCache = await request(`/chat/attachments/cache?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+  } catch (error) {
+    if (!silent) setInlineStatus(els.visionSettingsStatus, `Кэш недоступен: ${error.message || error}`, "error");
+  } finally {
+    renderVisionSettings();
+  }
+}
+
+async function cleanupVisionCache(scope) {
+  if (!state.activeProfileId || state.visionCacheBusy) return;
+  const label = scope === "orphans" ? "orphan-файлы" : "весь image-кэш профиля";
+  const approved = await openConfirmDialog({
+    eyebrow: "Очистка Vision-кэша",
+    title: `Удалить ${label}?`,
+    message: scope === "orphans"
+      ? "Будут удалены только непривязанные файлы старше 24 часов. Активные задачи будут пропущены."
+      : "Будут удалены изображения из истории этого профиля. Активные задачи будут пропущены.",
+    confirmLabel: "Удалить",
+  });
+  if (!approved) return;
+  state.visionCacheBusy = true;
+  renderVisionSettings();
+  try {
+    const result = await request("/chat/attachments/cleanup", {
+      method: "POST",
+      body: {
+        scope,
+        profile_id: state.activeProfileId,
+        temporary_ttl_seconds: 24 * 60 * 60,
+      },
+    });
+    await loadVisionCache({ silent: true });
+    setInlineStatus(
+      els.visionSettingsStatus,
+      `Удалено: ${result.deleted_count || 0}, освобождено: ${formatBytes(result.deleted_bytes || 0)}, active skipped: ${result.skipped_active_count || 0}.`,
+      "success",
+    );
+  } catch (error) {
+    setInlineStatus(els.visionSettingsStatus, `Очистка не выполнена: ${error.message || error}`, "error");
+  } finally {
+    state.visionCacheBusy = false;
+    renderVisionSettings();
+  }
 }
 
 function renderModelSettings() {
@@ -6498,19 +7079,7 @@ async function sendOcrTextToChat() {
 async function handleChatDroppedFile(file) {
   const fileKind = classifyFileKind(file);
   if (fileKind === "image") {
-    const approved = await openConfirmDialog({
-      eyebrow: "Drag & Drop",
-      title: "OCR для изображения",
-      message: "Для изображений сейчас доступно только OCR-распознавание текста.",
-      confirmLabel: "Распознать OCR",
-      cancelLabel: "Отмена",
-      returnFocus: els.promptInput,
-    });
-    if (!approved) {
-      showToast("Действие отменено пользователем.", "warning");
-      return;
-    }
-    await runOcrForImage(file);
+    await addChatImageFiles([file]);
     return;
   }
 
@@ -6557,9 +7126,16 @@ async function handleAsrToolDroppedFile(file) {
 }
 
 async function handleDroppedDataTransfer(zone, dataTransfer) {
+  if (zone === "chat" && !hasDirectoryInDataTransfer(dataTransfer)) {
+    const files = Array.from(dataTransfer?.files || []);
+    if (files.length > 1 && files.every((file) => classifyFileKind(file) === "image")) {
+      await addChatImageFiles(files);
+      return;
+    }
+  }
   const { file, error } = extractDroppedFile(dataTransfer);
   if (error === "multiple") {
-    showToast("Пока можно перетаскивать по одному файлу.", "warning");
+    showToast("Перетащите несколько изображений либо один аудио/видеофайл.", "warning");
     return;
   }
   if (!file) {
@@ -7202,7 +7778,7 @@ function renderAppRuntimeMaintenance() {
 }
 
 function setSettingsTab(tabName, { persist = true, render = true } = {}) {
-  const allowed = new Set(["profile", "models", "asr", "tts", "plugins", "system"]);
+  const allowed = new Set(["profile", "models", "vision", "asr", "tts", "plugins", "system"]);
   const next = allowed.has(tabName) ? tabName : "profile";
   state.activeSettingsTab = next;
   if (persist) {
@@ -7246,6 +7822,7 @@ function renderSettings() {
   renderLibraryPanels();
   renderModelControls();
   renderModelSettings();
+  renderVisionSettings();
   renderWhisperControls();
   renderTtsControls();
   renderDownloads();
@@ -7310,6 +7887,7 @@ function openSettings() {
   void loadTtsSettings({ silent: true });
   void loadTtsLibrary({ silent: true });
   void loadPlugins({ silent: true });
+  void loadVisionCache({ silent: true });
 }
 
 function openAsrPipelineSettings() {
@@ -7744,6 +8322,7 @@ async function loadModels({ silent = false } = {}) {
       ? data.catalog
       : (Array.isArray(data?.recommended) ? data.recommended : []);
     state.utilityModels = Array.isArray(data?.utility) ? data.utility : [];
+    state.visionModels = Array.isArray(data?.vision_catalog) ? data.vision_catalog : [];
     state.downloads = Array.isArray(data?.downloads) ? data.downloads : [];
     state.modelDiagnostics = data?.diagnostics || null;
     state.chatModelsError = data?.error || null;
@@ -7775,6 +8354,7 @@ async function loadModels({ silent = false } = {}) {
       writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel);
     }
     renderModelControls();
+    renderVisionSettings();
     renderDownloads();
     void refreshModelSettings({ silent: true });
     syncDownloadsPolling();
@@ -7927,11 +8507,15 @@ async function refreshAsrPipelineSettings({ silent = false } = {}) {
 }
 
 async function openSession(sessionId) {
+  if (state.currentSessionId !== (sessionId || null) && state.chatAttachments.length) {
+    await clearChatAttachments({ deleteRemote: true });
+  }
   state.currentSessionId = sessionId || null;
   writeStored(STORAGE_KEYS.activeSessionId, state.currentSessionId || "");
 
   if (!sessionId) {
     state.messages = [];
+    state.messageAttachments = {};
     state.latestTranscript = null;
     if (els.chatTitle) {
       els.chatTitle.textContent = "Новый чат";
@@ -7953,12 +8537,20 @@ async function openSession(sessionId) {
   applyCurrentSessionMeta();
 
   try {
-    const [messagesData, transcriptsData] = await Promise.all([
+    const [messagesData, transcriptsData, attachmentsData] = await Promise.all([
       request(`/sessions/${encodeURIComponent(sessionId)}/messages`),
       request(`/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
+      request(`/chat/attachments?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
     ]);
 
     state.messages = Array.isArray(messagesData?.messages) ? messagesData.messages : [];
+    state.messageAttachments = (Array.isArray(attachmentsData?.attachments) ? attachmentsData.attachments : [])
+      .reduce((groups, attachment) => {
+        const key = String(attachment?.message_id ?? "");
+        if (!key) return groups;
+        groups[key] = [...(groups[key] || []), attachment];
+        return groups;
+      }, {});
     const transcripts = Array.isArray(transcriptsData?.transcripts) ? transcriptsData.transcripts : [];
     state.latestTranscript = transcripts[0] || null;
     renderMessages();
@@ -7998,6 +8590,9 @@ async function loadSessions({ preferredSessionId = null } = {}) {
 }
 
 async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
+  if (state.activeProfileId && state.activeProfileId !== (profileId || null) && state.chatAttachments.length) {
+    await clearChatAttachments({ deleteRemote: true });
+  }
   state.activeProfileId = profileId || null;
   state.profileManagementMode = "edit";
   writeStored(STORAGE_KEYS.activeProfileId, state.activeProfileId || "");
@@ -8469,8 +9064,15 @@ async function ensureModelInstalled(modelName) {
   return false;
 }
 
-async function sendPromptText(rawQuery, { clearInput = false } = {}) {
-  const query = String(rawQuery || "").trim();
+async function sendPromptText(
+  rawQuery,
+  { clearInput = false, attachmentIds = [], consumeComposerAttachments = false } = {},
+) {
+  const normalizedAttachmentIds = Array.from(new Set(
+    (Array.isArray(attachmentIds) ? attachmentIds : []).map((item) => String(item || "").trim()).filter(Boolean),
+  ));
+  const query = String(rawQuery || "").trim()
+    || (normalizedAttachmentIds.length ? "Проанализируй прикреплённое изображение." : "");
   if (state.isSending) {
     await cancelCurrentChatGeneration();
     return;
@@ -8492,6 +9094,7 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
   const controller = new AbortController();
   state.chatTaskStartController = controller;
   updateSendButtonState();
+  renderChatAttachments();
   if (clearInput && els.promptInput) {
     els.promptInput.value = "";
     autoResizePrompt();
@@ -8507,12 +9110,18 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
       model_name: selectedModel,
       stream: activeProfileStreamingEnabled(),
     };
+    if (normalizedAttachmentIds.length) {
+      payload.attachment_ids = normalizedAttachmentIds;
+    }
 
     if (state.currentSessionId) {
       payload.session_id = state.currentSessionId;
     }
 
     const task = await request("/chat/tasks", { method: "POST", body: payload, signal: controller.signal });
+    if (consumeComposerAttachments && normalizedAttachmentIds.length) {
+      await clearChatAttachments({ deleteRemote: false });
+    }
     activeTaskId = task?.id || task?.task_id || "";
     state.chatTaskStartController = null;
     state.chatTaskId = task?.id || null;
@@ -8577,13 +9186,21 @@ async function sendPromptText(rawQuery, { clearInput = false } = {}) {
     clearChatTypingStreams(activeTaskId);
     state.isSending = false;
     updateSendButtonState();
+    renderChatAttachments();
     scrollMessagesToBottom({ force: true });
   }
 }
 
 async function sendCurrentPrompt() {
   const query = (els.promptInput?.value || "").trim();
-  await sendPromptText(query, { clearInput: true });
+  const attachmentIds = state.chatAttachments
+    .filter((item) => item.status === "ready" && item.server?.id)
+    .map((item) => item.server.id);
+  await sendPromptText(query, {
+    clearInput: true,
+    attachmentIds,
+    consumeComposerAttachments: true,
+  });
 }
 
 async function handleTranscription(file) {
@@ -9338,10 +9955,22 @@ function bindEvents() {
   els.promptInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (!state.isSending) {
+      if (!state.isSending && !els.sendButton?.disabled) {
         sendCurrentPrompt();
       }
     }
+  });
+  els.promptInput?.addEventListener("paste", async (event) => {
+    const clipboard = event.clipboardData;
+    const imageFiles = Array.from(clipboard?.items || [])
+      .filter((item) => item.kind === "file" && String(item.type || "").toLowerCase().startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    if (!imageFiles.length) return;
+    if (!String(clipboard?.getData("text/plain") || "")) {
+      event.preventDefault();
+    }
+    await addChatImageFiles(imageFiles);
   });
 
   els.voiceRecordButton?.addEventListener("click", async () => {
@@ -9399,6 +10028,10 @@ function bindEvents() {
     toggleComposerMenu();
   });
 
+  els.imageMenuItem?.addEventListener("click", () => {
+    toggleComposerMenu(false);
+    els.chatImageInput?.click();
+  });
   els.fileMenuItem?.addEventListener("click", () => {
     toggleComposerMenu(false);
     els.ocrImageInput?.click();
@@ -9411,6 +10044,13 @@ function bindEvents() {
     toggleComposerMenu(false);
     await openTtsTool({ focusText: true });
   });
+  els.chatImageInput?.addEventListener("change", async () => {
+    const files = Array.from(els.chatImageInput.files || []);
+    if (files.length) {
+      await addChatImageFiles(files);
+    }
+    els.chatImageInput.value = "";
+  });
   els.transcribeInput?.addEventListener("change", async () => {
     const file = els.transcribeInput.files?.[0];
     if (file) {
@@ -9422,6 +10062,12 @@ function bindEvents() {
     if (file) {
       await runOcrForImage(file);
     }
+  });
+  els.composerAttachments?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-chat-attachment-remove]");
+    if (!button || button.disabled) return;
+    await removeChatAttachment(button.dataset.chatAttachmentRemove || "");
+    els.promptInput?.focus();
   });
 
   els.messageList?.addEventListener("click", async (event) => {
@@ -9441,6 +10087,12 @@ function bindEvents() {
     const retryButton = event.target.closest("[data-retry-message-index]");
     if (retryButton) {
       await retryFailedAssistantMessage(retryButton.dataset.retryMessageIndex);
+      return;
+    }
+
+    const visionRagButton = event.target.closest("[data-vision-rag-index]");
+    if (visionRagButton) {
+      openVisionRagDialog(visionRagButton.dataset.visionRagIndex);
       return;
     }
 
@@ -9534,6 +10186,12 @@ function bindEvents() {
     if (event.target === els.confirmBackdrop) {
       resolveConfirmDialog(false);
     }
+  });
+  els.visionRagCloseButton?.addEventListener("click", closeVisionRagDialog);
+  els.visionRagCancelButton?.addEventListener("click", closeVisionRagDialog);
+  els.visionRagSaveButton?.addEventListener("click", saveVisionContextToRag);
+  els.visionRagBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.visionRagBackdrop) closeVisionRagDialog();
   });
 
   els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
@@ -10134,6 +10792,42 @@ function bindEvents() {
     }
   });
 
+  els.visionModelLibrary?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-vision-model-action]");
+    if (!button) return;
+    const action = button.dataset.visionModelAction || "";
+    const modelName = button.dataset.visionModel || "";
+    if (!modelName) return;
+    if (action === "select") {
+      await saveVisionSettingsFlow({
+        ...visionSettingsValues(),
+        vision_model: modelName,
+      });
+      return;
+    }
+    if (action === "download") {
+      await startModelDownload(modelName);
+      return;
+    }
+    if (action === "update") {
+      await startModelDownload(modelName, { mode: "update" });
+      return;
+    }
+    if (action === "delete") {
+      await deleteCurrentModel(modelName);
+    }
+  });
+  els.refreshVisionButton?.addEventListener("click", async () => {
+    await loadModels();
+    await loadVisionCache({ silent: true });
+    setInlineStatus(els.visionSettingsStatus, "Vision runtime и каталог обновлены.", "success");
+  });
+  els.saveVisionSettingsButton?.addEventListener("click", () => saveVisionSettingsFlow());
+  els.resetVisionSettingsButton?.addEventListener("click", resetVisionSettingsFlow);
+  els.refreshVisionCacheButton?.addEventListener("click", () => loadVisionCache());
+  els.cleanupVisionOrphansButton?.addEventListener("click", () => cleanupVisionCache("orphans"));
+  els.cleanupVisionCacheButton?.addEventListener("click", () => cleanupVisionCache("profile"));
+
   els.asrModelLibrary?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-asr-model-action]");
     if (!button) return;
@@ -10253,6 +10947,10 @@ function bindEvents() {
       closeAsrHistoryContextMenu();
       if (!els.confirmBackdrop?.hidden) {
         resolveConfirmDialog(false);
+        return;
+      }
+      if (!els.visionRagBackdrop?.hidden) {
+        closeVisionRagDialog();
         return;
       }
       if (!els.ragQuickMenu?.hidden) {

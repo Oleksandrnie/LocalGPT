@@ -18,6 +18,7 @@ from ..schemas import DatabaseCleanupRequest, DatabaseResetRequest
 from .. import transcribe_tasks
 from ..services import tts_service
 from backend.apps.rag import service as rag_service
+from backend.apps.chat.services import attachment_storage
 
 router = APIRouter()
 _USER_ID = os.getuid() if hasattr(os, "getuid") else 0
@@ -328,6 +329,7 @@ def reset_database(req: DatabaseResetRequest):
         if profile_id is not None:
             rag_service.delete_profile_source_dir(int(profile_id))
 
+    attachment_storage.delete_all_attachments()
     result = db.reset_database(vacuum=req.vacuum)
     rag_service.ensure_profile_source_dir(int(result["default_profile_id"]))
     return result

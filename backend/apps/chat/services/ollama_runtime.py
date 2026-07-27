@@ -220,10 +220,11 @@ def _post_json_stream(path: str, payload: dict[str, Any], *, timeout: float | No
 
 def chat_completion(
     model_name: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    num_ctx: int | None = None,
     keep_alive: str | None = None,
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
@@ -234,6 +235,8 @@ def chat_completion(
         options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = int(max_tokens)
+    if num_ctx is not None:
+        options["num_ctx"] = int(num_ctx)
     if num_gpu is not None:
         options["num_gpu"] = int(num_gpu)
 
@@ -264,10 +267,11 @@ def chat_completion(
 
 def chat_completion_stream(
     model_name: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    num_ctx: int | None = None,
     keep_alive: str | None = None,
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
@@ -278,6 +282,8 @@ def chat_completion_stream(
         options["temperature"] = temperature
     if max_tokens is not None:
         options["num_predict"] = int(max_tokens)
+    if num_ctx is not None:
+        options["num_ctx"] = int(num_ctx)
     if num_gpu is not None:
         options["num_gpu"] = int(num_gpu)
 

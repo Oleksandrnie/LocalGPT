@@ -6,7 +6,8 @@
 
 `backend/apps/chat/services/ollama_runtime.py` — низкоуровневый клиент локального Ollama:
 
-- normal и streaming chat;
+- normal, streaming и native multimodal `/api/chat`;
+- передаёт `temperature`, `num_predict` и явный `options.num_ctx`, чтобы Ollama не использовал неявный default context 4096;
 - model load/unload и active runners;
 - `keep_alive`, `think` и Metal→CPU fallback;
 - принудительная остановка зависших runners в ограниченных recovery flows.
@@ -23,6 +24,31 @@
 - не выбирает Local Calculator автоматически.
 
 Model discovery и install state принадлежат `app/services/models.py`. Состояния различают configured, installed, active, downloading, partial и missing; наличие orphan partial blob не равно установленной runtime-модели.
+
+### Vision-модели
+
+Vision library отделена от обычного chat catalog:
+
+| Model id | Назначение | Примерный размер |
+| --- | --- | --- |
+| `qwen2.5vl:3b` | рекомендуемый основной профиль | 3.2 GB |
+| `qwen2.5vl:7b` | более качественный профиль для сложных изображений | 6.0 GB |
+| `gemma3:4b` | альтернативный сравнительный профиль | 3.3 GB |
+
+Catalog capability — декларация UI, но direct image route разрешён только установленной модели, для которой текущий Ollama runtime подтвердил capability `vision`. `app/services/models.py` читает structured metadata, когда CLI его поддерживает, и парсит plain `ollama show` как совместимый fallback. Неподтверждённая capability не превращается в silent fallback.
+
+`backend/apps/chat/services/vision_runtime.py`:
+
+- обходит text intent router для image request;
+- в `auto` предпочитает catalog order, начиная с `qwen2.5vl:3b`;
+- добавляет base64 images только к копии последнего user message и только на время запроса;
+- ограничивает суммарный размер и одновременно выполняет не больше одного vision inference;
+- для выбранной text-only модели строит `vision_context`, затем передаёт его выбранной response model;
+- возвращает явную ошибку, если fallback запрещён или подходящей vision-модели нет.
+
+OCR assist (`auto`, `on`, `off`) добавляет помеченные per-image evidence; `ocr_only` — отдельный явно degraded route, а не скрытая замена vision.
+
+Для image chat profile setting `vision_num_ctx` применяется к direct vision analysis/generation. Значение по умолчанию — 8192, допустимый диапазон — 4096–131072; text-only response в `vision_context` fallback использует обычный model `num_ctx`. Больший context помогает вместить визуальные токены и историю, но увеличивает расход памяти.
 
 ## ASR backends
 
