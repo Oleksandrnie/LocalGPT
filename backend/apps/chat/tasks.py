@@ -13,7 +13,7 @@ from typing import Any
 
 from app import config, db
 from backend.apps.chat.service import ChatService, maybe_compress_session_history, sanitize_reply
-from backend.apps.chat.services import vision_runtime
+from backend.apps.chat.services import vision_context, vision_runtime
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -146,12 +146,20 @@ def _chat_worker(
     attachment_ids = [str(item.get("id") or "") for item in attachment_descriptors if item.get("id")]
     image_paths = [str(item.get("path") or "") for item in attachment_descriptors if item.get("path")]
     derived_vision_context: str | None = None
+    ocr_evidence: vision_context.OcrEvidence | None = None
     try:
         service = ChatService()
         completion_model = model_name
         completion_messages = messages
         runtime_mode = str((vision_route or {}).get("mode") or "")
         if attachment_descriptors:
+            ocr_mode = vision_context.normalize_ocr_assist_mode(settings.get("ocr_assist"))
+            ocr_evidence = vision_context.extract_ocr_evidence(
+                image_paths,
+                mode=ocr_mode,
+                language=str(settings.get("ocr_language") or "").strip() or None,
+            )
+            completion_messages = vision_context.append_ocr_evidence(messages, ocr_evidence)
             _set_worker_status(
                 status_path,
                 attachment_ids,
@@ -164,7 +172,29 @@ def _chat_worker(
                 settings.get("chat_image_max_total_bytes")
                 or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
             )
-            if runtime_mode == "vision_context":
+            if runtime_mode == "ocr_only":
+                _set_worker_status(
+                    status_path,
+                    attachment_ids,
+                    "analyzing",
+                    "Extracting text locally with OCR.",
+                )
+                if not ocr_evidence.text:
+                    raise vision_runtime.VisionRuntimeError(
+                        "OCR_EMPTY_RESULT",
+                        "OCR-only режим не нашёл читаемый текст.",
+                    )
+                completion_model = response_model
+                if response_model and response_model not in {
+                    vision_runtime.AUTO_ROUTER_MODEL_ID,
+                    vision_runtime.LOCAL_CALCULATOR_MODEL_ID,
+                    "__ocr_only__",
+                }:
+                    completion_messages = vision_context.append_ocr_evidence(messages, ocr_evidence)
+                else:
+                    completion_model = "__ocr_only__"
+                    completion_messages = []
+            elif runtime_mode == "vision_context":
                 _set_worker_status(
                     status_path,
                     attachment_ids,
@@ -172,7 +202,7 @@ def _chat_worker(
                     "Analyzing images locally.",
                 )
                 analysis_messages = [
-                    *messages,
+                    *completion_messages,
                     {
                         "role": "system",
                         "content": (
@@ -216,7 +246,7 @@ def _chat_worker(
             chunks: list[str] = []
             sequence = 0
             streaming_started = False
-            if attachment_descriptors and runtime_mode != "vision_context":
+            if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
                 delta_source = vision_runtime.chat_completion_stream(
                     completion_model,
                     completion_messages,
@@ -227,6 +257,8 @@ def _chat_worker(
                     ),
                     **service._runtime_kwargs(completion_model, settings),
                 )
+            elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
+                delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
             else:
                 delta_source = service.chat_completion_stream(
                     completion_model,
@@ -247,7 +279,7 @@ def _chat_worker(
                     db.append_message_content(assistant_message_id, delta, status="streaming")
             reply = sanitize_reply("".join(chunks))
         else:
-            if attachment_descriptors and runtime_mode != "vision_context":
+            if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
                 reply = sanitize_reply(
                     vision_runtime.chat_completion(
                         completion_model,
@@ -260,11 +292,15 @@ def _chat_worker(
                         **service._runtime_kwargs(completion_model, settings),
                     )
                 )
+            elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
+                reply = ocr_evidence.text if ocr_evidence else ""
             else:
                 reply = service.chat_completion(completion_model, completion_messages, settings=settings)
         result_payload: dict[str, Any] = {"reply": reply}
         if derived_vision_context:
             result_payload["vision_context"] = derived_vision_context
+        if ocr_evidence:
+            result_payload["ocr_evidence"] = ocr_evidence.to_dict()
         _atomic_write_json(result_path, result_payload)
         _set_attachment_status(attachment_ids, "completed")
         if session_id:
@@ -289,7 +325,8 @@ def _chat_worker(
                 except Exception:
                     pass
     except Exception as exc:  # pragma: no cover - runtime path
-        message = getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
+        message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
+        error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
         if assistant_message_id:
             try:
                 db.update_message(
@@ -302,7 +339,7 @@ def _chat_worker(
             except Exception:
                 pass
         _set_attachment_status(attachment_ids, "failed", error=str(message))
-        _atomic_write_json(error_path, {"code": "chat_generation_failed", "message": str(message)})
+        _atomic_write_json(error_path, {"code": error_code, "message": str(message)})
 
 
 def _cleanup_task_files(task: dict[str, Any]) -> None:

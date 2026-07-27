@@ -133,7 +133,7 @@ class ChatVisionLifecycleTestCase(unittest.TestCase):
             chat_tasks._chat_worker(
                 "qwen2.5vl:3b",
                 [{"role": "user", "content": "what is shown"}],
-                {},
+                {"ocr_assist": "off"},
                 self.session["id"],
                 self.profile_id,
                 assistant_message["id"],

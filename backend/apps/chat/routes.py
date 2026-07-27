@@ -25,7 +25,14 @@ from backend.apps.chat.service import (
     prompt_blocks,
     session_title_hint,
 )
-from backend.apps.chat.services import attachment_storage, local_calculator, model_residency, model_router, vision_runtime
+from backend.apps.chat.services import (
+    attachment_storage,
+    local_calculator,
+    model_residency,
+    model_router,
+    vision_context,
+    vision_runtime,
+)
 from backend.apps.rag import service as rag_service
 
 router = APIRouter()
@@ -670,13 +677,35 @@ def start_chat_task(req: ChatRequest):
                 settings=effective_settings,
             )
             model_state = model_service.list_models()
-            plan = vision_runtime.resolve_vision_route(
-                selected_model=target_model,
-                configured_vision_model=str(effective_settings.get("vision_model") or "auto"),
-                installed_models=model_state.get("installed") or [],
-            )
-            vision_route = plan.to_dict()
-            target_model = plan.response_model
+            ocr_mode = vision_context.normalize_ocr_assist_mode(effective_settings.get("ocr_assist"))
+            installed_records = model_state.get("installed") or []
+            installed_names = {
+                str(item.get("name") or "")
+                for item in installed_records
+                if isinstance(item, dict) and item.get("name")
+            }
+            if ocr_mode == "ocr_only":
+                response_model = (
+                    target_model
+                    if target_model in installed_names
+                    else "__ocr_only__"
+                )
+                vision_route = {
+                    "mode": "ocr_only",
+                    "vision_model": "",
+                    "response_model": response_model,
+                    "reason": "explicit_ocr_only_degraded_mode",
+                    "capabilities": ["ocr"],
+                }
+                target_model = response_model
+            else:
+                plan = vision_runtime.resolve_vision_route(
+                    selected_model=target_model,
+                    configured_vision_model=str(effective_settings.get("vision_model") or "auto"),
+                    installed_models=installed_records,
+                )
+                vision_route = plan.to_dict()
+                target_model = plan.response_model
             prepared["target_model"] = target_model
             prepared["vision_route"] = vision_route
             prepared["effective_settings"] = {
