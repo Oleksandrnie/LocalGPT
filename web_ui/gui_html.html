@@ -1131,12 +1131,8 @@
                             <p class="eyebrow">Перенос</p>
                             <h4>Экспорт и импорт моделей</h4>
                         </div>
-                        <button class="button button--ghost" id="refreshModelTransferButton" type="button">Обновить</button>
                     </div>
                     <p class="subtle">Создайте один файл <code>.localgpt-models</code> и перенесите его на другой компьютер любым способом.</p>
-                    <div id="modelTransferList" class="model-transfer__list">
-                        <p class="subtle">Нажмите «Обновить», чтобы получить список моделей.</p>
-                    </div>
                     <div class="button-row">
                         <button class="button button--primary" id="exportModelsButton" type="button">Экспорт моделей</button>
                         <button class="button button--ghost" id="importModelsButton" type="button">Импорт моделей</button>
@@ -1254,6 +1250,41 @@
                         </div>
                     </div>
                 </section>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-backdrop" id="modelExportBackdrop" hidden>
+        <section class="settings-panel settings-panel--compact model-export-dialog" role="dialog" aria-modal="true"
+            aria-labelledby="modelExportTitle" aria-describedby="modelExportDescription">
+            <header class="settings-panel__header">
+                <div>
+                    <p class="eyebrow">Экспорт моделей</p>
+                    <h3 id="modelExportTitle">Выберите модели</h3>
+                </div>
+                <button class="button button--ghost" id="closeModelExportButton" type="button">Закрыть</button>
+            </header>
+
+            <div class="settings-panel__content model-export-dialog__content">
+                <p class="subtle" id="modelExportDescription">Выбранные модели будут упакованы в один файл
+                    <code>.localgpt-models</code>.
+                </p>
+                <div class="model-export-dialog__toolbar">
+                    <label class="field field--checkbox model-export-dialog__select-all">
+                        <input id="selectAllModelExportInput" type="checkbox" />
+                        <span>Выбрать все</span>
+                    </label>
+                    <span class="subtle" id="modelExportSelectionSummary" aria-live="polite">Модели загружаются…</span>
+                </div>
+                <div id="modelTransferList" class="model-transfer__list">
+                    <p class="subtle">Проверяю локальные модели…</p>
+                </div>
+                <div class="model-export-dialog__footer">
+                    <button class="button button--ghost" id="cancelModelExportButton" type="button">Отмена</button>
+                    <button class="button button--primary" id="confirmModelExportButton" type="button" disabled>
+                        Экспортировать выбранные
+                    </button>
+                </div>
             </div>
         </section>
     </div>
