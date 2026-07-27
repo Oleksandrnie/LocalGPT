@@ -600,6 +600,8 @@ const state = {
   databaseMaintenanceBusy: false,
   appRuntimeBusy: false,
   modelTransferModels: [],
+  modelTransferPreviewLoaded: false,
+  modelTransferPreviewLoading: false,
   modelTransferTaskId: null,
   modelTransferBusy: false,
   asrToolIsOpen: false,
@@ -7805,14 +7807,26 @@ function renderModelTransfer() {
 }
 
 async function loadModelTransferPreview() {
+  if (state.modelTransferPreviewLoading) return;
+  state.modelTransferPreviewLoading = true;
   setInlineStatus(els.modelTransferStatus, "Проверяю локальные модели…", "warning");
   try {
     const data = await request("/model-transfer/export-preview");
     state.modelTransferModels = data.models || [];
+    state.modelTransferPreviewLoaded = true;
     renderModelTransfer();
     setInlineStatus(els.modelTransferStatus, `Готово моделей: ${data.complete_count || 0}. Общий уникальный размер: ${formatBytes(data.total_unique_size || 0)}.`, "success");
   } catch (error) {
+    state.modelTransferPreviewLoaded = false;
     setInlineStatus(els.modelTransferStatus, `Не удалось получить модели: ${error.message || error}`, "error");
+  } finally {
+    state.modelTransferPreviewLoading = false;
+  }
+}
+
+function ensureModelTransferPreview() {
+  if (!state.modelTransferPreviewLoaded && !state.modelTransferPreviewLoading) {
+    void loadModelTransferPreview();
   }
 }
 
@@ -7907,6 +7921,9 @@ function setSettingsTab(tabName, { persist = true, render = true } = {}) {
     if (isMobileLayout() && isOverlayOpen(els.settingsBackdrop)) {
       els.settingsBackdrop?.querySelector(".settings-panel__content")?.scrollTo({ top: 0, left: 0, behavior: "smooth" });
     }
+  }
+  if (next === "system") {
+    ensureModelTransferPreview();
   }
 }
 
@@ -8007,6 +8024,9 @@ function openSettings() {
   void loadTtsLibrary({ silent: true });
   void loadPlugins({ silent: true });
   void loadVisionCache({ silent: true });
+  if (state.activeSettingsTab === "system") {
+    ensureModelTransferPreview();
+  }
 }
 
 function openAsrPipelineSettings() {

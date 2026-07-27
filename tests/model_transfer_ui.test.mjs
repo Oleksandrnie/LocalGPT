@@ -26,3 +26,9 @@ test("UI performs preview, export, inspect, confirmation, and apply", () => {
   assert.match(css, /\.model-transfer__item/);
   assert.match(css, /\.model-transfer \[hidden\]/);
 });
+
+test("System settings load the model inventory automatically", () => {
+  assert.match(js, /if \(next === "system"\) \{\s*ensureModelTransferPreview\(\);/);
+  assert.match(js, /if \(state\.activeSettingsTab === "system"\) \{\s*ensureModelTransferPreview\(\);/);
+  assert.match(js, /modelTransferPreviewLoaded: false/);
+});
