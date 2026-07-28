@@ -11,6 +11,7 @@ LocalGPT — локальное приложение для чата, транс
 - Voice Studio на базе Piper с локальной библиотекой голосов и историей;
 - OCR изображений через Tesseract;
 - profile-scoped RAG для `.txt`, `.md` и `.json`, включая ASR context и явно сохраняемый text-only Vision context;
+- перенос complete Ollama, faster-whisper, whisper.cpp и Piper моделей между установками через один `.localgpt-models` bundle;
 - Plugin Registry v0 с trusted backend handlers;
 - локальный, LAN и private-tailnet доступ.
 
@@ -113,6 +114,7 @@ LAN launcher оставляет backend на localhost и поднимает Cad
 - [Индекс документации](docs/README.md)
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Тестирование](docs/TESTING.md)
+- [Перенос моделей: контракт и ограничения](docs/MODEL_TRANSFER_SPEC.md)
 - [Backlog](docs/BACKLOG.md)
 - [Инструкции для coding-агентов](AGENTS.md)
 

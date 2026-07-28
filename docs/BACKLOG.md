@@ -4,7 +4,6 @@
 
 ## Planned
 
-- Реализовать безопасный перенос локальных Ollama, Whisper и Piper моделей между профилями через проверяемый bundle; contract и границы описаны в [MODEL_TRANSFER_SPEC.md](MODEL_TRANSFER_SPEC.md).
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
 - Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
 

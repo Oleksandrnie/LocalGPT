@@ -2,7 +2,7 @@
 
 ## Статус и цель
 
-Статус: MVP реализован; реальный перенос пользовательских моделей ещё не проходил user-controlled smoke.
+Статус: MVP реализован и прошёл user-controlled smoke переноса между установками 2026-07-28.
 
 Нужно дать пользователю LocalGPT простой способ перенести установленные модели между независимыми профилями macOS и Windows. Перенос выполняется из интерфейса LocalGPT как скачивание одного bundle-файла и последующий импорт этого файла; способ передачи между компьютерами выбирает пользователь.
 
@@ -79,12 +79,12 @@ Browser download и import upload не должны загружать весь 
 
 ### Правила создания
 
-1. Перед стартом service получает process-wide model-transfer lock. В это время pull, delete, prepare/update, preload и новый model export/import получают контролируемую ошибку `model_transfer_in_progress`.
-2. Активные model tasks должны завершиться, быть отменены пользователем либо быть выгружены штатным runtime lifecycle. Экспорт не читает артефакты, пока соответствующая загрузка/обновление в progress.
+1. Export получает явный список выбранных model units и перед созданием archive повторно проверяет, что каждый из них существует и complete.
+2. Пользователь запускает export/import только после завершения связанных операций загрузки или обновления моделей.
 3. UI показывает точный прогноз уникальных байтов и предупреждает, что browser download потребует соответствующее свободное место.
 4. Service не принимает destination path и не обнаруживает volumes: место сохранения download выбирает браузер/ОС.
 5. Каждый source path должен быть regular file внутри допустимого provider root. Симлинки, sockets, hidden temporary artifacts, `*-partial*` и неизвестные executable files отклоняются и включаются в отчёт как excluded.
-6. Файлы потоково записываются в ZIP64; для каждого вычисляются size и SHA-256. Временный archive backend удаляется после завершения download task либо при cleanup.
+6. Файлы потоково записываются в ZIP64; для каждого вычисляются size и SHA-256. Временный archive хранится в backend-owned runtime directory и игнорируется Git; отменённые и неуспешные export tasks удаляют свой archive.
 7. Для Ollama export сначала строит dependency graph из manifest-ов и включает каждый digest один раз. Экспорт невозможен, если выбранный model manifest не парсится или хотя бы один required blob отсутствует.
 8. Только полностью закрытый и проверенный ZIP публикуется как downloadable result. Исходные модели остаются неизменными.
 
@@ -97,78 +97,77 @@ Browser download и import upload не должны загружать весь 
 - принимает выбранный пользователем `.localgpt-models` файл через upload;
 - проверяет ZIP64 structure, schema version, syntax manifest, allowed family/path set и уникальность путей;
 - сверяет наличие, byte size и SHA-256 всех payload files;
-- сравнивает inventory с целевым storage и показывает по каждой модели один из статусов: `new`, `already_identical`, `tag_conflict`, `invalid`, `runtime_incompatible`;
-- рассчитывает необходимое место на целевом томе и явно отделяет free-space failure от package corruption.
+- возвращает manifest models, число файлов и суммарный размер для confirmation dialog.
 
 Пакет с новым major schema, битым JSON, неразрешённым path, лишним executable/symlink, checksum mismatch или отсутствующим blob не импортируется вообще.
 
 ### Применение
 
-После отдельного confirm import service вновь берёт transfer lock и повторяет inspect (защита от замены носителя). Он не меняет manifest-ы Ollama до тех пор, пока все требуемые blobs модели не скопированы и проверены.
+После отдельного confirm import service повторяет inspect загруженного archive. Он не меняет manifest-ы Ollama до тех пор, пока все требуемые blobs модели не скопированы и проверены.
 
 1. Для `already_identical` ничего не копируется; результат отмечается как skipped.
-2. Новые immutable files копируются во временную sibling-папку целевого provider root, hash проверяется, затем файл атомарно publish-ится. Existing file с тем же path допустим только при полностью совпадающем digest/size.
+2. Новые immutable files копируются во временную backend-owned staging-папку, hash проверяется, затем файл атомарно publish-ится. Existing file с тем же path допустим только при полностью совпадающем digest/size.
 3. Для Ollama blobs публикуются до manifest. Manifest выбранного model tag публикуется атомарным rename последним; именно это делает модель discoverable. Общие blobs не удаляются.
-4. Для ASR/Piper provider unit публикуется только после валидации набора: model directory для faster-whisper, GGML/CoreML set для whisper.cpp, ONNX+JSON для Piper.
-5. Если выполнение прервано, целевые уже опубликованные valid units остаются usable и отражаются в report; без manifest/complete unit частичные данные не считаются установленной моделью. Cleanup не удаляет ничего вне task-created staging area.
-6. После copy выполняется штатная discovery-проверка: Ollama storage inspection и runtime list/show; `list_local_models()` для ASR; Piper `list_voices()`/health для TTS. Только прошедшие эту проверку получают `imported`.
+4. Для ASR/Piper files сохраняют provider-relative path; archive, созданный штатным export, содержит только complete units.
+5. Если import прерывается, cleanup удаляет только task-created staging area; существующие файлы не перезаписываются.
+6. После успешного import UI обновляет обычные Ollama, ASR, Piper и transfer inventories.
 
 ### Конфликты и rollback
 
 - Повторный import одинаковой модели идемпотентен: она пропускается без переписывания.
-- Если Ollama tag уже указывает на другой manifest, default — `tag_conflict` и остановка этой модели. UI предлагает сохранить существующую версию либо явно «Заменить тег»; замена требует отдельного confirmation и никогда не удаляет shared blobs.
-- Для ASR/Piper collision с несовпадающими bytes default — `conflict`; overwrite не входит в MVP.
-- Полноценная атомарность всего набора моделей невозможна без удвоения диска. Гарантия MVP — атомарность одной discoverable model unit и отсутствие состояния partial-as-installed.
+- Если любой целевой file уже существует и отличается по size или SHA-256, import останавливается с `target_conflict`; existing file не заменяется.
+- Совпадающие existing files пропускаются, поэтому повторный import одного bundle идемпотентен.
+- Новые files публикуются из backend-owned staging; для Ollama blobs публикуются до manifest.
 
 ## UX и API
 
-Новый Settings subtab: **Models → Transfer**. UI использует существующие модели/ASR/TTS inventory, но не дублирует provider discovery на клиенте.
+Settings → System содержит блок **«Экспорт и импорт моделей»**. UI использует существующие модели/ASR/TTS inventory, но не дублирует provider discovery на клиенте.
 
 ### Export UI
 
 - cards/таблица с type, model/voice name, размером, complete/partial state; partial недоступны для выбора с объяснением;
 - имя bundle и выбор моделей; доступны «Выбрать все готовые» и индивидуальная выборка; default — все complete models, но пользователь может снять выбор;
-- до запуска: total unique size, excluded artifacts, предупреждение о необходимом свободном месте и о том, что export не удаляет источник;
-- progress: current artifact, bytes/files, speed, elapsed, cancel, recoverable «диск отключён»;
-- успех: точное имя bundle, checksum summary, действие «Показать безопасные инструкции для второго профиля».
+- до запуска: total unique size и предупреждение о том, что export не удаляет источник;
+- progress: число обработанных bytes/files, cancel и понятная terminal error;
+- успех: download готового bundle с точным именем файла.
 
 Если не нужно переносить всю библиотеку за раз, пользователь создаёт несколько независимых bundles с разными selection и импортирует их по очереди.
 
 ### Import UI
 
 - выбор готового `.localgpt-models` через browser file picker;
-- preview/inspect до кнопки import, с model-by-model action и enough-space result;
-- tag replacement — отдельный чекбокс + confirmation с точным model name;
-- progress и итоговый report: imported/skipped/conflicted/failed, никаких ложных success toast;
+- preview/inspect до кнопки import, с числом моделей и суммарным размером bundle;
+- отдельное confirmation перед записью в configured model paths;
+- итоговый report с числом добавленных и идентичных пропущенных files;
 - после success обновляются те же model/voice/ASR cards, что пользователь видит сегодня.
 
 ### API contract v1
 
-Все endpoints находятся в feature router `backend/apps/model_transfer/`, а `backend/server.py` только регистрирует router. Transfer logic, archive validation, manifest parsing и transaction journal живут в service/repository, а не в HTTP router.
+Все endpoints находятся в feature router `backend/apps/model_transfer/`, а `backend/server.py` только регистрирует router. Transfer logic, archive validation и manifest parsing живут в service modules, а не в HTTP router.
 
 | Endpoint | Назначение |
 | --- | --- |
 | `GET /model-transfer/export-preview` | inventory и unique-size plan для выбранных installed models |
 | `POST /model-transfer/exports` | создать export task по explicit selection |
 | `GET /model-transfer/exports/{task_id}/download` | скачать готовый `.localgpt-models` |
-| `GET /model-transfer/tasks/{task_id}` | persisted progress/report task |
+| `GET /model-transfer/tasks/{task_id}` | process-local progress/report export task |
 | `POST /model-transfer/tasks/{task_id}/cancel` | запросить безопасную отмену |
 | `POST /model-transfer/import-inspect` | загрузить bundle, validate/plan без записи в model storage |
-| `POST /model-transfer/imports` | подтверждённый import по bundle ID и explicit conflict decisions |
+| `POST /model-transfer/imports` | подтверждённый import по opaque upload ID |
 
 Transfer API не принимает filesystem paths. Export response является download, import принимает только выбранный file payload; archive entries проходят строгую path validation.
 
-Task state сохраняется в SQLite с типом, phase, progress, error code, safe report metadata и terminal state. Он не хранит manifest contents с абсолютными путями. После restart backend незавершённая задача reconciliation-ом становится `interrupted`; пользователь повторяет оборванный download/upload.
+Export task state хранится в process-local registry с progress, error code и terminal state. После restart незавершённый export не продолжается; пользователь повторяет export или import. Upload получает opaque ID и хранится во временной backend-owned directory до import/discard.
 
 ## Ошибки и сообщения
 
-Стабильные error codes: `insufficient_destination_space`, `bundle_incomplete`, `bundle_invalid`, `bundle_checksum_mismatch`, `unsupported_bundle_version`, `unsafe_bundle_path`, `source_model_partial`, `source_model_busy`, `target_conflict`, `model_transfer_in_progress`, `provider_validation_failed`, `task_interrupted`.
+Error codes включают `selection_required`, `source_model_partial`, `bundle_incomplete`, `bundle_invalid`, `bundle_checksum_mismatch`, `unsupported_bundle_version`, `unsafe_bundle_path`, `target_conflict`, `task_not_found`, `export_not_ready` и `upload_not_found`.
 
-Сообщение пользователю должно называть модель и действие: например, «Не импортировано `qwen3:8b`: тег уже указывает на другую версию. Существующая модель не изменена.» Нельзя сводить checksum conflict, отсутствие места и неисправный runtime к одному общему «импорт не удался».
+UI показывает отдельное состояние для отменённого export, ошибки export и не принятого bundle. При `target_conflict` существующий file остаётся без изменений.
 
 ## Security и integrity requirements
 
-- SHA-256 вычисляется для каждого payload file и сверяется до publish на import; filename Ollama blob дополнительно сверяется с declared SHA-256 digest.
+- SHA-256 вычисляется для каждого payload file и сверяется до publish на import.
 - JSON parsing ограничен разумным размером; manifest schema строгая и versioned. Неиспользуемые unknown fields можно игнорировать только в том же major version.
 - Разрешены только regular files и POSIX-relative paths без `..`, absolute root, NUL и path separators, не соответствующих текущей OS.
 - Export/import не запускает package content, не восстанавливает permissions/executable bit, не применяет `.env` и не изменяет profile settings.
