@@ -167,6 +167,9 @@ app/data/transcribe_tasks/*.json
 !app/data/transcribe_tasks/.gitkeep
 app/data/tts/history/*.json
 !app/data/tts/history/.gitkeep
+app/data/model_transfer/**
+!app/data/model_transfer/.gitkeep
+*.localgpt-models
 tmp_logs/**
 !tmp_logs/.gitkeep
 rag_sources/**

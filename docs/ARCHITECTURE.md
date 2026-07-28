@@ -15,6 +15,7 @@ flowchart LR
     Apps --> OCR["OCR / Tesseract"]
     Apps --> RAG["RAG / local-hash-v1"]
     Apps --> Plugins["Plugin Registry / trusted handlers"]
+    Apps --> Transfer["Model transfer / ZIP64 export-import"]
     Shared --> SQLite["SQLite"]
     Apps --> Models["Project-scoped models/"]
     Chat --> Attachments["chat_attachments/profile-*"]
@@ -100,6 +101,10 @@ Vision-ответ не индексируется автоматически. П
 ### Plugins
 
 Registry читает `plugins/*/plugin.json` как данные. Код из `plugins/` не импортируется. Поведение trusted plugins реализуется только в `backend/apps/plugins/`.
+
+### Model transfer
+
+`backend/apps/model_transfer/` формирует несжатый ZIP64 `.localgpt-models` из выбранных complete provider units. Browser download/upload не принимает filesystem paths. Import дважды проверяет manifest, размеры и SHA-256, выполняет conflict preflight и публикует файлы из backend-owned staging в текущие `config.MODEL_PATHS`; Ollama manifests записываются после blobs.
 
 ## Storage
 

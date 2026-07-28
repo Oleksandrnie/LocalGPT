@@ -84,6 +84,10 @@ OCR assist (`auto`, `on`, `off`) добавляет помеченные per-ima
 
 Provider instance создаётся service layer; HTTP router не должен знать детали Piper runtime.
 
+## Перенос локальных моделей
+
+Transfer inventory использует configured paths и существующие provider boundaries. Переносятся только complete Ollama manifests со всеми blobs, готовая faster-whisper directory, whisper.cpp GGML с найденными CoreML assets и Piper `.onnx` + `.onnx.json`. Import не переносит runtime binaries/settings, не перезаписывает отличающиеся существующие файлы и публикует Ollama manifest после blobs. После успеха UI перечитывает обычные provider inventories.
+
 ## Lifecycle и ошибки
 
 Общий принцип:

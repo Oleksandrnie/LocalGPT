@@ -321,6 +321,12 @@ const els = {
   settingsBackdrop: document.getElementById("settingsBackdrop"),
   settingsTabList: document.getElementById("settingsTabList"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
+  modelExportBackdrop: document.getElementById("modelExportBackdrop"),
+  closeModelExportButton: document.getElementById("closeModelExportButton"),
+  cancelModelExportButton: document.getElementById("cancelModelExportButton"),
+  confirmModelExportButton: document.getElementById("confirmModelExportButton"),
+  selectAllModelExportInput: document.getElementById("selectAllModelExportInput"),
+  modelExportSelectionSummary: document.getElementById("modelExportSelectionSummary"),
   ragBackdrop: document.getElementById("ragBackdrop"),
   closeRagButton: document.getElementById("closeRagButton"),
   ragQuickMenu: document.getElementById("ragQuickMenu"),
@@ -474,6 +480,12 @@ const els = {
   resetDatabaseButton: document.getElementById("resetDatabaseButton"),
   databaseStatus: document.getElementById("databaseStatus"),
   downloadList: document.getElementById("downloadList"),
+  modelTransferList: document.getElementById("modelTransferList"),
+  exportModelsButton: document.getElementById("exportModelsButton"),
+  importModelsButton: document.getElementById("importModelsButton"),
+  importModelsInput: document.getElementById("importModelsInput"),
+  cancelModelTransferButton: document.getElementById("cancelModelTransferButton"),
+  modelTransferStatus: document.getElementById("modelTransferStatus"),
 };
 
 const VOICE_RECORD_ICON = els.voiceRecordButton?.innerHTML || "";
@@ -592,6 +604,13 @@ const state = {
   activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
   appRuntimeBusy: false,
+  modelTransferModels: [],
+  modelTransferPreviewLoaded: false,
+  modelTransferPreviewLoading: false,
+  modelTransferTotalUniqueSize: 0,
+  modelTransferSelectedIds: new Set(),
+  modelTransferTaskId: null,
+  modelTransferBusy: false,
   asrToolIsOpen: false,
   asrToolIsMinimized: false,
   asrToolBounds: null,
@@ -1169,6 +1188,7 @@ function syncMobileScrollLock() {
   const drawerOpen = els.sidebar?.classList.contains("sidebar--open") === true;
   const modalOpen = [
     els.settingsBackdrop,
+    els.modelExportBackdrop,
     els.ocrBackdrop,
     els.ragBackdrop,
     els.confirmBackdrop,
@@ -7777,6 +7797,184 @@ function renderAppRuntimeMaintenance() {
   }
 }
 
+function renderModelTransfer() {
+  if (!els.modelTransferList) return;
+  const models = state.modelTransferModels || [];
+  els.modelTransferList.innerHTML = models.length
+    ? models.map((item) => `
+        <label class="model-transfer__item">
+          <input type="checkbox" data-model-transfer-id="${escapeHtml(item.id)}"
+            ${item.selectable && state.modelTransferSelectedIds.has(item.id) ? "checked" : ""}
+            ${item.selectable ? "" : "disabled"} />
+          <span><strong>${escapeHtml(item.model_id)}</strong><br><small>${escapeHtml(item.family)}${item.reason ? ` • ${escapeHtml(item.reason)}` : ""}</small></span>
+          <span>${formatBytes(item.size || 0)}</span>
+        </label>`).join("")
+    : `<p class="subtle">${state.modelTransferPreviewLoaded ? "Готовые локальные модели не найдены." : "Проверяю локальные модели…"}</p>`;
+  renderModelExportSelectionState();
+  if (els.exportModelsButton) els.exportModelsButton.disabled = state.modelTransferBusy;
+  if (els.importModelsButton) els.importModelsButton.disabled = state.modelTransferBusy;
+  if (els.cancelModelTransferButton) els.cancelModelTransferButton.hidden = !state.modelTransferTaskId;
+}
+
+function renderModelExportSelectionState() {
+  const selectable = (state.modelTransferModels || []).filter((item) => item.selectable);
+  const selectedCount = selectable.filter((item) => state.modelTransferSelectedIds.has(item.id)).length;
+  if (els.selectAllModelExportInput) {
+    els.selectAllModelExportInput.disabled = state.modelTransferPreviewLoading || selectable.length === 0;
+    els.selectAllModelExportInput.checked = selectable.length > 0 && selectedCount === selectable.length;
+    els.selectAllModelExportInput.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
+  }
+  if (els.modelExportSelectionSummary) {
+    const size = state.modelTransferTotalUniqueSize
+      ? ` · весь набор ${formatBytes(state.modelTransferTotalUniqueSize)}`
+      : "";
+    els.modelExportSelectionSummary.textContent = state.modelTransferPreviewLoading
+      ? "Модели загружаются…"
+      : `Выбрано ${selectedCount} из ${selectable.length}${size}`;
+  }
+  if (els.confirmModelExportButton) {
+    els.confirmModelExportButton.disabled = state.modelTransferBusy || state.modelTransferPreviewLoading || selectedCount === 0;
+  }
+}
+
+async function loadModelTransferPreview() {
+  if (state.modelTransferPreviewLoading) return;
+  state.modelTransferPreviewLoading = true;
+  renderModelExportSelectionState();
+  setInlineStatus(els.modelTransferStatus, "Проверяю локальные модели…", "warning");
+  try {
+    const data = await request("/model-transfer/export-preview");
+    state.modelTransferModels = data.models || [];
+    state.modelTransferTotalUniqueSize = Number(data.total_unique_size || 0);
+    state.modelTransferSelectedIds = new Set(
+      state.modelTransferModels.filter((item) => item.selectable).map((item) => item.id),
+    );
+    state.modelTransferPreviewLoaded = true;
+    renderModelTransfer();
+    setInlineStatus(els.modelTransferStatus, `Готово моделей: ${data.complete_count || 0}. Общий уникальный размер: ${formatBytes(data.total_unique_size || 0)}.`, "success");
+  } catch (error) {
+    state.modelTransferPreviewLoaded = false;
+    setInlineStatus(els.modelTransferStatus, `Не удалось получить модели: ${error.message || error}`, "error");
+  } finally {
+    state.modelTransferPreviewLoading = false;
+    renderModelExportSelectionState();
+  }
+}
+
+function ensureModelTransferPreview() {
+  if (!state.modelTransferPreviewLoaded && !state.modelTransferPreviewLoading) {
+    void loadModelTransferPreview();
+  }
+}
+
+function openModelExportDialog() {
+  if (!els.modelExportBackdrop) return;
+  state.modelTransferSelectedIds = new Set(
+    (state.modelTransferModels || []).filter((item) => item.selectable).map((item) => item.id),
+  );
+  renderModelTransfer();
+  els.modelExportBackdrop.hidden = false;
+  syncMobileScrollLock();
+  ensureModelTransferPreview();
+  window.setTimeout(() => {
+    if (!els.selectAllModelExportInput?.disabled) {
+      els.selectAllModelExportInput.focus();
+    } else {
+      els.closeModelExportButton?.focus();
+    }
+  }, 0);
+}
+
+function closeModelExportDialog({ restoreFocus = true } = {}) {
+  if (!els.modelExportBackdrop || els.modelExportBackdrop.hidden) return;
+  els.modelExportBackdrop.hidden = true;
+  syncMobileScrollLock();
+  if (restoreFocus) {
+    window.setTimeout(() => els.exportModelsButton?.focus(), 0);
+  }
+}
+
+async function pollModelTransferTask(taskId) {
+  const task = await request(`/model-transfer/tasks/${encodeURIComponent(taskId)}`);
+  if (task.status === "running") {
+    setInlineStatus(els.modelTransferStatus, `Упаковка: ${task.processed_files || 0}/${task.total_files || "?"} файлов, ${formatBytes(task.processed_bytes || 0)}.`, "warning");
+    window.setTimeout(() => void pollModelTransferTask(taskId), 500);
+    return;
+  }
+  state.modelTransferBusy = false;
+  state.modelTransferTaskId = null;
+  renderModelTransfer();
+  if (task.status === "completed") {
+    setInlineStatus(els.modelTransferStatus, "Bundle готов. Начинаю скачивание…", "success");
+    window.location.assign(`/model-transfer/exports/${encodeURIComponent(taskId)}/download`);
+  } else {
+    setInlineStatus(els.modelTransferStatus, task.status === "cancelled" ? "Экспорт отменён." : `Ошибка экспорта: ${task.error_code || "unknown"}`, "error");
+  }
+}
+
+async function startModelExport() {
+  const selected = Array.from(state.modelTransferSelectedIds);
+  if (!selected.length) {
+    if (els.modelExportSelectionSummary) {
+      els.modelExportSelectionSummary.textContent = "Выберите хотя бы одну готовую модель.";
+    }
+    return;
+  }
+  closeModelExportDialog({ restoreFocus: false });
+  state.modelTransferBusy = true;
+  renderModelTransfer();
+  try {
+    const task = await request("/model-transfer/exports", { method: "POST", body: { models: selected } });
+    state.modelTransferTaskId = task.task_id;
+    renderModelTransfer();
+    await pollModelTransferTask(task.task_id);
+  } catch (error) {
+    state.modelTransferBusy = false;
+    renderModelTransfer();
+    setInlineStatus(els.modelTransferStatus, `Не удалось начать экспорт: ${error.message || error}`, "error");
+  }
+}
+
+async function inspectModelImport(file) {
+  const form = new FormData();
+  form.append("bundle", file);
+  state.modelTransferBusy = true;
+  renderModelTransfer();
+  setInlineStatus(els.modelTransferStatus, `Проверяю ${file.name}…`, "warning");
+  try {
+    const result = await request("/model-transfer/import-inspect", { method: "POST", body: form });
+    setInlineStatus(els.modelTransferStatus, `Bundle исправен: ${result.models?.length || 0} моделей, ${formatBytes(result.total_size || 0)}. Ожидается подтверждение.`, "success");
+    const approved = await openConfirmDialog({
+      eyebrow: "Импорт моделей",
+      title: `Импортировать ${result.models?.length || 0} моделей?`,
+      message: `LocalGPT повторно проверит bundle и добавит файлы в текущие пути моделей. Существующие отличающиеся файлы не будут заменены.`,
+      confirmLabel: "Импортировать",
+      cancelLabel: "Отмена",
+      returnFocus: els.importModelsButton,
+    });
+    if (!approved) {
+      await request(`/model-transfer/uploads/${encodeURIComponent(result.upload_id)}`, { method: "DELETE" });
+      setInlineStatus(els.modelTransferStatus, "Импорт отменён до изменения хранилища.", "warning");
+      return;
+    }
+    setInlineStatus(els.modelTransferStatus, "Повторно проверяю и импортирую модели…", "warning");
+    const applied = await request("/model-transfer/imports", { method: "POST", body: { upload_id: result.upload_id } });
+    setInlineStatus(els.modelTransferStatus, `Импорт завершён: добавлено файлов ${applied.published_files || 0}, идентичных пропущено ${applied.skipped_files || 0}.`, "success");
+    await Promise.all([
+      loadModels({ silent: true }),
+      loadWhisperModels({ silent: true }),
+      loadTtsSettings({ silent: true }),
+      loadModelTransferPreview(),
+    ]);
+  } catch (error) {
+    setInlineStatus(els.modelTransferStatus, `Bundle не принят: ${error.message || error}`, "error");
+  } finally {
+    state.modelTransferBusy = false;
+    if (els.importModelsInput) els.importModelsInput.value = "";
+    renderModelTransfer();
+  }
+}
+
 function setSettingsTab(tabName, { persist = true, render = true } = {}) {
   const allowed = new Set(["profile", "models", "vision", "asr", "tts", "plugins", "system"]);
   const next = allowed.has(tabName) ? tabName : "profile";
@@ -7789,6 +7987,9 @@ function setSettingsTab(tabName, { persist = true, render = true } = {}) {
     if (isMobileLayout() && isOverlayOpen(els.settingsBackdrop)) {
       els.settingsBackdrop?.querySelector(".settings-panel__content")?.scrollTo({ top: 0, left: 0, behavior: "smooth" });
     }
+  }
+  if (next === "system") {
+    ensureModelTransferPreview();
   }
 }
 
@@ -7830,6 +8031,7 @@ function renderSettings() {
   renderPlugins();
   renderDatabaseMaintenance();
   renderAppRuntimeMaintenance();
+  renderModelTransfer();
 
   if (els.modelsDirInput && !els.modelsDirInput.value && state.modelsDir) {
     els.modelsDirInput.value = state.modelsDir;
@@ -7888,6 +8090,9 @@ function openSettings() {
   void loadTtsLibrary({ silent: true });
   void loadPlugins({ silent: true });
   void loadVisionCache({ silent: true });
+  if (state.activeSettingsTab === "system") {
+    ensureModelTransferPreview();
+  }
 }
 
 function openAsrPipelineSettings() {
@@ -10134,6 +10339,37 @@ function bindEvents() {
       closeSettings();
     }
   });
+  els.closeModelExportButton?.addEventListener("click", () => closeModelExportDialog());
+  els.cancelModelExportButton?.addEventListener("click", () => closeModelExportDialog());
+  els.modelExportBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.modelExportBackdrop) {
+      closeModelExportDialog();
+    }
+  });
+  els.selectAllModelExportInput?.addEventListener("change", () => {
+    const selectable = (state.modelTransferModels || []).filter((item) => item.selectable);
+    state.modelTransferSelectedIds = els.selectAllModelExportInput.checked
+      ? new Set(selectable.map((item) => item.id))
+      : new Set();
+    els.modelTransferList?.querySelectorAll("[data-model-transfer-id]").forEach((input) => {
+      if (!input.disabled) input.checked = els.selectAllModelExportInput.checked;
+    });
+    renderModelExportSelectionState();
+  });
+  els.modelTransferList?.addEventListener("change", (event) => {
+    const input = event.target instanceof HTMLInputElement
+      ? event.target.closest("[data-model-transfer-id]")
+      : null;
+    if (!input) return;
+    const modelId = input.getAttribute("data-model-transfer-id");
+    if (input.checked) {
+      state.modelTransferSelectedIds.add(modelId);
+    } else {
+      state.modelTransferSelectedIds.delete(modelId);
+    }
+    renderModelExportSelectionState();
+  });
+  els.confirmModelExportButton?.addEventListener("click", () => void startModelExport());
   els.closeRagButton?.addEventListener("click", () => closeRagPanel());
   els.ragBackdrop?.addEventListener("click", (event) => {
     if (event.target === els.ragBackdrop) {
@@ -10897,6 +11133,18 @@ function bindEvents() {
     await saveModelsDir(true);
   });
 
+  els.exportModelsButton?.addEventListener("click", openModelExportDialog);
+  els.importModelsButton?.addEventListener("click", () => els.importModelsInput?.click());
+  els.importModelsInput?.addEventListener("change", () => {
+    const file = els.importModelsInput?.files?.[0];
+    if (file) void inspectModelImport(file);
+  });
+  els.cancelModelTransferButton?.addEventListener("click", async () => {
+    if (state.modelTransferTaskId) {
+      await request(`/model-transfer/tasks/${encodeURIComponent(state.modelTransferTaskId)}/cancel`, { method: "POST" });
+    }
+  });
+
   document.addEventListener("pointerover", (event) => {
     const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
     if (!target || target === activeTooltipTarget) return;
@@ -10947,6 +11195,10 @@ function bindEvents() {
       closeAsrHistoryContextMenu();
       if (!els.confirmBackdrop?.hidden) {
         resolveConfirmDialog(false);
+        return;
+      }
+      if (!els.modelExportBackdrop?.hidden) {
+        closeModelExportDialog();
         return;
       }
       if (!els.visionRagBackdrop?.hidden) {

@@ -48,6 +48,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Plugin Registry и Tailscale handler | `venv/bin/python -m unittest tests.test_plugin_registry -v` |
 | Model installation state | `venv/bin/python -m unittest tests.test_model_install_state -v` |
 | Ollama pull API/CLI compatibility | `venv/bin/python -m unittest tests.test_ollama_pull -v` |
+| Model export/import bundle | `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export tests.test_model_transfer_import -v` |
 
 Tests используют `unittest`; отдельные cases создают temporary SQLite/files и patch внешние процессы. Перед live-запуском всё равно проверяйте конкретный test body на обращение к локальным моделям/CLI.
 
@@ -88,6 +89,14 @@ Static UI contract для attachment composer, Vision tab и explicit RAG export
 ```bash
 node tests/chat_attachments_ui.test.mjs
 ```
+
+System Settings model-transfer contract:
+
+```bash
+node tests/model_transfer_ui.test.mjs
+```
+
+Model-transfer tests используют только temporary synthetic files. Реальный export/import локальных моделей запускается отдельно явным действием пользователя.
 
 Контролируемый live vision smoke запускается отдельно после явной установки модели. Используйте маленькое детерминированное изображение, `temperature=0`, ограниченный `max_tokens`, последовательный запуск и `keep_alive=0`; проверьте точный текст/формы, отсутствие CPU fallback, terminal task/attachment state, отсутствие binary/path в messages и пустой `ollama ps` после теста. Не загружайте 3B и 7B одновременно на 16 GB машине.
 
