@@ -114,7 +114,7 @@ LAN launcher оставляет backend на localhost и поднимает Cad
 - [Индекс документации](docs/README.md)
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Тестирование](docs/TESTING.md)
-- [Перенос моделей: контракт и ограничения](docs/MODEL_TRANSFER_SPEC.md)
+- [Экспорт и импорт моделей](docs/MODEL_TRANSFER_SPEC.md)
 - [Backlog](docs/BACKLOG.md)
 - [Инструкции для coding-агентов](AGENTS.md)
 
