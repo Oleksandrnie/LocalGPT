@@ -722,15 +722,13 @@ def search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any
         if lexical:
             score = max(score, lexical * 0.25)
         score += min(0.18, lexical * 0.18)
-        if score <= 0:
-            continue
         document_meta = chunk.get("document_metadata") or {}
         source_kind = document_meta.get("source_kind") or _source_kind(Path(str(chunk.get("source_id") or "")))
         if source_kind == "pricing" and any(
             marker in query_lower
-            for marker in ("тариф", "цена", "стоим", "прайс", "час", "депозит", "докуп")
+            for marker in ("тариф", "цен", "стоим", "прайс", "расцен", "час", "депозит", "докуп")
         ):
-            score += 0.35
+            score += 0.7
         if source_kind == "profile" and any(
             marker in query_lower
             for marker in ("кто я", "обо мне", "чем занима", "моя роль", "профиль", "интерес", "работаю")
@@ -741,6 +739,8 @@ def search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any
         if source_kind == "template" and any(marker in query_lower for marker in ("шаблон", "сообщение", "ответ клиенту")):
             score += 0.2
         score += 0.08 if document_meta.get("source_role") == "source_of_truth" else 0.0
+        if score <= 0:
+            continue
         scored.append(
             {
                 "score": round(score, 4),

@@ -888,6 +888,24 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
         self.assertIn("PUBG Mobile", rag_block)
 
+    def test_rag_price_query_prioritizes_pricing_markdown(self):
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        (source_dir / "company.kb.pricing.md").write_text(
+            "# Тарифы\n\nБазовая услуга — 9 990 ₽ в месяц.",
+            encoding="utf-8",
+        )
+        (source_dir / "company.context.md").write_text(
+            "Компания оказывает услуги по поддержке сайтов.",
+            encoding="utf-8",
+        )
+        rag_service.ingest_sources(self.profile_id)
+
+        results = rag_service.search(self.profile_id, "какие цены есть на услуги", top_k=5)
+
+        self.assertTrue(results)
+        self.assertEqual(results[0]["source_id"], "company.kb.pricing.md")
+        self.assertIn("9 990 ₽", results[0]["content"])
+
     def test_rag_ingest_accepts_only_markdown_and_removes_legacy_json_index(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
         md_path = source_dir / "plain.md"
