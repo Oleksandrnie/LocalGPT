@@ -34,7 +34,7 @@ curl http://127.0.0.1:8000/health
 
 ## LAN через Caddy
 
-На macOS используйте `start_localgpt_lan.command`. Он вызывает `tools/LTrnsrb.sh` (legacy filename), который:
+На macOS обычный `start_localgpt.command` или `./start_localgpt.sh` без аргументов автоматически вызывает `tools/LTrnsrb.sh` (legacy filename); `start_localgpt_lan.command` остаётся compatibility alias. Launcher:
 
 - читает `LOCALGPT_PORT`/legacy backend port и `LAN_HTTPS_PORT`;
 - определяет private LAN IP;
@@ -45,6 +45,8 @@ curl http://127.0.0.1:8000/health
 - хранит PID/log/port files в temporary runtime directory.
 
 `Caddyfile.lan` в репозитории — localhost fallback/example; launcher создаёт актуальный config динамически.
+
+Если Caddy не установлен или private LAN IP не обнаружен, launcher явно сообщает об этом и открывает только localhost UI. Явные аргументы macOS launchers сохраняют direct local launch для диагностики.
 
 Первое устройство может потребовать доверия к Caddy local CA. Не публикуйте generated certificate/private key.
 
