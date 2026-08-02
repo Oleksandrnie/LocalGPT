@@ -5,6 +5,7 @@ import io
 import os
 import tempfile
 import unittest
+import subprocess
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -108,6 +109,17 @@ class SetupDependencyTests(unittest.TestCase):
     def test_windows_start_launcher_prefers_runtime_venv(self) -> None:
         source = (ROOT / "start_localgpt.bat").read_text(encoding="utf-8")
         self.assertLess(source.index(r"venv\Scripts\python.exe"), source.index("where py"))
+
+    def test_direct_python3_launcher_reaches_cli(self) -> None:
+        completed = subprocess.run(
+            ["python3", "run_localgpt.py", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+        self.assertIn("Launch LocalGPT", completed.stdout)
 
 
 if __name__ == "__main__":

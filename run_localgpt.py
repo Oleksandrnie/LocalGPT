@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Cross-platform launcher for LocalGPT (macOS / Linux / Windows)."""
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 import os
+import shutil
 import sys
 import time
 import socket
@@ -24,6 +27,51 @@ OLLAMA_HEALTH_URL = f"{OLLAMA_DEFAULT_BASE_URL}/v1/models"
 OLLAMA_LOG_FILE = ROOT / "ollama.log"
 ENV_FILE = ROOT / ".env"
 MODELS_BASE = ROOT / "models"
+MIN_PYTHON = (3, 10)
+
+
+def reexec_with_supported_python() -> None:
+    """Replace an old bootstrap interpreter with the runtime venv Python."""
+    if sys.version_info >= MIN_PYTHON:
+        return
+
+    venv_python = (
+        VENV_DIR / "Scripts" / "python.exe"
+        if os.name == "nt"
+        else VENV_DIR / "bin" / "python"
+    )
+    candidates = [venv_python]
+    for name in ("python3.13", "python3.12", "python3.11", "python3.10"):
+        path = shutil.which(name)
+        if path:
+            candidates.append(Path(path))
+
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        probe = subprocess.run(
+            [str(candidate), "-c", "import sys; raise SystemExit(sys.version_info < (3, 10))"],
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            print(
+                f"[i] Python {sys.version_info.major}.{sys.version_info.minor} is only the "
+                f"bootstrap interpreter; continuing with {candidate}.",
+                flush=True,
+            )
+            os.execv(
+                str(candidate),
+                [str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]],
+            )
+
+    required = f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]}+"
+    raise SystemExit(
+        f"Python {required} is required. Run the platform setup entry point in setup/."
+    )
+
+
+reexec_with_supported_python()
 
 
 def run(cmd, **kwargs):
