@@ -59,7 +59,7 @@
 - Technical debt: none yet.
 - Next steps: create documentation checkpoint and hand off the clean-machine acceptance matrix to the user.
 - Validation: safe baseline passed: `git diff --check`, Python `compileall`, Node syntax, markdown rendering tests, 5 bootstrap unit tests, `pip check`, `sh -n`, and `zsh -n`. No installer was executed.
-- Git checkpoint: pending.
+- Git checkpoint: `2f9a141` — Document and harden bootstrap workflow.
 
 ## Overall Status
 - Status: awaiting user acceptance.
@@ -70,7 +70,7 @@
 - Known problems: clean-machine/idempotency/startup acceptance remains unexecuted by explicit user request; PowerShell syntax/runtime was not executable on the current macOS host.
 - Technical debt: none identified; optional package availability can vary by Linux distribution repository and is reported explicitly by the installer.
 - Next action: user runs the documented acceptance matrix and reports results; fix any platform issue, then add `documentation/change-index.md` entry and remove this progress file in the final cleanup commit.
-- Latest Git checkpoint: `d490aba` — Launch Windows bootstrap in PowerShell.
+- Latest Git checkpoint: `2f9a141` — Document and harden bootstrap workflow.
 
 ## Continuation Prompt
-Continue work on `bootstrap-dependencies` using `docs/progress/bootstrap-dependencies-progress.md`. Read the progress file, current Git status, and latest checkpoint commit first. Current status: implementation and safe QA complete, awaiting user clean-machine acceptance. Completed: dependency audit/pins, shared OS-detecting bootstrap, macOS/Linux Terminal and Windows PowerShell entry points, focused tests, safe baseline, permanent docs. Remaining: record user acceptance results, correct any platform issue, append the completion entry to `documentation/change-index.md`, and remove this progress file in the final cleanup commit. Problems/blockers: installers and PowerShell were intentionally not run by the agent; user owns acceptance. Decisions to preserve: confirmations before installs; no model/data/config/network activation; preserve unrelated ASR progress. Latest checkpoint: `d490aba`; documentation checkpoint follows this progress update. Perform next: run the acceptance matrix in `docs/TESTING.md` on the target clean environment and record exact output/results. Update the progress file before and after the next meaningful stage.
+Continue work on `bootstrap-dependencies` using `docs/progress/bootstrap-dependencies-progress.md`. Read the progress file, current Git status, and latest checkpoint commit first. Current status: implementation and safe QA complete, awaiting user clean-machine acceptance. Completed: dependency audit/pins, shared OS-detecting bootstrap, macOS/Linux Terminal and Windows PowerShell entry points, focused tests, safe baseline, permanent docs. Remaining: record user acceptance results, correct any platform issue, append the completion entry to `documentation/change-index.md`, and remove this progress file in the final cleanup commit. Problems/blockers: installers and PowerShell were intentionally not run by the agent; user owns acceptance. Decisions to preserve: confirmations before installs; no model/data/config/network activation; preserve unrelated ASR progress. Latest checkpoint: `2f9a141`. Perform next: run the acceptance matrix in `docs/TESTING.md` on the target clean environment and record exact output/results. Update the progress file before and after the next meaningful stage.
