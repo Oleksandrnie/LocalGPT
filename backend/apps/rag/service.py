@@ -324,6 +324,13 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(left[idx] * right[idx] for idx in range(size))
 
 
+def _tokens_match(query_token: str, content_token: str) -> bool:
+    if query_token == content_token:
+        return True
+    prefix_length = min(len(query_token), len(content_token), 7)
+    return prefix_length >= 5 and query_token[:prefix_length] == content_token[:prefix_length]
+
+
 def _existing_documents(profile_id: int, source_type: str = SOURCE_TYPE) -> dict[str, dict[str, Any]]:
     return {
         str(item.get("source_id") or ""): item
@@ -706,7 +713,14 @@ def search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any
             for value in (chunk.get("content"), chunk.get("source_id"), chunk.get("title"))
         ).lower()
         content_tokens = set(TOKEN_RE.findall(haystack))
-        lexical = len(query_tokens & content_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
+        matched_query_tokens = {
+            query_token
+            for query_token in query_tokens
+            if any(_tokens_match(query_token, content_token) for content_token in content_tokens)
+        }
+        lexical = len(matched_query_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
+        if lexical:
+            score = max(score, lexical * 0.25)
         score += min(0.18, lexical * 0.18)
         if score <= 0:
             continue

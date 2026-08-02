@@ -35,6 +35,7 @@
 
 - Existing manual JSON sources will stop being indexed; this is intentional per user request, while files remain on disk for recovery.
 - Reindex must remove their existing database records without deleting user files.
+- User later authorized deleting the existing JSON duplicates from `rag_sources/`; the exact six files in `profile_1_Default/` were deleted after verification.
 
 ## Baseline
 
@@ -95,6 +96,8 @@
 - Stage 2 completed: `.md` is the sole accepted suffix; auto-JSON generation and JSON truth priority were removed; legacy JSON index records are reconciled without deleting user files.
 - Validation: four targeted `LocalGPTPipelineMemoryTestCase` tests passed.
 - Stage 3 completed: the browser accepts only Markdown and all RAG documentation, README, architecture, testing matrix and changelog describe the one-source contract.
+- Live database and screenshot review: the tariff answer was grounded correctly because the available Markdown sources contain no tariff prices; a dedicated pricing Markdown source is required for that answer.
+- Fixed a Markdown-only retrieval regression: a lexical match on a Russian word form now remains eligible even when its hashing-vector score is non-positive.
 - Next action: run final proportional validation and cleanup.
 
 ## Validation results
@@ -106,4 +109,4 @@
 
 - Current stage: Stage 4.
 - Current repository state: branch `codex/rag-source-ingestion`; one unrelated deleted runtime JSON file remains unstaged.
-- Next exact action: run full proportional validation and inspect the complete diff.
+- Next exact action: checkpoint the retrieval hardening, then rerun proportional validation and inspect the complete diff.
