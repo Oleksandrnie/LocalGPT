@@ -73,4 +73,4 @@ if [ -z "$PYTHON_BIN" ]; then
   exit 1
 fi
 
-exec "$PYTHON_BIN" tools/bootstrap_localgpt.py "$@"
+exec "$PYTHON_BIN" bootstrap/bootstrap_localgpt.py "$@"

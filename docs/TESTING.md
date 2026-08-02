@@ -26,13 +26,13 @@ node tests/markdown_rendering.test.mjs
 Bootstrap contract без запуска package installers:
 
 ```bash
-venv/bin/python -m py_compile tools/bootstrap_localgpt.py tests/test_bootstrap_dependencies.py
+venv/bin/python -m py_compile bootstrap/bootstrap_localgpt.py tests/test_bootstrap_dependencies.py
 venv/bin/python -m unittest tests.test_bootstrap_dependencies -v
 /bin/sh -n bootstrap_localgpt.sh
 /bin/zsh -n bootstrap_localgpt.command
 ```
 
-`tools/bootstrap_localgpt.py --verify-only` только проверяет текущее окружение, но возвращает non-zero при отсутствующих обязательных runtime components.
+`bootstrap/bootstrap_localgpt.py --verify-only` только проверяет текущее окружение, но возвращает non-zero при отсутствующих обязательных runtime components.
 
 Если `venv/` ещё не создан, сначала запустите LocalGPT или установите `app/requirements.txt` в отдельное окружение.
 

@@ -32,18 +32,19 @@
 
 ### Stage 2 — Bootstrap Implementation
 - Goal: add an idempotent root bootstrap command with system, project, and verification phases.
-- Related files: `tools/bootstrap_localgpt.py`, `bootstrap_localgpt.command`, `bootstrap_localgpt.sh`, `bootstrap_localgpt.bat`, `bootstrap_localgpt.ps1`, `tests/test_bootstrap_dependencies.py`.
+- Related files: `bootstrap/bootstrap_localgpt.py`, `bootstrap/bootstrap_localgpt.ps1`, three root platform entry points, `bootstrap/README.md`, and `tests/test_bootstrap_dependencies.py`.
 - [x] Completed: shared core detects macOS/Linux/Windows and their supported package managers.
 - [x] Completed: native launchers provide Terminal/Windows console entry and bootstrap Python when absent.
 - [x] Completed: system, project, and final-verification phases with explicit installation confirmations and idempotent presence checks.
 - [x] Completed: models, RAG/user data, `.env`, Tailscale Serve/Funnel, and public exposure remain untouched.
 - [x] Completed: safe static/unit validation.
+- [x] Completed: consolidated internal bootstrap implementation into `bootstrap/`, retaining only one user-facing entry point per OS in the project root.
 - [~] In progress: Stage 2 checkpoint.
 - Architectural decisions: platform-specific entry points are thin wrappers; dependency decisions and verification live in one Python core; Caddy, Tailscale, and Node remain opt-in.
 - Problems: initial Windows wrapper stayed in cmd; corrected after the checkpoint so `.bat` now opens the PowerShell launcher. Linux launcher now attempts a native terminal emulator when started without a TTY.
 - Technical debt: none yet.
-- Next steps: run only safe static/unit checks; real installer acceptance is delegated to the user as requested.
-- Validation: `py_compile` passed for bootstrap/test; 5 focused unit tests passed before and after launcher correction; `sh -n` and `zsh -n` passed; `git diff --check` passed. PowerShell runtime is unavailable on the macOS host, so `.ps1` execution is delegated to user acceptance. No package installation commands executed by the agent.
+- Next steps: real installer acceptance is delegated to the user as requested.
+- Validation: `py_compile` and 5 focused unit tests passed after the folder consolidation; `sh -n`, `zsh -n`, and `git diff --check` passed. PowerShell runtime is unavailable on the macOS host, so `.ps1` execution is delegated to user acceptance. No package installation commands executed by the agent.
 - Git checkpoint: `98bca6a` — Add interactive cross-platform bootstrap; corrective launcher checkpoint pending.
 
 ### Stage 3 — QA, Documentation & Cleanup
@@ -66,10 +67,10 @@
 - Completed: Stage 1 `32d297b`; Stage 2 `98bca6a`; launcher correction `d490aba`; affected permanent documentation drafted.
 - In progress: documentation checkpoint and handoff.
 - Pending: user clean-machine acceptance, change index, final cleanup.
-- Changed files: `app/requirements.txt`, `docs/DEPENDENCIES.md`, `tools/bootstrap_localgpt.py`, four native bootstrap entry points, `tests/test_bootstrap_dependencies.py`, `README.md`, `docs/README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CHANGELOG.md`, and this progress file.
+- Changed files: `app/requirements.txt`, `docs/DEPENDENCIES.md`, `bootstrap/`, three root native bootstrap entry points, `tests/test_bootstrap_dependencies.py`, `README.md`, `docs/README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CHANGELOG.md`, and this progress file.
 - Known problems: clean-machine/idempotency/startup acceptance remains unexecuted by explicit user request; PowerShell syntax/runtime was not executable on the current macOS host.
 - Technical debt: none identified; optional package availability can vary by Linux distribution repository and is reported explicitly by the installer.
-- Next action: user runs the documented acceptance matrix and reports results; fix any platform issue, then add `documentation/change-index.md` entry and remove this progress file in the final cleanup commit.
+- Next action: record the requested bootstrap folder consolidation checkpoint; user then runs the documented acceptance matrix and reports results; fix any platform issue, then add `documentation/change-index.md` entry and remove this progress file in the final cleanup commit.
 - Latest Git checkpoint: `2f9a141` — Document and harden bootstrap workflow.
 
 ## Continuation Prompt

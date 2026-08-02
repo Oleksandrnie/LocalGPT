@@ -64,6 +64,6 @@ Secrets и machine-specific paths не должны попадать в Git.
 
 - `run_localgpt.py` создаёт `venv/`, устанавливает `app/requirements.txt` при изменении его hash, создаёт runtime directories, запускает Ollama service и backend.
 - UI/provider flows по явному действию скачивают выбранные Ollama, ASR и Piper models.
-- Новый `bootstrap_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку. `bootstrap_localgpt.command`, `bootstrap_localgpt.sh`, `bootstrap_localgpt.bat` и `bootstrap_localgpt.ps1` только обеспечивают native Terminal/PowerShell entry и первоначальный Python bootstrap.
+- Внутренний `bootstrap/bootstrap_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку. Три корневых entry points — `bootstrap_localgpt.command`, `bootstrap_localgpt.sh` и `bootstrap_localgpt.bat` — обеспечивают native Terminal/PowerShell entry и первоначальный Python bootstrap; Windows PowerShell adapter находится в `bootstrap/`.
 
 Launcher запуска приложения не должен подменять bootstrap системных пакетов: после первого setup обычный старт остаётся быстрым и идемпотентным.

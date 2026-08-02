@@ -42,11 +42,7 @@ Linux:
 ./bootstrap_localgpt.sh
 ```
 
-Windows — двойной клик по `bootstrap_localgpt.bat` или из PowerShell:
-
-```powershell
-.\bootstrap_localgpt.ps1
-```
+Windows — двойной клик по `bootstrap_localgpt.bat`. Он откроет PowerShell и продолжит установку там.
 
 Bootstrap:
 

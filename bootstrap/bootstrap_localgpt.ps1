@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $ProjectRoot
 
 function Find-CompatiblePython {
@@ -46,7 +46,7 @@ try {
     }
 
     $Prefix = $Python.Prefix
-    & $Python.Command @Prefix "tools\bootstrap_localgpt.py" @args
+    & $Python.Command @Prefix "bootstrap\bootstrap_localgpt.py" @args
     $BootstrapExit = $LASTEXITCODE
 } catch {
     Write-Host "[!] $($_.Exception.Message)" -ForegroundColor Red
