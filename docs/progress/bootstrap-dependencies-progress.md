@@ -49,26 +49,28 @@
 ### Stage 3 — QA, Documentation & Cleanup
 - Goal: validate bootstrap behavior, update affected permanent docs, record completion, and remove this file in a cleanup commit.
 - Related files: tests and affected documentation.
-- [ ] Pending: validation on host plus isolated/dry-run simulations.
-- [ ] Pending: documentation and change index.
+- [x] Completed: safe static and isolated unit validation without executing installers.
+- [x] Completed: updated affected setup, architecture, testing, dependency, docs index, and changelog documentation.
+- [ ] Pending: user-owned clean-machine acceptance on target platforms.
+- [ ] Pending: completion entry in `documentation/change-index.md` after acceptance.
 - [ ] Pending: final cleanup commit removing this progress file.
 - Architectural decisions: no live model download, generation, transcription, or public-network action during QA.
-- Problems: clean physical machines may be unavailable; use isolated environments and deterministic mocks where necessary, and report that limitation precisely.
+- Problems: PowerShell and clean Windows/Linux/macOS environments are not available in the current macOS workspace; user explicitly owns real installer acceptance.
 - Technical debt: none yet.
-- Next steps: begin after implementation checkpoint.
-- Validation: pending.
+- Next steps: create documentation checkpoint and hand off the clean-machine acceptance matrix to the user.
+- Validation: safe baseline passed: `git diff --check`, Python `compileall`, Node syntax, markdown rendering tests, 5 bootstrap unit tests, `pip check`, `sh -n`, and `zsh -n`. No installer was executed.
 - Git checkpoint: pending.
 
 ## Overall Status
-- Status: in progress.
-- Completed: Stage 1 checkpoint `32d297b`; cross-platform bootstrap implementation.
-- In progress: Stage 2 checkpoint.
-- Pending: permanent documentation, change index, user clean-machine acceptance, cleanup.
-- Changed files: Stage 1 files plus `tools/bootstrap_localgpt.py`, three platform entry points, and `tests/test_bootstrap_dependencies.py`.
-- Known problems: none.
-- Technical debt: pending audit.
-- Next action: validate and commit Stage 1, then implement the cross-platform interactive bootstrap core and native entry points.
-- Latest Git checkpoint: `32d297b` — Audit and pin deployment dependencies.
+- Status: awaiting user acceptance.
+- Completed: Stage 1 `32d297b`; Stage 2 `98bca6a`; launcher correction `d490aba`; affected permanent documentation drafted.
+- In progress: documentation checkpoint and handoff.
+- Pending: user clean-machine acceptance, change index, final cleanup.
+- Changed files: `app/requirements.txt`, `docs/DEPENDENCIES.md`, `tools/bootstrap_localgpt.py`, four native bootstrap entry points, `tests/test_bootstrap_dependencies.py`, `README.md`, `docs/README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CHANGELOG.md`, and this progress file.
+- Known problems: clean-machine/idempotency/startup acceptance remains unexecuted by explicit user request; PowerShell syntax/runtime was not executable on the current macOS host.
+- Technical debt: none identified; optional package availability can vary by Linux distribution repository and is reported explicitly by the installer.
+- Next action: user runs the documented acceptance matrix and reports results; fix any platform issue, then add `documentation/change-index.md` entry and remove this progress file in the final cleanup commit.
+- Latest Git checkpoint: `d490aba` — Launch Windows bootstrap in PowerShell.
 
 ## Continuation Prompt
-Continue work on `bootstrap-dependencies` using `docs/progress/bootstrap-dependencies-progress.md`. Read the progress file, current Git status, and latest checkpoint commit first. Current status: Stage 1 dependency audit ready for checkpoint. Completed: acceptance criteria, mandatory docs, source/config audit, dependency contract and pinned direct requirements. Remaining: cross-platform interactive bootstrap, safe static validation, permanent docs, change index, cleanup. Problems/blockers: user owns real clean-machine acceptance. Decisions to preserve: no model/data/config installation; shared OS-detecting core with macOS/Linux/Windows terminal entry points; categorize core vs conditional dependencies; prompt before installations; preserve unrelated ASR progress. Latest checkpoint: none. Perform next: validate and commit Stage 1, then implement bootstrap. Update the progress file before and after the next meaningful stage.
+Continue work on `bootstrap-dependencies` using `docs/progress/bootstrap-dependencies-progress.md`. Read the progress file, current Git status, and latest checkpoint commit first. Current status: implementation and safe QA complete, awaiting user clean-machine acceptance. Completed: dependency audit/pins, shared OS-detecting bootstrap, macOS/Linux Terminal and Windows PowerShell entry points, focused tests, safe baseline, permanent docs. Remaining: record user acceptance results, correct any platform issue, append the completion entry to `documentation/change-index.md`, and remove this progress file in the final cleanup commit. Problems/blockers: installers and PowerShell were intentionally not run by the agent; user owns acceptance. Decisions to preserve: confirmations before installs; no model/data/config/network activation; preserve unrelated ASR progress. Latest checkpoint: `d490aba`; documentation checkpoint follows this progress update. Perform next: run the acceptance matrix in `docs/TESTING.md` on the target clean environment and record exact output/results. Update the progress file before and after the next meaningful stage.

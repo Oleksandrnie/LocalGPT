@@ -26,11 +26,43 @@ LocalGPT — локальное приложение для чата, транс
 - Caddy для LAN HTTPS;
 - Tailscale Serve для опционального private-tailnet доступа.
 
-## Требования
+## Первый запуск проекта
 
-Обязательно:
+На новом компьютере запустите platform entry point. Он определит ОС и package manager, откроет Terminal/PowerShell, покажет отсутствующие компоненты и запросит согласие перед каждой установкой.
 
-- Python 3;
+macOS — двойной клик по `bootstrap_localgpt.command` или команда:
+
+```bash
+./bootstrap_localgpt.command
+```
+
+Linux:
+
+```bash
+./bootstrap_localgpt.sh
+```
+
+Windows — двойной клик по `bootstrap_localgpt.bat` или из PowerShell:
+
+```powershell
+.\bootstrap_localgpt.ps1
+```
+
+Bootstrap:
+
+- при необходимости устанавливает Python и поддерживаемый package manager;
+- ставит обязательные system/runtime tools и закреплённые Python packages в `venv/`;
+- отдельно предлагает опциональные Caddy, Tailscale и Node.js;
+- безопасно пропускает уже найденные компоненты и пригоден для повторного запуска;
+- не скачивает модели, RAG-данные, не создаёт `.env` и не включает сетевой доступ.
+
+После успешной финальной проверки запускайте LocalGPT обычным launcher-ом из следующего раздела. Полный подтверждённый inventory, версии и назначение компонентов: [Зависимости LocalGPT](docs/DEPENDENCIES.md).
+
+## Требования и ограничения
+
+Для runtime используются:
+
+- Python 3.10+;
 - достаточно свободного диска под выбранные модели;
 - Ollama для LLM-функций.
 
@@ -42,7 +74,7 @@ LocalGPT — локальное приложение для чата, транс
 - Caddy — для штатного LAN HTTPS launcher на macOS;
 - Tailscale — только для private-tailnet доступа.
 
-## Быстрый запуск
+## Обычный запуск
 
 1. При необходимости создайте локальную конфигурацию:
 
@@ -70,7 +102,7 @@ LocalGPT — локальное приложение для чата, транс
    start_localgpt.command
    ```
 
-Launcher создаёт `venv/`, устанавливает `app/requirements.txt`, проверяет Ollama, выбирает свободный backend-порт и запускает `backend.server:app`. По умолчанию UI открывается на `http://127.0.0.1:8000/ui/gui_html.html`; если порт занят, launcher выбирает следующий свободный.
+Launcher повторно использует подготовленный `venv/`, при изменении `app/requirements.txt` обновляет packages, проверяет Ollama, выбирает свободный backend-порт и запускает `backend.server:app`. По умолчанию UI открывается на `http://127.0.0.1:8000/ui/gui_html.html`; если порт занят, launcher выбирает следующий свободный.
 
 Полезные варианты:
 
@@ -114,6 +146,7 @@ LAN launcher оставляет backend на localhost и поднимает Cad
 - [Индекс документации](docs/README.md)
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Тестирование](docs/TESTING.md)
+- [Зависимости и bootstrap](docs/DEPENDENCIES.md)
 - [Экспорт и импорт моделей](docs/MODEL_TRANSFER_SPEC.md)
 - [Backlog](docs/BACKLOG.md)
 - [Инструкции для coding-агентов](AGENTS.md)

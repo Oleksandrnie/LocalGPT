@@ -26,6 +26,17 @@ find_python() {
   return 1
 }
 
+run_as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo 'Administrative privileges are required, but sudo is missing.'
+    exit 1
+  fi
+}
+
 PYTHON_BIN=$(find_python || true)
 if [ -z "$PYTHON_BIN" ]; then
   printf 'Python 3.10+ is missing. Install it now? [Y/n] '
@@ -45,10 +56,10 @@ if [ -z "$PYTHON_BIN" ]; then
       brew install python
       ;;
     Linux)
-      if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip
-      elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y python3 python3-pip
-      elif command -v pacman >/dev/null 2>&1; then sudo pacman -S --needed --noconfirm python python-pip
-      elif command -v zypper >/dev/null 2>&1; then sudo zypper --non-interactive install python3 python3-pip python3-venv
+      if command -v apt-get >/dev/null 2>&1; then run_as_root apt-get update && run_as_root apt-get install -y python3 python3-venv python3-pip
+      elif command -v dnf >/dev/null 2>&1; then run_as_root dnf install -y python3 python3-pip
+      elif command -v pacman >/dev/null 2>&1; then run_as_root pacman -S --needed --noconfirm python python-pip
+      elif command -v zypper >/dev/null 2>&1; then run_as_root zypper --non-interactive install python3 python3-pip python3-venv
       else echo 'No supported package manager found.'; exit 1
       fi
       ;;

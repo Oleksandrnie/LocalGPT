@@ -9,7 +9,8 @@ function Find-CompatiblePython {
     )
     foreach ($candidate in $candidates) {
         if (Get-Command $candidate.Command -ErrorAction SilentlyContinue) {
-            & $candidate.Command @($candidate.Prefix) -c "import sys; raise SystemExit(sys.version_info < (3, 10))" 2>$null
+            $Prefix = $candidate.Prefix
+            & $candidate.Command @Prefix -c "import sys; raise SystemExit(sys.version_info < (3, 10))" 2>$null
             if ($LASTEXITCODE -eq 0) {
                 return $candidate
             }
@@ -44,7 +45,8 @@ try {
         }
     }
 
-    & $Python.Command @($Python.Prefix) "tools\bootstrap_localgpt.py" @args
+    $Prefix = $Python.Prefix
+    & $Python.Command @Prefix "tools\bootstrap_localgpt.py" @args
     $BootstrapExit = $LASTEXITCODE
 } catch {
     Write-Host "[!] $($_.Exception.Message)" -ForegroundColor Red

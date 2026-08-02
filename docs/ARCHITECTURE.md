@@ -24,7 +24,8 @@ flowchart LR
 
 ## Runtime и точки входа
 
-- `run_localgpt.py` выполняет bootstrap, создаёт `venv/`, устанавливает `app/requirements.txt`, проверяет Ollama, выбирает порт и запускает `uvicorn backend.server:app`.
+- `bootstrap_localgpt.command` / `.sh` / `.bat` / `.ps1` обеспечивают native Terminal/PowerShell entry и первоначальный Python bootstrap. Общий `tools/bootstrap_localgpt.py` определяет ОС/package manager, после подтверждения ставит system/runtime dependencies, создаёт `venv/` и выполняет final verification без установки моделей или конфигурации.
+- `run_localgpt.py` выполняет только повторяемый project bootstrap: создаёт/переиспользует `venv/`, обновляет `app/requirements.txt` при изменении hash, проверяет и запускает Ollama, выбирает порт и запускает `uvicorn backend.server:app`.
 - `backend/server.py` создаёт FastAPI app, подключает CORS, регистрирует shared и feature routers, монтирует `web_ui/` на `/ui` и перенаправляет `/` на UI.
 - `app/server.py` импортирует `backend.server:app` и существует как compatibility shim.
 - `web_ui/gui_html.html` — активная HTML-точка входа; она подключает `css/style.css` и ES module `js/app.js`.
