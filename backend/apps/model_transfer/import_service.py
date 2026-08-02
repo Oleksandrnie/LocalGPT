@@ -14,6 +14,41 @@ _UPLOADS: dict[str, Path] = {}
 _LOCK = threading.Lock()
 
 
+def upload_storage_dir() -> Path:
+    return config.DATA_DIR / "model_transfer" / "uploads"
+
+
+def _upload_files() -> list[Path]:
+    directory = upload_storage_dir()
+    if not directory.is_dir():
+        return []
+    return [
+        path for path in directory.iterdir()
+        if path.is_file() and not path.is_symlink() and path.suffix == ".localgpt-models"
+    ]
+
+
+def upload_storage_summary() -> dict:
+    files = _upload_files()
+    return {
+        "file_count": len(files),
+        "total_size": sum(path.stat().st_size for path in files),
+    }
+
+
+def clear_upload_storage() -> dict:
+    directory = upload_storage_dir()
+    files = _upload_files()
+    total_size = sum(path.stat().st_size for path in files)
+    for path in files:
+        path.unlink()
+    with _LOCK:
+        for upload_id, path in list(_UPLOADS.items()):
+            if path.parent == directory:
+                _UPLOADS.pop(upload_id, None)
+    return {"deleted_files": len(files), "freed_size": total_size}
+
+
 def inspect_archive(path: Path) -> dict:
     try:
         with zipfile.ZipFile(path) as bundle:

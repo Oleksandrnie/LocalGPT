@@ -4,9 +4,16 @@ from pydantic import BaseModel
 
 from .inventory import export_inventory
 from . import export_service
-from .import_service import apply_import, discard_upload, inspect_archive, register_upload
+from .import_service import (
+    apply_import,
+    clear_upload_storage,
+    discard_upload,
+    inspect_archive,
+    register_upload,
+    upload_storage_dir,
+    upload_storage_summary,
+)
 from .manifest import BundleValidationError
-from app import config
 
 router = APIRouter(prefix="/model-transfer", tags=["model-transfer"])
 
@@ -57,7 +64,7 @@ def download_export(task_id: str):
 async def inspect_import(bundle: UploadFile = File(...)):
     if not str(bundle.filename or "").lower().endswith(".localgpt-models"):
         raise HTTPException(422, detail={"code": "bundle_invalid", "message": "Выберите файл .localgpt-models."})
-    staging = config.DATA_DIR / "model_transfer" / "uploads"
+    staging = upload_storage_dir()
     staging.mkdir(parents=True, exist_ok=True)
     path = staging / f"{__import__('uuid').uuid4()}.localgpt-models"
     keep = False
@@ -93,3 +100,13 @@ def delete_upload(upload_id: str):
     if not discard_upload(upload_id):
         raise HTTPException(404, detail={"code": "upload_not_found"})
     return {"deleted": True}
+
+
+@router.get("/uploads")
+def get_upload_storage():
+    return upload_storage_summary()
+
+
+@router.delete("/uploads")
+def clear_uploads():
+    return clear_upload_storage()
