@@ -50,6 +50,8 @@ curl http://127.0.0.1:8000/health
 
 Первое устройство может потребовать доверия к Caddy local CA. Не публикуйте generated certificate/private key.
 
+Когда LAN HTTPS listener отвечает, Settings → System → «Доступ с телефона» позволяет сохранить публичный `root.crt` Caddy на текущем компьютере для iPhone или Android. Файл отдаётся только через guarded `GET /network/caddy/root-ca` с `Cache-Control: no-store`; он не содержит private key. Браузер сохраняет файл в выбранную папку или стандартные downloads — затем пользователь передаёт его на устройство и вручную включает доверие. Если LAN URL недоступен, действия сохранения отключены.
+
 ## Tailscale private tailnet
 
 1. Запустите LocalGPT локально.

@@ -6,6 +6,7 @@
 
 ### Added
 
+- Settings → System can save Caddy's public LAN root certificate to the current computer for manual iPhone/Android transfer; the guarded no-store endpoint never serves a private key and is unavailable without live LAN HTTPS.
 - Интерактивный cross-platform setup (bootstrap) для macOS, Linux и Windows: native Terminal/PowerShell entry points, OS/package-manager detection, system/project dependency phases и final verification без загрузки моделей или пользовательских данных.
 - Подтверждённый dependency inventory и закреплённые версии прямых Python packages для воспроизводимого первого запуска.
 - Settings → System export/import complete Ollama, faster-whisper, whisper.cpp и Piper models через checksum-validated ZIP64 `.localgpt-models`, с выбором, прогрессом, подтверждением и conflict-safe publication.
