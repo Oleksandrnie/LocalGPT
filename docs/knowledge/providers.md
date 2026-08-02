@@ -58,9 +58,9 @@ OCR assist (`auto`, `on`, `off`) добавляет помеченные per-ima
 - `faster_whisper` — Python/CTranslate2;
 - `auto` — whisper.cpp при готовом binary/model, иначе faster-whisper.
 
-`backend/apps/asr/whisper.py` выбирает backend и нормализует общий результат. `whisper_cpp.py` владеет binary/model discovery, command execution и подготовкой путей. `downloads.py` управляет model preparation/update state.
+`backend/apps/asr/whisper.py` выбирает backend и нормализует общий результат. `whisper_cpp.py` владеет binary/model/VAD discovery, command execution и подготовкой путей: штатный запуск включает Silero VAD, подавление non-speech tokens и отключение temperature fallback, чтобы тишина не становилась вымышленной транскрипцией. `downloads.py` управляет model preparation/update state.
 
-Основные параметры находятся в `.env.example`: model, device, compute type, beam size, binary, threads, model path, FFmpeg и CoreML download policy.
+Основные параметры находятся в `.env.example`: model, device, compute type, beam size, binary, threads, model path, FFmpeg и CoreML download policy. На macOS setup также устанавливает небольшой `ggml-silero-v6.2.0.bin`; параметры VAD зафиксированы runtime-ом и покрыты backend tests.
 
 ## TTS contract
 
