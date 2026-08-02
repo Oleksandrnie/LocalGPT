@@ -105,7 +105,7 @@ Registry читает `plugins/*/plugin.json` как данные. Код из `
 
 ### Model transfer
 
-`backend/apps/model_transfer/` формирует несжатый ZIP64 `.localgpt-models` из выбранных complete provider units. Browser download/upload не принимает filesystem paths. Import дважды проверяет manifest, размеры и SHA-256, выполняет conflict preflight и публикует файлы из backend-owned staging в текущие `config.MODEL_PATHS`; Ollama manifests записываются после blobs.
+`backend/apps/model_transfer/` формирует несжатый ZIP64 `.localgpt-models` из выбранных complete provider units. Browser download/upload не принимает filesystem paths. Import дважды проверяет manifest, размеры и SHA-256, выполняет conflict preflight и публикует файлы из backend-owned staging в текущие `config.MODEL_PATHS`; Ollama manifests записываются после blobs. Успешный, отменённый или неуспешный import удаляет свой временный upload-archive; Settings → System показывает оставшиеся архивы после прерванных flows и позволяет явно очистить только прямые regular `.localgpt-models` files в backend-owned upload directory.
 
 ## Storage
 
