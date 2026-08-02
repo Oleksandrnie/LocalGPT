@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = ROOT / "app" / "requirements.txt"
 VENV_DIR = ROOT / "venv"
 DOT_VENV_DIR = ROOT / ".venv"
+WHISPER_CPP_SETUP_SCRIPT = ROOT / "tools" / "setup_whisper_cpp_macos.sh"
+WHISPER_CPP_CLI = ROOT / "models" / "whisper_cpp" / "bin" / "whisper-cli"
+WHISPER_CPP_VAD_MODEL = ROOT / "models" / "whisper_cpp" / "ggml-silero-v6.2.0.bin"
 MIN_PYTHON = (3, 10)
 
 
@@ -201,6 +204,32 @@ def missing_commands(names: list[str]) -> list[str]:
     return [name for name in names if not shutil.which(name)]
 
 
+def build_whisper_cpp_cli(system: str) -> None:
+    if system != "macos":
+        info("whisper.cpp CLI build is currently automated by setup on macOS only.")
+        return
+    if WHISPER_CPP_CLI.is_file() and os.access(WHISPER_CPP_CLI, os.X_OK) and WHISPER_CPP_VAD_MODEL.is_file():
+        info(f"whisper.cpp CLI and Silero VAD already built: {WHISPER_CPP_CLI}")
+        return
+    if not WHISPER_CPP_SETUP_SCRIPT.is_file():
+        raise SetupError(f"whisper.cpp setup script is missing: {WHISPER_CPP_SETUP_SCRIPT}")
+
+    step("Building standard whisper.cpp CLI")
+    run(
+        [str(WHISPER_CPP_SETUP_SCRIPT)],
+        env={
+            **os.environ,
+            "WHISPER_CPP_ENABLE_COREML": "0",
+            "WHISPER_CPP_DOWNLOAD_MODEL": "0",
+            "WHISPER_CPP_DOWNLOAD_VAD": "1",
+        },
+    )
+    if not WHISPER_CPP_CLI.is_file() or not os.access(WHISPER_CPP_CLI, os.X_OK):
+        raise SetupError(f"whisper.cpp build completed without an executable CLI: {WHISPER_CPP_CLI}")
+    if not WHISPER_CPP_VAD_MODEL.is_file():
+        raise SetupError(f"whisper.cpp build completed without a Silero VAD model: {WHISPER_CPP_VAD_MODEL}")
+
+
 def install_system_dependencies(system: str) -> None:
     step("Phase 1/3 — system dependencies")
     if system == "macos" and subprocess.run(
@@ -235,6 +264,8 @@ def install_system_dependencies(system: str) -> None:
             install_windows(ids)
     else:
         info("Core system tools are already installed; skipping.")
+
+    build_whisper_cpp_cli(system)
 
     if not shutil.which("ollama"):
         if not ask("Ollama is missing. Install the runtime (without models)?"):
@@ -343,6 +374,18 @@ def verify_environment(system: str) -> bool:
         else:
             failures.append("python packages")
             warn((probe.stderr or probe.stdout or "Python import verification failed").strip())
+
+    if system == "macos":
+        if WHISPER_CPP_CLI.is_file() and os.access(WHISPER_CPP_CLI, os.X_OK):
+            info(f"whisper.cpp CLI: {WHISPER_CPP_CLI}")
+        else:
+            failures.append("whisper.cpp CLI")
+            warn(f"whisper.cpp CLI: missing ({WHISPER_CPP_CLI})")
+        if WHISPER_CPP_VAD_MODEL.is_file():
+            info(f"whisper.cpp Silero VAD: {WHISPER_CPP_VAD_MODEL}")
+        else:
+            failures.append("whisper.cpp Silero VAD")
+            warn(f"whisper.cpp Silero VAD: missing ({WHISPER_CPP_VAD_MODEL})")
 
     if failures:
         warn("Setup is incomplete: " + ", ".join(failures))

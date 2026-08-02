@@ -10,7 +10,7 @@ LocalGPT — локальное приложение для чата, транс
 - анализ транскриптов: быстрое саммари, умное саммари и явно разрешаемый полный pipeline;
 - Voice Studio на базе Piper с локальной библиотекой голосов и историей;
 - OCR изображений через Tesseract;
-- profile-scoped RAG для `.txt`, `.md` и `.json`, включая ASR context и явно сохраняемый text-only Vision context;
+- profile-scoped RAG для Markdown-файлов, включая ASR context и явно сохраняемый text-only Vision context;
 - перенос complete Ollama, faster-whisper, whisper.cpp и Piper моделей между установками через один `.localgpt-models` bundle;
 - Plugin Registry v0 с trusted backend handlers;
 - локальный, LAN и private-tailnet доступ.
@@ -49,6 +49,7 @@ Setup (технически — bootstrap):
 - при необходимости устанавливает Python и поддерживаемый package manager;
 - ставит обязательные system/runtime tools и закреплённые Python packages в `venv/`;
 - отдельно предлагает опциональные Caddy, Tailscale и Node.js;
+- на macOS собирает штатный `whisper-cli` и небольшой Silero VAD-фильтр от распознавания тишины, но не загружает ASR-модели и CoreML-артефакты;
 - безопасно пропускает уже найденные компоненты и пригоден для повторного запуска;
 - не скачивает модели, RAG-данные, не создаёт `.env` и не включает сетевой доступ.
 
@@ -67,7 +68,7 @@ Setup (технически — bootstrap):
 По используемым функциям:
 
 - `ffmpeg` — конвертация аудио и часть ASR/TTS сценариев;
-- `whisper-cli` и GGML-модель — для backend `whisper_cpp`;
+- `whisper-cli` (собирается setup-ом на macOS) и GGML-модель — для backend `whisper_cpp`;
 - Tesseract — для OCR;
 - Caddy — для штатного LAN HTTPS launcher на macOS;
 - Tailscale — только для private-tailnet доступа.

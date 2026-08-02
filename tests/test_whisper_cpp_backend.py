@@ -36,6 +36,7 @@ class WhisperCppBackendTestCase(unittest.TestCase):
         config.SETTINGS.whisper_cpp_download_coreml = False
         config.TRANSCRIBE_LOG_FILE = self.tmp / "transcribe.log"
         config.SETTINGS.whisper_cpp_models_dir.mkdir(parents=True, exist_ok=True)
+        whisper_cpp.whisper_cpp_vad_model_path().write_bytes(b"vad")
         downloads._TASKS.clear()
         downloads._ACTIVE_BY_MODEL.clear()
 
@@ -66,6 +67,12 @@ class WhisperCppBackendTestCase(unittest.TestCase):
             self.assertEqual(command[command.index("--language") + 1], "ru")
             self.assertEqual(command[command.index("--threads") + 1], "4")
             self.assertEqual(command[command.index("--prompt") + 1], "secret prompt")
+            self.assertIn("--suppress-nst", command)
+            self.assertIn("--no-fallback", command)
+            self.assertEqual(command[command.index("--no-speech-thold") + 1], "0.8")
+            self.assertEqual(command[command.index("--vad-model") + 1], str(whisper_cpp.whisper_cpp_vad_model_path()))
+            self.assertEqual(command[command.index("--vad-threshold") + 1], "0.3")
+            self.assertEqual(command[command.index("--vad-min-speech-duration-ms") + 1], "100")
             output_prefix = Path(command[command.index("--output-file") + 1])
             output_prefix.with_suffix(".json").write_text(
                 json.dumps(
@@ -101,6 +108,11 @@ class WhisperCppBackendTestCase(unittest.TestCase):
         self.assertEqual(result["runtime"]["beam_size"], 3)
         self.assertEqual(result["runtime"]["threads"], 4)
         self.assertTrue(result["runtime"]["prompt_present"])
+        self.assertEqual(
+            result["runtime"]["decoder_guard_args"],
+            ["--suppress-nst", "--no-fallback", "--no-speech-thold", "0.8"],
+        )
+        self.assertEqual(result["runtime"]["vad_args"], ["--vad-threshold", "0.3", "--vad-min-speech-duration-ms", "100"])
         self.assertIn("<prompt chars=13>", result["runtime"]["command"])
 
         log_lines = config.TRANSCRIBE_LOG_FILE.read_text(encoding="utf-8").splitlines()

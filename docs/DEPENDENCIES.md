@@ -13,7 +13,7 @@
 | Core LLM runtime | Ollama CLI/service | актуальная поддерживаемая версия с `/api/chat`, `/api/pull`, `/api/ps` | chat, model discovery/download и vision | устанавливается интерактивно; модели не загружаются |
 | Media | FFmpeg | 6+; проверен проектный host 8.1.1 | ASR audio conversion, OCR video-frame extraction, TTS speed processing | устанавливается интерактивно |
 | OCR | Tesseract | 5+; проверен project host 5.5.2 | image OCR; недоступные language packs отбрасываются runtime-ом | устанавливается интерактивно |
-| ASR build | Git, CMake, Apple Command Line Tools, curl, unzip | Git 2+, CMake 3.20+ | сборка `whisper-cli` и получение ASR artifacts по явному действию пользователя | проверяются; Homebrew packages ставятся интерактивно, CLT запрашиваются macOS |
+| ASR build | Git, CMake, Apple Command Line Tools, curl, unzip | Git 2+, CMake 3.20+ | macOS-сборка `whisper-cli` и Silero VAD; получение ASR artifacts по явному действию пользователя | на macOS setup собирает CLI и загружает VAD без речевой модели; Homebrew packages ставятся интерактивно, CLT запрашиваются macOS |
 | LAN optional | Caddy | 2+; проверен project host 2.10.2 | `start_localgpt_lan.command`, private LAN HTTPS | отдельное интерактивное согласие |
 | Tailnet optional | Tailscale app/CLI | 1+ | read-only plugin status и manual Tailscale Serve | отдельное интерактивное согласие; Serve/Funnel не включаются |
 | QA only | Node.js | 18+ | `node --check` и `.mjs` tests | отдельное интерактивное согласие; frontend runtime Node не использует |
@@ -45,7 +45,7 @@ Setup не устанавливает:
 - Piper voices;
 - RAG sources, profile/user configuration или databases.
 
-Модельные artifacts загружаются только после явного действия в UI или отдельной model-specific команде. `whisper-cli` также не собирается setup-ом, потому что штатный setup одновременно работает с model artifacts; setup устанавливает только его build prerequisites.
+Речевые model artifacts загружаются только после явного действия в UI или отдельной model-specific команде. На macOS setup отдельно собирает native `whisper-cli` и устанавливает маленький Silero VAD-фильтр для тишины, но не загружает GGML-модель и CoreML encoder; для Linux и Windows он пока не запускает непроверенную native-сборку.
 
 ## Переменные окружения
 
@@ -64,6 +64,6 @@ Secrets и machine-specific paths не должны попадать в Git.
 
 - `run_localgpt.py` создаёт `venv/`, устанавливает `app/requirements.txt` при изменении его hash, создаёт runtime directories, запускает Ollama service и backend.
 - UI/provider flows по явному действию скачивают выбранные Ollama, ASR и Piper models.
-- `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку. Все platform entry points и Windows PowerShell adapter находятся рядом в `setup/`; они вычисляют корень проекта от собственного пути, поэтому не зависят от текущего рабочего каталога.
+- `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку; на macOS он также строит и проверяет `models/whisper_cpp/bin/whisper-cli` без загрузки model artifacts. Все platform entry points и Windows PowerShell adapter находятся рядом в `setup/`; они вычисляют корень проекта от собственного пути, поэтому не зависят от текущего рабочего каталога.
 
 Launcher запуска приложения не должен подменять setup системных пакетов: после первого setup обычный старт остаётся быстрым и идемпотентным.

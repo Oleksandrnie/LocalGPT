@@ -16,7 +16,7 @@ SOURCE_TYPE = "manual_file"
 ASR_CONTEXT_SOURCE_TYPE = "asr_context"
 VISION_CONTEXT_SOURCE_TYPE = "vision_context"
 EMBEDDING_MODEL = "local-hash-v1"
-SUPPORTED_SUFFIXES = {".txt", ".md", ".json"}
+SUPPORTED_SUFFIXES = {".md"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
 CHUNK_CHARS = 1200
 CHUNK_OVERLAP = 180
@@ -99,23 +99,13 @@ def _iter_source_files(profile_id: int) -> list[Path]:
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             continue
         files.append(path)
-    return sorted(
-        files,
-        key=lambda item: (0 if item.suffix.lower() == ".json" else 1, item.relative_to(root).as_posix().lower()),
-    )
+    return sorted(files, key=lambda item: item.relative_to(root).as_posix().lower())
 
 
 def _read_text_file(path: Path) -> str:
     if path.stat().st_size > MAX_FILE_BYTES:
         raise ValueError("file_too_large")
-    raw = path.read_text(encoding="utf-8", errors="replace")
-    if path.suffix.lower() == ".json":
-        try:
-            parsed = json.loads(raw)
-            return json.dumps(parsed, ensure_ascii=False, indent=2)
-        except json.JSONDecodeError:
-            return raw
-    return raw
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def _extract_sections(text: str) -> list[dict[str, Any]]:
@@ -286,27 +276,6 @@ def structured_payload_for_markdown(path: Path) -> dict[str, Any]:
     return payload
 
 
-def ensure_structured_json_files(profile_id: int, *, force: bool = False) -> list[str]:
-    created: list[str] = []
-    for md_path in _iter_source_files(profile_id):
-        if md_path.suffix.lower() != ".md":
-            continue
-        json_path = md_path.with_suffix(".json")
-        if json_path.exists():
-            if not force:
-                continue
-            try:
-                existing = json.loads(json_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                existing = None
-            if not isinstance(existing, dict) or existing.get("generated_by") != "localgpt_auto_structurer":
-                continue
-        payload = structured_payload_for_markdown(md_path)
-        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        created.append(_relative_source_id(json_path, profile_id))
-    return created
-
-
 def _clean_text(text: str) -> str:
     lines = [re.sub(r"\s+", " ", line).strip() for line in (text or "").splitlines()]
     compact = "\n".join(line for line in lines if line)
@@ -353,6 +322,13 @@ def _cosine(left: list[float], right: list[float]) -> float:
         return 0.0
     size = min(len(left), len(right))
     return sum(left[idx] * right[idx] for idx in range(size))
+
+
+def _tokens_match(query_token: str, content_token: str) -> bool:
+    if query_token == content_token:
+        return True
+    prefix_length = min(len(query_token), len(content_token), 7)
+    return prefix_length >= 5 and query_token[:prefix_length] == content_token[:prefix_length]
 
 
 def _existing_documents(profile_id: int, source_type: str = SOURCE_TYPE) -> dict[str, dict[str, Any]]:
@@ -604,7 +580,6 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
 
-    generated_json = ensure_structured_json_files(profile_id, force=force)
     existing = _existing_documents(profile_id)
     scanned = 0
     indexed = 0
@@ -625,8 +600,8 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             "mtime": stat.st_mtime,
             "embedding_model": EMBEDDING_MODEL,
             "source_kind": _source_kind(path),
-            "truth_priority": 100 if path.suffix.lower() == ".json" else 10,
-            "source_role": "source_of_truth" if path.suffix.lower() == ".json" else "explanation",
+            "truth_priority": 10,
+            "source_role": "source",
         }
         current = existing.get(source_id)
         current_meta = current.get("metadata") if isinstance(current, dict) else {}
@@ -692,7 +667,6 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
         "profile_source_dir": str(source_dir(profile_id)),
         "embedding_model": EMBEDDING_MODEL,
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
-        "generated_json": generated_json,
         "scanned": scanned,
         "indexed": indexed,
         "skipped": skipped,
@@ -739,17 +713,22 @@ def search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any
             for value in (chunk.get("content"), chunk.get("source_id"), chunk.get("title"))
         ).lower()
         content_tokens = set(TOKEN_RE.findall(haystack))
-        lexical = len(query_tokens & content_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
+        matched_query_tokens = {
+            query_token
+            for query_token in query_tokens
+            if any(_tokens_match(query_token, content_token) for content_token in content_tokens)
+        }
+        lexical = len(matched_query_tokens) / max(1, len(query_tokens)) if query_tokens else 0.0
+        if lexical:
+            score = max(score, lexical * 0.25)
         score += min(0.18, lexical * 0.18)
-        if score <= 0:
-            continue
         document_meta = chunk.get("document_metadata") or {}
         source_kind = document_meta.get("source_kind") or _source_kind(Path(str(chunk.get("source_id") or "")))
         if source_kind == "pricing" and any(
             marker in query_lower
-            for marker in ("тариф", "цена", "стоим", "прайс", "час", "депозит", "докуп")
+            for marker in ("тариф", "цен", "стоим", "прайс", "расцен", "час", "депозит", "докуп")
         ):
-            score += 0.35
+            score += 0.7
         if source_kind == "profile" and any(
             marker in query_lower
             for marker in ("кто я", "обо мне", "чем занима", "моя роль", "профиль", "интерес", "работаю")
@@ -760,6 +739,8 @@ def search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any
         if source_kind == "template" and any(marker in query_lower for marker in ("шаблон", "сообщение", "ответ клиенту")):
             score += 0.2
         score += 0.08 if document_meta.get("source_role") == "source_of_truth" else 0.0
+        if score <= 0:
+            continue
         scored.append(
             {
                 "score": round(score, 4),
@@ -780,12 +761,9 @@ def search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any
 
 def build_context(chunks: list[dict[str, Any]], *, max_chars: int = 6000) -> str:
     parts: list[str] = [
-        "RAG rules: JSON chunks are source of truth. If JSON conflicts with Markdown, use JSON. "
-        "Markdown chunks are explanatory context. Do not invent facts not present in retrieved chunks. "
-        "For pricing questions, use explicit structured values and distinguish a minimum tariff from a maximum variant inside a tariff line. "
-        "For plural cheapest, middle, or highest grid requests, use one matching variant from each tariff line. "
-        "For singular cheapest or most-expensive grid requests, use one absolute item across the whole grid. "
-        "If the intended selection is ambiguous and the retrieved source does not define it, ask a short clarifying question."
+        "RAG rules: use the retrieved Markdown sources as authoritative local context. "
+        "Do not invent facts that are not present in the retrieved chunks. "
+        "If the source does not define an ambiguous value, ask a short clarifying question."
     ]
     total = len(parts[0]) + 2
     for item in chunks:
@@ -822,12 +800,10 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
             continue
         target.write_bytes(data)
         saved.append(_relative_source_id(target, profile_id))
-    generated_json = ensure_structured_json_files(profile_id)
     return {
         "profile_id": profile_id,
         "source_dir": str(target_dir),
         "saved": saved,
-        "generated_json": generated_json,
         "errors": errors,
         "status": status(profile_id),
     }
@@ -839,25 +815,13 @@ def delete_file(profile_id: int, source_id: str) -> dict[str, Any]:
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="rag_file_not_found")
 
-    delete_targets = [target]
-    if target.suffix.lower() == ".md":
-        companion = target.with_suffix(".json")
-        if companion.exists() and companion.is_file():
-            try:
-                companion_payload = json.loads(companion.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                companion_payload = None
-            if isinstance(companion_payload, dict) and companion_payload.get("generated_by") == "localgpt_auto_structurer":
-                delete_targets.append(companion)
-
-    for path in delete_targets:
-        source = _relative_source_id(path, profile_id)
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-        db.delete_source_document(profile_id, SOURCE_TYPE, source)
-        deleted.append(source)
+    source = _relative_source_id(target, profile_id)
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        pass
+    db.delete_source_document(profile_id, SOURCE_TYPE, source)
+    deleted.append(source)
 
     return {"profile_id": profile_id, "deleted": deleted, "status": status(profile_id)}
 
@@ -874,5 +838,4 @@ def migrate_legacy_root_files(profile_id: int) -> dict[str, Any]:
             continue
         shutil.move(str(path), str(target))
         moved.append(_relative_source_id(target, profile_id))
-    generated_json = ensure_structured_json_files(profile_id)
-    return {"moved": moved, "generated_json": generated_json, "status": status(profile_id)}
+    return {"moved": moved, "status": status(profile_id)}

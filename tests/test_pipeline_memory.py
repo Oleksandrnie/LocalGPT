@@ -855,17 +855,16 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
             ChatRequest(query="What is Alpha project deadline?", profile_id=self.profile_id, model_name="qwen2.5:3b")
         )
 
-        self.assertEqual(ingest["indexed"], 2)
-        self.assertIn("project.json", ingest["generated_json"])
-        self.assertEqual(ingest["stats"]["documents"], 2)
+        self.assertEqual(ingest["indexed"], 1)
+        self.assertEqual(ingest["stats"]["documents"], 1)
+        self.assertFalse((source_dir / "project.json").exists())
         self.assertTrue(prepared["rag_chunks"])
         contents = [item["content"] for item in prepared["messages"]]
         rag_index = next(idx for idx, item in enumerate(contents) if "Relevant RAG context" in item)
         query_index = len(contents) - 1
         self.assertLess(rag_index, query_index)
         self.assertIn("Alpha project deadline", contents[rag_index])
-        self.assertIn("JSON chunks are source of truth", contents[rag_index])
-        self.assertIn("For plural cheapest, middle, or highest grid requests", contents[rag_index])
+        self.assertIn("Markdown sources as authoritative", contents[rag_index])
         self.assertEqual(prepared["effective_settings"]["rag_enabled_effective"], True)
         self.assertGreater(prepared["effective_settings"]["rag_chunks_used"], 0)
 
@@ -889,63 +888,61 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
         self.assertIn("PUBG Mobile", rag_block)
 
-    def test_force_reindex_regenerates_only_auto_json(self):
+    def test_rag_price_query_prioritizes_pricing_markdown(self):
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        (source_dir / "company.kb.pricing.md").write_text(
+            "# Тарифы\n\nБазовая услуга — 9 990 ₽ в месяц.",
+            encoding="utf-8",
+        )
+        (source_dir / "company.context.md").write_text(
+            "Компания оказывает услуги по поддержке сайтов.",
+            encoding="utf-8",
+        )
+        rag_service.ingest_sources(self.profile_id)
+
+        results = rag_service.search(self.profile_id, "какие цены есть на услуги", top_k=5)
+
+        self.assertTrue(results)
+        self.assertEqual(results[0]["source_id"], "company.kb.pricing.md")
+        self.assertIn("9 990 ₽", results[0]["content"])
+
+    def test_rag_ingest_accepts_only_markdown_and_removes_legacy_json_index(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
         md_path = source_dir / "plain.md"
         md_path.write_text("Первичная заметка.", encoding="utf-8")
-        generated = rag_service.ensure_structured_json_files(self.profile_id)
-        self.assertEqual(generated, ["plain.json"])
-
-        md_path.write_text("Обновленная заметка с гитарой.", encoding="utf-8")
-        generated_again = rag_service.ensure_structured_json_files(self.profile_id, force=True)
-        self.assertEqual(generated_again, ["plain.json"])
-        self.assertIn("гитарой", (source_dir / "plain.json").read_text(encoding="utf-8"))
-
-        manual_json = source_dir / "manual.json"
-        manual_json.write_text('{"generated_by":"human","facts":[{"text":"do not overwrite"}]}', encoding="utf-8")
-        (source_dir / "manual.md").write_text("Авто не должен перезаписать ручной JSON.", encoding="utf-8")
-        rag_service.ensure_structured_json_files(self.profile_id, force=True)
-        self.assertIn("do not overwrite", manual_json.read_text(encoding="utf-8"))
-
-    def test_pricing_structurer_recognizes_premium_heading(self):
-        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
-        md_path = source_dir / "pricing.md"
-        md_path.write_text(
-            "# Pricing\n\n"
-            "### Базовый\n"
-            "- 3 часа — 9 990 ₽\n\n"
-            "### Оптимальный\n"
-            "- 8 часов — 23 920 ₽\n\n"
-            "### Премиальный\n"
-            "- 16 часов — 47 840 ₽\n",
-            encoding="utf-8",
+        legacy_json = source_dir / "plain.json"
+        legacy_json.write_text('{"fact":"legacy duplicate"}', encoding="utf-8")
+        db.create_source_document(
+            profile_id=self.profile_id,
+            session_id=None,
+            source_type=rag_service.SOURCE_TYPE,
+            source_id="plain.json",
+            title="plain.json",
+            content=None,
+            metadata={},
         )
 
-        payload = rag_service.structured_payload_for_markdown(md_path)
+        ingest = rag_service.ingest_sources(self.profile_id, force=True)
 
-        self.assertEqual(
-            payload["pricing"]["support_tariffs"],
-            [
-                {"line": "Базовый", "hours": 3, "price": 9990},
-                {"line": "Оптимальный", "hours": 8, "price": 23920},
-                {"line": "Премиальный", "hours": 16, "price": 47840},
-            ],
-        )
+        self.assertEqual(rag_service.SUPPORTED_SUFFIXES, {".md"})
+        self.assertEqual(ingest["scanned"], 1)
+        self.assertEqual(ingest["indexed"], 1)
+        self.assertEqual(ingest["removed_stale"], 1)
+        self.assertTrue(legacy_json.exists())
+        self.assertEqual(rag_service.status(self.profile_id)["files"], ["plain.md"])
+        self.assertEqual(db.rag_stats(self.profile_id)["documents"], 1)
 
     def test_rag_delete_file_removes_file_and_auto_companion(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
         md_path = source_dir / "delete-me.md"
         md_path.write_text("Удаляемая заметка.", encoding="utf-8")
         rag_service.ingest_sources(self.profile_id, force=True)
-        self.assertTrue((source_dir / "delete-me.json").exists())
         self.assertGreater(db.rag_stats(self.profile_id)["documents"], 0)
 
         result = rag_service.delete_file(self.profile_id, "delete-me.md")
 
         self.assertIn("delete-me.md", result["deleted"])
-        self.assertIn("delete-me.json", result["deleted"])
         self.assertFalse(md_path.exists())
-        self.assertFalse((source_dir / "delete-me.json").exists())
         self.assertEqual(db.rag_stats(self.profile_id)["documents"], 0)
 
     def test_rag_files_are_scoped_per_profile(self):
@@ -958,8 +955,8 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         first_ingest = rag_service.ingest_sources(self.profile_id)
         second_ingest = rag_service.ingest_sources(second["id"])
 
-        self.assertEqual(first_ingest["stats"]["documents"], 2)
-        self.assertEqual(second_ingest["stats"]["documents"], 2)
+        self.assertEqual(first_ingest["stats"]["documents"], 1)
+        self.assertEqual(second_ingest["stats"]["documents"], 1)
         self.assertTrue(rag_service.search(self.profile_id, "alpha_unique_profile_fact", top_k=3))
         results = rag_service.search(self.profile_id, "beta_unique_profile_fact", top_k=3)
         self.assertFalse(any("beta_unique_profile_fact" in item["content"] for item in results))

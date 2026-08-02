@@ -528,6 +528,8 @@ const state = {
   isTranscribing: false,
   isRecordingVoice: false,
   isVoiceTranscribing: false,
+  promptPlaceholderHint: "",
+  promptPlaceholderHintTimer: null,
   voiceTranscriptionTaskId: null,
   voiceTranscriptionStartController: null,
   chatTaskId: null,
@@ -2537,7 +2539,25 @@ function insertVoiceTranscript(text) {
   insertPromptText(text, { append: true });
 }
 
+function showPromptPlaceholderHint(text, durationMs = 2500) {
+  if (!els.promptInput) return;
+  state.promptPlaceholderHint = String(text || "").trim();
+  if (state.promptPlaceholderHintTimer) window.clearTimeout(state.promptPlaceholderHintTimer);
+  updateSendButtonState();
+  state.promptPlaceholderHintTimer = window.setTimeout(() => {
+    state.promptPlaceholderHint = "";
+    state.promptPlaceholderHintTimer = null;
+    updateSendButtonState();
+  }, durationMs);
+}
+
+function isEmptyVoiceTranscriptionError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("пустую транскрипцию") || message.includes("пустой текст");
+}
+
 const VOICE_TRANSCRIPTION_TIMEOUT_MS = 5 * 60 * 1000;
+const MIN_VOICE_RECORDING_MS = 700;
 const FILE_TRANSCRIPTION_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_TRANSCRIPTION_TIMEOUT_MS = 60 * 60 * 1000;
 
@@ -2611,11 +2631,12 @@ async function transcribeVoiceBlob(blob, mimeType) {
 
   try {
     const extension = audioExtensionForMimeType(mimeType || blob.type);
+    const promptPreset = normalizePromptPreset(state.selectedPromptPreset);
     const formData = new FormData();
     formData.append("file", blob, `voice-note.${extension}`);
     formData.append("model", getSelectedChatWhisperModel() || "medium");
-    formData.append("prompt_preset", "auto");
-    formData.append("language", "auto");
+    formData.append("prompt_preset", promptPreset);
+    formData.append("language", languageForPromptPreset(promptPreset));
     formData.append("store_result", "false");
 
     const task = await request("/transcribe/tasks", {
@@ -2643,6 +2664,8 @@ async function transcribeVoiceBlob(blob, mimeType) {
   } catch (error) {
     if (isAbortError(error)) {
       setFooter("Распознавание голоса остановлено.", "warning");
+    } else if (isEmptyVoiceTranscriptionError(error)) {
+      showPromptPlaceholderHint("Речь не распознана — проверьте микрофон и повторите запись.");
     } else {
       setFooter(`Ошибка голосовой транскрибации: ${error.message || error}`, "error");
     }
@@ -2656,6 +2679,19 @@ async function transcribeVoiceBlob(blob, mimeType) {
 
 async function startVoiceRecording() {
   if (state.isRecordingVoice || state.isVoiceTranscribing) return;
+  const selectedModel = getSelectedChatWhisperModel();
+  if (state.asrModels.length && !isWhisperModelInstalled(selectedModel)) {
+    const item = state.asrModels.find((entry) => entry.name === selectedModel);
+    const warning = getWhisperItemWarnings(item)[0] || "модель или whisper.cpp runtime не готовы";
+    setFooter(
+      `Диктовка ${selectedModel} недоступна: ${warning}. Открываю ASR-библиотеку — нажмите «Дособрать» или «Загрузить».`,
+      "warning",
+    );
+    setSettingsTab("asr", { render: false });
+    openSettings();
+    setLibraryOpen("asr", true);
+    return;
+  }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     setFooter("Запись с микрофона не поддерживается в этом браузере.", "warning");
     return;
@@ -2666,6 +2702,7 @@ async function startVoiceRecording() {
     const mimeType = pickVoiceRecorderMimeType();
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     const chunks = [];
+    const recordingStartedAt = Date.now();
 
     recorder.addEventListener("dataavailable", (event) => {
       if (event.data && event.data.size > 0) {
@@ -2675,11 +2712,17 @@ async function startVoiceRecording() {
 
     recorder.addEventListener("stop", async () => {
       const outputType = recorder.mimeType || mimeType || "audio/webm";
+      const durationMs = Date.now() - recordingStartedAt;
       stopVoiceStreamTracks();
       state.voiceRecorder = null;
       const blob = new Blob(chunks, { type: outputType });
       if (!blob.size) {
         setFooter("Запись пустая, попробуйте ещё раз.", "warning");
+        renderVoiceRecordButton();
+        return;
+      }
+      if (durationMs < MIN_VOICE_RECORDING_MS) {
+        showPromptPlaceholderHint("Запись слишком короткая — говорите хотя бы около секунды.");
         renderVoiceRecordButton();
         return;
       }
@@ -2850,9 +2893,10 @@ function updateSendButtonState() {
   );
   if (els.promptInput) {
     els.promptInput.disabled = false;
-    els.promptInput.placeholder = !hasInstalledChatModel
+    const defaultPlaceholder = !hasInstalledChatModel
       ? "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения."
       : (!selectedModel ? "Выберите модель, чтобы отправлять сообщения." : "Напишите сообщение…");
+    els.promptInput.placeholder = state.promptPlaceholderHint || defaultPlaceholder;
   }
   els.sendButton.disabled = state.isSending
     ? false

@@ -116,6 +116,8 @@ Model-transfer tests используют только temporary synthetic files
 ### ASR
 
 - быстрый voice-to-input и ASR Studio остаются разными UX flows;
+- chat-диктовка использует language/prompt preset активного профиля; запись короче 700 мс не отправляется в ASR;
+- `whisper.cpp` использует Silero VAD, чтобы тишина не превращалась в вымышленную транскрипцию;
 - backend selection соответствует `WHISPER_BACKEND`;
 - disabled stage не запускается ни одним analysis mode;
 - `full` требует `asr_full_analysis_enabled`;
@@ -139,8 +141,8 @@ Model-transfer tests используют только temporary synthetic files
 ### RAG
 
 - profile isolation;
-- `.txt`, `.md`, `.json` validation;
-- MD→JSON generation и force reindex;
+- validation только `.md` и отклонение legacy `.txt`/`.json`;
+- force reindex очищает stale JSON records, не удаляя legacy files;
 - chunk overlap, embedding metadata и top-k search;
 - context assembly соблюдает `max_chars`;
 - file/context deletion очищает DB records.
@@ -182,7 +184,7 @@ Model-transfer tests используют только temporary synthetic files
 Эта проверка намеренно ручная: она устанавливает system packages и может запросить administrative privileges.
 
 1. На чистом macOS/Linux/Windows environment запустить соответствующий `setup/setup_localgpt.*` entry point.
-2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие model downloads.
+2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие model downloads. На macOS убедиться, что `models/whisper_cpp/bin/whisper-cli` собран и исполняем.
 3. Согласиться на core dependencies; optional Caddy/Tailscale/Node проверить отдельно по нужному режиму.
 4. Убедиться, что final verification проходит и `venv/` содержит imports из `app/requirements.txt`.
    Отдельный `.venv/`, если он существовал до setup, должен остаться нетронутым и не считаться штатным runtime environment.

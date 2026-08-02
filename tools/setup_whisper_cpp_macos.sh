@@ -10,11 +10,15 @@ BIN_DIR="$WHISPER_CPP_DIR/bin"
 MODEL_FILE="${WHISPER_CPP_MODEL_FILE:-"$WHISPER_CPP_DIR/ggml-${MODEL_NAME}.bin"}"
 COREML_ZIP="${WHISPER_CPP_COREML_ZIP:-"$WHISPER_CPP_DIR/ggml-${MODEL_NAME}-encoder.mlmodelc.zip"}"
 COREML_DIR="${WHISPER_CPP_COREML_DIR:-"$WHISPER_CPP_DIR/ggml-${MODEL_NAME}-encoder.mlmodelc"}"
+VAD_MODEL_FILE="${WHISPER_CPP_VAD_MODEL_FILE:-"$WHISPER_CPP_DIR/ggml-silero-v6.2.0.bin"}"
 REPO_URL="${WHISPER_CPP_REPO_URL:-https://github.com/ggml-org/whisper.cpp.git}"
 MODEL_URL="${WHISPER_CPP_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${MODEL_NAME}.bin?download=true}"
 COREML_URL="${WHISPER_CPP_COREML_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${MODEL_NAME}-encoder.mlmodelc.zip?download=true}"
+VAD_MODEL_URL="${WHISPER_CPP_VAD_MODEL_URL:-https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin}"
 ENABLE_METAL="${WHISPER_CPP_ENABLE_METAL:-1}"
 ENABLE_COREML="${WHISPER_CPP_ENABLE_COREML:-1}"
+DOWNLOAD_MODEL="${WHISPER_CPP_DOWNLOAD_MODEL:-1}"
+DOWNLOAD_VAD="${WHISPER_CPP_DOWNLOAD_VAD:-1}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -68,13 +72,15 @@ ln -sf "$CLI_PATH" "$BIN_DIR/whisper-cli"
 
 if [ -f "$MODEL_FILE" ]; then
     echo "[i] GGML model already exists: $MODEL_FILE"
+elif [ "$DOWNLOAD_MODEL" != "1" ]; then
+    echo "[i] Skipping GGML model download."
 else
     echo "[*] Downloading GGML model: $MODEL_NAME"
     curl -L --fail --progress-bar "$MODEL_URL" -o "$MODEL_FILE.tmp"
     mv "$MODEL_FILE.tmp" "$MODEL_FILE"
 fi
 
-if [ "$ENABLE_COREML" = "1" ]; then
+if [ "$ENABLE_COREML" = "1" ] && [ "$DOWNLOAD_MODEL" = "1" ]; then
     if [ -d "$COREML_DIR" ]; then
         echo "[i] CoreML encoder already exists: $COREML_DIR"
     else
@@ -83,6 +89,16 @@ if [ "$ENABLE_COREML" = "1" ]; then
         mv "$COREML_ZIP.tmp" "$COREML_ZIP"
         unzip -q -o "$COREML_ZIP" -d "$WHISPER_CPP_DIR"
         rm -rf "$WHISPER_CPP_DIR/__MACOSX"
+    fi
+fi
+
+if [ "$DOWNLOAD_VAD" = "1" ]; then
+    if [ -f "$VAD_MODEL_FILE" ]; then
+        echo "[i] Silero VAD model already exists: $VAD_MODEL_FILE"
+    else
+        echo "[*] Downloading Silero VAD model..."
+        curl -L --fail --progress-bar "$VAD_MODEL_URL" -o "$VAD_MODEL_FILE.tmp"
+        mv "$VAD_MODEL_FILE.tmp" "$VAD_MODEL_FILE"
     fi
 fi
 
@@ -96,3 +112,4 @@ echo "WHISPER_CPP_MODELS_DIR=$WHISPER_CPP_DIR"
 echo "WHISPER_CPP_MODEL_PATH=$WHISPER_CPP_DIR/ggml-{model}.bin"
 echo "WHISPER_CPP_CONVERT_AUDIO=1"
 echo "WHISPER_CPP_DOWNLOAD_COREML=1"
+echo "# Silero VAD is installed automatically to suppress silence hallucinations."
