@@ -8,7 +8,7 @@
 - Branch: `codex/model-transfer-upload-cleanup`.
 - Started: 2026-08-03.
 - Current status: active.
-- Current stage: Stage 1 — backend upload-storage contract.
+- Current stage: Stage 2 — System settings control.
 
 ## Instructions and precedence
 
@@ -67,7 +67,7 @@
 ### Stage 2 — System settings control
 
 - Goal: make usage visible and let the user confirm cleanup from System settings.
-- Status: pending.
+- Status: completed.
 - Actions: add markup, UI state/requests, confirmation/accessibility and static contract coverage.
 - Validation: `node tests/model_transfer_ui.test.mjs`, syntax check.
 - Completion criterion: user can see usage, confirm deletion, and get a precise result without affecting models.
@@ -103,7 +103,19 @@
 - Validation: `venv/bin/python -m unittest tests.test_model_transfer_import -v` (4 passed); `git diff --check` passed.
 - Next action: inspect staged diff and create Stage 1 checkpoint, then build the System settings control.
 
+### 2026-08-03 — Stage 1 checkpoint
+
+- Checkpoint: `9bc2269 feat(model-transfer): add upload archive cleanup API`.
+- Next action: implement the System control.
+
+### 2026-08-03 — Stage 2 implemented
+
+- Completed: Settings → System now displays temporary archive count/size, refreshes after import, and offers a keyboard-accessible confirmed cleanup that explains model files are untouched.
+- Changed: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, `tests/model_transfer_ui.test.mjs`.
+- Validation: `node --check web_ui/js/app.js`; `node tests/model_transfer_ui.test.mjs` (5 passed); `git diff --check` passed.
+- Next action: inspect staged diff and create Stage 2 checkpoint, then update affected permanent documents and run final validation.
+
 ## Continuation state
 
-- Current stage: Stage 1.
-- Next exact action: stage Stage 1 files and create its focused checkpoint.
+- Current stage: Stage 2.
+- Next exact action: stage Stage 2 files and create its focused checkpoint.
