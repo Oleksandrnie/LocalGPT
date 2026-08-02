@@ -16,4 +16,6 @@
 
 Setup всегда читает канонический `app/requirements.txt` и создаёт `venv/`, который затем использует `run_localgpt.py`. Окружение `.venv/`, созданное вручную, не подменяется и не удаляется.
 
+На macOS setup также собирает native `models/whisper_cpp/bin/whisper-cli`. Это не загружает GGML-модель или CoreML encoder: их по-прежнему добавляют отдельно в ASR Library.
+
 Подробный dependency inventory и правила установки: [`docs/DEPENDENCIES.md`](../docs/DEPENDENCIES.md).

@@ -49,6 +49,7 @@ Setup (технически — bootstrap):
 - при необходимости устанавливает Python и поддерживаемый package manager;
 - ставит обязательные system/runtime tools и закреплённые Python packages в `venv/`;
 - отдельно предлагает опциональные Caddy, Tailscale и Node.js;
+- на macOS собирает штатный `whisper-cli`, но не загружает ASR-модели и CoreML-артефакты;
 - безопасно пропускает уже найденные компоненты и пригоден для повторного запуска;
 - не скачивает модели, RAG-данные, не создаёт `.env` и не включает сетевой доступ.
 
@@ -67,7 +68,7 @@ Setup (технически — bootstrap):
 По используемым функциям:
 
 - `ffmpeg` — конвертация аудио и часть ASR/TTS сценариев;
-- `whisper-cli` и GGML-модель — для backend `whisper_cpp`;
+- `whisper-cli` (собирается setup-ом на macOS) и GGML-модель — для backend `whisper_cpp`;
 - Tesseract — для OCR;
 - Caddy — для штатного LAN HTTPS launcher на macOS;
 - Tailscale — только для private-tailnet доступа.

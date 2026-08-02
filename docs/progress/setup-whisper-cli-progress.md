@@ -7,7 +7,7 @@
 - Expected result: macOS setup builds the executable without downloading a model; setup verifies its presence and documents the platform contract.
 - Source specification: user request of 2026-08-03.
 - Branch: `codex/rag-source-ingestion`.
-- Current stage: Stage 2 — documentation and cleanup.
+- Current stage: Stage 2 — completed; ready for final progress cleanup.
 
 ## Scope lock
 
@@ -27,6 +27,24 @@
 
 ### Stage 2 — Documentation and cleanup
 
-- Status: in progress.
-- Update setup/dependency docs and run proportional validation.
+- Status: completed.
+- Updated setup/dependency, architecture, testing, root README and changelog documentation. Validation passed: setup unit tests (14), shell syntax, Python compilation, UI static check, dictation UI test and Markdown rendering test.
 - Checkpoint: `Document standard whisper CLI setup`.
+
+## Changed files
+
+- `setup/setup_localgpt.py`
+- `tools/setup_whisper_cpp_macos.sh`
+- `tests/test_setup_dependencies.py`
+- `README.md`
+- `setup/README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/DEPENDENCIES.md`
+- `docs/TESTING.md`
+- `docs/CHANGELOG.md`
+
+## Decisions and continuation
+
+- A native CLI belongs to the standard macOS bootstrap because `whisper_cpp` is the default ASR backend; model artifacts remain an explicit user action.
+- Linux and Windows do not receive a guessed build flow. Extend those platforms only with a separately verified implementation.
+- Next step: remove this completed progress file in the final cleanup commit.

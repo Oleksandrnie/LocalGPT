@@ -182,7 +182,7 @@ Model-transfer tests используют только temporary synthetic files
 Эта проверка намеренно ручная: она устанавливает system packages и может запросить administrative privileges.
 
 1. На чистом macOS/Linux/Windows environment запустить соответствующий `setup/setup_localgpt.*` entry point.
-2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие model downloads.
+2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие model downloads. На macOS убедиться, что `models/whisper_cpp/bin/whisper-cli` собран и исполняем.
 3. Согласиться на core dependencies; optional Caddy/Tailscale/Node проверить отдельно по нужному режиму.
 4. Убедиться, что final verification проходит и `venv/` содержит imports из `app/requirements.txt`.
    Отдельный `.venv/`, если он существовал до setup, должен остаться нетронутым и не считаться штатным runtime environment.
