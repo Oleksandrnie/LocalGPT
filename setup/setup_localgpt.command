@@ -2,12 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
 
 set +e
 /bin/sh "$SCRIPT_DIR/setup_localgpt.sh" "$@"
-status=$?
+setup_exit=$?
 set -e
 echo
 read "?Press Enter to close Terminal..."
-exit $status
+exit $setup_exit

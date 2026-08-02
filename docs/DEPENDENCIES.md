@@ -64,6 +64,6 @@ Secrets и machine-specific paths не должны попадать в Git.
 
 - `run_localgpt.py` создаёт `venv/`, устанавливает `app/requirements.txt` при изменении его hash, создаёт runtime directories, запускает Ollama service и backend.
 - UI/provider flows по явному действию скачивают выбранные Ollama, ASR и Piper models.
-- Внутренний `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку. Три корневых entry points — `setup_localgpt.command`, `setup_localgpt.sh` и `setup_localgpt.bat` — обеспечивают native Terminal/PowerShell entry и первоначальный Python setup; Windows PowerShell adapter находится в `setup/`.
+- `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку. Все platform entry points и Windows PowerShell adapter находятся рядом в `setup/`; они вычисляют корень проекта от собственного пути, поэтому не зависят от текущего рабочего каталога.
 
 Launcher запуска приложения не должен подменять setup системных пакетов: после первого setup обычный старт остаётся быстрым и идемпотентным.

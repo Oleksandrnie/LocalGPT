@@ -30,19 +30,19 @@ LocalGPT — локальное приложение для чата, транс
 
 На новом компьютере запустите platform entry point. Он определит ОС и package manager, откроет Terminal/PowerShell, покажет отсутствующие компоненты и запросит согласие перед каждой установкой.
 
-macOS — двойной клик по `setup_localgpt.command` или команда:
+macOS — двойной клик по `setup/setup_localgpt.command` или команда:
 
 ```bash
-./setup_localgpt.command
+./setup/setup_localgpt.command
 ```
 
 Linux:
 
 ```bash
-./setup_localgpt.sh
+./setup/setup_localgpt.sh
 ```
 
-Windows — двойной клик по `setup_localgpt.bat`. Он откроет PowerShell и продолжит установку там.
+Windows — двойной клик по `setup\setup_localgpt.bat`. Он откроет PowerShell и продолжит установку там.
 
 Setup (технически — bootstrap):
 
@@ -51,6 +51,8 @@ Setup (технически — bootstrap):
 - отдельно предлагает опциональные Caddy, Tailscale и Node.js;
 - безопасно пропускает уже найденные компоненты и пригоден для повторного запуска;
 - не скачивает модели, RAG-данные, не создаёт `.env` и не включает сетевой доступ.
+
+Канонический список Python packages находится в `app/requirements.txt`; отдельного корневого `requirements.txt` нет. Setup создаёт штатный `venv/`. Если ранее было вручную создано `.venv/`, оно останется нетронутым, но LocalGPT его не использует.
 
 После успешной финальной проверки запускайте LocalGPT обычным launcher-ом из следующего раздела. Полный подтверждённый inventory, версии и назначение компонентов: [Зависимости LocalGPT](docs/DEPENDENCIES.md).
 
@@ -100,12 +102,14 @@ Setup (технически — bootstrap):
 
 Launcher повторно использует подготовленный `venv/`, при изменении `app/requirements.txt` обновляет packages, проверяет Ollama, выбирает свободный backend-порт и запускает `backend.server:app`. По умолчанию UI открывается на `http://127.0.0.1:8000/ui/gui_html.html`; если порт занят, launcher выбирает следующий свободный.
 
+Команда `python3 run_localgpt.py` также поддерживается: если системный `python3` старее 3.10, launcher автоматически продолжит через подготовленный `venv/bin/python`. Системный Python при этом не изменяется.
+
 Полезные варианты:
 
 ```bash
-python3 run_localgpt.py --no-browser
-python3 run_localgpt.py --no-reload
-python3 run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
+venv/bin/python run_localgpt.py --no-browser
+venv/bin/python run_localgpt.py --no-reload
+venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 ```
 
 Параметры окружения, model paths, CORS и ASR/TTS настройки перечислены в [`.env.example`](.env.example).
