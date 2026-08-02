@@ -26,9 +26,10 @@
 
 ### Stage 2 — ASR whisper.cpp availability
 
-- Status: pending.
-- Inspect configured binary path, installed artifacts and the ASR provider's error path; implement a scoped correction only if the repository/runtime setup is at fault.
-- Checkpoint: `Fix whisper.cpp availability detection` (only if a tracked fix is warranted).
+- Status: completed.
+- Confirmed GGML/CoreML are present but `models/whisper_cpp/bin/whisper-cli` is absent. Chat dictation now blocks before microphone recording, opens Settings → ASR → Library, and directs the user to «Дособрать»/«Загрузить».
+- Validation: focused UI contract test, JavaScript syntax check and whisper.cpp model-status test pass.
+- Checkpoint: `Guide dictation setup before recording`.
 
 ## Validation
 
@@ -37,5 +38,4 @@
 
 ## Continuation state
 
-- Next action: patch pricing intent markers and prove `third_party.kb.pricing.md` is retrieved for the reported query.
-- Next action: inspect whisper.cpp configuration and installed artifacts for Stage 2.
+- Next action: run final proportional validation, inspect the complete diff, then delete this progress file in cleanup.

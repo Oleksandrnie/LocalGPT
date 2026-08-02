@@ -2656,6 +2656,19 @@ async function transcribeVoiceBlob(blob, mimeType) {
 
 async function startVoiceRecording() {
   if (state.isRecordingVoice || state.isVoiceTranscribing) return;
+  const selectedModel = getSelectedChatWhisperModel();
+  if (state.asrModels.length && !isWhisperModelInstalled(selectedModel)) {
+    const item = state.asrModels.find((entry) => entry.name === selectedModel);
+    const warning = getWhisperItemWarnings(item)[0] || "модель или whisper.cpp runtime не готовы";
+    setFooter(
+      `Диктовка ${selectedModel} недоступна: ${warning}. Открываю ASR-библиотеку — нажмите «Дособрать» или «Загрузить».`,
+      "warning",
+    );
+    setSettingsTab("asr", { render: false });
+    openSettings();
+    setLibraryOpen("asr", true);
+    return;
+  }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     setFooter("Запись с микрофона не поддерживается в этом браузере.", "warning");
     return;
