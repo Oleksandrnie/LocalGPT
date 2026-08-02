@@ -24,3 +24,9 @@ test("very short recordings are not sent to Whisper", () => {
   assert.match(javascript, /showPromptPlaceholderHint\("Запись слишком короткая/);
   assert.match(javascript, /function showPromptPlaceholderHint\(text, durationMs = 2500\)/);
 });
+
+test("empty speech detection is shown in the chat input, not as a runtime error", () => {
+  assert.match(javascript, /function isEmptyVoiceTranscriptionError\(error\)/);
+  assert.match(javascript, /else if \(isEmptyVoiceTranscriptionError\(error\)\)/);
+  assert.match(javascript, /showPromptPlaceholderHint\("Речь не распознана/);
+});

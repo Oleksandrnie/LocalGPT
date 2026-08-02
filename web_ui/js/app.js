@@ -2551,6 +2551,11 @@ function showPromptPlaceholderHint(text, durationMs = 2500) {
   }, durationMs);
 }
 
+function isEmptyVoiceTranscriptionError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("пустую транскрипцию") || message.includes("пустой текст");
+}
+
 const VOICE_TRANSCRIPTION_TIMEOUT_MS = 5 * 60 * 1000;
 const MIN_VOICE_RECORDING_MS = 700;
 const FILE_TRANSCRIPTION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -2659,6 +2664,8 @@ async function transcribeVoiceBlob(blob, mimeType) {
   } catch (error) {
     if (isAbortError(error)) {
       setFooter("Распознавание голоса остановлено.", "warning");
+    } else if (isEmptyVoiceTranscriptionError(error)) {
+      showPromptPlaceholderHint("Речь не распознана — проверьте микрофон и повторите запись.");
     } else {
       setFooter(`Ошибка голосовой транскрибации: ${error.message || error}`, "error");
     }
