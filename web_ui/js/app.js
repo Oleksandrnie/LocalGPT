@@ -528,6 +528,8 @@ const state = {
   isTranscribing: false,
   isRecordingVoice: false,
   isVoiceTranscribing: false,
+  promptPlaceholderHint: "",
+  promptPlaceholderHintTimer: null,
   voiceTranscriptionTaskId: null,
   voiceTranscriptionStartController: null,
   chatTaskId: null,
@@ -2537,6 +2539,18 @@ function insertVoiceTranscript(text) {
   insertPromptText(text, { append: true });
 }
 
+function showPromptPlaceholderHint(text, durationMs = 2500) {
+  if (!els.promptInput) return;
+  state.promptPlaceholderHint = String(text || "").trim();
+  if (state.promptPlaceholderHintTimer) window.clearTimeout(state.promptPlaceholderHintTimer);
+  updateSendButtonState();
+  state.promptPlaceholderHintTimer = window.setTimeout(() => {
+    state.promptPlaceholderHint = "";
+    state.promptPlaceholderHintTimer = null;
+    updateSendButtonState();
+  }, durationMs);
+}
+
 const VOICE_TRANSCRIPTION_TIMEOUT_MS = 5 * 60 * 1000;
 const MIN_VOICE_RECORDING_MS = 700;
 const FILE_TRANSCRIPTION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -2701,7 +2715,7 @@ async function startVoiceRecording() {
         return;
       }
       if (durationMs < MIN_VOICE_RECORDING_MS) {
-        setFooter("Запись слишком короткая. Говорите хотя бы около секунды и повторите попытку.", "warning");
+        showPromptPlaceholderHint("Запись слишком короткая — говорите хотя бы около секунды.");
         renderVoiceRecordButton();
         return;
       }
@@ -2872,9 +2886,10 @@ function updateSendButtonState() {
   );
   if (els.promptInput) {
     els.promptInput.disabled = false;
-    els.promptInput.placeholder = !hasInstalledChatModel
+    const defaultPlaceholder = !hasInstalledChatModel
       ? "Нет доступных моделей. Загрузите модель, чтобы отправлять сообщения."
       : (!selectedModel ? "Выберите модель, чтобы отправлять сообщения." : "Напишите сообщение…");
+    els.promptInput.placeholder = state.promptPlaceholderHint || defaultPlaceholder;
   }
   els.sendButton.disabled = state.isSending
     ? false

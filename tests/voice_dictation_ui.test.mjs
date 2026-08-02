@@ -21,5 +21,6 @@ test("voice dictation uses the active profile ASR language preset", () => {
 test("very short recordings are not sent to Whisper", () => {
   assert.match(javascript, /const MIN_VOICE_RECORDING_MS = 700/);
   assert.match(javascript, /durationMs < MIN_VOICE_RECORDING_MS/);
-  assert.match(javascript, /Запись слишком короткая/);
+  assert.match(javascript, /showPromptPlaceholderHint\("Запись слишком короткая/);
+  assert.match(javascript, /function showPromptPlaceholderHint\(text, durationMs = 2500\)/);
 });
