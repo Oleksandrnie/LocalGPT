@@ -4,12 +4,12 @@
 
 ## Уровни зависимостей
 
-| Уровень | Компонент | Версия / контракт | Для чего нужен | До bootstrap |
+| Уровень | Компонент | Версия / контракт | Для чего нужен | До setup |
 | --- | --- | --- | --- | --- |
-| Bootstrap | macOS, Linux или Windows | native Terminal/PowerShell и Python 3.10+ для общего core | запуск platform entry point и `bootstrap_localgpt.py` | entry point устанавливает Python при отсутствии, затем передаёт управление core |
+| Setup / bootstrap | macOS, Linux или Windows | native Terminal/PowerShell и Python 3.10+ для общего core | запуск platform entry point и `setup/setup_localgpt.py` | entry point устанавливает Python при отсутствии, затем передаёт управление core |
 | Core | Homebrew, apt, dnf, pacman, zypper или winget | актуальная поддерживаемая версия | установка отсутствующих системных пакетов | определяется автоматически; Homebrew может быть установлен интерактивно |
 | Core | Python | 3.10+ | launcher, FastAPI backend, providers, RAG и plugins | устанавливается интерактивно через Homebrew |
-| Core | `venv`, `pip` | из выбранного Python | изолированное Python-окружение | создаётся/обновляется bootstrap |
+| Core | `venv`, `pip` | из выбранного Python | изолированное Python-окружение | создаётся/обновляется setup |
 | Core LLM runtime | Ollama CLI/service | актуальная поддерживаемая версия с `/api/chat`, `/api/pull`, `/api/ps` | chat, model discovery/download и vision | устанавливается интерактивно; модели не загружаются |
 | Media | FFmpeg | 6+; проверен проектный host 8.1.1 | ASR audio conversion, OCR video-frame extraction, TTS speed processing | устанавливается интерактивно |
 | OCR | Tesseract | 5+; проверен project host 5.5.2 | image OCR; недоступные language packs отбрасываются runtime-ом | устанавливается интерактивно |
@@ -18,7 +18,7 @@
 | Tailnet optional | Tailscale app/CLI | 1+ | read-only plugin status и manual Tailscale Serve | отдельное интерактивное согласие; Serve/Funnel не включаются |
 | QA only | Node.js | 18+ | `node --check` и `.mjs` tests | отдельное интерактивное согласие; frontend runtime Node не использует |
 
-Жёсткий minimum для Ollama, Homebrew и Tailscale не зафиксирован кодом или manifest-ом проекта. Bootstrap поэтому проверяет работоспособный CLI и устанавливает текущую stable-версию package manager-а, не имитируя неподтверждённую совместимость со старыми версиями.
+Жёсткий minimum для Ollama, Homebrew и Tailscale не зафиксирован кодом или manifest-ом проекта. Setup (bootstrap) поэтому проверяет работоспособный CLI и устанавливает текущую stable-версию package manager-а, не имитируя неподтверждённую совместимость со старыми версиями.
 
 ## Python packages
 
@@ -36,20 +36,20 @@
 
 Transitive packages (`pydantic`, `starlette`, `ctranslate2`, `onnxruntime`, `numpy`, `av` и другие) устанавливаются resolver-ом из закреплённых direct requirements. Отдельного npm install нет: активный frontend — browser-native HTML/CSS/ES modules и не имеет `package.json`.
 
-## Модели и данные не являются bootstrap-зависимостями
+## Модели и данные не являются setup-зависимостями
 
-Bootstrap не устанавливает:
+Setup не устанавливает:
 
 - Ollama text/vision models;
 - GGML или faster-whisper models и CoreML encoder;
 - Piper voices;
 - RAG sources, profile/user configuration или databases.
 
-Модельные artifacts загружаются только после явного действия в UI или отдельной model-specific команде. `whisper-cli` также не собирается bootstrap-ом, потому что штатный setup одновременно работает с model artifacts; bootstrap устанавливает только его build prerequisites.
+Модельные artifacts загружаются только после явного действия в UI или отдельной model-specific команде. `whisper-cli` также не собирается setup-ом, потому что штатный setup одновременно работает с model artifacts; setup устанавливает только его build prerequisites.
 
 ## Переменные окружения
 
-Обязательных пользовательских переменных для первого локального запуска нет: defaults позволяют создать storage и поднять backend. `.env` опционален и bootstrap его не создаёт и не меняет.
+Обязательных пользовательских переменных для первого локального запуска нет: defaults позволяют создать storage и поднять backend. `.env` опционален и setup его не создаёт и не меняет.
 
 Основные группы overrides полностью перечислены в [`.env.example`](../.env.example):
 
@@ -64,6 +64,6 @@ Secrets и machine-specific paths не должны попадать в Git.
 
 - `run_localgpt.py` создаёт `venv/`, устанавливает `app/requirements.txt` при изменении его hash, создаёт runtime directories, запускает Ollama service и backend.
 - UI/provider flows по явному действию скачивают выбранные Ollama, ASR и Piper models.
-- Внутренний `bootstrap/bootstrap_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку. Три корневых entry points — `bootstrap_localgpt.command`, `bootstrap_localgpt.sh` и `bootstrap_localgpt.bat` — обеспечивают native Terminal/PowerShell entry и первоначальный Python bootstrap; Windows PowerShell adapter находится в `bootstrap/`.
+- Внутренний `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку. Три корневых entry points — `setup_localgpt.command`, `setup_localgpt.sh` и `setup_localgpt.bat` — обеспечивают native Terminal/PowerShell entry и первоначальный Python setup; Windows PowerShell adapter находится в `setup/`.
 
-Launcher запуска приложения не должен подменять bootstrap системных пакетов: после первого setup обычный старт остаётся быстрым и идемпотентным.
+Launcher запуска приложения не должен подменять setup системных пакетов: после первого setup обычный старт остаётся быстрым и идемпотентным.

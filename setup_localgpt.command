@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 set +e
-/bin/sh "$SCRIPT_DIR/bootstrap_localgpt.sh" "$@"
+/bin/sh "$SCRIPT_DIR/setup_localgpt.sh" "$@"
 status=$?
 set -e
 echo

@@ -4,13 +4,13 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
-if [ "$(uname -s)" = "Linux" ] && [ ! -t 0 ] && [ "${LOCALGPT_BOOTSTRAP_TERMINAL:-0}" != "1" ]; then
+if [ "$(uname -s)" = "Linux" ] && [ ! -t 0 ] && [ "${LOCALGPT_SETUP_TERMINAL:-0}" != "1" ]; then
   for terminal in x-terminal-emulator gnome-terminal konsole xterm; do
     if command -v "$terminal" >/dev/null 2>&1; then
       case "$terminal" in
-        gnome-terminal) exec "$terminal" -- env LOCALGPT_BOOTSTRAP_TERMINAL=1 "$SCRIPT_DIR/bootstrap_localgpt.sh" "$@" ;;
-        konsole) exec "$terminal" -e env LOCALGPT_BOOTSTRAP_TERMINAL=1 "$SCRIPT_DIR/bootstrap_localgpt.sh" "$@" ;;
-        *) exec "$terminal" -e env LOCALGPT_BOOTSTRAP_TERMINAL=1 "$SCRIPT_DIR/bootstrap_localgpt.sh" "$@" ;;
+        gnome-terminal) exec "$terminal" -- env LOCALGPT_SETUP_TERMINAL=1 "$SCRIPT_DIR/setup_localgpt.sh" "$@" ;;
+        konsole) exec "$terminal" -e env LOCALGPT_SETUP_TERMINAL=1 "$SCRIPT_DIR/setup_localgpt.sh" "$@" ;;
+        *) exec "$terminal" -e env LOCALGPT_SETUP_TERMINAL=1 "$SCRIPT_DIR/setup_localgpt.sh" "$@" ;;
       esac
     fi
   done
@@ -41,7 +41,7 @@ PYTHON_BIN=$(find_python || true)
 if [ -z "$PYTHON_BIN" ]; then
   printf 'Python 3.10+ is missing. Install it now? [Y/n] '
   read -r answer
-  case "$answer" in n|N|no|NO) echo 'Bootstrap cancelled.'; exit 1 ;; esac
+  case "$answer" in n|N|no|NO) echo 'Setup cancelled.'; exit 1 ;; esac
 
   case "$(uname -s)" in
     Darwin)
@@ -69,8 +69,8 @@ if [ -z "$PYTHON_BIN" ]; then
 fi
 
 if [ -z "$PYTHON_BIN" ]; then
-  echo 'Python 3.10+ is still unavailable. Reopen the terminal and rerun bootstrap.'
+  echo 'Python 3.10+ is still unavailable. Reopen the terminal and rerun setup.'
   exit 1
 fi
 
-exec "$PYTHON_BIN" bootstrap/bootstrap_localgpt.py "$@"
+exec "$PYTHON_BIN" setup/setup_localgpt.py "$@"

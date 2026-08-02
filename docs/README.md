@@ -5,7 +5,7 @@
 | Задача | Основной документ |
 | --- | --- |
 | Установить и запустить LocalGPT | [Корневой README](../README.md) |
-| Проверить dependency inventory и bootstrap contract | [DEPENDENCIES.md](DEPENDENCIES.md) |
+| Проверить dependency inventory и setup/bootstrap contract | [DEPENDENCIES.md](DEPENDENCIES.md) |
 | Понять систему целиком | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Запустить или расширить проверки | [TESTING.md](TESTING.md) |
 | Посмотреть значимые изменения | [CHANGELOG.md](CHANGELOG.md) |

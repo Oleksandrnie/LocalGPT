@@ -24,10 +24,10 @@ try {
     if (-not $Python) {
         $Answer = Read-Host "Python 3.10+ is missing. Install Python 3.13 with winget? [Y/n]"
         if ($Answer -match "^(n|no)$") {
-            throw "Bootstrap cancelled: Python is required."
+            throw "Setup cancelled: Python is required."
         }
         if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            throw "winget is unavailable. Install Microsoft App Installer and rerun bootstrap."
+            throw "winget is unavailable. Install Microsoft App Installer and rerun setup."
         }
         & winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
         if ($LASTEXITCODE -ne 0) {
@@ -41,18 +41,18 @@ try {
             $Python = Find-CompatiblePython
         }
         if (-not $Python) {
-            throw "Python was installed but is not visible yet. Reopen PowerShell and rerun bootstrap."
+            throw "Python was installed but is not visible yet. Reopen PowerShell and rerun setup."
         }
     }
 
     $Prefix = $Python.Prefix
-    & $Python.Command @Prefix "bootstrap\bootstrap_localgpt.py" @args
-    $BootstrapExit = $LASTEXITCODE
+    & $Python.Command @Prefix "setup\setup_localgpt.py" @args
+    $SetupExit = $LASTEXITCODE
 } catch {
     Write-Host "[!] $($_.Exception.Message)" -ForegroundColor Red
-    $BootstrapExit = 1
+    $SetupExit = 1
 }
 
 Write-Host ""
 Read-Host "Press Enter to close PowerShell"
-exit $BootstrapExit
+exit $SetupExit

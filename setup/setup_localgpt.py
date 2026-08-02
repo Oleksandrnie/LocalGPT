@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive cross-platform dependency bootstrap for LocalGPT."""
+"""Interactive cross-platform first-time setup for LocalGPT."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ VENV_DIR = ROOT / "venv"
 MIN_PYTHON = (3, 10)
 
 
-class BootstrapError(RuntimeError):
+class SetupError(RuntimeError):
     pass
 
 
@@ -40,7 +40,7 @@ def ask(message: str, *, default: bool = True) -> bool:
         try:
             answer = input(f"{message} {suffix} ").strip().lower()
         except EOFError as exc:
-            raise BootstrapError("Interactive input is required.") from exc
+            raise SetupError("Interactive input is required.") from exc
         if not answer:
             return default
         if answer in {"y", "yes", "д", "да"}:
@@ -54,7 +54,7 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     print(">>", subprocess.list2cmdline(command))
     completed = subprocess.run(command, cwd=ROOT, env=env, check=False)
     if completed.returncode != 0:
-        raise BootstrapError(
+        raise SetupError(
             f"Command failed with exit code {completed.returncode}: "
             f"{subprocess.list2cmdline(command)}"
         )
@@ -68,14 +68,14 @@ def host_os() -> str:
         return "windows"
     if system == "linux":
         return "linux"
-    raise BootstrapError(f"Unsupported operating system: {platform.system() or 'unknown'}")
+    raise SetupError(f"Unsupported operating system: {platform.system() or 'unknown'}")
 
 
 def linux_package_manager() -> str:
     for name in ("apt-get", "dnf", "pacman", "zypper"):
         if shutil.which(name):
             return name
-    raise BootstrapError(
+    raise SetupError(
         "No supported Linux package manager found (apt-get, dnf, pacman, zypper)."
     )
 
@@ -83,7 +83,7 @@ def linux_package_manager() -> str:
 def sudo_prefix() -> list[str]:
     if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0:
         if not shutil.which("sudo"):
-            raise BootstrapError("Administrative privileges are required, but sudo is missing.")
+            raise SetupError("Administrative privileges are required, but sudo is missing.")
         return ["sudo"]
     return []
 
@@ -113,7 +113,7 @@ def install_macos(packages: list[str]) -> None:
         return
     brew = shutil.which("brew")
     if not brew:
-        raise BootstrapError("Homebrew is missing. Rerun the .command launcher to install it first.")
+        raise SetupError("Homebrew is missing. Rerun the .command launcher to install it first.")
     run([brew, "install", *packages])
 
 
@@ -171,7 +171,7 @@ WINGET_PACKAGES = {
 def install_windows(package_ids: list[str]) -> None:
     winget = shutil.which("winget")
     if not winget:
-        raise BootstrapError("winget is required on Windows. Install Microsoft App Installer and rerun.")
+        raise SetupError("winget is required on Windows. Install Microsoft App Installer and rerun.")
     for package_id in package_ids:
         run(
             [
@@ -190,7 +190,7 @@ def install_windows(package_ids: list[str]) -> None:
 def install_official_linux_script(url: str, label: str) -> None:
     curl = shutil.which("curl")
     if not curl:
-        raise BootstrapError(f"curl is required to install {label}.")
+        raise SetupError(f"curl is required to install {label}.")
     command = f'"{curl}" -fsSL "{url}" | sh'
     prefix = sudo_prefix()
     run([*prefix, "sh", "-c", command])
@@ -208,8 +208,8 @@ def install_system_dependencies(system: str) -> None:
         info("Apple Command Line Tools are missing and are required to build whisper.cpp.")
         if ask("Open the macOS Command Line Tools installer?"):
             run(["xcode-select", "--install"])
-            raise BootstrapError(
-                "Finish the macOS Command Line Tools installer, then rerun bootstrap."
+            raise SetupError(
+                "Finish the macOS Command Line Tools installer, then rerun setup."
             )
         warn("Skipped optional whisper.cpp build prerequisite: Apple Command Line Tools.")
 
@@ -222,7 +222,7 @@ def install_system_dependencies(system: str) -> None:
     if required:
         info("Missing required tools: " + ", ".join(required))
         if not ask("Install missing system tools?"):
-            raise BootstrapError("Required system dependency installation was declined.")
+            raise SetupError("Required system dependency installation was declined.")
         if system == "macos":
             package_map = {"tesseract": "tesseract"}
             install_macos([package_map.get(name, name) for name in required])
@@ -237,7 +237,7 @@ def install_system_dependencies(system: str) -> None:
 
     if not shutil.which("ollama"):
         if not ask("Ollama is missing. Install the runtime (without models)?"):
-            raise BootstrapError("Ollama is required by the standard LocalGPT launcher.")
+            raise SetupError("Ollama is required by the standard LocalGPT launcher.")
         if system == "macos":
             install_macos(["ollama"])
         elif system == "linux":
@@ -286,11 +286,11 @@ def venv_python() -> Path:
 def install_project_dependencies() -> None:
     step("Phase 2/3 — project dependencies")
     if sys.version_info < MIN_PYTHON:
-        raise BootstrapError(
+        raise SetupError(
             f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ is required; found {platform.python_version()}."
         )
     if not REQUIREMENTS.is_file():
-        raise BootstrapError(f"Requirements file not found: {REQUIREMENTS}")
+        raise SetupError(f"Requirements file not found: {REQUIREMENTS}")
     python = venv_python()
     if not python.exists():
         info(f"Creating virtual environment: {VENV_DIR}")
@@ -339,9 +339,9 @@ def verify_environment(system: str) -> bool:
             warn((probe.stderr or probe.stdout or "Python import verification failed").strip())
 
     if failures:
-        warn("Bootstrap is incomplete: " + ", ".join(failures))
+        warn("Setup is incomplete: " + ", ".join(failures))
         if system == "windows":
-            warn("If tools were just installed, close this window, reopen PowerShell, and rerun bootstrap.")
+            warn("If tools were just installed, close this window, reopen PowerShell, and rerun setup.")
         return False
     print("\n[OK] LocalGPT runtime dependencies are ready.")
     info("No models, RAG data, user configuration, or network exposure were created.")
@@ -350,7 +350,7 @@ def verify_environment(system: str) -> bool:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Interactive LocalGPT dependency bootstrap")
+    parser = argparse.ArgumentParser(description="Interactive LocalGPT first-time setup")
     parser.add_argument(
         "--verify-only",
         action="store_true",
@@ -363,7 +363,7 @@ def main() -> int:
     args = parse_args()
     try:
         system = host_os()
-        print("LocalGPT dependency bootstrap")
+        print("LocalGPT first-time setup")
         info(f"Detected OS: {system} ({platform.platform()})")
         info(f"Project root: {ROOT}")
         info("Every installation requires confirmation. Models and user data are out of scope.")
@@ -371,11 +371,11 @@ def main() -> int:
             install_system_dependencies(system)
             install_project_dependencies()
         return 0 if verify_environment(system) else 1
-    except (BootstrapError, OSError) as exc:
+    except (SetupError, OSError) as exc:
         warn(str(exc))
         return 1
     except KeyboardInterrupt:
-        warn("Bootstrap cancelled by user.")
+        warn("Setup cancelled by user.")
         return 130
 
 

@@ -30,21 +30,21 @@ LocalGPT — локальное приложение для чата, транс
 
 На новом компьютере запустите platform entry point. Он определит ОС и package manager, откроет Terminal/PowerShell, покажет отсутствующие компоненты и запросит согласие перед каждой установкой.
 
-macOS — двойной клик по `bootstrap_localgpt.command` или команда:
+macOS — двойной клик по `setup_localgpt.command` или команда:
 
 ```bash
-./bootstrap_localgpt.command
+./setup_localgpt.command
 ```
 
 Linux:
 
 ```bash
-./bootstrap_localgpt.sh
+./setup_localgpt.sh
 ```
 
-Windows — двойной клик по `bootstrap_localgpt.bat`. Он откроет PowerShell и продолжит установку там.
+Windows — двойной клик по `setup_localgpt.bat`. Он откроет PowerShell и продолжит установку там.
 
-Bootstrap:
+Setup (технически — bootstrap):
 
 - при необходимости устанавливает Python и поддерживаемый package manager;
 - ставит обязательные system/runtime tools и закреплённые Python packages в `venv/`;
@@ -142,7 +142,7 @@ LAN launcher оставляет backend на localhost и поднимает Cad
 - [Индекс документации](docs/README.md)
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Тестирование](docs/TESTING.md)
-- [Зависимости и bootstrap](docs/DEPENDENCIES.md)
+- [Зависимости и setup](docs/DEPENDENCIES.md)
 - [Экспорт и импорт моделей](docs/MODEL_TRANSFER_SPEC.md)
 - [Backlog](docs/BACKLOG.md)
 - [Инструкции для coding-агентов](AGENTS.md)
