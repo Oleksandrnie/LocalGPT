@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""Interactive cross-platform dependency bootstrap for LocalGPT."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+REQUIREMENTS = ROOT / "app" / "requirements.txt"
+VENV_DIR = ROOT / "venv"
+MIN_PYTHON = (3, 10)
+
+
+class BootstrapError(RuntimeError):
+    pass
+
+
+def info(message: str) -> None:
+    print(f"[i] {message}")
+
+
+def step(message: str) -> None:
+    print(f"\n[*] {message}")
+
+
+def warn(message: str) -> None:
+    print(f"[!] {message}")
+
+
+def ask(message: str, *, default: bool = True) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        try:
+            answer = input(f"{message} {suffix} ").strip().lower()
+        except EOFError as exc:
+            raise BootstrapError("Interactive input is required.") from exc
+        if not answer:
+            return default
+        if answer in {"y", "yes", "д", "да"}:
+            return True
+        if answer in {"n", "no", "н", "нет"}:
+            return False
+        warn("Enter yes/y or no/n.")
+
+
+def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
+    print(">>", subprocess.list2cmdline(command))
+    completed = subprocess.run(command, cwd=ROOT, env=env, check=False)
+    if completed.returncode != 0:
+        raise BootstrapError(
+            f"Command failed with exit code {completed.returncode}: "
+            f"{subprocess.list2cmdline(command)}"
+        )
+
+
+def host_os() -> str:
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    if system == "windows":
+        return "windows"
+    if system == "linux":
+        return "linux"
+    raise BootstrapError(f"Unsupported operating system: {platform.system() or 'unknown'}")
+
+
+def linux_package_manager() -> str:
+    for name in ("apt-get", "dnf", "pacman", "zypper"):
+        if shutil.which(name):
+            return name
+    raise BootstrapError(
+        "No supported Linux package manager found (apt-get, dnf, pacman, zypper)."
+    )
+
+
+def sudo_prefix() -> list[str]:
+    if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0:
+        if not shutil.which("sudo"):
+            raise BootstrapError("Administrative privileges are required, but sudo is missing.")
+        return ["sudo"]
+    return []
+
+
+def refresh_windows_path() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import winreg
+
+        values: list[str] = []
+        locations = (
+            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+            (winreg.HKEY_CURRENT_USER, r"Environment"),
+        )
+        for hive, key_name in locations:
+            with winreg.OpenKey(hive, key_name) as key:
+                value, _ = winreg.QueryValueEx(key, "Path")
+                values.append(str(value))
+        os.environ["PATH"] = os.pathsep.join(values)
+    except OSError:
+        warn("Could not refresh Windows PATH; reopen PowerShell if a new CLI is not detected.")
+
+
+def install_macos(packages: list[str]) -> None:
+    if not packages:
+        return
+    brew = shutil.which("brew")
+    if not brew:
+        raise BootstrapError("Homebrew is missing. Rerun the .command launcher to install it first.")
+    run([brew, "install", *packages])
+
+
+LINUX_PACKAGES = {
+    "apt-get": {
+        "core": ["git", "curl", "unzip", "cmake", "build-essential", "ffmpeg", "tesseract-ocr"],
+        "caddy": ["caddy"],
+        "node": ["nodejs", "npm"],
+    },
+    "dnf": {
+        "core": ["git", "curl", "unzip", "cmake", "gcc-c++", "make", "ffmpeg", "tesseract"],
+        "caddy": ["caddy"],
+        "node": ["nodejs", "npm"],
+    },
+    "pacman": {
+        "core": ["git", "curl", "unzip", "cmake", "base-devel", "ffmpeg", "tesseract"],
+        "caddy": ["caddy"],
+        "node": ["nodejs", "npm"],
+    },
+    "zypper": {
+        "core": ["git", "curl", "unzip", "cmake", "gcc-c++", "make", "ffmpeg", "tesseract-ocr"],
+        "caddy": ["caddy"],
+        "node": ["nodejs", "npm"],
+    },
+}
+
+
+def install_linux(manager: str, packages: list[str]) -> None:
+    if not packages:
+        return
+    prefix = sudo_prefix()
+    if manager == "apt-get":
+        run([*prefix, manager, "update"])
+        run([*prefix, manager, "install", "-y", *packages])
+    elif manager == "dnf":
+        run([*prefix, manager, "install", "-y", *packages])
+    elif manager == "pacman":
+        run([*prefix, manager, "-S", "--needed", "--noconfirm", *packages])
+    elif manager == "zypper":
+        run([*prefix, manager, "--non-interactive", "install", *packages])
+
+
+WINGET_PACKAGES = {
+    "git": "Git.Git",
+    "cmake": "Kitware.CMake",
+    "ffmpeg": "Gyan.FFmpeg",
+    "tesseract": "UB-Mannheim.TesseractOCR",
+    "ollama": "Ollama.Ollama",
+    "caddy": "CaddyServer.Caddy",
+    "node": "OpenJS.NodeJS.LTS",
+    "tailscale": "Tailscale.Tailscale",
+}
+
+
+def install_windows(package_ids: list[str]) -> None:
+    winget = shutil.which("winget")
+    if not winget:
+        raise BootstrapError("winget is required on Windows. Install Microsoft App Installer and rerun.")
+    for package_id in package_ids:
+        run(
+            [
+                winget,
+                "install",
+                "--id",
+                package_id,
+                "--exact",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ]
+        )
+    refresh_windows_path()
+
+
+def install_official_linux_script(url: str, label: str) -> None:
+    curl = shutil.which("curl")
+    if not curl:
+        raise BootstrapError(f"curl is required to install {label}.")
+    command = f'"{curl}" -fsSL "{url}" | sh'
+    prefix = sudo_prefix()
+    run([*prefix, "sh", "-c", command])
+
+
+def missing_commands(names: list[str]) -> list[str]:
+    return [name for name in names if not shutil.which(name)]
+
+
+def install_system_dependencies(system: str) -> None:
+    step("Phase 1/3 — system dependencies")
+    if system == "macos" and subprocess.run(
+        ["xcode-select", "-p"], capture_output=True, check=False
+    ).returncode != 0:
+        info("Apple Command Line Tools are missing and are required to build whisper.cpp.")
+        if ask("Open the macOS Command Line Tools installer?"):
+            run(["xcode-select", "--install"])
+            raise BootstrapError(
+                "Finish the macOS Command Line Tools installer, then rerun bootstrap."
+            )
+        warn("Skipped optional whisper.cpp build prerequisite: Apple Command Line Tools.")
+
+    required_names = (
+        ["git", "cmake", "ffmpeg", "tesseract"]
+        if system == "windows"
+        else ["git", "curl", "unzip", "cmake", "ffmpeg", "tesseract"]
+    )
+    required = missing_commands(required_names)
+    if required:
+        info("Missing required tools: " + ", ".join(required))
+        if not ask("Install missing system tools?"):
+            raise BootstrapError("Required system dependency installation was declined.")
+        if system == "macos":
+            package_map = {"tesseract": "tesseract"}
+            install_macos([package_map.get(name, name) for name in required])
+        elif system == "linux":
+            manager = linux_package_manager()
+            install_linux(manager, LINUX_PACKAGES[manager]["core"])
+        else:
+            ids = [WINGET_PACKAGES[name] for name in required if name in WINGET_PACKAGES]
+            install_windows(ids)
+    else:
+        info("Core system tools are already installed; skipping.")
+
+    if not shutil.which("ollama"):
+        if not ask("Ollama is missing. Install the runtime (without models)?"):
+            raise BootstrapError("Ollama is required by the standard LocalGPT launcher.")
+        if system == "macos":
+            install_macos(["ollama"])
+        elif system == "linux":
+            install_official_linux_script("https://ollama.com/install.sh", "Ollama")
+        else:
+            install_windows([WINGET_PACKAGES["ollama"]])
+    else:
+        info("Ollama is already installed; skipping.")
+
+    install_optional_dependencies(system)
+
+
+def install_optional_dependencies(system: str) -> None:
+    optional = (
+        ("caddy", "Caddy is needed for the LocalGPT LAN HTTPS launcher."),
+        ("tailscale", "Tailscale is optional for private tailnet access; Serve is never enabled here."),
+        ("node", "Node.js is only needed for frontend static checks and .mjs tests."),
+    )
+    for command, description in optional:
+        lookup = "node" if command == "node" else command
+        if shutil.which(lookup):
+            info(f"Optional {command} is already installed; skipping.")
+            continue
+        info(description)
+        if not ask(f"Install optional {command}?", default=False):
+            info(f"Skipped optional {command}.")
+            continue
+        if system == "macos":
+            install_macos([command])
+        elif system == "linux":
+            if command == "tailscale":
+                install_official_linux_script("https://tailscale.com/install.sh", "Tailscale")
+            else:
+                manager = linux_package_manager()
+                install_linux(manager, LINUX_PACKAGES[manager][command])
+        else:
+            install_windows([WINGET_PACKAGES[command]])
+
+
+def venv_python() -> Path:
+    if os.name == "nt":
+        return VENV_DIR / "Scripts" / "python.exe"
+    return VENV_DIR / "bin" / "python"
+
+
+def install_project_dependencies() -> None:
+    step("Phase 2/3 — project dependencies")
+    if sys.version_info < MIN_PYTHON:
+        raise BootstrapError(
+            f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ is required; found {platform.python_version()}."
+        )
+    if not REQUIREMENTS.is_file():
+        raise BootstrapError(f"Requirements file not found: {REQUIREMENTS}")
+    python = venv_python()
+    if not python.exists():
+        info(f"Creating virtual environment: {VENV_DIR}")
+        run([sys.executable, "-m", "venv", str(VENV_DIR)])
+    else:
+        info("Virtual environment already exists; reusing it.")
+    if ask("Install/verify pinned Python packages in venv?"):
+        run([str(python), "-m", "pip", "install", "--upgrade", "pip"])
+        run([str(python), "-m", "pip", "install", "-r", str(REQUIREMENTS)])
+    else:
+        info("Skipped Python package installation by request.")
+
+
+def verify_environment(system: str) -> bool:
+    step("Phase 3/3 — final verification")
+    failures: list[str] = []
+    required = ["git", "curl", "cmake", "ffmpeg", "tesseract", "ollama"]
+    for command in required:
+        path = shutil.which(command)
+        if path:
+            info(f"{command}: {path}")
+        else:
+            failures.append(command)
+            warn(f"{command}: missing")
+
+    python = venv_python()
+    if not python.exists():
+        failures.append("venv")
+        warn("venv Python is missing")
+    else:
+        probe = subprocess.run(
+            [
+                str(python),
+                "-c",
+                "import fastapi, uvicorn, multipart, PIL, httpx, openpyxl, piper, faster_whisper",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            info(f"Python runtime imports: OK ({python})")
+        else:
+            failures.append("python packages")
+            warn((probe.stderr or probe.stdout or "Python import verification failed").strip())
+
+    if failures:
+        warn("Bootstrap is incomplete: " + ", ".join(failures))
+        if system == "windows":
+            warn("If tools were just installed, close this window, reopen PowerShell, and rerun bootstrap.")
+        return False
+    print("\n[OK] LocalGPT runtime dependencies are ready.")
+    info("No models, RAG data, user configuration, or network exposure were created.")
+    info("Start LocalGPT with the platform launcher documented in README.md.")
+    return True
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Interactive LocalGPT dependency bootstrap")
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Only inspect the current environment; do not offer installations.",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        system = host_os()
+        print("LocalGPT dependency bootstrap")
+        info(f"Detected OS: {system} ({platform.platform()})")
+        info(f"Project root: {ROOT}")
+        info("Every installation requires confirmation. Models and user data are out of scope.")
+        if not args.verify_only:
+            install_system_dependencies(system)
+            install_project_dependencies()
+        return 0 if verify_environment(system) else 1
+    except (BootstrapError, OSError) as exc:
+        warn(str(exc))
+        return 1
+    except KeyboardInterrupt:
+        warn("Bootstrap cancelled by user.")
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

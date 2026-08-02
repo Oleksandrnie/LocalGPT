@@ -32,13 +32,18 @@
 
 ### Stage 2 — Bootstrap Implementation
 - Goal: add an idempotent root bootstrap command with system, project, and verification phases.
-- Related files: pending after Stage 1 contract.
-- [ ] Pending: implementation.
-- Architectural decisions: pending audit.
+- Related files: `tools/bootstrap_localgpt.py`, `bootstrap_localgpt.command`, `bootstrap_localgpt.sh`, `bootstrap_localgpt.bat`, `tests/test_bootstrap_dependencies.py`.
+- [x] Completed: shared core detects macOS/Linux/Windows and their supported package managers.
+- [x] Completed: native launchers provide Terminal/Windows console entry and bootstrap Python when absent.
+- [x] Completed: system, project, and final-verification phases with explicit installation confirmations and idempotent presence checks.
+- [x] Completed: models, RAG/user data, `.env`, Tailscale Serve/Funnel, and public exposure remain untouched.
+- [x] Completed: safe static/unit validation.
+- [~] In progress: Stage 2 checkpoint.
+- Architectural decisions: platform-specific entry points are thin wrappers; dependency decisions and verification live in one Python core; Caddy, Tailscale, and Node remain opt-in.
 - Problems: none yet.
 - Technical debt: none yet.
-- Next steps: implement after Stage 1 checkpoint.
-- Validation: pending.
+- Next steps: run only safe static/unit checks; real installer acceptance is delegated to the user as requested.
+- Validation: `py_compile` passed for bootstrap/test; 5 focused unit tests passed; `sh -n` and `zsh -n` passed; `git diff --check` passed. No package installation commands executed by the agent.
 - Git checkpoint: pending.
 
 ### Stage 3 — QA, Documentation & Cleanup
@@ -56,14 +61,14 @@
 
 ## Overall Status
 - Status: in progress.
-- Completed: acceptance criteria extraction; branch/status check; mandatory documentation review; dependency audit and documented contract.
-- In progress: Stage 1 validation/checkpoint.
-- Pending: audit contract, bootstrap implementation, QA, permanent documentation, change index, cleanup.
-- Changed files: `app/requirements.txt`, `docs/DEPENDENCIES.md`, `docs/progress/bootstrap-dependencies-progress.md`.
+- Completed: Stage 1 checkpoint `32d297b`; cross-platform bootstrap implementation.
+- In progress: Stage 2 checkpoint.
+- Pending: permanent documentation, change index, user clean-machine acceptance, cleanup.
+- Changed files: Stage 1 files plus `tools/bootstrap_localgpt.py`, three platform entry points, and `tests/test_bootstrap_dependencies.py`.
 - Known problems: none.
 - Technical debt: pending audit.
 - Next action: validate and commit Stage 1, then implement the cross-platform interactive bootstrap core and native entry points.
-- Latest Git checkpoint: none.
+- Latest Git checkpoint: `32d297b` — Audit and pin deployment dependencies.
 
 ## Continuation Prompt
 Continue work on `bootstrap-dependencies` using `docs/progress/bootstrap-dependencies-progress.md`. Read the progress file, current Git status, and latest checkpoint commit first. Current status: Stage 1 dependency audit ready for checkpoint. Completed: acceptance criteria, mandatory docs, source/config audit, dependency contract and pinned direct requirements. Remaining: cross-platform interactive bootstrap, safe static validation, permanent docs, change index, cleanup. Problems/blockers: user owns real clean-machine acceptance. Decisions to preserve: no model/data/config installation; shared OS-detecting core with macOS/Linux/Windows terminal entry points; categorize core vs conditional dependencies; prompt before installations; preserve unrelated ASR progress. Latest checkpoint: none. Perform next: validate and commit Stage 1, then implement bootstrap. Update the progress file before and after the next meaningful stage.
