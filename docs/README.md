@@ -5,11 +5,12 @@
 | Задача | Основной документ |
 | --- | --- |
 | Установить и запустить LocalGPT | [Корневой README](../README.md) |
+| Проверить dependency inventory и setup/bootstrap contract | [DEPENDENCIES.md](DEPENDENCIES.md) |
 | Понять систему целиком | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Запустить или расширить проверки | [TESTING.md](TESTING.md) |
 | Посмотреть значимые изменения | [CHANGELOG.md](CHANGELOG.md) |
 | Спланировать незавершённую работу | [BACKLOG.md](BACKLOG.md) |
-| Спланировать безопасный перенос моделей | [MODEL_TRANSFER_SPEC.md](MODEL_TRANSFER_SPEC.md) |
+| Понять контракт и ограничения переноса моделей | [MODEL_TRANSFER_SPEC.md](MODEL_TRANSFER_SPEC.md) |
 | Работать coding-агентом | [AGENTS.md](../AGENTS.md) |
 
 ## База знаний

@@ -23,6 +23,17 @@ node --check web_ui/js/app.js
 node tests/markdown_rendering.test.mjs
 ```
 
+Setup/bootstrap contract без запуска package installers:
+
+```bash
+venv/bin/python -m py_compile setup/setup_localgpt.py tests/test_setup_dependencies.py
+venv/bin/python -m unittest tests.test_setup_dependencies -v
+/bin/sh -n setup_localgpt.sh
+/bin/zsh -n setup_localgpt.command
+```
+
+`setup/setup_localgpt.py --verify-only` только проверяет текущее окружение, но возвращает non-zero при отсутствующих обязательных runtime components.
+
 Если `venv/` ещё не создан, сначала запустите LocalGPT или установите `app/requirements.txt` в отдельное окружение.
 
 ## Unit tests
@@ -165,6 +176,20 @@ Model-transfer tests используют только temporary synthetic files
 - macOS: `.command` launchers, Caddy certificate trust, whisper.cpp Metal/CoreML, microphone permissions;
 - Windows: `start_localgpt.bat`, Python launcher resolution, filesystem paths;
 - Linux: executable bit на shell scripts, `ffmpeg`, Tesseract и Ollama service.
+
+## Setup/bootstrap acceptance на новом окружении
+
+Эта проверка намеренно ручная: она устанавливает system packages и может запросить administrative privileges.
+
+1. На чистом macOS/Linux/Windows environment запустить соответствующий `setup_localgpt.*` entry point.
+2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие model downloads.
+3. Согласиться на core dependencies; optional Caddy/Tailscale/Node проверить отдельно по нужному режиму.
+4. Убедиться, что final verification проходит и `venv/` содержит imports из `app/requirements.txt`.
+5. Повторить setup: установленные system tools должны быть пропущены, pip не должен ломать environment.
+6. Запустить `start_localgpt*`, проверить `/health` и `/ui/gui_html.html` по Backend smoke выше.
+7. Убедиться, что `.env`, models, RAG sources, profiles и public networking не создавались автоматически.
+
+Результаты platform acceptance фиксируются в активном task progress до финального cleanup.
 
 ## Критерии прохождения
 
