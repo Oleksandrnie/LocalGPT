@@ -9,7 +9,7 @@
 - Branch: `codex/rag-source-ingestion`.
 - Started: 2026-08-03.
 - Current status: in progress.
-- Current stage: Stage 3 — UI and documentation cleanup.
+- Current stage: Stage 4 — final validation and cleanup.
 
 ## Instructions and precedence
 
@@ -68,8 +68,8 @@
 ### Stage 3 — UI and documentation cleanup
 
 - Goal: update upload affordances and user documentation to reflect one source per document.
-- Status: pending
-- Validation: static UI check, targeted tests and diff review.
+- Status: completed
+- Validation: HTML upload filter review, `node --check web_ui/js/app.js`, documentation diff review.
 - Proposed checkpoint commit: `Document Markdown-only RAG sources`.
 
 ### Stage 4 — Final validation and cleanup
@@ -94,7 +94,8 @@
 - Also inspected the live chat history: one 12-message greeting-only session; no RAG query exists there.
 - Stage 2 completed: `.md` is the sole accepted suffix; auto-JSON generation and JSON truth priority were removed; legacy JSON index records are reconciled without deleting user files.
 - Validation: four targeted `LocalGPTPipelineMemoryTestCase` tests passed.
-- Next action: finish UI and documentation validation.
+- Stage 3 completed: the browser accepts only Markdown and all RAG documentation, README, architecture, testing matrix and changelog describe the one-source contract.
+- Next action: run final proportional validation and cleanup.
 
 ## Validation results
 
@@ -103,6 +104,6 @@
 
 ## Continuation state
 
-- Current stage: Stage 3.
+- Current stage: Stage 4.
 - Current repository state: branch `codex/rag-source-ingestion`; one unrelated deleted runtime JSON file remains unstaged.
 - Next exact action: run full proportional validation and inspect the complete diff.

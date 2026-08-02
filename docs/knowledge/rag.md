@@ -8,13 +8,12 @@ RAG изолирован по профилям:
 rag_sources/
 ├── README.md
 └── profile-<id>/
-    ├── document.md
-    └── document.json
+    └── document.md
 ```
 
 `rag_sources/README.md` — component-owned инструкция. Остальные файлы runtime-only и игнорируются Git.
 
-Поддерживаются `.txt`, `.md` и `.json`. Path resolution запрещает выход из profile source directory.
+Поддерживается только `.md`. Path resolution запрещает выход из profile source directory.
 
 ## Ingestion
 
@@ -22,20 +21,19 @@ rag_sources/
 
 1. создаёт/находит directory профиля;
 2. сканирует поддерживаемые файлы;
-3. для Markdown при необходимости создаёт structured JSON companion;
-4. читает и нормализует текст;
-5. создаёт chunks;
-6. считает embeddings;
-7. синхронизирует `source_documents`, `document_chunks`, `document_embeddings`;
-8. удаляет stale records.
+3. читает и нормализует Markdown;
+4. создаёт chunks;
+5. считает embeddings;
+6. синхронизирует `source_documents`, `document_chunks`, `document_embeddings`;
+7. удаляет stale records, включая прежние JSON-записи индекса.
 
-Upload endpoint сохраняет файлы только после suffix/path validation. Force ingest пересобирает structured companions и index.
+Upload endpoint сохраняет только Markdown после suffix/path validation. Force ingest пересобирает index, но не удаляет legacy JSON-файлы с диска.
 
-## Markdown и structured JSON
+## Markdown sources
 
-Markdown parser выделяет headings/sections и отдельные pricing/constraint facts. Generated JSON хранит структурированное представление рядом с source Markdown. Это облегчает точный retrieval, но Markdown остаётся читаемым source.
+Каждый RAG-документ — один Markdown-файл и один индексируемый источник. Это исключает повторение тех же фактов в retrieval и оставляет пользователю единую редактируемую версию. Точные числа, правила и таблицы записывайте в Markdown явно: с заголовками, списками и короткими строками «поле: значение».
 
-Ручной JSON полезен, когда данные имеют строгую схему или неоднозначные числовые условия. Требования к содержимому source files описаны в [`rag_sources/README.md`](../../rag_sources/README.md).
+Старые JSON-файлы не индексируются и не удаляются автоматически; при необходимости перенесите их содержимое в соответствующий Markdown-файл, затем нажмите «Индексировать». Подробные требования к содержимому описаны в [`rag_sources/README.md`](../../rag_sources/README.md).
 
 ## Chunking
 

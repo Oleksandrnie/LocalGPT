@@ -95,7 +95,7 @@ UI обращается к `/tts/*`; service выбирает provider, вали
 
 ### RAG
 
-Файлы профиля сканируются, Markdown при необходимости получает structured JSON companion, текст разбивается на chunks, а deterministic embeddings пишутся в SQLite. Chat получает top-k chunks только активного профиля.
+Файлы профиля Markdown сканируются, текст разбивается на chunks, а deterministic embeddings пишутся в SQLite. Chat получает top-k chunks только активного профиля; каждый файл создаёт один индексируемый источник.
 
 Vision-ответ не индексируется автоматически. Пользователь может открыть редактируемый export и явно создать source type `vision_context`; в index попадает только производный текст и безопасные ссылки на message/session/attachment ids, без image binary и storage paths.
 

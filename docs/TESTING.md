@@ -139,8 +139,8 @@ Model-transfer tests используют только temporary synthetic files
 ### RAG
 
 - profile isolation;
-- `.txt`, `.md`, `.json` validation;
-- MD→JSON generation и force reindex;
+- validation только `.md` и отклонение legacy `.txt`/`.json`;
+- force reindex очищает stale JSON records, не удаляя legacy files;
 - chunk overlap, embedding metadata и top-k search;
 - context assembly соблюдает `max_chars`;
 - file/context deletion очищает DB records.

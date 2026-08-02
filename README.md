@@ -10,7 +10,7 @@ LocalGPT — локальное приложение для чата, транс
 - анализ транскриптов: быстрое саммари, умное саммари и явно разрешаемый полный pipeline;
 - Voice Studio на базе Piper с локальной библиотекой голосов и историей;
 - OCR изображений через Tesseract;
-- profile-scoped RAG для `.txt`, `.md` и `.json`, включая ASR context и явно сохраняемый text-only Vision context;
+- profile-scoped RAG для Markdown-файлов, включая ASR context и явно сохраняемый text-only Vision context;
 - перенос complete Ollama, faster-whisper, whisper.cpp и Piper моделей между установками через один `.localgpt-models` bundle;
 - Plugin Registry v0 с trusted backend handlers;
 - локальный, LAN и private-tailnet доступ.
