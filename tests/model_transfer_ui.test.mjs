@@ -16,6 +16,8 @@ test("System settings expose model export and import controls", () => {
     "modelTransferList",
     "selectAllModelExportInput",
     "confirmModelExportButton",
+    "modelTransferUploadsSummary",
+    "cleanupModelTransferUploadsButton",
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
@@ -32,6 +34,7 @@ test("UI performs preview, export, inspect, confirmation, and apply", () => {
     "/model-transfer/exports",
     "/model-transfer/import-inspect",
     "/model-transfer/imports",
+    "/model-transfer/uploads",
     "openConfirmDialog",
   ]) {
     assert.ok(js.includes(contract), `missing ${contract}`);
@@ -42,8 +45,16 @@ test("UI performs preview, export, inspect, confirmation, and apply", () => {
 
 test("System settings load the model inventory automatically", () => {
   assert.match(js, /if \(next === "system"\) \{\s*ensureModelTransferPreview\(\);/);
+  assert.match(js, /if \(next === "system"\) \{\s*ensureModelTransferPreview\(\);\s*ensureModelTransferUploads\(\);/);
   assert.match(js, /if \(state\.activeSettingsTab === "system"\) \{\s*ensureModelTransferPreview\(\);/);
   assert.match(js, /modelTransferPreviewLoaded: false/);
+});
+
+test("System settings show and confirm cleanup of temporary import archives", () => {
+  assert.match(js, /cleanupModelTransferUploadsButton\?\.addEventListener\("click", \(\) => void cleanupModelTransferUploads\(\)\)/);
+  assert.match(js, /confirmLabel: "Удалить архивы"/);
+  assert.match(js, /method: "DELETE"/);
+  assert.match(css, /\.model-transfer__uploads/);
 });
 
 test("Export opens a selection modal and only its confirmation starts the task", () => {

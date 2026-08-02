@@ -69,6 +69,29 @@ class ModelTransferImportTests(unittest.TestCase):
             self.assertFalse(archive.exists())
             self.assertFalse(import_service.discard_upload(upload_id))
 
+    def test_upload_storage_summary_and_cleanup_only_delete_upload_bundles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            uploads = base / "data" / "model_transfer" / "uploads"
+            uploads.mkdir(parents=True)
+            bundle = uploads / "kept-for-import.localgpt-models"
+            bundle.write_bytes(b"bundle")
+            unrelated = uploads / "notes.txt"
+            unrelated.write_text("keep")
+            nested = uploads / "nested"
+            nested.mkdir()
+            nested_bundle = nested / "nested.localgpt-models"
+            nested_bundle.write_bytes(b"nested")
+            with patch.object(import_service.config, "DATA_DIR", base / "data"):
+                upload_id = import_service.register_upload(bundle)
+                self.assertEqual(import_service.upload_storage_summary(), {"file_count": 1, "total_size": 6})
+                self.assertEqual(import_service.clear_upload_storage(), {"deleted_files": 1, "freed_size": 6})
+                self.assertFalse(bundle.exists())
+                self.assertTrue(unrelated.exists())
+                self.assertTrue(nested_bundle.exists())
+                with self.assertRaises(BundleValidationError):
+                    import_service.apply_import(upload_id)
+
 
 if __name__ == "__main__":
     unittest.main()

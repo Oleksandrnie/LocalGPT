@@ -4260,7 +4260,28 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     border-radius: 12px;
 }
 
+.model-transfer__uploads {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+.model-transfer__uploads .field__label,
+.model-transfer__uploads .subtle {
+    margin: 0;
+}
+
 @media (max-width: 640px) {
+    .model-transfer__uploads {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
     .model-export-dialog__toolbar {
         align-items: flex-start;
         flex-direction: column;

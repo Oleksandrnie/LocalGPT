@@ -486,6 +486,8 @@ const els = {
   importModelsInput: document.getElementById("importModelsInput"),
   cancelModelTransferButton: document.getElementById("cancelModelTransferButton"),
   modelTransferStatus: document.getElementById("modelTransferStatus"),
+  modelTransferUploadsSummary: document.getElementById("modelTransferUploadsSummary"),
+  cleanupModelTransferUploadsButton: document.getElementById("cleanupModelTransferUploadsButton"),
 };
 
 const VOICE_RECORD_ICON = els.voiceRecordButton?.innerHTML || "";
@@ -613,6 +615,8 @@ const state = {
   modelTransferSelectedIds: new Set(),
   modelTransferTaskId: null,
   modelTransferBusy: false,
+  modelTransferUploads: null,
+  modelTransferUploadsLoading: false,
   asrToolIsOpen: false,
   asrToolIsMinimized: false,
   asrToolBounds: null,
@@ -7858,6 +7862,21 @@ function renderModelTransfer() {
   if (els.exportModelsButton) els.exportModelsButton.disabled = state.modelTransferBusy;
   if (els.importModelsButton) els.importModelsButton.disabled = state.modelTransferBusy;
   if (els.cancelModelTransferButton) els.cancelModelTransferButton.hidden = !state.modelTransferTaskId;
+  if (els.modelTransferUploadsSummary) {
+    const uploads = state.modelTransferUploads;
+    els.modelTransferUploadsSummary.textContent = state.modelTransferUploadsLoading
+      ? "Проверяю хранилище…"
+      : uploads
+        ? uploads.file_count
+          ? `${uploads.file_count} ${archiveCountLabel(uploads.file_count)} · ${formatBytes(uploads.total_size || 0)}`
+          : "Временных архивов нет."
+        : "Не удалось получить сведения о временных архивах.";
+  }
+  if (els.cleanupModelTransferUploadsButton) {
+    els.cleanupModelTransferUploadsButton.disabled = state.modelTransferBusy
+      || state.modelTransferUploadsLoading
+      || !state.modelTransferUploads?.file_count;
+  }
 }
 
 function renderModelExportSelectionState() {
@@ -7908,6 +7927,61 @@ async function loadModelTransferPreview() {
 function ensureModelTransferPreview() {
   if (!state.modelTransferPreviewLoaded && !state.modelTransferPreviewLoading) {
     void loadModelTransferPreview();
+  }
+}
+
+async function loadModelTransferUploads() {
+  if (state.modelTransferUploadsLoading) return;
+  state.modelTransferUploadsLoading = true;
+  renderModelTransfer();
+  try {
+    state.modelTransferUploads = await request("/model-transfer/uploads");
+  } catch (error) {
+    state.modelTransferUploads = null;
+  } finally {
+    state.modelTransferUploadsLoading = false;
+    renderModelTransfer();
+  }
+}
+
+function ensureModelTransferUploads() {
+  if (!state.modelTransferUploads && !state.modelTransferUploadsLoading) {
+    void loadModelTransferUploads();
+  }
+}
+
+function archiveCountLabel(count) {
+  const lastTwo = count % 100;
+  const last = count % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return "архивов";
+  if (last === 1) return "архив";
+  if (last >= 2 && last <= 4) return "архива";
+  return "архивов";
+}
+
+async function cleanupModelTransferUploads() {
+  const uploads = state.modelTransferUploads;
+  if (!uploads?.file_count) return;
+  const approved = await openConfirmDialog({
+    eyebrow: "Временные архивы",
+    title: `Удалить ${uploads.file_count} ${archiveCountLabel(uploads.file_count)}?`,
+    message: `Будет освобождено ${formatBytes(uploads.total_size || 0)}. Установленные модели и экспортированные bundle-файлы не будут затронуты.`,
+    confirmLabel: "Удалить архивы",
+    cancelLabel: "Отмена",
+    returnFocus: els.cleanupModelTransferUploadsButton,
+  });
+  if (!approved) return;
+  state.modelTransferBusy = true;
+  renderModelTransfer();
+  try {
+    const result = await request("/model-transfer/uploads", { method: "DELETE" });
+    state.modelTransferUploads = { file_count: 0, total_size: 0 };
+    setInlineStatus(els.modelTransferStatus, `Удалено архивов: ${result.deleted_files || 0}. Освобождено ${formatBytes(result.freed_size || 0)}.`, "success");
+  } catch (error) {
+    setInlineStatus(els.modelTransferStatus, `Не удалось очистить временные архивы: ${error.message || error}`, "error");
+  } finally {
+    state.modelTransferBusy = false;
+    renderModelTransfer();
   }
 }
 
@@ -8009,6 +8083,7 @@ async function inspectModelImport(file) {
       loadWhisperModels({ silent: true }),
       loadTtsSettings({ silent: true }),
       loadModelTransferPreview(),
+      loadModelTransferUploads(),
     ]);
   } catch (error) {
     setInlineStatus(els.modelTransferStatus, `Bundle не принят: ${error.message || error}`, "error");
@@ -8034,6 +8109,7 @@ function setSettingsTab(tabName, { persist = true, render = true } = {}) {
   }
   if (next === "system") {
     ensureModelTransferPreview();
+    ensureModelTransferUploads();
   }
 }
 
@@ -11188,6 +11264,7 @@ function bindEvents() {
       await request(`/model-transfer/tasks/${encodeURIComponent(state.modelTransferTaskId)}/cancel`, { method: "POST" });
     }
   });
+  els.cleanupModelTransferUploadsButton?.addEventListener("click", () => void cleanupModelTransferUploads());
 
   document.addEventListener("pointerover", (event) => {
     const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;

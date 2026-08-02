@@ -1140,6 +1140,14 @@
                         <button class="button button--ghost" id="cancelModelTransferButton" type="button" hidden>Отменить</button>
                     </div>
                     <p class="inline-status" id="modelTransferStatus" aria-live="polite"></p>
+                    <div class="model-transfer__uploads">
+                        <div>
+                            <p class="field__label">Временные архивы импорта</p>
+                            <p class="subtle" id="modelTransferUploadsSummary" aria-live="polite">Проверяю хранилище…</p>
+                        </div>
+                        <button class="button button--ghost" id="cleanupModelTransferUploadsButton" type="button">Очистить архивы</button>
+                    </div>
+                    <p class="subtle">После импорта архив удаляется автоматически. Эта очистка удаляет только оставшиеся временные файлы <code>.localgpt-models</code>, а не установленные модели.</p>
                 </section>
 
                 <section class="settings-group" data-settings-tab-panel="system">

@@ -9,6 +9,7 @@
 - Интерактивный cross-platform setup (bootstrap) для macOS, Linux и Windows: native Terminal/PowerShell entry points, OS/package-manager detection, system/project dependency phases и final verification без загрузки моделей или пользовательских данных.
 - Подтверждённый dependency inventory и закреплённые версии прямых Python packages для воспроизводимого первого запуска.
 - Settings → System export/import complete Ollama, faster-whisper, whisper.cpp и Piper models через checksum-validated ZIP64 `.localgpt-models`, с выбором, прогрессом, подтверждением и conflict-safe publication.
+- Settings → System показывает usage временных архивов model import и позволяет подтверждённо очистить только эти backend-owned `.localgpt-models` files.
 
 ### Changed
 
