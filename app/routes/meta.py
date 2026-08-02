@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi import Request
+from fastapi.responses import FileResponse
 
 from .. import chat_tasks, config, db
 from ..schemas import DatabaseCleanupRequest, DatabaseResetRequest
@@ -27,6 +28,7 @@ RUNTIME_DIR = Path(os.getenv("LOCALGPT_RUNTIME_DIR", str(_DEFAULT_RUNTIME_DIR)))
 BACKEND_PID_FILE = RUNTIME_DIR / "backend.pid"
 CADDY_PID_FILE = RUNTIME_DIR / "caddy.pid"
 CADDY_LAUNCH_AGENT_LABEL = "local.localgpt.caddy"
+CADDY_ROOT_CA_RELATIVE_PATH = Path("pki") / "authorities" / "local" / "root.crt"
 
 
 def _is_private_lan_ipv4(value: str | None) -> bool:
@@ -130,6 +132,19 @@ def _lan_https_port() -> str:
     return port or "8443"
 
 
+def _caddy_data_dir() -> Path:
+    configured = (os.getenv("LOCALGPT_CADDY_DATA_DIR", "") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Caddy"
+    return Path.home() / ".local" / "share" / "caddy"
+
+
+def _caddy_root_ca_path() -> Path:
+    return _caddy_data_dir() / CADDY_ROOT_CA_RELATIVE_PATH
+
+
 def _get_lan_url(request: Request) -> str | None:
     explicit = (os.getenv("LAN_ACCESS_URL", "") or "").strip()
     if not explicit:
@@ -172,6 +187,24 @@ def get_network_address_items(request: Request) -> list[dict[str, object]]:
             "security_note": "Доступен только когда LAN HTTPS listener реально отвечает.",
         }
     ]
+
+
+@router.get("/network/caddy/root-ca", include_in_schema=False)
+def download_caddy_root_ca(request: Request):
+    """Download Caddy's public local CA only while the LAN proxy is live."""
+    if not _get_lan_url(request):
+        raise HTTPException(status_code=404, detail="LAN HTTPS через Caddy недоступен.")
+
+    certificate_path = _caddy_root_ca_path()
+    if not certificate_path.is_file() or certificate_path.is_symlink():
+        raise HTTPException(status_code=404, detail="Корневой сертификат Caddy не найден.")
+
+    return FileResponse(
+        certificate_path,
+        media_type="application/x-x509-ca-cert",
+        filename="localgpt-caddy-root-ca.crt",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _read_pid(path: Path) -> int | None:

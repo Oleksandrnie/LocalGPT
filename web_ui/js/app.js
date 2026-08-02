@@ -473,6 +473,8 @@ const els = {
   moveModelsDirButton: document.getElementById("moveModelsDirButton"),
   lanUrlValue: document.getElementById("lanUrlValue"),
   copyLanUrlFromSettingsButton: document.getElementById("copyLanUrlFromSettingsButton"),
+  downloadCaddyCertificateIosButton: document.getElementById("downloadCaddyCertificateIosButton"),
+  downloadCaddyCertificateAndroidButton: document.getElementById("downloadCaddyCertificateAndroidButton"),
   restartBackendButton: document.getElementById("restartBackendButton"),
   shutdownButton: document.getElementById("shutdownButton"),
   appRuntimeStatus: document.getElementById("appRuntimeStatus"),
@@ -7629,6 +7631,12 @@ function renderLanUrl() {
   if (els.copyLanUrlFromSettingsButton) {
     els.copyLanUrlFromSettingsButton.disabled = !state.lanUrl;
   }
+  if (els.downloadCaddyCertificateIosButton) {
+    els.downloadCaddyCertificateIosButton.disabled = !state.lanUrl;
+  }
+  if (els.downloadCaddyCertificateAndroidButton) {
+    els.downloadCaddyCertificateAndroidButton.disabled = !state.lanUrl;
+  }
   renderNetworkAddressMenu();
 }
 
@@ -9933,6 +9941,24 @@ async function copyLanUrlOnly() {
   }
 }
 
+function downloadCaddyRootCertificate(platform) {
+  if (!state.lanUrl) {
+    setFooter("LAN HTTPS через Caddy пока недоступен.", "warning");
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = "/network/caddy/root-ca";
+  link.download = "localgpt-caddy-root-ca.crt";
+  link.hidden = true;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  const device = platform === "ios" ? "iPhone" : "Android";
+  setFooter(`Файл сертификата для ${device} отправлен в загрузки браузера. При необходимости выберите папку в диалоге браузера.`, "success");
+}
+
 async function copyNetworkAddressItem(item) {
   if (!item?.url) {
     setFooter("Адрес доступа пока недоступен.", "warning");
@@ -10553,6 +10579,8 @@ function bindEvents() {
   els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
   els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrlOnly());
+  els.downloadCaddyCertificateIosButton?.addEventListener("click", () => downloadCaddyRootCertificate("ios"));
+  els.downloadCaddyCertificateAndroidButton?.addEventListener("click", () => downloadCaddyRootCertificate("android"));
   els.networkAddressMenu?.addEventListener("click", async (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-network-address-index]") : null;
     if (!button) return;
