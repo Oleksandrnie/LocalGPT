@@ -6,7 +6,7 @@
 - Acceptance criteria: the CLI command uses decoder-level non-speech suppression and does not temperature-fallback into invented text; the behavior is covered by focused tests; user-spoken text is not filtered after recognition.
 - Source specification: user report and screenshot, 2026-08-03.
 - Branch: `codex/rag-source-ingestion`.
-- Current stage: Stage 2 — documentation and cleanup.
+- Current stage: Stage 2 — completed; ready for final progress cleanup.
 
 ## Scope lock
 
@@ -27,6 +27,13 @@
 
 ### Stage 2 — Documentation and cleanup
 
-- Status: in_progress.
-- Update permanent records, run final validation, then delete this progress file.
+- Status: completed.
+- Updated README, setup README, dependency/testing documentation and changelog. Final validation passed: 21 focused Python tests, 3 static UI tests, shell syntax, Python compilation, JavaScript syntax, and the live synthetic-silence smoke.
 - Checkpoint: `Document dictation hallucination safeguards`.
+
+## Decisions and continuation
+
+- Do not suppress a list of phrases after transcription: it can delete real speech. VAD removes non-speech before decoding instead.
+- The active profile's `ru`/`en` preset is now also respected by chat dictation; users can change it in ASR Studio.
+- The current Mac runtime now contains `ggml-silero-v6.2.0.bin`; restart LocalGPT to load the changed backend code.
+- Next step: delete this completed progress file in the final cleanup commit.

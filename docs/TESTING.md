@@ -116,6 +116,8 @@ Model-transfer tests используют только temporary synthetic files
 ### ASR
 
 - быстрый voice-to-input и ASR Studio остаются разными UX flows;
+- chat-диктовка использует language/prompt preset активного профиля; запись короче 700 мс не отправляется в ASR;
+- `whisper.cpp` использует Silero VAD, чтобы тишина не превращалась в вымышленную транскрипцию;
 - backend selection соответствует `WHISPER_BACKEND`;
 - disabled stage не запускается ни одним analysis mode;
 - `full` требует `asr_full_analysis_enabled`;
