@@ -42,10 +42,21 @@ class SetupDependencyTests(unittest.TestCase):
         with patch.object(setup.shutil, "which", side_effect=lambda name: f"/bin/{name}" if name == "git" else None):
             self.assertEqual(setup.missing_commands(["git", "ffmpeg"]), ["ffmpeg"])
 
-    def test_model_installation_is_not_part_of_setup_contract(self) -> None:
+    def test_setup_builds_the_standard_whisper_cli_without_model_artifacts(self) -> None:
         source = (ROOT / "setup" / "setup_localgpt.py").read_text(encoding="utf-8")
         self.assertNotIn("ollama pull", source)
-        self.assertNotIn("setup_whisper_cpp", source)
+        self.assertIn("setup_whisper_cpp_macos.sh", source)
+        self.assertIn('"WHISPER_CPP_DOWNLOAD_MODEL": "0"', source)
+        self.assertIn('"WHISPER_CPP_ENABLE_COREML": "0"', source)
+
+    def test_macos_whisper_cli_build_skips_when_already_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cli = Path(temp_dir) / "whisper-cli"
+            cli.write_text("#!/bin/sh\n", encoding="utf-8")
+            cli.chmod(0o755)
+            with patch.object(setup, "WHISPER_CPP_CLI", cli), patch.object(setup, "run") as run_mock:
+                setup.build_whisper_cpp_cli("macos")
+            run_mock.assert_not_called()
 
     def test_setup_uses_canonical_requirements_and_runtime_venv(self) -> None:
         self.assertEqual(setup.REQUIREMENTS, ROOT / "app" / "requirements.txt")

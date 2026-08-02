@@ -15,6 +15,7 @@ MODEL_URL="${WHISPER_CPP_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp
 COREML_URL="${WHISPER_CPP_COREML_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${MODEL_NAME}-encoder.mlmodelc.zip?download=true}"
 ENABLE_METAL="${WHISPER_CPP_ENABLE_METAL:-1}"
 ENABLE_COREML="${WHISPER_CPP_ENABLE_COREML:-1}"
+DOWNLOAD_MODEL="${WHISPER_CPP_DOWNLOAD_MODEL:-1}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -68,13 +69,15 @@ ln -sf "$CLI_PATH" "$BIN_DIR/whisper-cli"
 
 if [ -f "$MODEL_FILE" ]; then
     echo "[i] GGML model already exists: $MODEL_FILE"
+elif [ "$DOWNLOAD_MODEL" != "1" ]; then
+    echo "[i] Skipping GGML model download."
 else
     echo "[*] Downloading GGML model: $MODEL_NAME"
     curl -L --fail --progress-bar "$MODEL_URL" -o "$MODEL_FILE.tmp"
     mv "$MODEL_FILE.tmp" "$MODEL_FILE"
 fi
 
-if [ "$ENABLE_COREML" = "1" ]; then
+if [ "$ENABLE_COREML" = "1" ] && [ "$DOWNLOAD_MODEL" = "1" ]; then
     if [ -d "$COREML_DIR" ]; then
         echo "[i] CoreML encoder already exists: $COREML_DIR"
     else
