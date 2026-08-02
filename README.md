@@ -105,9 +105,9 @@ Launcher повторно использует подготовленный `ven
 Полезные варианты:
 
 ```bash
-python3 run_localgpt.py --no-browser
-python3 run_localgpt.py --no-reload
-python3 run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
+venv/bin/python run_localgpt.py --no-browser
+venv/bin/python run_localgpt.py --no-reload
+venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 ```
 
 Параметры окружения, model paths, CORS и ASR/TTS настройки перечислены в [`.env.example`](.env.example).

@@ -92,6 +92,23 @@ class SetupDependencyTests(unittest.TestCase):
             self.assertIn("The existing .venv is left untouched", output.getvalue())
             self.assertTrue(dot_venv.is_dir())
 
+    def test_setup_command_does_not_assign_reserved_zsh_status(self) -> None:
+        source = (ROOT / "setup" / "setup_localgpt.command").read_text(encoding="utf-8")
+        self.assertNotIn("status=$?", source)
+        self.assertIn("setup_exit=$?", source)
+
+    def test_posix_start_launchers_prefer_runtime_venv(self) -> None:
+        for name in ("start_localgpt.command", "start_localgpt.sh"):
+            with self.subTest(name=name):
+                source = (ROOT / name).read_text(encoding="utf-8")
+                venv_position = source.index("venv/bin/python")
+                fallback_position = source.index("python3.13 python3.12")
+                self.assertLess(venv_position, fallback_position)
+
+    def test_windows_start_launcher_prefers_runtime_venv(self) -> None:
+        source = (ROOT / "start_localgpt.bat").read_text(encoding="utf-8")
+        self.assertLess(source.index(r"venv\Scripts\python.exe"), source.index("where py"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,8 +7,8 @@ cd "$PROJECT_ROOT"
 
 set +e
 /bin/sh "$SCRIPT_DIR/setup_localgpt.sh" "$@"
-status=$?
+setup_exit=$?
 set -e
 echo
 read "?Press Enter to close Terminal..."
-exit $status
+exit $setup_exit

@@ -21,7 +21,7 @@ Default:
 или:
 
 ```bash
-python3 run_localgpt.py --host 127.0.0.1 --port 8000
+venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000
 ```
 
 Launcher выбирает следующий свободный порт, если requested port занят. `--strict-port` вместо этого прекращает запуск. `--port-file` записывает фактически выбранный порт.

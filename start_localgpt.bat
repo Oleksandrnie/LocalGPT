@@ -3,6 +3,11 @@ setlocal
 
 cd /d "%~dp0"
 
+if exist "%~dp0venv\Scripts\python.exe" (
+  "%~dp0venv\Scripts\python.exe" run_localgpt.py %*
+  exit /b %ERRORLEVEL%
+)
+
 where py >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
   py -3 run_localgpt.py %*
@@ -15,5 +20,5 @@ if %ERRORLEVEL% EQU 0 (
   exit /b %ERRORLEVEL%
 )
 
-echo Python is not installed or not available in PATH.
+echo Python 3.10+ is not installed or not available in PATH.
 exit /b 1
