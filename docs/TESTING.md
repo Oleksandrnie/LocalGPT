@@ -28,8 +28,8 @@ Setup/bootstrap contract без запуска package installers:
 ```bash
 venv/bin/python -m py_compile setup/setup_localgpt.py tests/test_setup_dependencies.py
 venv/bin/python -m unittest tests.test_setup_dependencies -v
-/bin/sh -n setup_localgpt.sh
-/bin/zsh -n setup_localgpt.command
+/bin/sh -n setup/setup_localgpt.sh
+/bin/zsh -n setup/setup_localgpt.command
 ```
 
 `setup/setup_localgpt.py --verify-only` только проверяет текущее окружение, но возвращает non-zero при отсутствующих обязательных runtime components.
@@ -181,10 +181,11 @@ Model-transfer tests используют только temporary synthetic files
 
 Эта проверка намеренно ручная: она устанавливает system packages и может запросить administrative privileges.
 
-1. На чистом macOS/Linux/Windows environment запустить соответствующий `setup_localgpt.*` entry point.
+1. На чистом macOS/Linux/Windows environment запустить соответствующий `setup/setup_localgpt.*` entry point.
 2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие model downloads.
 3. Согласиться на core dependencies; optional Caddy/Tailscale/Node проверить отдельно по нужному режиму.
 4. Убедиться, что final verification проходит и `venv/` содержит imports из `app/requirements.txt`.
+   Отдельный `.venv/`, если он существовал до setup, должен остаться нетронутым и не считаться штатным runtime environment.
 5. Повторить setup: установленные system tools должны быть пропущены, pip не должен ломать environment.
 6. Запустить `start_localgpt*`, проверить `/health` и `/ui/gui_html.html` по Backend smoke выше.
 7. Убедиться, что `.env`, models, RAG sources, profiles и public networking не создавались автоматически.

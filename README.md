@@ -30,19 +30,19 @@ LocalGPT — локальное приложение для чата, транс
 
 На новом компьютере запустите platform entry point. Он определит ОС и package manager, откроет Terminal/PowerShell, покажет отсутствующие компоненты и запросит согласие перед каждой установкой.
 
-macOS — двойной клик по `setup_localgpt.command` или команда:
+macOS — двойной клик по `setup/setup_localgpt.command` или команда:
 
 ```bash
-./setup_localgpt.command
+./setup/setup_localgpt.command
 ```
 
 Linux:
 
 ```bash
-./setup_localgpt.sh
+./setup/setup_localgpt.sh
 ```
 
-Windows — двойной клик по `setup_localgpt.bat`. Он откроет PowerShell и продолжит установку там.
+Windows — двойной клик по `setup\setup_localgpt.bat`. Он откроет PowerShell и продолжит установку там.
 
 Setup (технически — bootstrap):
 
@@ -51,6 +51,8 @@ Setup (технически — bootstrap):
 - отдельно предлагает опциональные Caddy, Tailscale и Node.js;
 - безопасно пропускает уже найденные компоненты и пригоден для повторного запуска;
 - не скачивает модели, RAG-данные, не создаёт `.env` и не включает сетевой доступ.
+
+Канонический список Python packages находится в `app/requirements.txt`; отдельного корневого `requirements.txt` нет. Setup создаёт штатный `venv/`. Если ранее было вручную создано `.venv/`, оно останется нетронутым, но LocalGPT его не использует.
 
 После успешной финальной проверки запускайте LocalGPT обычным launcher-ом из следующего раздела. Полный подтверждённый inventory, версии и назначение компонентов: [Зависимости LocalGPT](docs/DEPENDENCIES.md).
 

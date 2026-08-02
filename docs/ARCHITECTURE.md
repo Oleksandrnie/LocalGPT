@@ -24,7 +24,7 @@ flowchart LR
 
 ## Runtime и точки входа
 
-- Корневые `setup_localgpt.command` / `.sh` / `.bat` обеспечивают native Terminal/PowerShell entry и первоначальный Python setup. Внутренние `setup/setup_localgpt.py` и `.ps1` определяют ОС/package manager, после подтверждения ставят system/runtime dependencies, создают `venv/` и выполняют final verification без установки моделей или конфигурации. Это первичный bootstrap окружения.
+- `setup/setup_localgpt.command` / `.sh` / `.bat` обеспечивают native Terminal/PowerShell entry и первоначальный Python setup. Находящиеся рядом `setup_localgpt.py` и `.ps1` определяют ОС/package manager, после подтверждения ставят system/runtime dependencies из канонического `app/requirements.txt`, создают штатный `venv/` и выполняют final verification без установки моделей или конфигурации. Это первичный bootstrap окружения.
 - `run_localgpt.py` выполняет только повторяемый project setup: создаёт/переиспользует `venv/`, обновляет `app/requirements.txt` при изменении hash, проверяет и запускает Ollama, выбирает порт и запускает `uvicorn backend.server:app`.
 - `backend/server.py` создаёт FastAPI app, подключает CORS, регистрирует shared и feature routers, монтирует `web_ui/` на `/ui` и перенаправляет `/` на UI.
 - `app/server.py` импортирует `backend.server:app` и существует как compatibility shim.

@@ -46,7 +46,8 @@ try {
     }
 
     $Prefix = $Python.Prefix
-    & $Python.Command @Prefix "setup\setup_localgpt.py" @args
+    $SetupCore = Join-Path $PSScriptRoot "setup_localgpt.py"
+    & $Python.Command @Prefix $SetupCore @args
     $SetupExit = $LASTEXITCODE
 } catch {
     Write-Host "[!] $($_.Exception.Message)" -ForegroundColor Red

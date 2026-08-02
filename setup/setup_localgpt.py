@@ -15,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = ROOT / "app" / "requirements.txt"
 VENV_DIR = ROOT / "venv"
+DOT_VENV_DIR = ROOT / ".venv"
 MIN_PYTHON = (3, 10)
 
 
@@ -293,6 +294,11 @@ def install_project_dependencies() -> None:
         raise SetupError(f"Requirements file not found: {REQUIREMENTS}")
     python = venv_python()
     if not python.exists():
+        if DOT_VENV_DIR.exists():
+            warn(
+                f"Found {DOT_VENV_DIR}, but LocalGPT uses {VENV_DIR}. "
+                "The existing .venv is left untouched."
+            )
         info(f"Creating virtual environment: {VENV_DIR}")
         run([sys.executable, "-m", "venv", str(VENV_DIR)])
     else:

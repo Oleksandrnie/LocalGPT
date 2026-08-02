@@ -2,7 +2,8 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-cd "$SCRIPT_DIR"
+PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$PROJECT_ROOT"
 
 if [ "$(uname -s)" = "Linux" ] && [ ! -t 0 ] && [ "${LOCALGPT_SETUP_TERMINAL:-0}" != "1" ]; then
   for terminal in x-terminal-emulator gnome-terminal konsole xterm; do
@@ -17,7 +18,7 @@ if [ "$(uname -s)" = "Linux" ] && [ ! -t 0 ] && [ "${LOCALGPT_SETUP_TERMINAL:-0}
 fi
 
 find_python() {
-  for candidate in python3 python; do
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
     if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
       command -v "$candidate"
       return 0
@@ -73,4 +74,4 @@ if [ -z "$PYTHON_BIN" ]; then
   exit 1
 fi
 
-exec "$PYTHON_BIN" setup/setup_localgpt.py "$@"
+exec "$PYTHON_BIN" "$SCRIPT_DIR/setup_localgpt.py" "$@"
