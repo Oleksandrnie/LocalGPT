@@ -48,13 +48,16 @@ class SetupDependencyTests(unittest.TestCase):
         self.assertIn("setup_whisper_cpp_macos.sh", source)
         self.assertIn('"WHISPER_CPP_DOWNLOAD_MODEL": "0"', source)
         self.assertIn('"WHISPER_CPP_ENABLE_COREML": "0"', source)
+        self.assertIn('"WHISPER_CPP_DOWNLOAD_VAD": "1"', source)
 
     def test_macos_whisper_cli_build_skips_when_already_executable(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             cli = Path(temp_dir) / "whisper-cli"
             cli.write_text("#!/bin/sh\n", encoding="utf-8")
             cli.chmod(0o755)
-            with patch.object(setup, "WHISPER_CPP_CLI", cli), patch.object(setup, "run") as run_mock:
+            vad_model = Path(temp_dir) / "ggml-silero-v6.2.0.bin"
+            vad_model.write_bytes(b"vad")
+            with patch.object(setup, "WHISPER_CPP_CLI", cli), patch.object(setup, "WHISPER_CPP_VAD_MODEL", vad_model), patch.object(setup, "run") as run_mock:
                 setup.build_whisper_cpp_cli("macos")
             run_mock.assert_not_called()
 

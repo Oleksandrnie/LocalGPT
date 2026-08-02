@@ -2538,6 +2538,7 @@ function insertVoiceTranscript(text) {
 }
 
 const VOICE_TRANSCRIPTION_TIMEOUT_MS = 5 * 60 * 1000;
+const MIN_VOICE_RECORDING_MS = 700;
 const FILE_TRANSCRIPTION_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_TRANSCRIPTION_TIMEOUT_MS = 60 * 60 * 1000;
 
@@ -2611,11 +2612,12 @@ async function transcribeVoiceBlob(blob, mimeType) {
 
   try {
     const extension = audioExtensionForMimeType(mimeType || blob.type);
+    const promptPreset = normalizePromptPreset(state.selectedPromptPreset);
     const formData = new FormData();
     formData.append("file", blob, `voice-note.${extension}`);
     formData.append("model", getSelectedChatWhisperModel() || "medium");
-    formData.append("prompt_preset", "auto");
-    formData.append("language", "auto");
+    formData.append("prompt_preset", promptPreset);
+    formData.append("language", languageForPromptPreset(promptPreset));
     formData.append("store_result", "false");
 
     const task = await request("/transcribe/tasks", {
@@ -2679,6 +2681,7 @@ async function startVoiceRecording() {
     const mimeType = pickVoiceRecorderMimeType();
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     const chunks = [];
+    const recordingStartedAt = Date.now();
 
     recorder.addEventListener("dataavailable", (event) => {
       if (event.data && event.data.size > 0) {
@@ -2688,11 +2691,17 @@ async function startVoiceRecording() {
 
     recorder.addEventListener("stop", async () => {
       const outputType = recorder.mimeType || mimeType || "audio/webm";
+      const durationMs = Date.now() - recordingStartedAt;
       stopVoiceStreamTracks();
       state.voiceRecorder = null;
       const blob = new Blob(chunks, { type: outputType });
       if (!blob.size) {
         setFooter("Запись пустая, попробуйте ещё раз.", "warning");
+        renderVoiceRecordButton();
+        return;
+      }
+      if (durationMs < MIN_VOICE_RECORDING_MS) {
+        setFooter("Запись слишком короткая. Говорите хотя бы около секунды и повторите попытку.", "warning");
         renderVoiceRecordButton();
         return;
       }

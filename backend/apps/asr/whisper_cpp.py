@@ -14,6 +14,12 @@ from app import config
 
 _QUANT_SUFFIXES = ("", "-q8_0", "-q5_0", "-q5_1", "-q4_0", "-q4_1")
 DEFAULT_TRANSCRIBE_LOG_MAX_BYTES = 2 * 1024 * 1024
+DEFAULT_DECODER_GUARD_ARGS = (
+    "--suppress-nst",
+    "--no-fallback",
+    "--no-speech-thold",
+    "0.8",
+)
 
 
 def _resolve_path_template(raw: str, model_name: str) -> Path:
@@ -83,6 +89,14 @@ def whisper_cpp_coreml_path(model_name: str) -> Path:
     return whisper_cpp_model_path(model_name).parent / f"ggml-{model_name}-encoder.mlmodelc"
 
 
+def whisper_cpp_vad_model_path() -> Path:
+    return config.SETTINGS.whisper_cpp_models_dir / "ggml-silero-v6.2.0.bin"
+
+
+def is_whisper_cpp_vad_ready() -> bool:
+    return whisper_cpp_vad_model_path().is_file()
+
+
 def is_whisper_cpp_coreml_ready(model_name: str) -> bool:
     if not config.SETTINGS.whisper_cpp_download_coreml:
         return True
@@ -95,6 +109,8 @@ def whisper_cpp_runtime_status(model_name: str) -> dict[str, Any]:
     coreml_path = whisper_cpp_coreml_path(model_name)
     model_ready = model_path.exists()
     binary_ready = is_whisper_cpp_binary_ready()
+    vad_path = whisper_cpp_vad_model_path()
+    vad_ready = is_whisper_cpp_vad_ready()
     coreml_required = bool(config.SETTINGS.whisper_cpp_download_coreml)
     coreml_ready = is_whisper_cpp_coreml_ready(model_name)
     warnings: list[str] = []
@@ -103,15 +119,19 @@ def whisper_cpp_runtime_status(model_name: str) -> dict[str, Any]:
         warnings.append(f"GGML-модель не найдена: {model_path}")
     if not binary_ready:
         warnings.append(f"whisper-cli не найден или не исполняемый: {binary_path}")
+    if not vad_ready:
+        warnings.append(f"Silero VAD model не найден: {vad_path}")
     if coreml_required and not coreml_ready:
         warnings.append(f"CoreML encoder не найден: {coreml_path}")
 
     return {
-        "ready": model_ready and binary_ready,
+        "ready": model_ready and binary_ready and vad_ready,
         "model_installed": model_ready,
         "model_path": str(model_path),
-        "runtime_installed": binary_ready,
+        "runtime_installed": binary_ready and vad_ready,
         "runtime_binary": str(binary_path),
+        "vad_installed": vad_ready,
+        "vad_model_path": str(vad_path),
         "coreml_required": coreml_required,
         "coreml_installed": coreml_ready,
         "coreml_path": str(coreml_path),
@@ -122,7 +142,7 @@ def whisper_cpp_runtime_status(model_name: str) -> dict[str, Any]:
 def is_whisper_cpp_runtime_ready(model_name: str) -> bool:
     if not is_whisper_cpp_model_ready(model_name):
         return False
-    return is_whisper_cpp_binary_ready()
+    return is_whisper_cpp_binary_ready() and is_whisper_cpp_vad_ready()
 
 
 def _redacted_command(command: list[str]) -> list[str]:
@@ -291,6 +311,9 @@ def transcribe_with_whisper_cpp(
     model_path = whisper_cpp_model_path(model_name)
     if not model_path.exists():
         raise RuntimeError(f"WHISPER_CPP_MODEL_NOT_FOUND::{model_path}")
+    vad_model_path = whisper_cpp_vad_model_path()
+    if not vad_model_path.is_file():
+        raise RuntimeError(f"WHISPER_CPP_VAD_MODEL_NOT_FOUND::{vad_model_path}")
 
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="localgpt-whisper-cpp-") as temp_name:
@@ -317,6 +340,8 @@ def transcribe_with_whisper_cpp(
             command.extend(["--threads", str(resolved_threads)])
         if prompt:
             command.extend(["--prompt", prompt])
+        command.extend(DEFAULT_DECODER_GUARD_ARGS)
+        command.extend(["--vad", "--vad-model", str(vad_model_path)])
         command.extend(config.SETTINGS.whisper_cpp_extra_args)
         runtime: dict[str, Any] = {
             "backend": "whisper_cpp",
@@ -332,6 +357,8 @@ def transcribe_with_whisper_cpp(
             "threads_arg_used": resolved_threads > 0,
             "prompt_present": bool(prompt),
             "prompt_chars": len(prompt or ""),
+            "decoder_guard_args": list(DEFAULT_DECODER_GUARD_ARGS),
+            "vad_model_path": str(vad_model_path),
             "extra_args": list(config.SETTINGS.whisper_cpp_extra_args),
             "output_json": str(output_prefix.with_suffix(".json")),
             "command": _redacted_command(command),
