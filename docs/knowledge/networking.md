@@ -34,7 +34,7 @@ curl http://127.0.0.1:8000/health
 
 ## LAN через Caddy
 
-На macOS используйте `start_localgpt_lan.command`. Он вызывает `tools/LTrnsrb.sh` (legacy filename), который:
+На macOS обычный `start_localgpt.command` или `./start_localgpt.sh` без аргументов автоматически вызывает `tools/LTrnsrb.sh` (legacy filename); `start_localgpt_lan.command` остаётся compatibility alias. Launcher:
 
 - читает `LOCALGPT_PORT`/legacy backend port и `LAN_HTTPS_PORT`;
 - определяет private LAN IP;
@@ -46,7 +46,11 @@ curl http://127.0.0.1:8000/health
 
 `Caddyfile.lan` в репозитории — localhost fallback/example; launcher создаёт актуальный config динамически.
 
+Если Caddy не установлен или private LAN IP не обнаружен, launcher явно сообщает об этом и открывает только localhost UI. Явные аргументы macOS launchers сохраняют direct local launch для диагностики.
+
 Первое устройство может потребовать доверия к Caddy local CA. Не публикуйте generated certificate/private key.
+
+Когда LAN HTTPS listener отвечает, Settings → System → «Доступ с телефона» позволяет сохранить публичный `root.crt` Caddy на текущем компьютере для iPhone или Android. Файл отдаётся только через guarded `GET /network/caddy/root-ca` с `Cache-Control: no-store`; он не содержит private key. Браузер сохраняет файл в выбранную папку или стандартные downloads — затем пользователь передаёт его на устройство и вручную включает доверие. Если LAN URL недоступен, действия сохранения отключены.
 
 ## Tailscale private tailnet
 

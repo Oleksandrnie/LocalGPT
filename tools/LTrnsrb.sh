@@ -307,7 +307,7 @@ write_caddy_launch_agent() {
   LOCALGPT_LAUNCH_AGENT_FILE="${LAUNCH_AGENT_FILE}" \
   LOCALGPT_CADDY_BIN="${CADDY_BIN}" \
   LOCALGPT_CADDY_CONFIG_FILE="${CADDY_CONFIG_FILE}" \
-  LOCALGPT_PROJECT_ROOT="${PROJECT_ROOT}" \
+  LOCALGPT_CADDY_WORKING_DIR="${LOG_DIR}" \
   LOCALGPT_CADDY_LOG="${CADDY_LOG}" \
   LOCALGPT_PATH="${PATH}" \
   "${BOOTSTRAP_PYTHON}" - <<'PY'
@@ -322,7 +322,7 @@ plist = {
         "--config",
         os.environ["LOCALGPT_CADDY_CONFIG_FILE"],
     ],
-    "WorkingDirectory": os.environ["LOCALGPT_PROJECT_ROOT"],
+    "WorkingDirectory": os.environ["LOCALGPT_CADDY_WORKING_DIR"],
     "RunAtLoad": True,
     "KeepAlive": False,
     "StandardOutPath": os.environ["LOCALGPT_CADDY_LOG"],
@@ -552,8 +552,11 @@ start_backend || exit 1
 
 CADDY_BIN="$(resolve_caddy)"
 if [[ -z "${CADDY_BIN}" ]]; then
-  osascript -e 'display alert "LocalGPT" message "Caddy was not found. Install it with: brew install caddy"'
-  exit 1
+  message="Caddy was not found. LAN HTTPS is unavailable; opening LocalGPT on this Mac. Install it with: brew install caddy"
+  echo "[!] ${message}" >&2
+  osascript -e "display alert \"LocalGPT\" message \"${message}\""
+  open "http://127.0.0.1:${BACKEND_PORT}/ui/gui_html.html"
+  exit 0
 fi
 
 LAN_IP="$(detect_lan_ip)"

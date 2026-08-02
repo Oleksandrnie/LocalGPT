@@ -6,6 +6,7 @@
 
 ### Added
 
+- Settings → System can save Caddy's public LAN root certificate to the current computer for manual iPhone/Android transfer; the guarded no-store endpoint never serves a private key and is unavailable without live LAN HTTPS.
 - Интерактивный cross-platform setup (bootstrap) для macOS, Linux и Windows: native Terminal/PowerShell entry points, OS/package-manager detection, system/project dependency phases и final verification без загрузки моделей или пользовательских данных.
 - Подтверждённый dependency inventory и закреплённые версии прямых Python packages для воспроизводимого первого запуска.
 - Settings → System export/import complete Ollama, faster-whisper, whisper.cpp и Piper models через checksum-validated ZIP64 `.localgpt-models`, с выбором, прогрессом, подтверждением и conflict-safe publication.
@@ -13,6 +14,7 @@
 
 ### Changed
 
+- Ordinary macOS startup now automatically provisions the private Caddy LAN HTTPS proxy while keeping the backend on localhost; the LaunchAgent runs from its runtime directory to avoid the reproduced no-listener startup hang, and missing Caddy falls back to an explicitly reported localhost launch.
 - RAG принимает и индексирует только Markdown: автоматические JSON-дубли и их искусственный приоритет удалены, а reindex очищает старые JSON-записи из SQLite без удаления файлов пользователя.
 - Диктовка в чате теперь проверяет готовность выбранной ASR-модели и whisper.cpp runtime до записи, открывая ASR-библиотеку с действием «Дособрать» вместо поздней ошибки транскрибации.
 - Все cross-platform setup entry points собраны в `setup/`, их пути сделаны независимыми от текущего каталога; документация теперь явно различает штатный `venv/`, ручной `.venv/` и канонический `app/requirements.txt`.

@@ -4,6 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# The ordinary macOS launch path keeps the backend private and starts the
+# local Caddy HTTPS proxy when a private LAN address and Caddy are available.
+# Preserve direct launcher arguments for diagnostics and advanced local runs.
+if [[ "$#" -eq 0 ]]; then
+  exec /bin/zsh "$SCRIPT_DIR/tools/LTrnsrb.sh"
+fi
+
 if [[ -x "$SCRIPT_DIR/venv/bin/python" ]]; then
   exec "$SCRIPT_DIR/venv/bin/python" run_localgpt.py "$@"
 fi

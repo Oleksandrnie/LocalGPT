@@ -101,7 +101,7 @@ Setup (технически — bootstrap):
    start_localgpt.command
    ```
 
-Launcher повторно использует подготовленный `venv/`, при изменении `app/requirements.txt` обновляет packages, проверяет Ollama, выбирает свободный backend-порт и запускает `backend.server:app`. По умолчанию UI открывается на `http://127.0.0.1:8000/ui/gui_html.html`; если порт занят, launcher выбирает следующий свободный.
+Launcher повторно использует подготовленный `venv/`, при изменении `app/requirements.txt` обновляет packages, проверяет Ollama, выбирает свободный backend-порт и запускает `backend.server:app`. На macOS обычный запуск без аргументов также автоматически поднимает Caddy для private LAN HTTPS, сохраняя backend на localhost; URL появится в разделе «Доступ с телефона». Если Caddy не установлен или private LAN IP отсутствует, LocalGPT явно сообщит об этом и откроет только локальный UI. Linux/Windows и macOS-запуск с явными аргументами остаются direct local launch. Если порт занят, launcher выбирает следующий свободный.
 
 Команда `python3 run_localgpt.py` также поддерживается: если системный `python3` старее 3.10, launcher автоматически продолжит через подготовленный `venv/bin/python`. Системный Python при этом не изменяется.
 
@@ -117,13 +117,7 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 
 ## LAN и Tailscale
 
-Для доступа в одной локальной сети на macOS:
-
-```text
-start_localgpt_lan.command
-```
-
-LAN launcher оставляет backend на localhost и поднимает Caddy HTTPS на локальном адресе. Подробности и диагностика: [networking](docs/knowledge/networking.md).
+Для доступа в одной локальной сети на macOS используйте обычный `start_localgpt.command` или `./start_localgpt.sh` без аргументов: LAN launcher теперь запускается автоматически. `start_localgpt_lan.command` сохранён как compatibility alias. LAN path оставляет backend на localhost и поднимает Caddy HTTPS на локальном адресе. Подробности и диагностика: [networking](docs/knowledge/networking.md).
 
 Для удалённого доступа используйте только private Tailscale tailnet. LocalGPT не запускает `tailscale serve` автоматически и не рекомендует Funnel или прямую публикацию backend-порта. Инструкция находится в [Tailscale plugin](plugins/tailscale/README.md).
 

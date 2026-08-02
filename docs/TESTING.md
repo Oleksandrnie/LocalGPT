@@ -57,6 +57,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | WAV post-processing | `venv/bin/python -m unittest tests.test_audio_postprocess_service -v` |
 | OCR heuristics | `venv/bin/python -m unittest tests.test_ocr_service -v` |
 | Plugin Registry и Tailscale handler | `venv/bin/python -m unittest tests.test_plugin_registry -v` |
+| Caddy LAN certificate download | `venv/bin/python -m unittest tests.test_network_certificate -v` |
 | Model installation state | `venv/bin/python -m unittest tests.test_model_install_state -v` |
 | Ollama pull API/CLI compatibility | `venv/bin/python -m unittest tests.test_ollama_pull -v` |
 | Model export/import bundle | `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export tests.test_model_transfer_import -v` |
@@ -105,6 +106,12 @@ System Settings model-transfer contract:
 
 ```bash
 node tests/model_transfer_ui.test.mjs
+```
+
+System Settings LAN certificate controls:
+
+```bash
+node tests/lan_certificate_ui.test.mjs
 ```
 
 Model-transfer tests используют только temporary synthetic files. Реальный export/import локальных моделей запускается отдельно явным действием пользователя.
