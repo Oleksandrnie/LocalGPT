@@ -71,6 +71,8 @@ class WhisperCppBackendTestCase(unittest.TestCase):
             self.assertIn("--no-fallback", command)
             self.assertEqual(command[command.index("--no-speech-thold") + 1], "0.8")
             self.assertEqual(command[command.index("--vad-model") + 1], str(whisper_cpp.whisper_cpp_vad_model_path()))
+            self.assertEqual(command[command.index("--vad-threshold") + 1], "0.3")
+            self.assertEqual(command[command.index("--vad-min-speech-duration-ms") + 1], "100")
             output_prefix = Path(command[command.index("--output-file") + 1])
             output_prefix.with_suffix(".json").write_text(
                 json.dumps(
@@ -110,6 +112,7 @@ class WhisperCppBackendTestCase(unittest.TestCase):
             result["runtime"]["decoder_guard_args"],
             ["--suppress-nst", "--no-fallback", "--no-speech-thold", "0.8"],
         )
+        self.assertEqual(result["runtime"]["vad_args"], ["--vad-threshold", "0.3", "--vad-min-speech-duration-ms", "100"])
         self.assertIn("<prompt chars=13>", result["runtime"]["command"])
 
         log_lines = config.TRANSCRIBE_LOG_FILE.read_text(encoding="utf-8").splitlines()

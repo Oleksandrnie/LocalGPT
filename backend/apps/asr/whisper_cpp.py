@@ -20,6 +20,12 @@ DEFAULT_DECODER_GUARD_ARGS = (
     "--no-speech-thold",
     "0.8",
 )
+DEFAULT_VAD_ARGS = (
+    "--vad-threshold",
+    "0.3",
+    "--vad-min-speech-duration-ms",
+    "100",
+)
 
 
 def _resolve_path_template(raw: str, model_name: str) -> Path:
@@ -341,7 +347,7 @@ def transcribe_with_whisper_cpp(
         if prompt:
             command.extend(["--prompt", prompt])
         command.extend(DEFAULT_DECODER_GUARD_ARGS)
-        command.extend(["--vad", "--vad-model", str(vad_model_path)])
+        command.extend(["--vad", "--vad-model", str(vad_model_path), *DEFAULT_VAD_ARGS])
         command.extend(config.SETTINGS.whisper_cpp_extra_args)
         runtime: dict[str, Any] = {
             "backend": "whisper_cpp",
@@ -359,6 +365,7 @@ def transcribe_with_whisper_cpp(
             "prompt_chars": len(prompt or ""),
             "decoder_guard_args": list(DEFAULT_DECODER_GUARD_ARGS),
             "vad_model_path": str(vad_model_path),
+            "vad_args": list(DEFAULT_VAD_ARGS),
             "extra_args": list(config.SETTINGS.whisper_cpp_extra_args),
             "output_json": str(output_prefix.with_suffix(".json")),
             "command": _redacted_command(command),
