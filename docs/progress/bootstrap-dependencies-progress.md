@@ -28,11 +28,11 @@
 - Technical debt: none identified in the dependency contract; exact package availability still depends on the detected OS repository/package manager.
 - Next steps: validate the audit diff and create the Stage 1 checkpoint.
 - Validation: source/config/import/subprocess inventory completed; installed host versions and Python package set recorded; `git diff --check` passed; `venv/bin/python -m pip check` passed.
-- Git checkpoint: pending.
+- Git checkpoint: `32d297b` — Audit and pin deployment dependencies.
 
 ### Stage 2 — Bootstrap Implementation
 - Goal: add an idempotent root bootstrap command with system, project, and verification phases.
-- Related files: `tools/bootstrap_localgpt.py`, `bootstrap_localgpt.command`, `bootstrap_localgpt.sh`, `bootstrap_localgpt.bat`, `tests/test_bootstrap_dependencies.py`.
+- Related files: `tools/bootstrap_localgpt.py`, `bootstrap_localgpt.command`, `bootstrap_localgpt.sh`, `bootstrap_localgpt.bat`, `bootstrap_localgpt.ps1`, `tests/test_bootstrap_dependencies.py`.
 - [x] Completed: shared core detects macOS/Linux/Windows and their supported package managers.
 - [x] Completed: native launchers provide Terminal/Windows console entry and bootstrap Python when absent.
 - [x] Completed: system, project, and final-verification phases with explicit installation confirmations and idempotent presence checks.
@@ -40,11 +40,11 @@
 - [x] Completed: safe static/unit validation.
 - [~] In progress: Stage 2 checkpoint.
 - Architectural decisions: platform-specific entry points are thin wrappers; dependency decisions and verification live in one Python core; Caddy, Tailscale, and Node remain opt-in.
-- Problems: none yet.
+- Problems: initial Windows wrapper stayed in cmd; corrected after the checkpoint so `.bat` now opens the PowerShell launcher. Linux launcher now attempts a native terminal emulator when started without a TTY.
 - Technical debt: none yet.
 - Next steps: run only safe static/unit checks; real installer acceptance is delegated to the user as requested.
-- Validation: `py_compile` passed for bootstrap/test; 5 focused unit tests passed; `sh -n` and `zsh -n` passed; `git diff --check` passed. No package installation commands executed by the agent.
-- Git checkpoint: pending.
+- Validation: `py_compile` passed for bootstrap/test; 5 focused unit tests passed before and after launcher correction; `sh -n` and `zsh -n` passed; `git diff --check` passed. PowerShell runtime is unavailable on the macOS host, so `.ps1` execution is delegated to user acceptance. No package installation commands executed by the agent.
+- Git checkpoint: `98bca6a` — Add interactive cross-platform bootstrap; corrective launcher checkpoint pending.
 
 ### Stage 3 — QA, Documentation & Cleanup
 - Goal: validate bootstrap behavior, update affected permanent docs, record completion, and remove this file in a cleanup commit.

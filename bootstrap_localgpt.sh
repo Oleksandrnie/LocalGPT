@@ -4,6 +4,18 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
+if [ "$(uname -s)" = "Linux" ] && [ ! -t 0 ] && [ "${LOCALGPT_BOOTSTRAP_TERMINAL:-0}" != "1" ]; then
+  for terminal in x-terminal-emulator gnome-terminal konsole xterm; do
+    if command -v "$terminal" >/dev/null 2>&1; then
+      case "$terminal" in
+        gnome-terminal) exec "$terminal" -- env LOCALGPT_BOOTSTRAP_TERMINAL=1 "$SCRIPT_DIR/bootstrap_localgpt.sh" "$@" ;;
+        konsole) exec "$terminal" -e env LOCALGPT_BOOTSTRAP_TERMINAL=1 "$SCRIPT_DIR/bootstrap_localgpt.sh" "$@" ;;
+        *) exec "$terminal" -e env LOCALGPT_BOOTSTRAP_TERMINAL=1 "$SCRIPT_DIR/bootstrap_localgpt.sh" "$@" ;;
+      esac
+    fi
+  done
+fi
+
 find_python() {
   for candidate in python3 python; do
     if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
