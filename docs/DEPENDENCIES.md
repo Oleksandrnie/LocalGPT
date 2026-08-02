@@ -64,6 +64,6 @@ Secrets и machine-specific paths не должны попадать в Git.
 
 - `run_localgpt.py` создаёт `venv/`, устанавливает `app/requirements.txt` при изменении его hash, создаёт runtime directories, запускает Ollama service и backend.
 - UI/provider flows по явному действию скачивают выбранные Ollama, ASR и Piper models.
-- `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку; на macOS он также строит и проверяет `models/whisper_cpp/bin/whisper-cli` без загрузки model artifacts. Все platform entry points и Windows PowerShell adapter находятся рядом в `setup/`; они вычисляют корень проекта от собственного пути, поэтому не зависят от текущего рабочего каталога.
+- `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку; на macOS он также строит и проверяет `models/whisper_cpp/bin/whisper-cli` и `models/whisper_cpp/ggml-silero-v6.2.0.bin` для VAD, без загрузки речевой GGML-модели или CoreML encoder. Все platform entry points и Windows PowerShell adapter находятся рядом в `setup/`; они вычисляют корень проекта от собственного пути, поэтому не зависят от текущего рабочего каталога.
 
 Launcher запуска приложения не должен подменять setup системных пакетов: после первого setup обычный старт остаётся быстрым и идемпотентным.
