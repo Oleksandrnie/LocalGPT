@@ -832,6 +832,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
         self.assertTrue(any("Не используй LaTeX" in item for item in contents))
         self.assertTrue(any("35,690 ₽" in item and "35 690 ₽" in item for item in contents))
+        self.assertTrue(any("119 600 ₽" in item and "$1,250" in item and "€1,250" in item for item in contents))
 
     def test_sanitize_reply_normalizes_latex_currency_format(self):
         raw = r"Итого: \[ 23,730 \, \text{₽} + 11,960 \, \text{₽} = 35,690 \, \text{₽} \]"
@@ -841,6 +842,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertNotIn(r"\[", cleaned)
         self.assertNotIn(r"\text", cleaned)
         self.assertIn("23 730 ₽ + 11 960 ₽ = 35 690 ₽", cleaned)
+
+    def test_sanitize_reply_normalizes_accidental_currency_glyph_after_amount(self):
+        cleaned = sanitize_reply("Итоговая стоимость: 950 670 ⽇")
+
+        self.assertEqual(cleaned, "Итоговая стоимость: 950 670 ₽")
 
     def test_rag_ingest_and_prompt_context(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)

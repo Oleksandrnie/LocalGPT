@@ -52,14 +52,14 @@
 ### Stage 2 — Chat output enforcement
 
 - Goal: give generated answers the same contract and normalize the observed erroneous glyph.
-- Status: in_progress
+- Status: completed
 - Validation: focused `tests.test_pipeline_memory` tests.
 - Proposed checkpoint commit: `fix(chat): enforce currency display format`.
 
 ### Stage 3 — Verification and cleanup
 
 - Goal: run proportional validation, update permanent RAG documentation, and remove this temporary record.
-- Status: pending
+- Status: in_progress
 - Validation: `git diff --check`, focused unit tests, compile baseline, and RAG scans.
 - Proposed checkpoint commit: `docs(rag): record verified currency formatting`.
 
@@ -78,10 +78,18 @@
 - Validation: inspected all active RAG Markdown files; no malformed currency layout remains outside explanatory prohibitions.
 - Next action: validate chat guardrail and accidental-glyph sanitizer, then checkpoint Stage 1.
 
+### 2026-08-03 — Stage 2 complete
+
+- Changed: `backend/apps/chat/service.py` and `tests/test_pipeline_memory.py`.
+- Completed: the global chat guardrail now defines ₽/$/€ layouts; `sanitize_reply()` changes an observed `⽇` immediately after a number to `₽`.
+- Validation: the three focused formatting/sanitizer tests pass.
+- Known unrelated baseline: the full `tests.test_pipeline_memory` run has two pre-existing ASR-pipeline failures (`test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers`, `test_pipeline_tasks_are_normalized_for_transcript_record`).
+- Next action: checkpoint Stage 2, run final proportional checks, update the changelog, and remove this progress record.
+
 ## Continuation state
 
 - Current stage: Stage 2.
-- Next exact action: checkpoint the completed RAG source/documentation stage, then finish chat output validation.
+- Next exact action: checkpoint Stage 2, then perform final validation and cleanup.
 
 ## Final checklist
 
