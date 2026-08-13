@@ -9,6 +9,7 @@
 - Code-enforced prompt/RAG/runtime security controls: metadata-only diagnostics/logging, task ownership, request/prompt/upload budgets, generation concurrency/timeout cleanup и bounded SSE reconnects.
 - `ADMIN_TOKEN` authorization для runtime/database/storage/debug operations; Web UI передаёт token header-ом и хранит только в browser session.
 - Offline `hybrid_v1` RAG retrieval с facet coverage, source diversity, duplicate suppression и provenance/status diagnostics; trust-aware L1/L2/L4 prompt composition отделяет policy/persona от untrusted evidence.
+- Versioned local RAG embedding provider для Ollama `embeddinggemma`: provider/model/version/dimensions metadata, fail-closed vector validation, explicit atomic reindex и сохранение предыдущего generation для rollback без скрытого hashing fallback.
 - Chat reasoning теперь отделён от финального ответа в normal/SSE lifecycle, появляется в terminal modal live после первого chunk и остаётся persisted после completion/cancel/error; Thinking имеет рабочие ON/OFF controls и отдельные persisted output/thinking budgets с честной one-pass Ollama policy.
 - User messages получили то же действие `Скопировать`, что и assistant messages: raw multiline/Markdown content передаётся в clipboard без изменения, а Chat → RAG остаётся отдельным действием.
 - Любое user message и completed assistant message можно явно отредактировать и добавить в profile-scoped RAG; role/source metadata сохраняется, reasoning и binary исключены, source удаляется независимо.

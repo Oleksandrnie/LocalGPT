@@ -219,6 +219,13 @@ class Settings:
     single_large_target_model: bool
     preload_model_on_manual_select: bool
     admin_token: str
+    rag_embedding_provider: str
+    rag_embedding_model: str
+    rag_embedding_version: str
+    rag_embedding_dimensions: int
+    rag_embedding_timeout_seconds: float
+    rag_embedding_batch_size: int
+    rag_embedding_keep_alive: str
     tts_enabled: bool
     tts_default_provider: str
     tts_audio_format: str
@@ -534,6 +541,13 @@ def _load_settings() -> Settings:
         single_large_target_model=_parse_bool("SINGLE_LARGE_TARGET_MODEL", True),
         preload_model_on_manual_select=_parse_bool("PRELOAD_MODEL_ON_MANUAL_SELECT", False),
         admin_token=os.getenv("ADMIN_TOKEN", ""),
+        rag_embedding_provider=(os.getenv("RAG_EMBEDDING_PROVIDER", "local_hash") or "local_hash").strip(),
+        rag_embedding_model=(os.getenv("RAG_EMBEDDING_MODEL", "embeddinggemma:latest") or "embeddinggemma:latest").strip(),
+        rag_embedding_version=(os.getenv("RAG_EMBEDDING_VERSION", "embeddinggemma-300m-v1") or "embeddinggemma-300m-v1").strip(),
+        rag_embedding_dimensions=max(1, _parse_int("RAG_EMBEDDING_DIMENSIONS", 256)),
+        rag_embedding_timeout_seconds=max(1.0, _parse_float("RAG_EMBEDDING_TIMEOUT_SECONDS", 60.0)),
+        rag_embedding_batch_size=max(1, min(128, _parse_int("RAG_EMBEDDING_BATCH_SIZE", 32))),
+        rag_embedding_keep_alive=_parse_keep_alive("RAG_EMBEDDING_KEEP_ALIVE", "2m"),
         tts_enabled=_parse_bool("TTS_ENABLED", True),
         tts_default_provider=(os.getenv("TTS_DEFAULT_PROVIDER", "piper") or "piper").strip().lower(),
         tts_audio_format=audio_format,

@@ -2076,6 +2076,61 @@ def create_document_embedding(
         return int(cur.lastrowid)
 
 
+def list_document_chunks(profile_id: int) -> list[dict[str, Any]]:
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT id AS chunk_id, document_id, profile_id, session_id, chunk_index, content, metadata_json
+            FROM document_chunks
+            WHERE profile_id = ?
+            ORDER BY id ASC
+            """,
+            (profile_id,),
+        ).fetchall()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = _row_dict(row) or {}
+        item["metadata"] = _from_json(item.pop("metadata_json", None), {})
+        result.append(item)
+    return result
+
+
+def replace_embedding_generation(
+    profile_id: int,
+    embedding_model: str,
+    rows: list[dict[str, Any]],
+) -> int:
+    now = _utcnow()
+    with closing(_connect()) as conn:
+        conn.execute(
+            "DELETE FROM document_embeddings WHERE profile_id = ? AND embedding_model = ?",
+            (profile_id, embedding_model),
+        )
+        conn.executemany(
+            """
+            INSERT INTO document_embeddings (
+                chunk_id, profile_id, embedding_model, embedding_json,
+                metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    int(row["chunk_id"]),
+                    profile_id,
+                    embedding_model,
+                    _to_json(row["embedding"]),
+                    _to_json(row.get("metadata")),
+                    now,
+                    now,
+                )
+                for row in rows
+            ],
+        )
+        conn.commit()
+    return len(rows)
+
+
 def list_rag_chunks(
     profile_id: int,
     embedding_model: str | None = None,

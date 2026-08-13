@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import math
 import re
 import shutil
 from pathlib import Path
@@ -11,7 +9,7 @@ from typing import Any
 from fastapi import HTTPException, UploadFile
 
 from app import config, db
-from backend.apps.rag import retrieval
+from backend.apps.rag import embeddings, retrieval
 
 SOURCE_TYPE = "manual_file"
 ASR_CONTEXT_SOURCE_TYPE = "asr_context"
@@ -310,17 +308,36 @@ def _chunk_text(text: str) -> list[str]:
 
 
 def embed_text(text: str) -> list[float]:
-    vector = [0.0] * VECTOR_DIMS
-    for token in TOKEN_RE.findall((text or "").lower()):
-        digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
-        value = int.from_bytes(digest, "big")
-        index = value % VECTOR_DIMS
-        sign = 1.0 if (value >> 8) & 1 else -1.0
-        vector[index] += sign
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm <= 0:
-        return vector
-    return [round(value / norm, 6) for value in vector]
+    provider = _embedding_provider()
+    return _embed_texts(provider, [text])[0]
+
+
+def _embedding_provider() -> embeddings.EmbeddingProvider:
+    try:
+        return embeddings.provider_from_settings()
+    except embeddings.EmbeddingError as exc:
+        raise HTTPException(status_code=503, detail=f"rag_embedding_configuration_error:{exc}") from exc
+
+
+def _embed_texts(
+    provider: embeddings.EmbeddingProvider,
+    texts: list[str],
+    *,
+    release: bool = True,
+) -> list[list[float]]:
+    try:
+        vectors = provider.embed(texts, release=release)
+    except embeddings.EmbeddingError as exc:
+        raise HTTPException(status_code=503, detail=f"rag_embedding_provider_unavailable:{exc}") from exc
+    if len(vectors) != len(texts) or any(
+        len(vector) != provider.descriptor.dimensions for vector in vectors
+    ):
+        raise HTTPException(status_code=503, detail="rag_embedding_provider_incompatible")
+    return vectors
+
+
+def _descriptor_metadata(provider: embeddings.EmbeddingProvider) -> dict[str, Any]:
+    return provider.descriptor.as_metadata()
 
 
 def _cosine(left: list[float], right: list[float]) -> float:
@@ -358,6 +375,10 @@ def _index_text_document(
     if not chunks:
         raise HTTPException(status_code=422, detail="rag_context_empty")
 
+    provider = _embedding_provider()
+    vectors = _embed_texts(provider, chunks)
+    descriptor = _descriptor_metadata(provider)
+
     db.delete_source_document(profile_id, source_type, source_id)
     document = db.create_source_document(
         profile_id=profile_id,
@@ -366,10 +387,10 @@ def _index_text_document(
         source_id=source_id,
         title=title,
         content=text,
-        metadata={**metadata, "embedding_model": EMBEDDING_MODEL},
+        metadata={**metadata, "embedding_model": provider.descriptor.storage_key, "embedding": descriptor},
     )
     document_id = int(document["id"])
-    for idx, chunk in enumerate(chunks):
+    for idx, (chunk, vector) in enumerate(zip(chunks, vectors)):
         chunk_id = db.create_document_chunk(
             document_id=document_id,
             profile_id=profile_id,
@@ -381,9 +402,14 @@ def _index_text_document(
         db.create_document_embedding(
             chunk_id=chunk_id,
             profile_id=profile_id,
-            embedding_model=EMBEDDING_MODEL,
-            embedding=embed_text(chunk),
-            metadata={"source_id": source_id, "chunk_index": idx, "source_type": source_type},
+            embedding_model=provider.descriptor.storage_key,
+            embedding=vector,
+            metadata={
+                "source_id": source_id,
+                "chunk_index": idx,
+                "source_type": source_type,
+                "embedding": descriptor,
+            },
         )
     return {
         "indexed": True,
@@ -392,7 +418,8 @@ def _index_text_document(
         "source_id": source_id,
         "title": title,
         "chunks_indexed": len(chunks),
-        "embedding_model": EMBEDDING_MODEL,
+        "embedding_model": provider.descriptor.storage_key,
+        "embedding": descriptor,
     }
 
 
@@ -673,12 +700,16 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
 
+    provider = _embedding_provider()
+    embedding_model = provider.descriptor.storage_key
+    descriptor = _descriptor_metadata(provider)
     existing = _existing_documents(profile_id)
     scanned = 0
     indexed = 0
     skipped = 0
     errors: list[dict[str, str]] = []
     total_chunks = 0
+    reindex_required = 0
     seen_source_ids: set[str] = set()
 
     for path in _iter_source_files(profile_id):
@@ -691,19 +722,27 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             "suffix": path.suffix.lower(),
             "size": stat.st_size,
             "mtime": stat.st_mtime,
-            "embedding_model": EMBEDDING_MODEL,
+            "embedding_model": embedding_model,
+            "embedding": descriptor,
             "source_kind": _source_kind(path),
             "truth_priority": 10,
             "source_role": "source",
         }
         current = existing.get(source_id)
         current_meta = current.get("metadata") if isinstance(current, dict) else {}
-        if (
-            not force
-            and current
+        unchanged_source = (
+            current
             and current_meta.get("size") == metadata["size"]
             and current_meta.get("mtime") == metadata["mtime"]
-            and current_meta.get("embedding_model") == EMBEDDING_MODEL
+        )
+        if unchanged_source and current_meta.get("embedding_model") != embedding_model:
+            reindex_required += 1
+            skipped += 1
+            continue
+        if (
+            not force
+            and unchanged_source
+            and current_meta.get("embedding_model") == embedding_model
         ):
             skipped += 1
             continue
@@ -718,6 +757,8 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             errors.append({"path": source_id, "error": str(exc)})
             continue
 
+        vectors = _embed_texts(provider, chunks)
+
         db.delete_source_document(profile_id, SOURCE_TYPE, source_id)
         document = db.create_source_document(
             profile_id=profile_id,
@@ -729,7 +770,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             metadata=metadata,
         )
         document_id = int(document["id"])
-        for idx, chunk in enumerate(chunks):
+        for idx, (chunk, vector) in enumerate(zip(chunks, vectors)):
             chunk_id = db.create_document_chunk(
                 document_id=document_id,
                 profile_id=profile_id,
@@ -741,9 +782,9 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             db.create_document_embedding(
                 chunk_id=chunk_id,
                 profile_id=profile_id,
-                embedding_model=EMBEDDING_MODEL,
-                embedding=embed_text(chunk),
-                metadata={"path": source_id, "chunk_index": idx},
+                embedding_model=embedding_model,
+                embedding=vector,
+                metadata={"path": source_id, "chunk_index": idx, "embedding": descriptor},
             )
         indexed += 1
         total_chunks += len(chunks)
@@ -758,19 +799,82 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
         "profile_id": profile_id,
         "source_dir": f"profile:{profile_id}",
         "source_scope": "active_profile",
-        "embedding_model": EMBEDDING_MODEL,
+        "embedding_model": embedding_model,
+        "embedding": descriptor,
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "scanned": scanned,
         "indexed": indexed,
         "skipped": skipped,
         "chunks_indexed": total_chunks,
         "removed_stale": removed_stale,
+        "reindex_required": reindex_required,
         "errors": errors,
         "stats": stats,
     }
 
 
+def reindex_embeddings(
+    profile_id: int,
+    *,
+    provider: embeddings.EmbeddingProvider | None = None,
+) -> dict[str, Any]:
+    if not db.get_profile(profile_id):
+        raise HTTPException(status_code=404, detail="profile_not_found")
+    selected = provider or _embedding_provider()
+    chunks = db.list_document_chunks(profile_id)
+    batch_size = max(1, int(config.SETTINGS.rag_embedding_batch_size))
+    rows: list[dict[str, Any]] = []
+    descriptor = _descriptor_metadata(selected)
+    for start in range(0, len(chunks), batch_size):
+        batch = chunks[start : start + batch_size]
+        is_last = start + batch_size >= len(chunks)
+        vectors = _embed_texts(selected, [str(item.get("content") or "") for item in batch], release=is_last)
+        for item, vector in zip(batch, vectors):
+            rows.append(
+                {
+                    "chunk_id": int(item["chunk_id"]),
+                    "embedding": vector,
+                    "metadata": {
+                        **(item.get("metadata") or {}),
+                        "embedding": descriptor,
+                    },
+                }
+            )
+    replaced = db.replace_embedding_generation(profile_id, selected.descriptor.storage_key, rows)
+    return {
+        "profile_id": profile_id,
+        "embedding_model": selected.descriptor.storage_key,
+        "embedding": descriptor,
+        "chunks_reindexed": replaced,
+        "rollback_preserved": True,
+    }
+
+
+def _current_generation_chunks(
+    profile_id: int,
+    provider: embeddings.EmbeddingProvider,
+    *,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    current = db.list_rag_chunks(
+        profile_id,
+        embedding_model=provider.descriptor.storage_key,
+        session_id=session_id,
+    )
+    available = db.list_rag_chunks(profile_id, session_id=session_id)
+    current_ids = {int(item["chunk_id"]) for item in current}
+    available_ids = {int(item["chunk_id"]) for item in available}
+    if available_ids - current_ids:
+        raise HTTPException(
+            status_code=409,
+            detail=f"rag_embedding_reindex_required:{provider.descriptor.storage_key}",
+        )
+    return current
+
+
 def status(profile_id: int | None = None, *, session_id: str | None = None) -> dict[str, Any]:
+    provider = _embedding_provider()
+    embedding_model = provider.descriptor.storage_key
     files = _iter_source_files(profile_id) if profile_id is not None else []
     if profile_id is not None:
         valid_source_ids = {_relative_source_id(path, profile_id) for path in files}
@@ -779,7 +883,7 @@ def status(profile_id: int | None = None, *, session_id: str | None = None) -> d
             if source_id and source_id not in valid_source_ids:
                 db.delete_source_document(profile_id, SOURCE_TYPE, source_id)
     scoped_chunks = (
-        db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL, session_id=session_id)
+        db.list_rag_chunks(profile_id, embedding_model=embedding_model, session_id=session_id)
         if profile_id is not None
         else []
     )
@@ -788,10 +892,22 @@ def status(profile_id: int | None = None, *, session_id: str | None = None) -> d
         "chunks": len(scoped_chunks),
         "embeddings": len(scoped_chunks),
     }
+    available_chunks = (
+        db.list_rag_chunks(profile_id, session_id=session_id) if profile_id is not None else []
+    )
+    missing_chunks = len(
+        {int(item["chunk_id"]) for item in available_chunks}
+        - {int(item["chunk_id"]) for item in scoped_chunks}
+    )
     return {
         "source_dir": f"profile:{profile_id}" if profile_id is not None else "profile-scoped",
         "source_scope": "active_profile" if profile_id is not None else "profile_required",
-        "embedding_model": EMBEDDING_MODEL,
+        "embedding_model": embedding_model,
+        "embedding": _descriptor_metadata(provider),
+        "embedding_generation": {
+            "status": "reindex_required" if missing_chunks else "ready",
+            "missing_chunks": missing_chunks,
+        },
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "file_count": len(files),
         "files": [_relative_source_id(path, profile_id) for path in files[:100]],
@@ -814,11 +930,15 @@ def _legacy_search(
     cleaned_query = (query or "").strip()
     if not cleaned_query or top_k <= 0:
         return []
-    query_vector = embed_text(cleaned_query)
+    provider = _embedding_provider()
+    raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
+    if not raw_chunks:
+        return []
+    query_vector = _embed_texts(provider, [cleaned_query])[0]
     query_tokens = set(TOKEN_RE.findall(cleaned_query.lower()))
     query_lower = cleaned_query.lower()
     scored: list[dict[str, Any]] = []
-    for chunk in db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL, session_id=session_id):
+    for chunk in raw_chunks:
         score = _cosine(query_vector, chunk.get("embedding") or [])
         haystack = " ".join(
             str(value or "")
@@ -902,8 +1022,12 @@ def search_with_diagnostics(
     if not cleaned_query or top_k <= 0:
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [])
         return {"strategy": DEFAULT_RETRIEVAL_STRATEGY, "results": [], "diagnostics": diagnostics}
-    query_vector = embed_text(cleaned_query)
-    raw_chunks = db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL, session_id=session_id)
+    provider = _embedding_provider()
+    raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
+    if not raw_chunks:
+        diagnostics = retrieval.evidence_diagnostics(cleaned_query, [])
+        return {"strategy": DEFAULT_RETRIEVAL_STRATEGY, "results": [], "diagnostics": diagnostics}
+    query_vector = _embed_texts(provider, [cleaned_query])[0]
     evaluated = retrieval.rank_hybrid(
         raw_chunks,
         cleaned_query,
@@ -938,7 +1062,8 @@ def search(
 def audit_corpus(profile_id: int) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
-    chunks = db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL)
+    provider = _embedding_provider()
+    chunks = _current_generation_chunks(profile_id, provider)
     return {"profile_id": profile_id, **retrieval.corpus_audit(chunks)}
 
 

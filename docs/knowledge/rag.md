@@ -48,7 +48,11 @@ Service старается резать по абзацам, а длинные �
 
 ## Embeddings и search
 
-`EMBEDDING_MODEL = local-hash-v1` — deterministic local hashing vector, не внешняя neural embedding model. Индексация и retrieval не требуют Ollama, не загружают chat LLM и не отправляют corpus наружу.
+Embedding слой имеет versioned provider contract. Compatibility generation `local-hash-v1` остаётся default и не требует Ollama; semantic generation использует локальный Ollama `/api/embed` с `embeddinggemma:latest`, фиксированными model version и dimensions. Канонический generation key включает provider/model/version/dimensions, а те же поля сохраняются в metadata документа и vector row. Векторы разных generation не смешиваются.
+
+Semantic provider передаёт `truncate=false`, валидирует число, размерность и конечность значений и не откатывается молча к hashing при timeout, отсутствии модели или несовместимом ответе. Последний batch отправляется с `keep_alive=0`, поэтому embedding model предсказуемо выгружается; промежуточные reindex batches используют bounded keep-alive. Размер batch ограничен настройкой.
+
+Переключение `RAG_EMBEDDING_PROVIDER`/model/version/dimensions не конвертирует индекс автоматически: search возвращает `rag_embedding_reindex_required`, пока все доступные chunks не получат выбранное generation. Переиндексация сначала полностью рассчитывает новое поколение и только затем атомарно публикует его; прежние generation остаются в SQLite, поэтому rollback выполняется возвратом прежней конфигурации без повторного чтения corpus. Пользовательский API/UI для запуска и наблюдения semantic reindex относится к отдельному operational stage.
 
 Default search strategy `hybrid_v1`:
 
@@ -63,13 +67,13 @@ Default search strategy `hybrid_v1`:
 
 Для capability follow-up с platform/system vocabulary ranking дополнительно повышает chunks с плотным прямым перечнем поддержки/доработки или несколькими платформами/системами. Это общий lexical сигнал без списка конкретных брендов. Conflict diagnostics связывает год с тем же chunk, где найдено exclusive/alternative утверждение, чтобы случайные годы из соседнего boilerplate не создавали ложный конфликт.
 
-Это лёгкий локальный retrieval. Semantic quality всё ещё ограничена hashing/lexical approach; точные headings, ключевые слова и structured facts особенно важны. Локальная semantic embedding dependency была рассмотрена, но не выбрана: в текущей среде она требует отсутствующую модель/dependency и отдельную тяжёлую загрузку, поэтому не удовлетворяет offline reproducibility/resource gate этого этапа.
+Пока выбран compatibility generation, semantic quality ограничена hashing/lexical approach; точные headings, ключевые слова и structured facts особенно важны. Semantic provider уже доступен как инфраструктура, но не включается автоматически и не загружает модель без явной локальной установки и переиндексации.
 
 На synthetic CMS + regions corpus baseline `legacy` дважды выбирал `duplicate-aggregate.md` в top-2. `hybrid_v1` выбрал `cms.md` и `regions.md`, снизив top-2 duplicate-source ratio с 100% до 0% и дав specific facet coverage 2/2 вместо 0/2. Один bounded прогон по 100 запросов показал около 3.14 ms/query и 1.56 MB peak для legacy против 10.59 ms/query и 2.16 MB peak для hybrid; это regression-test observation, не production benchmark.
 
 Отдельный cross-domain eval находится в `tools/rag_retrieval_eval.py` и `tests/fixtures/rag_retrieval_eval/`. Он использует unrelated synthetic domains, exact/paraphrase/typo/conflict/negative cases и metadata-only report. Это канонический quality gate для будущих embeddings/reranking; временный пользовательский corpus в fixtures и production heuristics не переносится.
 
-Rollback не переиндексирует и не меняет источники: app setting `rag_retrieval_strategy=legacy` возвращает прежнее ранжирование; отсутствие/неизвестное значение выбирает `hybrid_v1`.
+Retrieval-strategy rollback не переиндексирует и не меняет источники: app setting `rag_retrieval_strategy=legacy` возвращает прежнее ранжирование; отсутствие/неизвестное значение выбирает `hybrid_v1`. Embedding-generation rollback независимо выбирает сохранённый прежний provider/model/version/dimensions key.
 
 ## Chat integration
 

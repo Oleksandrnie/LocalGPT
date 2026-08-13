@@ -52,6 +52,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
 | Prompt/RAG security, hybrid retrieval и grounding diagnostics | `venv/bin/python -m unittest tests.test_prompt_rag_security_audit tests.test_chat_rag tests.test_vision_rag -v` |
 | Cross-domain RAG retrieval baseline, metadata-only | `venv/bin/python -m unittest tests.test_rag_retrieval_eval -v` |
+| Versioned RAG embedding provider, reindex и rollback | `venv/bin/python -m unittest tests.test_rag_embeddings -v` |
 | Live-model harness contract без загрузки модели | `venv/bin/python -m unittest tests.test_live_llm_security_harness -v` |
 | Profile/session isolation и history-turn contract | `venv/bin/python -m unittest tests.test_context_isolation tests.test_chat_attachments tests.test_chat_rag tests.test_vision_rag -v` |
 | Runtime authorization, ownership, redaction, limits и cleanup | `venv/bin/python -m unittest tests.test_runtime_security -v` |
@@ -202,6 +203,7 @@ Model-transfer tests используют только temporary synthetic files
 - validation только `.md` и отклонение legacy `.txt`/`.json`;
 - force reindex очищает stale JSON records, не удаляя legacy files;
 - chunk overlap, embedding metadata, `hybrid_v1`/`legacy` rollback и diversified top-k search;
+- versioned provider/model/dimensions не смешиваются; несовместимый Ollama response fail-closed, explicit reindex атомарно публикует новое generation и сохраняет прежнее для rollback;
 - context assembly соблюдает `max_chars` и содержит bounded facet/provenance diagnostics;
 - generic capability/platform follow-up выбирает direct supported-platform evidence, а query composer не дублирует повторённые recent user turns;
 - search соблюдает query/top-k limits; multi-file upload проверяет count/per-file/total bytes до publication и не оставляет artifacts при 413;

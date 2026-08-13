@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 9 pending — local multilingual embedding infrastructure.
+- Current stage: Stage 10 pending — hybrid lexical and semantic candidate fusion.
 
 ## Instructions and precedence
 
@@ -174,7 +174,7 @@
 ### Stage 9 — Local multilingual embedding infrastructure
 
 - Goal: replace hashing as semantic evidence with a versioned local multilingual embedding provider while preserving explicit offline behavior.
-- Status: pending.
+- Status: completed.
 - Actions: select a resource-bounded model using primary model documentation; add provider abstraction and dependency/resource gates; persist provider/model/version/dimension; implement explicit reindex requirement and rollback to the previous indexed generation without silent fallback.
 - Expected result: arbitrary supported-language chunks and queries receive comparable semantic vectors; stale/incompatible vectors are never mixed.
 - Validation: provider contract tests, deterministic stub vectors, schema/reindex/rollback tests, then one bounded local provider smoke if the model is available or download is separately authorized.
@@ -329,8 +329,19 @@
 - Interpretation: raw top-5 presence overstates quality because hashing collisions can select the expected file while facet diagnostics still report `not_found`. The baseline proves the need for a real semantic provider and later fusion/status calibration; it does not justify tuning against the temporary work corpus.
 - Validation: 39 focused eval/prompt-RAG-security/chat tests passed, including deterministic eval results excluding timing and direct CLI output; runner/test compilation, RAG/test compileall and `git diff --check` passed. No LLM, embedding dependency or network access was used.
 - Changed: cross-domain fixtures/case manifest, metadata-only eval tool/tests, testing and RAG knowledge docs, active progress record.
-- Checkpoint: `test(rag): add cross-domain retrieval baseline` pending commit creation after this progress snapshot.
-- Next action: stop after the focused commit. On explicit user continuation, begin Stage 9 with primary-source model/provider research and resource/compatibility gates before installing or downloading anything.
+- Checkpoint: `3b9fbb7` (`test(rag): add cross-domain retrieval baseline`).
+- Next action: completed by the Stage 9 continuation below.
+
+### 2026-08-14 — Stage 9 versioned local embeddings
+
+- Stage: Stage 9.
+- Provider decision: selected Ollama `embeddinggemma:latest` as the optional local multilingual semantic adapter, using its native `/api/embed` path and a 256-dimensional versioned generation. Compatibility default remains `local-hash-v1` until the model is explicitly installed and operational reindex controls are added; no model or dependency was downloaded.
+- Completed: added provider/model/version/dimension descriptors, strict response validation, bounded batch settings and final `keep_alive=0`; indexing/search now resolve one active generation and never mix stale vectors. Unknown providers, unavailable Ollama and incompatible vectors fail explicitly without hashing fallback.
+- Reindex/rollback: a new internal explicit reindex calculates all vectors before an atomic generation replacement, preserves earlier generations, and releases the provider on the last batch. Ordinary ingest cannot silently replace an unchanged corpus after provider switch; search/status report that reindex is required. Returning to the prior generation restores retrieval without editing sources.
+- Validation: provider request/shape/no-fallback tests and temporary-corpus generation/reindex/rollback/failure tests added; 56 focused RAG/security/isolation Python tests and 4 Markdown rendering tests passed. Compileall, JavaScript syntax and diff check passed. Warnings are pre-existing datetime/Starlette/resource warnings, not test failures. Live provider smoke skipped because `embeddinggemma` is not installed locally and download was not separately authorized.
+- Changed: RAG embedding adapter, settings/example environment, atomic DB generation operations, RAG service integration, focused tests, RAG/testing/changelog docs and this progress record.
+- Checkpoint: `feat(rag): add versioned local embeddings` pending commit creation after final validation.
+- Next action: stop after the focused commit. On explicit user continuation, begin Stage 10 hybrid lexical/semantic candidate fusion and compare it with the unchanged Stage 8 cross-domain gate; do not run chat models.
 
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 
@@ -400,11 +411,11 @@
 ## Validation results
 
 - Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed. Stage 7D repeated RAG/test compileall and diff check successfully.
-- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D passed 36 focused prompt/RAG/chat tests. Stage 8 passed 39 eval/prompt-RAG-security/chat tests.
+- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D passed 36 focused prompt/RAG/chat tests. Stage 8 passed 39 eval/prompt-RAG-security/chat tests. Stage 9 provider/generation tests and focused RAG/security/isolation regression gate passed after the implementation correction recorded above.
 - Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement; host LAN HTTPS/API/SSE/CORS/admin/certificate matrix passed.
 - Manual/regression checks: user confirmed restored host behavior and functional second-device access; Qwen3 OFF + generic CMS RAG answer passed on the real phone. Safari still displays `Not Secure`, so certificate trust status remains pending separately in Stage 7A.
 - Skipped checks and reasons: no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
-- Remaining uncertainty: model behavioral jailbreak resistance varies; current hashing/lexical retrieval quality is not yet measured across domains; semantic provider and reranking choices remain pending Stages 8–11; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
+- Remaining uncertainty: model behavioral jailbreak resistance varies; live `embeddinggemma` quality/resources remain unmeasured until a separately authorized install/smoke; hybrid semantic fusion and reranker decision remain Stages 10–11; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
 
 ## Regressions and deferred work
 
@@ -425,16 +436,16 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D).
+- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8).
 
 ## Continuation state
 
-- Current stage: Stage 9 pending; stop required after the Stage 8 commit until the user explicitly resumes.
-- Last completed action: deterministic metadata-only baseline recorded for the unchanged `local-hash-v1` / `hybrid_v1` retrieval path.
-- Current repository state: Stage 8 owns only synthetic fixtures, eval tool/tests, affected testing/RAG docs, and this progress update; production retrieval code and dependencies are unchanged.
-- Known risks: raw recall overstates grounded quality; paraphrase diagnostics, typo tolerance, negative rejection and conflict status need improvement. Backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`.
-- Next exact action: after manual continuation, research a small local multilingual embedding provider from primary documentation; record model size, languages, dimensions, license/runtime support and Mac resource gate before any dependency/download or implementation.
-- Next files: provider/RAG docs and current dependency/setup contracts; then versioned embedding adapter/schema/tests if the resource gate is accepted within Stage 9.
+- Current stage: Stage 10 pending; stop required after the Stage 9 commit until the user explicitly resumes.
+- Last completed action: versioned local embedding provider, atomic explicit reindex and previous-generation rollback implemented without changing the active compatibility generation.
+- Current repository state: Stage 9 changes only embedding configuration/adapter, generation persistence/service integration, focused tests, affected docs and this progress record. No model was installed or run, and the user's current RAG needs no manual reindex.
+- Known risks: live semantic quality/resources are not yet measured; Stage 8 raw recall still overstates grounded quality, and paraphrase diagnostics, typo tolerance, negative rejection and conflict status need improvement. Backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`.
+- Next exact action: after manual continuation, implement domain-neutral lexical/semantic candidate fusion over version-matched vectors, remove the temporary generic capability bonus only after the cross-domain quality gate passes, then commit and stop.
+- Next files: `backend/apps/rag/retrieval.py`, embedding/search integration, Stage 8 eval/tests and affected RAG/testing docs.
 
 ## Final checklist
 
