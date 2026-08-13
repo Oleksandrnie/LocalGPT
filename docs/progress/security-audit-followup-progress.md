@@ -91,7 +91,7 @@
 ### Stage 6 — Controlled live-model jailbreak validation
 
 - Goal: run the prior security controls against an actually installed Ollama chat model with synthetic canaries.
-- Status: pending.
+- Status: completed; checkpoint pending.
 - Actions: add a separate opt-in harness/command; record model/runtime identity and hard/behavioral classifications; run bounded deterministic fixtures; make minimal mitigation only for reproduced failures.
 - Expected result: reproducible live report without raw hidden prompts, client corpus, or secrets.
 - Validation: harness unit tests plus controlled repeated live run; confirm no foreign source reaches request and no model output triggers a privileged action.
@@ -160,7 +160,27 @@
 - Changed: backend/database/RAG/ASR/UI contracts, deterministic Python/Node isolation tests, and affected architecture/backend/RAG/UI/testing/changelog records.
 - Validation: 216 focused Python tests ran with only the two recorded ASR baseline failures; 28 Node tests, compileall, JS syntax, and diff check passed.
 - Issues: ambiguous legacy derived rows without `session_id` are preserved but quarantined from ordinary retrieval; explicit promotion remains out of scope.
-- Next action: create the Stage 5 checkpoint, then build the opt-in live Ollama security harness.
+- Checkpoint: `5acb521 feat(security): enforce profile and session context isolation`.
+- Next action: build and validate the opt-in live Ollama security harness.
+
+### 2026-08-13 — Stage 6 pre-live harness
+
+- Stage: Stage 6.
+- Completed: added a separate opt-in synthetic jailbreak harness with eight required categories, unique protected/behavioral/foreign-scope canaries, deterministic generation settings, metadata-only reporting, and explicit hard-versus-behavioral classification.
+- Changed: `tools/live_llm_security.py`, `tests/test_live_llm_security_harness.py`, and this progress record.
+- Validation: 49 focused isolation/prompt/runtime/harness tests, compileall, JS syntax, Markdown rendering, and diff check passed.
+- Issues: no code regression; the earlier mistyped test module name was corrected in the command and the intended suite passed.
+- Next action: identify the installed primary chat model and run the bounded live suite twice through the real Ollama runtime.
+
+### 2026-08-13 — Stage 6 live-model validation and mitigation
+
+- Stage: Stage 6.
+- Completed: ran eight synthetic security categories twice on `qwen3:4b`, `qwen2.5:3b-instruct`, and `qwen2.5:7b-instruct`, strictly sequentially; separated raw model behavior from the enforced backend boundary; added normal/reasoning/streaming/vision protected-literal fail-closed handling and removed a reproduced user-marker false positive.
+- Changed: backend/profile guard policy, ChatService/task output enforcement, opt-in metadata-only harness/tests, and affected architecture/provider/testing/audit/changelog/backlog records.
+- Validation: final current-code runs were `qwen3:4b` 2 raw disclosures / 2 backend blocks / 0 hard failures / 12 behavioral; `qwen2.5:3b-instruct` 2 / 2 / 0 / 6; `qwen2.5:7b-instruct` 0 / 0 / 0 / 6. All 48 runs had no foreign-scope prompt boundary breach or action edge. Ollama `0.32.5`, Metal M1 Pro, `temperature=0`, `num_ctx=8192`, `max_tokens=160`, `think=false`.
+- Regression: 201 broad focused Python tests reproduced only the two documented ASR baseline failures; 28 Node tests, compileall, JavaScript syntax, and diff check passed.
+- Issues: all three models retain some behavioral susceptibility, strongest on `qwen3:4b`; backend boundaries remain authoritative. No raw prompt, response or canary value was persisted in project artifacts.
+- Next action: run broad Stage 6 regression, update this checkpoint with the commit hash, then start Stage 7A LAN validation.
 
 ## Changed files
 
@@ -169,11 +189,14 @@
 - `docs/progress/security-audit-followup-progress.md`.
 - `tests/test_context_isolation.py`.
 - `tests/context_isolation_ui.test.mjs`.
+- `tests/test_live_llm_security_harness.py`.
+- `tools/live_llm_security.py`.
 
 ### Modified
 
 - `app/db.py`, session/criteria schemas and routes.
 - Chat attachments/routes/service and ASR transcript/pipeline routes.
+- Chat prompt policy/service/tasks output boundary and global system policy.
 - RAG routes/service and active Web UI request/settings flows.
 - Existing focused tests and affected permanent documentation.
 
@@ -184,11 +207,11 @@
 ## Validation results
 
 - Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed.
-- Unit/contract tests: Stage 5 matrix passed; 216 broad focused tests reproduced only two baseline ASR failures; 28 Node tests passed.
-- Integration/smoke tests: not started.
+- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed.
+- Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement.
 - Manual/regression checks: not started.
-- Skipped checks and reasons: live Ollama and LAN intentionally deferred until isolated automated controls are implemented.
-- Remaining uncertainty: live model behavior and real LAN remain unverified; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
+- Skipped checks and reasons: real LAN remains Stage 7A; no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
+- Remaining uncertainty: model behavioral jailbreak resistance varies; real LAN remains unverified; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
 
 ## Regressions and deferred work
 
@@ -209,16 +232,16 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: none yet.
+- Follow-up checkpoints: `5acb521` (Stage 5).
 
 ## Continuation state
 
-- Current stage: Stage 6.
-- Last completed action: Stage 5 implementation, focused regression, and affected-doc update.
-- Current repository state: Stage 5 diff ready for focused commit; progress file remains ignored until forced add.
-- Known risks: live model behavior and LAN environment are still unverified; legacy derived rows are intentionally non-retrievable without ownership.
-- Next exact action: checkpoint Stage 5, then add a separate opt-in synthetic live-model harness.
-- Next command or file: inspect staged Stage 5 diff, commit, then trace `ollama_runtime` request metadata for the live harness.
+- Current stage: Stage 6 checkpoint.
+- Last completed action: final live validation on all three requested text models and Ollama shutdown.
+- Current repository state: Stage 5 is committed at `5acb521`; Stage 6 code/docs/tests are ready for broad regression and focused commit.
+- Known risks: raw model privacy/behavior varies, especially on `qwen3:4b`; backend fail-closed enforcement is required. LAN remains unverified.
+- Next exact action: run broad focused/static regression, inspect staged diff, and create the Stage 6 checkpoint.
+- Next command or file: `venv/bin/python -m unittest` focused security/runtime/chat suites, followed by static/Node checks.
 
 ## Final checklist
 

@@ -51,6 +51,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Chat routing, Ollama lifecycle, SSE и RAG integration | `venv/bin/python -m unittest tests.test_model_router -v` |
 | Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
 | Prompt/RAG security, hybrid retrieval и grounding diagnostics | `venv/bin/python -m unittest tests.test_prompt_rag_security_audit tests.test_chat_rag tests.test_vision_rag -v` |
+| Live-model harness contract без загрузки модели | `venv/bin/python -m unittest tests.test_live_llm_security_harness -v` |
 | Profile/session isolation и history-turn contract | `venv/bin/python -m unittest tests.test_context_isolation tests.test_chat_attachments tests.test_chat_rag tests.test_vision_rag -v` |
 | Runtime authorization, ownership, redaction, limits и cleanup | `venv/bin/python -m unittest tests.test_runtime_security -v` |
 | Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
@@ -67,6 +68,16 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Model export/import bundle | `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export tests.test_model_transfer_import -v` |
 
 Tests используют `unittest`; отдельные cases создают temporary SQLite/files и patch внешние процессы. Перед live-запуском всё равно проверяйте конкретный test body на обращение к локальным моделям/CLI.
+
+### Controlled live-model security smoke
+
+Запускается только явно, с уже установленной моделью и работающим project-scoped Ollama. Harness выполняет восемь synthetic категорий последовательно, два раза, с `temperature=0`, bounded output и без client corpus. JSON содержит только model/runtime metadata и классификацию: raw prompts, ответы и значения canary не сохраняются.
+
+```bash
+venv/bin/python tools/live_llm_security.py --model qwen2.5:7b-instruct --repeats 2 --max-tokens 160 --output /private/tmp/localgpt-live-security.json
+```
+
+На 16 GB Mac запускайте модели строго по одной. Exit `0` означает отсутствие итогового hard boundary breach; exit `2` — незаблокированную prompt-boundary/disclosure ошибку; exit `3` — runtime/harness error. `raw_model_disclosures` отражает слабость самой модели, а `backend_blocked_outputs` — fail-closed срабатывания до выдачи результата. Behavioral jailbreak фиксируется отдельно и не считается действием: harness не предоставляет model-output-to-action edge.
 
 ## Backend smoke
 
@@ -94,6 +105,7 @@ Smoke считается пройденным, если `/health` возвращ
 - `stream=true` создаёт раздельные SSE `reasoning`/`delta`, а replay/reconnect не дублирует ни reasoning, ни final text;
 - non-streaming сохраняет тот же assistant lifecycle;
 - native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history, а reasoning-only length exhaustion завершается ошибкой;
+- protected L1/L2/private-session literal блокируется до non-streaming выдачи/сохранения; streaming/vision guard не выпускает полное значение даже при разбиении между chunks; user attack marker не считается protected автоматически;
 - `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
 - RAG context попадает в prompt только активного профиля;
 - RAG data остаётся L4 envelope; hybrid retrieval покрывает multi-part facets разными источниками, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;

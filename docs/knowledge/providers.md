@@ -14,6 +14,8 @@
 
 Native `message.thinking` и `message.content` нормализуются в разные result/event поля. Thinking OFF передаёт `think=false`; для hybrid Qwen к копии последнего user turn добавляется transient `/no_think`, который не сохраняется. Thinking ON использует native structured reasoning. Reasoning никогда не возвращается строковыми compatibility APIs и не смешивается с final stream.
 
+`ChatService` не полагается на отказ модели как на privacy boundary. Перед выдачей non-streaming content/reasoning он блокирует буквальное повторение длинных secret-like значений из backend/profile prompt layers и явно помеченного private session context. Streaming guard удерживает хвост длиной до самого длинного protected literal и проверяет его до отправки; direct vision stream использует ту же проверку. User-query markers не повышаются до protected values.
+
 Ollama предоставляет один `num_predict`, поэтому `output_tokens` и `thinking_tokens` не выдаются за два provider hard limits. OFF отправляет output budget; ON отправляет safety-capped сумму allowances для одного inference, а effective settings явно сообщают `native_reasoning_budget_supported=false`. Reasoning-only `done_reason=length` считается incomplete final answer. Конкретный локальный Modelfile может не соблюдать OFF; такой manifest нужно обновить, а не разбирать reasoning-like `content` эвристиками.
 
 `model_residency.py` управляет target-model policy отдельно от router model. Ручной и auto режимы могут использовать разные `keep_alive`; target limit предотвращает накопление тяжёлых моделей.

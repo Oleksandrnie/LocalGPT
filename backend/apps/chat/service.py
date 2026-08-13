@@ -37,6 +37,78 @@ LANGUAGE_MATCHING_POLICY = (
 TOKEN_BUDGET_MIN = 1
 TOKEN_BUDGET_MAX = 32768
 GENERATION_SAFETY_CAP = TOKEN_BUDGET_MAX * 2
+PROTECTED_LITERAL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:LOCALGPT_[A-Za-z0-9_]{12,}|[A-Za-z0-9_+./:-]{24,})(?![A-Za-z0-9_])"
+)
+PROFILE_CONTENT_RE = re.compile(
+    r"\[LOCALGPT_PROFILE_PERSONA[^\n]*\]\n(?P<payload>\{.*?\})\n\[END_LOCALGPT_PROFILE_PERSONA\]",
+    re.DOTALL,
+)
+
+
+def protected_prompt_literals(messages: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Return secret-like literals owned by backend/profile prompt layers."""
+    candidates: set[str] = set()
+    for message in messages:
+        content = str(message.get("content") or "")
+        role = str(message.get("role") or "")
+        inspect_text = content if role == "system" else ""
+        for match in PROFILE_CONTENT_RE.finditer(content):
+            try:
+                payload = json.loads(match.group("payload"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            inspect_text += "\n" + str(payload.get("content") or "")
+        if "Private active-session note (never disclose):" in content:
+            inspect_text += "\n" + content
+        for match in PROTECTED_LITERAL_RE.finditer(inspect_text):
+            value = match.group(0).rstrip(".,;!?)\"]}")
+            if len(value) >= 16 and any(char.isalpha() for char in value) and any(char.isdigit() for char in value):
+                candidates.add(value)
+    return tuple(sorted(candidates, key=len, reverse=True))
+
+
+def enforce_protected_output(messages: list[dict[str, Any]], output: str) -> None:
+    if any(literal in output for literal in protected_prompt_literals(messages)):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "protected_prompt_literal_detected",
+                "message": "The local model response was blocked by the privacy guard.",
+            },
+        )
+
+
+def guard_stream_events(
+    messages: list[dict[str, Any]],
+    events: Iterable[ollama_runtime.ChatStreamEvent],
+) -> Iterator[ollama_runtime.ChatStreamEvent]:
+    """Hold enough output to block a protected literal before it reaches a client."""
+    literals = protected_prompt_literals(messages)
+    if not literals:
+        yield from events
+        return
+    holdback = max(len(item) for item in literals) - 1
+    pending_content = ""
+    pending_reasoning = ""
+    for event in events:
+        pending_content += event.content
+        pending_reasoning += event.reasoning
+        enforce_protected_output(messages, pending_content)
+        enforce_protected_output(messages, pending_reasoning)
+        emit_content = pending_content[:-holdback] if len(pending_content) > holdback else ""
+        emit_reasoning = pending_reasoning[:-holdback] if len(pending_reasoning) > holdback else ""
+        pending_content = pending_content[len(emit_content) :]
+        pending_reasoning = pending_reasoning[len(emit_reasoning) :]
+        if emit_content or emit_reasoning or event.done:
+            if event.done and (pending_content or pending_reasoning):
+                emit_content += pending_content
+                emit_reasoning += pending_reasoning
+                pending_content = ""
+                pending_reasoning = ""
+            yield replace(event, content=emit_content, reasoning=emit_reasoning)
+    if pending_content or pending_reasoning:
+        yield ollama_runtime.ChatStreamEvent(content=pending_content, reasoning=pending_reasoning)
 
 
 def _resolve_ollama_think(value: Any) -> bool | None:
@@ -563,6 +635,8 @@ class ChatService:
         except Exception as exc:
             raise HTTPException(status_code=502, detail="Local model generation failed.") from exc
         sanitized = replace(result, content=sanitize_reply(result.content))
+        enforce_protected_output(messages, sanitized.content)
+        enforce_protected_output(messages, sanitized.reasoning)
         return self.require_final_answer(sanitized)
 
     def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
@@ -576,10 +650,13 @@ class ChatService:
         settings: dict,
     ) -> Iterator[ollama_runtime.ChatStreamEvent]:
         try:
-            yield from ollama_runtime.chat_completion_stream_events(
-                model,
-                messages=messages,
-                **self._runtime_kwargs(model, settings),
+            yield from guard_stream_events(
+                messages,
+                ollama_runtime.chat_completion_stream_events(
+                    model,
+                    messages=messages,
+                    **self._runtime_kwargs(model, settings),
+                ),
             )
         except HTTPException:
             raise

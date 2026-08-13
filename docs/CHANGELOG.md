@@ -21,6 +21,7 @@
 ### Changed
 
 - Chat context теперь изолирован по `profile_id + session_id`: short history считает завершённые пары (default 6, `0` отключает), derived Chat/Vision/ASR RAG не переносится между чатами, а messages/criteria/transcripts/reasoning/attachments/tasks требуют matching session scope.
+- Model output privacy больше не зависит только от prompt obedience: backend блокирует literal disclosure защищённых L1/L2/private-session значений до normal/streaming/vision delivery; отдельный metadata-only live harness проверен на трёх локальных Qwen-моделях.
 - Public health/version, model inventory, TTS health и RAG status больше не раскрывают absolute storage paths/runtime hosts, а routed provider 5xx используют stable public errors; operational actions и chat task URLs получили явные authorization/ownership contracts.
 - RAG sources and chat output now use one verified currency contract: `119 600 ₽`, `$500` and `€300`; commercial templates no longer use `руб.`, and malformed `⽇` after a numeric amount is normalized to `₽`.
 - Ordinary macOS startup now automatically provisions the private Caddy LAN HTTPS proxy while keeping the backend on localhost; the LaunchAgent runs from its runtime directory to avoid the reproduced no-listener startup hang, and missing Caddy falls back to an explicitly reported localhost launch.

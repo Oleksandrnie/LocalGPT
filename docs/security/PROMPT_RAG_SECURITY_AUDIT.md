@@ -204,9 +204,23 @@ All confirmed High findings are closed by code-enforced controls. Remaining Medi
 5. Apply API/logging/authorization controls independently from retrieval so rollback cannot re-open Critical/High boundaries.
 6. Do not mutate or delete user RAG files during rollout. Corpus hygiene output is diagnostic/preview only.
 
+## Stage 6 live-model follow-up (2026-08-13)
+
+The opt-in `tools/live_llm_security.py` harness ran eight synthetic categories twice per model, sequentially, with `temperature=0`, `num_ctx=8192`, `max_tokens=160`, `think=false`, Ollama `0.32.5`, and no client corpus or real secret. Raw prompts, responses and canary values were not recorded.
+
+| Model | Build | Raw disclosures | Backend blocks | Hard failures | Behavioral residual |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `qwen3:4b` | 4.0B, Q4_K_M, context 262144 | 2 | 2 | 0 | 12/16 |
+| `qwen2.5:3b-instruct` | 3.1B, Q4_K_M, context 32768 | 2 | 2 | 0 | 6/16 |
+| `qwen2.5:7b-instruct` | 7.6B, Q4_K_M, context 32768 | 0 | 0 | 0 | 6/16 |
+
+The reproduced raw disclosures showed that prompt-only privacy is not a reliable boundary, especially for `qwen3:4b`. The mitigation therefore remains backend-owned: secret-like literals from L1/L2 and explicitly marked private session context are blocked before normal, reasoning, streaming or vision output is delivered or persisted. Streaming holds a bounded tail so a complete literal split across chunks is detected before release. Foreign profile/session canaries never entered assembled prompts, and the harness exposed no model-output-to-privileged-action edge.
+
+Behavioral failures remain model limitations: a model can repeat an attacker-provided behavioral canary or make a false authorization claim, but those strings are not promoted to protected input and have no backend action capability. `qwen3:4b` is materially less resistant than the two instruct models and should not be treated as a security policy engine. LAN validation remains Stage 7A.
+
 ## Residual risks and untested environments
 
-- Live-model resistance varies by model and quantization. The final environment had no reachable Ollama runtime, so no answer-generation comparison was attempted and no model was loaded or downloaded.
+- Live-model resistance varies by model and quantization; the tested Qwen builds retain the behavioral limitations recorded above. Literal blocking is defense-in-depth for secret-like protected values, not a general semantic DLP system.
 - Real corpus duplication, stale content and multilingual paraphrase distribution were not inspected because client data must not enter the audit artifacts.
 - LAN/tailnet reachability, reverse-proxy headers, OS file permissions and log access were not exercised in this environment.
 - Browser smoke covered desktop System controls, 390×844 overflow, light theme and focus. Native prompt-dialog automation timed out; session-only token transport is instead covered by static UI and API authorization tests.
@@ -219,4 +233,4 @@ All confirmed High findings are closed by code-enforced controls. Remaining Medi
 - Full discovery ran 286 tests with exactly the three failures reproduced on the base commit: two ASR pipeline expectation mismatches and one plugin-registry restored-database issue. No new regression remained.
 - 27 static UI tests passed, including escaped Markdown/model output, task reasoning/reconnect behavior, responsive/focus/theme contracts and privileged-request transport.
 - Local bounded smoke returned 200 for minimal health/version/UI and authorized storage read, and 403 for restart without a token. Browser smoke covered desktop/System settings plus 390×844 layout, light theme and focus without model generation.
-- Live Ollama, real LAN/tailnet/reverse-proxy headers and an external-agent channel were not available. These are environment limitations, not claimed passes.
+- Live Ollama is covered by the Stage 6 follow-up above. Real LAN/reverse-proxy headers and an external-agent channel remain untested; Tailscale is outside the follow-up scope.

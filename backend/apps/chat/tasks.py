@@ -13,7 +13,13 @@ from typing import Any
 
 from app import config, db
 from backend.apps.chat.prompt_policy import data_envelope
-from backend.apps.chat.service import ChatService, maybe_compress_session_history, sanitize_reply
+from backend.apps.chat.service import (
+    ChatService,
+    enforce_protected_output,
+    guard_stream_events,
+    maybe_compress_session_history,
+    sanitize_reply,
+)
 from backend.apps.chat.services import ollama_runtime, vision_context, vision_runtime
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
@@ -311,15 +317,24 @@ def _chat_worker(
             reasoning_sequence = 0
             streaming_started = False
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
-                delta_source = vision_runtime.chat_completion_stream(
-                    completion_model,
-                    completion_messages,
-                    image_paths,
-                    max_total_bytes=int(
-                        settings.get("chat_image_max_total_bytes")
-                        or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
-                    ),
-                    **service._runtime_kwargs(completion_model, settings, vision=True),
+                delta_source = (
+                    event.content
+                    for event in guard_stream_events(
+                        completion_messages,
+                        (
+                            ollama_runtime.ChatStreamEvent(content=delta)
+                            for delta in vision_runtime.chat_completion_stream(
+                                completion_model,
+                                completion_messages,
+                                image_paths,
+                                max_total_bytes=int(
+                                    settings.get("chat_image_max_total_bytes")
+                                    or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                                ),
+                                **service._runtime_kwargs(completion_model, settings, vision=True),
+                            )
+                        ),
+                    )
                 )
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
@@ -394,6 +409,8 @@ def _chat_worker(
                 reasoning = completion_result.reasoning
                 done_reason = completion_result.done_reason
                 eval_count = completion_result.eval_count
+        enforce_protected_output(completion_messages, reply)
+        enforce_protected_output(completion_messages, reasoning)
         service.require_final_answer(
             ollama_runtime.ChatCompletionResult(
                 content=reply,

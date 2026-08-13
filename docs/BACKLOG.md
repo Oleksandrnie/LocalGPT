@@ -4,7 +4,7 @@
 
 ## Planned
 
-- Перед release выполнить bounded live comparison одной thinking и одной non-thinking модели, а также реальную LAN/tailnet/reverse-proxy проверку новых security contracts без клиентского corpus.
+- Перед release выполнить реальную LAN/reverse-proxy проверку новых security contracts без клиентского corpus; tailnet validation остаётся отдельной будущей задачей.
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
 - Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
 
