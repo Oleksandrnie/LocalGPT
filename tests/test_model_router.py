@@ -153,7 +153,11 @@ class ModelRouterTestCase(unittest.TestCase):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(content="ok"),
+        ) as native_chat:
             reply = service.chat_completion(
                 "qwen2.5:7b-instruct",
                 messages,
@@ -173,7 +177,11 @@ class ModelRouterTestCase(unittest.TestCase):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(content="ok"),
+        ) as native_chat:
             reply = service.chat_completion(
                 "qwen2.5vl:3b",
                 messages,
@@ -205,7 +213,11 @@ class ModelRouterTestCase(unittest.TestCase):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(content="ok"),
+        ) as native_chat:
             reply = service.chat_completion(
                 "qwen3:8b",
                 messages,
@@ -222,11 +234,40 @@ class ModelRouterTestCase(unittest.TestCase):
             think=False,
         )
 
+    def test_chat_completion_rejects_reasoning_only_length_exhaustion(self):
+        service = ChatService()
+        result = ollama_runtime.ChatCompletionResult(
+            content="",
+            reasoning="unfinished reasoning",
+            done_reason="length",
+            eval_count=64,
+        )
+
+        with patch.object(ollama_runtime, "chat_completion_result", return_value=result):
+            with self.assertRaises(HTTPException) as ctx:
+                service.chat_completion(
+                    "qwen3:8b",
+                    [{"role": "user", "content": "hello"}],
+                    settings={"max_tokens": 64, "ollama_think": "on"},
+                )
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(ctx.exception.detail["code"], "chat_final_answer_incomplete")
+
     def test_chat_completion_stream_passes_keep_alive_to_native_ollama_request(self):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion_stream", return_value=iter(["при", "вет"])) as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_stream_events",
+            return_value=iter(
+                [
+                    ollama_runtime.ChatStreamEvent(content="при"),
+                    ollama_runtime.ChatStreamEvent(content="вет", done=True, done_reason="stop"),
+                ]
+            ),
+        ) as native_chat:
             chunks = list(
                 service.chat_completion_stream(
                     "qwen2.5:7b-instruct",
@@ -252,9 +293,10 @@ class ModelRouterTestCase(unittest.TestCase):
             "_post_json_stream",
             return_value=iter(
                 [
+                    {"message": {"thinking": "Сначала"}},
                     {"message": {"content": "При"}},
                     {"message": {"content": "вет"}},
-                    {"done": True},
+                    {"done": True, "done_reason": "stop", "eval_count": 4},
                 ]
             ),
         ) as post_stream:
@@ -282,8 +324,16 @@ class ModelRouterTestCase(unittest.TestCase):
     def test_ollama_chat_passes_think_false_to_native_chat_payload(self):
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "_post_json", return_value={"message": {"content": "ok"}}) as post_json:
-            reply = ollama_runtime.chat_completion(
+        with patch.object(
+            ollama_runtime,
+            "_post_json",
+            return_value={
+                "message": {"content": "ok", "thinking": ""},
+                "done_reason": "stop",
+                "eval_count": 1,
+            },
+        ) as post_json:
+            result = ollama_runtime.chat_completion_result(
                 "qwen3:8b",
                 messages=messages,
                 temperature=0.1,
@@ -291,10 +341,42 @@ class ModelRouterTestCase(unittest.TestCase):
                 think=False,
             )
 
-        self.assertEqual(reply, "ok")
+        self.assertEqual(result.content, "ok")
+        self.assertEqual(result.reasoning, "")
+        self.assertEqual(result.done_reason, "stop")
+        self.assertEqual(result.eval_count, 1)
         payload = post_json.call_args.args[1]
         self.assertIs(payload["think"], False)
         self.assertEqual(payload["model"], "qwen3:8b")
+        self.assertTrue(payload["messages"][-1]["content"].endswith("/no_think"))
+        self.assertEqual(messages, [{"role": "user", "content": "hello"}])
+
+    def test_ollama_chat_stream_events_keep_reasoning_out_of_content_wrapper(self):
+        messages = [{"role": "user", "content": "hello"}]
+        with patch.object(
+            ollama_runtime,
+            "_post_json_stream",
+            return_value=iter(
+                [
+                    {"message": {"thinking": "reason ", "content": ""}},
+                    {"message": {"thinking": "trace", "content": ""}},
+                    {"message": {"content": "final"}},
+                    {"done": True, "done_reason": "stop", "eval_count": 7},
+                ]
+            ),
+        ):
+            events = list(
+                ollama_runtime.chat_completion_stream_events(
+                    "qwen3:8b",
+                    messages=messages,
+                    think=True,
+                )
+            )
+
+        self.assertEqual("".join(event.reasoning for event in events), "reason trace")
+        self.assertEqual("".join(event.content for event in events), "final")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].done_reason, "stop")
 
     def test_ollama_chat_retries_metal_failure_with_cpu_fallback(self):
         messages = [{"role": "user", "content": "hello"}]

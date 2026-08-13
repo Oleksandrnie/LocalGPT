@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import replace
 from datetime import datetime
 from typing import Any, Iterable, Iterator
 
@@ -348,18 +349,70 @@ class ChatService:
             runtime_kwargs["think"] = think
         return runtime_kwargs
 
-    def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
+    @staticmethod
+    def require_final_answer(result: ollama_runtime.ChatCompletionResult) -> ollama_runtime.ChatCompletionResult:
+        if result.content.strip():
+            return result
+        exhausted_after_reasoning = bool(result.reasoning.strip()) and result.done_reason == "length"
+        message = (
+            "Thinking budget exhausted before the model produced a final answer."
+            if exhausted_after_reasoning
+            else "The model completed without a final answer."
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "chat_final_answer_incomplete",
+                "message": message,
+                "done_reason": result.done_reason,
+            },
+        )
+
+    def chat_completion_result(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        settings: dict,
+    ) -> ollama_runtime.ChatCompletionResult:
         try:
-            text = ollama_runtime.chat_completion(model, messages=messages, **self._runtime_kwargs(model, settings))
+            result = ollama_runtime.chat_completion_result(
+                model,
+                messages=messages,
+                **self._runtime_kwargs(model, settings),
+            )
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
-        return sanitize_reply(text)
+        sanitized = replace(result, content=sanitize_reply(result.content))
+        return self.require_final_answer(sanitized)
+
+    def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
+        return self.chat_completion_result(model, messages, settings=settings).content
+
+    def chat_completion_stream_events(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        settings: dict,
+    ) -> Iterator[ollama_runtime.ChatStreamEvent]:
+        try:
+            yield from ollama_runtime.chat_completion_stream_events(
+                model,
+                messages=messages,
+                **self._runtime_kwargs(model, settings),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
 
     def chat_completion_stream(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> Iterator[str]:
-        try:
-            yield from ollama_runtime.chat_completion_stream(model, messages=messages, **self._runtime_kwargs(model, settings))
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
+        for event in self.chat_completion_stream_events(model, messages, settings=settings):
+            if event.content:
+                yield event.content
 
 
 def session_title_hint(raw_title: str | None, query: str | None) -> str:

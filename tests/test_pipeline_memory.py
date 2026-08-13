@@ -26,6 +26,7 @@ from backend.apps.asr.transcripts import router as transcripts_router
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, _sse_event, router as chat_router, start_chat_task
 from backend.apps.chat.service import response_language_instruction, sanitize_reply
+from backend.apps.chat.services import ollama_runtime
 from backend.apps.rag import routes as rag_routes
 from backend.apps.rag import service as rag_service
 
@@ -421,8 +422,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         status_path = Path(self.tmpdir.name) / "non-streaming.status.json"
 
         with (
-            patch("backend.apps.chat.tasks.ChatService.chat_completion", return_value="Полный ответ") as full_response,
-            patch("backend.apps.chat.tasks.ChatService.chat_completion_stream") as stream_response,
+            patch(
+                "backend.apps.chat.tasks.ChatService.chat_completion_result",
+                return_value=ollama_runtime.ChatCompletionResult(content="Полный ответ", done_reason="stop"),
+            ) as full_response,
+            patch("backend.apps.chat.tasks.ChatService.chat_completion_stream_events") as stream_response,
         ):
             chat_tasks._chat_worker(
                 "qwen2.5:7b-instruct",
@@ -450,6 +454,93 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(updated_message["content"], "Полный ответ")
         self.assertFalse(updated_message["is_partial"])
         self.assertIsNone(updated_message["error"])
+
+    def test_streaming_worker_separates_reasoning_from_final_deltas(self):
+        session = db.create_session(self.profile_id, "Reasoning stream", "qwen3:4b")
+        assistant_message = db.create_assistant_message(session["id"], model="qwen3:4b")
+        result_path = Path(self.tmpdir.name) / "reasoning.result.json"
+        error_path = Path(self.tmpdir.name) / "reasoning.error.json"
+        delta_path = Path(self.tmpdir.name) / "reasoning.deltas.jsonl"
+        status_path = Path(self.tmpdir.name) / "reasoning.status.json"
+
+        events = iter(
+            [
+                ollama_runtime.ChatStreamEvent(reasoning="internal "),
+                ollama_runtime.ChatStreamEvent(reasoning="trace"),
+                ollama_runtime.ChatStreamEvent(content="Финальный "),
+                ollama_runtime.ChatStreamEvent(content="ответ"),
+                ollama_runtime.ChatStreamEvent(done=True, done_reason="stop", eval_count=12),
+            ]
+        )
+        with patch(
+            "backend.apps.chat.tasks.ChatService.chat_completion_stream_events",
+            return_value=events,
+        ):
+            chat_tasks._chat_worker(
+                "qwen3:4b",
+                [{"role": "user", "content": "hello"}],
+                {"streaming_enabled": True, "ollama_think": "on"},
+                session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                True,
+                str(delta_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+            )
+
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual(result["reply"], "Финальный ответ")
+        self.assertEqual(result["reasoning"], "internal trace")
+        self.assertEqual(result["done_reason"], "stop")
+        self.assertEqual(result["eval_count"], 12)
+        delta_text = delta_path.read_text(encoding="utf-8")
+        self.assertIn("Финальный ", delta_text)
+        self.assertIn("ответ", delta_text)
+        self.assertNotIn("internal", delta_text)
+        self.assertEqual(db.get_message(assistant_message["id"])["content"], "Финальный ответ")
+        self.assertFalse(error_path.exists())
+
+    def test_reasoning_only_length_exhaustion_fails_worker(self):
+        session = db.create_session(self.profile_id, "Reasoning exhausted", "qwen3:4b")
+        assistant_message = db.create_assistant_message(session["id"], model="qwen3:4b")
+        result_path = Path(self.tmpdir.name) / "exhausted.result.json"
+        error_path = Path(self.tmpdir.name) / "exhausted.error.json"
+        delta_path = Path(self.tmpdir.name) / "exhausted.deltas.jsonl"
+        status_path = Path(self.tmpdir.name) / "exhausted.status.json"
+
+        events = iter(
+            [
+                ollama_runtime.ChatStreamEvent(reasoning="unfinished reasoning"),
+                ollama_runtime.ChatStreamEvent(done=True, done_reason="length", eval_count=64),
+            ]
+        )
+        with patch(
+            "backend.apps.chat.tasks.ChatService.chat_completion_stream_events",
+            return_value=events,
+        ):
+            chat_tasks._chat_worker(
+                "qwen3:4b",
+                [{"role": "user", "content": "hello"}],
+                {"streaming_enabled": True, "ollama_think": "on"},
+                session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                True,
+                str(delta_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+            )
+
+        error = json.loads(error_path.read_text(encoding="utf-8"))
+        self.assertEqual(error["code"], "chat_final_answer_incomplete")
+        self.assertIn("Thinking budget exhausted", error["message"])
+        self.assertFalse(result_path.exists())
+        updated = db.get_message(assistant_message["id"])
+        self.assertEqual(updated["status"], "failed")
+        self.assertEqual(updated["content"], "")
 
     def test_chat_task_events_streams_delta_events_from_task_artifact(self):
         session = db.create_session(self.profile_id, "SSE delta", "qwen2.5:7b-instruct")

@@ -13,7 +13,7 @@ from typing import Any
 
 from app import config, db
 from backend.apps.chat.service import ChatService, maybe_compress_session_history, sanitize_reply
-from backend.apps.chat.services import vision_context, vision_runtime
+from backend.apps.chat.services import ollama_runtime, vision_context, vision_runtime
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -147,6 +147,9 @@ def _chat_worker(
     image_paths = [str(item.get("path") or "") for item in attachment_descriptors if item.get("path")]
     derived_vision_context: str | None = None
     ocr_evidence: vision_context.OcrEvidence | None = None
+    reasoning = ""
+    done_reason: str | None = None
+    eval_count: int | None = None
     try:
         service = ChatService()
         completion_model = model_name
@@ -244,6 +247,7 @@ def _chat_worker(
 
         if stream:
             chunks: list[str] = []
+            reasoning_chunks: list[str] = []
             sequence = 0
             streaming_started = False
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
@@ -260,23 +264,44 @@ def _chat_worker(
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
             else:
-                delta_source = service.chat_completion_stream(
+                event_source = service.chat_completion_stream_events(
                     completion_model,
                     completion_messages,
                     settings=settings,
                 )
-            for delta in delta_source:
-                if not delta:
-                    continue
-                if not streaming_started:
-                    _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
-                    _set_attachment_status(attachment_ids, "generating")
-                    streaming_started = True
-                sequence += 1
-                chunks.append(delta)
-                _append_delta_jsonl(delta_path, sequence, delta)
-                if assistant_message_id:
-                    db.append_message_content(assistant_message_id, delta, status="streaming")
+                for event in event_source:
+                    if event.reasoning:
+                        reasoning_chunks.append(event.reasoning)
+                    if event.done:
+                        done_reason = event.done_reason
+                        eval_count = event.eval_count
+                    delta = event.content
+                    if not delta:
+                        continue
+                    if not streaming_started:
+                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                        _set_attachment_status(attachment_ids, "generating")
+                        streaming_started = True
+                    sequence += 1
+                    chunks.append(delta)
+                    _append_delta_jsonl(delta_path, sequence, delta)
+                    if assistant_message_id:
+                        db.append_message_content(assistant_message_id, delta, status="streaming")
+                delta_source = None
+            if delta_source is not None:
+                for delta in delta_source:
+                    if not delta:
+                        continue
+                    if not streaming_started:
+                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                        _set_attachment_status(attachment_ids, "generating")
+                        streaming_started = True
+                    sequence += 1
+                    chunks.append(delta)
+                    _append_delta_jsonl(delta_path, sequence, delta)
+                    if assistant_message_id:
+                        db.append_message_content(assistant_message_id, delta, status="streaming")
+            reasoning = "".join(reasoning_chunks)
             reply = sanitize_reply("".join(chunks))
         else:
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
@@ -295,8 +320,30 @@ def _chat_worker(
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 reply = ocr_evidence.text if ocr_evidence else ""
             else:
-                reply = service.chat_completion(completion_model, completion_messages, settings=settings)
+                completion_result = service.chat_completion_result(
+                    completion_model,
+                    completion_messages,
+                    settings=settings,
+                )
+                reply = completion_result.content
+                reasoning = completion_result.reasoning
+                done_reason = completion_result.done_reason
+                eval_count = completion_result.eval_count
+        service.require_final_answer(
+            ollama_runtime.ChatCompletionResult(
+                content=reply,
+                reasoning=reasoning,
+                done_reason=done_reason,
+                eval_count=eval_count,
+            )
+        )
         result_payload: dict[str, Any] = {"reply": reply}
+        if reasoning:
+            result_payload["reasoning"] = reasoning
+        if done_reason:
+            result_payload["done_reason"] = done_reason
+        if eval_count is not None:
+            result_payload["eval_count"] = eval_count
         if derived_vision_context:
             result_payload["vision_context"] = derived_vision_context
         if ocr_evidence:
@@ -325,8 +372,13 @@ def _chat_worker(
                 except Exception:
                     pass
     except Exception as exc:  # pragma: no cover - runtime path
-        message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
-        error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict):
+            message = detail.get("message") or detail.get("detail") or str(detail)
+            error_code = str(detail.get("code") or getattr(exc, "code", None) or "chat_generation_failed")
+        else:
+            message = getattr(exc, "message", None) or detail or str(exc) or "chat_generation_failed"
+            error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
         if assistant_message_id:
             try:
                 db.update_message(
