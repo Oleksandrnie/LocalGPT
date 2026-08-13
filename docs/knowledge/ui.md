@@ -47,6 +47,10 @@ State частично хранится в profile preferences/backend, част
 
 Assistant card рендерится из persisted `message.status`. Optimistic placeholder не является источником истины. Markdown проходит через `markdown.mjs`; raw model HTML не вставляется напрямую.
 
+Если assistant message имеет `has_reasoning`, рядом с автором показывается keyboard-accessible terminal icon `>_`. Он лениво загружает reasoning в read-only dialog; Escape/backdrop/close возвращают focus на исходную кнопку. Reasoning не вставляется в body ответа.
+
+Каждое непустое user message и completed assistant message имеет действие `Добавить в RAG`. Оно открывает общий editable title/text dialog; cancel ничего не индексирует, confirm отправляет только отредактированный текст. Vision export использует тот же dialog pattern.
+
 Image composer принимает PNG/JPEG/WebP через picker, paste и multi-file drop. До отправки карточка показывает thumbnail, upload/error state и отдельную keyboard-accessible кнопку удаления. Обычная text paste не перехватывается, а backend settings остаются источником истины для count/byte/pixel/side limits. История загружает attachment metadata отдельно и рендерит ownership-checked thumbnail/media URLs, не binary data URI.
 
 ### Model state
@@ -63,6 +67,8 @@ Settings tab `Vision` не смешан с обычной chat library. Он п�
 - attachment cache statistics и cleanup.
 
 После завершённого анализа действие Vision → RAG открывает dialog с редактируемым title/text. Export выполняется только после подтверждения пользователя и не переносит image binary.
+
+Settings → Chat / LLM показывает отдельные `Output tokens` и `Thinking tokens`. Быстрый Thinking ON/OFF видим для thinking-capable модели (для Auto — по profile preference) и сохраняет оба budget override без сброса.
 
 ## Themes
 

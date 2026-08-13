@@ -49,6 +49,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Подсистема | Команда |
 | --- | --- |
 | Chat routing, Ollama lifecycle, SSE и RAG integration | `venv/bin/python -m unittest tests.test_model_router -v` |
+| Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
 | Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
@@ -89,6 +90,8 @@ Smoke считается пройденным, если `/health` возвращ
 - missing/partial/installed/active states не смешиваются;
 - `stream=true` создаёт SSE `delta`, а reconnect не дублирует текст;
 - non-streaming сохраняет тот же assistant lifecycle;
+- native reasoning отделён от final content в normal/streaming paths, не входит в SSE/history, а reasoning-only length exhaustion завершается ошибкой;
+- `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
 - RAG context попадает в prompt только активного профиля;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
 - PNG/JPEG/WebP upload проверяет profile ownership, count/byte/pixel/side limits и не сохраняет binary в message/RAG;
@@ -100,6 +103,7 @@ Static UI contract для attachment composer, Vision tab и explicit RAG export
 
 ```bash
 node tests/chat_attachments_ui.test.mjs
+node tests/chat_reasoning_ui.test.mjs
 ```
 
 System Settings model-transfer contract:
@@ -153,6 +157,7 @@ Model-transfer tests используют только temporary synthetic files
 - chunk overlap, embedding metadata и top-k search;
 - context assembly соблюдает `max_chars`;
 - file/context deletion очищает DB records.
+- explicit user/completed-assistant export проверяет profile ownership, role metadata, отсутствие reasoning, retrieval и независимое удаление.
 
 ### Plugins и networking
 
@@ -174,6 +179,7 @@ Model-transfer tests используют только temporary synthetic files
 - ASR/TTS/OCR tool docks;
 - RAG panel и context section;
 - image picker/paste/drop, attachment preview/remove/history и Vision → RAG dialog;
+- reasoning icon/modal, два token budget поля, быстрый Thinking и общий Chat → RAG dialog;
 - Vision settings/library, runtime capability state и cache cleanup;
 - Plugins и network-address menu;
 - keyboard focus, aria states и reduced-motion-sensitive flows.

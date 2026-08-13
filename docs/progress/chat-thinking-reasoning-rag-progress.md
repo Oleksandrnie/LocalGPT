@@ -9,7 +9,7 @@
 - Branch: `feature/chat-thinking-reasoning-rag`, created from clean `dev` aligned with `origin/dev` on 2026-08-13.
 - Started: 2026-08-13.
 - Current status: in_progress.
-- Current stage: Stage 5 — regression, live acceptance, docs, and cleanup.
+- Current stage: final cleanup.
 
 ## Instructions and precedence
 
@@ -121,7 +121,7 @@
 ### Stage 5 — Regression, live acceptance, docs, and cleanup
 
 - Goal: satisfy the complete DoD and leave a review-ready clean branch.
-- Status: in_progress.
+- Status: completed; checkpoint and task-owned progress cleanup pending.
 - Actions: full static/unit suite, clean/existing DB migration smoke, controlled live Qwen flows, manual UI matrix, affected docs/changelog, final diff/status review, then delete this progress file.
 - Validation: specification command set plus new focused tests and documented manual/live evidence.
 - Completion criterion: all acceptance criteria pass or an exact external blocker remains documented; no temporary/debug/unrelated changes; clean working tree after final cleanup commit.
@@ -192,16 +192,25 @@
 - Issues: none; browser viewport/theme/focus validation remains in Stage 5.
 - Next action: create the Stage 4 checkpoint, then run full regressions, controlled live Qwen acceptance, interactive UI matrix, and affected-doc review.
 
+### 2026-08-13 — Stage 5 regression, live QA, and docs
+
+- Stage: 5 completed; final cleanup started.
+- Completed: full safe Python/Node run, isolated failure audit, focused rerun, qwen3:0.6b live ON/OFF contract, temporary-DB browser QA, dark/light and desktop/mobile matrix, keyboard/focus verification, affected-doc update, and final preservation fix for token budgets during quick Thinking save.
+- Changed: affected architecture/testing/backend/provider/RAG/UI/changelog docs; shared modal eyebrow; quick-settings preservation list and its UI contract test.
+- Validation: static checks; 69 focused Python tests plus 3 targeted migration/reasoning tests; all Node suites; full Python 243/246 with only two isolated baseline ASR failures and one order-dependent plugin failure that passes alone; live OFF `reasoning=0, final=2, stop`, ON `reasoning=367 chars, final=четыре, stop`; browser 1440×900 and 390×844, dark/light, no horizontal overflow, Escape/focus return, editable RAG text, budget values 512/2048, and Thinking ON→OFF.
+- Issues: installed qwen3:4b manifest remains incompatible with a hard OFF contract; qwen3:0.6b acceptance passes. Full-suite ASR baseline failures remain outside scope; plugin registry failure is suite-order state leakage, not reproducible alone.
+- Next action: create docs/QA checkpoint, remove this completed progress file, run final diff/status checks, and create cleanup commit.
+
 ## Validation results
 
-- Static checks: baseline passed.
+- Static checks: final diff check, compileall, JS syntax, markdown renderer, and all Node UI suites passed.
 - Unit/contract tests: Stage 1 focused set passed 62 tests after changes.
 - Stage 2 unit/contract tests: 67 focused tests passed, including settings validation, legacy migration, profile isolation, storage cap, and both worker modes.
 - Integration/smoke tests: native qwen3:4b audit exposed an incompatible OFF manifest; adapter ON/OFF acceptance passed on installed qwen3:0.6b with `keep_alive=0`.
 - Chat → RAG integration: 10 Python endpoint/service tests passed for user/assistant roles, isolation, retrieval, deletion, reasoning exclusion, and Vision compatibility.
-- Manual/regression checks: 13 static UI/markdown contracts passed; interactive browser matrix pending Stage 5.
-- Skipped checks: full Python suite and browser/UI matrix deferred to Stage 5; no changes exist yet.
-- Remaining uncertainty: exact combined safety cap/defaults must be reconciled with existing config ranges and context limits during Stage 2.
+- Manual/regression checks: browser matrix passed at 1440×900 and 390×844 in dark/light themes; reasoning and Chat → RAG dialogs, Escape/focus return, budgets, quick Thinking ON/OFF, action visibility, and horizontal overflow checked.
+- Full-suite result: 243/246; the two known ASR failures reproduce alone, while the plugin registry `app_settings` failure passes alone and is order-dependent.
+- Remaining uncertainty: qwen3:4b's installed Modelfile ignores OFF and requires model refresh/replacement; no unsafe content heuristic was added.
 
 ## Regressions and deferred work
 
@@ -235,28 +244,35 @@
 
 ### Stage 4
 
-- Commit hash: pending creation.
+- Commit hash: `ba29e79`.
 - Message: `feat(rag): add explicit chat message export`.
 - Files: schemas, RAG route/service, shared modal/actions, and focused Python/Node tests.
 - Validation: static checks, 10 Python tests, and 13 Node tests.
 
+### Stage 5
+
+- Commit hash: pending creation.
+- Message: `docs: document chat reasoning and RAG lifecycle`.
+- Files: affected permanent docs, final UI polish/preservation fix, focused UI contract, and this progress state.
+- Validation: full/focused Python and Node matrix, live Qwen, and interactive browser QA.
+
 ## Continuation state
 
-- Current stage: Stage 5 — regression, live acceptance, docs, and cleanup.
-- Last completed action: Stage 4 focused backend/UI validation and progress update.
-- Current repository state: Stages 1–3 committed; validated Stage 4 diff pending checkpoint commit.
-- Known risks: interactive modal focus/layout and the installed qwen3:4b OFF incompatibility.
-- Next exact action: create the Stage 4 checkpoint, then run the full safe test matrix and browser UI checks before updating affected documentation.
-- Next files: affected permanent docs after validation evidence is final.
+- Current stage: final cleanup.
+- Last completed action: Stage 5 docs and final focused validation.
+- Current repository state: Stages 1–4 committed; validated Stage 5 diff pending checkpoint commit.
+- Known risks: installed qwen3:4b OFF incompatibility is documented and model-specific.
+- Next exact action: create Stage 5 checkpoint, delete this progress file, inspect final history/status, and create cleanup commit.
+- Next files: this task-owned progress file only.
 
 ## Final checklist
 
-- [ ] Every approved stage is completed.
-- [ ] Every acceptance criterion and Definition of Done item is checked.
-- [ ] Required validation passed or limitations are explicitly accepted.
-- [ ] Regressions were compared with baseline.
-- [ ] Only affected permanent documentation and records were updated.
-- [ ] Deferred work was captured without expanding scope.
-- [ ] No unrelated changes or task-owned temporary artifacts remain.
-- [ ] Final diff and working-tree state were inspected.
-- [ ] Progress file is ready to be deleted.
+- [x] Every approved stage is completed.
+- [x] Every acceptance criterion and Definition of Done item is checked.
+- [x] Required validation passed or limitations are explicitly accepted.
+- [x] Regressions were compared with baseline.
+- [x] Only affected permanent documentation and records were updated.
+- [x] Deferred work was captured without expanding scope.
+- [x] No unrelated changes or task-owned temporary artifacts remain except this progress file.
+- [ ] Final diff and working-tree state were inspected after checkpoint.
+- [x] Progress file is ready to be deleted.

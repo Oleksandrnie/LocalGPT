@@ -133,6 +133,8 @@ const ASR_ANALYSIS_MODES = [
 const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
   "max_tokens",
+  "output_tokens",
+  "thinking_tokens",
   "num_ctx",
   "ollama_keep_alive",
   "ollama_think",

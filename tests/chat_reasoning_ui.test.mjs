@@ -15,6 +15,8 @@ test("LLM settings expose separate output and thinking budgets", () => {
 test("quick Thinking control is visible for declared thinking-capable models", () => {
   assert.match(javascript, /quickThinkingControl\.hidden = !shouldShowThinkingToggleForModel\(modelName\)/);
   assert.match(javascript, /quickThinkingMobileControl\.hidden = !shouldShowThinkingToggleForModel\(modelName\)/);
+  assert.match(javascript, /MODEL_SETTINGS_OVERRIDE_KEYS = \[[\s\S]*"output_tokens",[\s\S]*"thinking_tokens",/);
+  assert.match(javascript, /buildModelSettingsPayload\(\{ ollama_think: nextMode \}\)/);
 });
 
 test("reasoning is lazy-loaded into an accessible read-only dialog", () => {
