@@ -25,6 +25,7 @@ CADDY_PID_FILE="${LOG_DIR}/caddy.pid"
 BACKEND_PORT_FILE="${LOG_DIR}/backend.port"
 CADDY_CONFIG_FILE="${LOG_DIR}/Caddyfile.auto"
 LAN_IP_FILE="${LOG_DIR}/lan_ip"
+CADDY_CONFIG_CHANGED=0
 LAUNCH_AGENT_LABEL="local.localgpt.caddy"
 LAUNCH_AGENT_FILE="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
 
@@ -119,8 +120,10 @@ cleanup_stale_pidfile() {
   fi
 }
 
-cleanup_stale_pidfile "${BACKEND_PID_FILE}"
-cleanup_stale_pidfile "${CADDY_PID_FILE}"
+if [[ "${LOCALGPT_LAUNCHER_LIBRARY_ONLY:-0}" != "1" ]]; then
+  cleanup_stale_pidfile "${BACKEND_PID_FILE}"
+  cleanup_stale_pidfile "${CADDY_PID_FILE}"
+fi
 
 read_pid_file() {
   local pid_file="$1"
@@ -226,13 +229,16 @@ write_caddy_config() {
   local lan_ip="$1"
   local hosts=""
   local upstreams=""
+  local next_config="${CADDY_CONFIG_FILE}.next"
   hosts="$(build_caddy_hosts "${lan_ip}")"
   upstreams="$(build_caddy_upstreams)"
-  cat > "${CADDY_CONFIG_FILE}" <<EOF
+  cat > "${next_config}" <<EOF
 {
   admin off
+  auto_https disable_redirects
 }
 ${hosts} {
+  bind ${lan_ip}
   tls internal
   reverse_proxy ${upstreams} {
     lb_try_duration 5s
@@ -241,6 +247,13 @@ ${hosts} {
   }
 }
 EOF
+  if [[ -f "${CADDY_CONFIG_FILE}" ]] && cmp -s "${next_config}" "${CADDY_CONFIG_FILE}"; then
+    rm -f "${next_config}"
+    CADDY_CONFIG_CHANGED=0
+    return
+  fi
+  mv "${next_config}" "${CADDY_CONFIG_FILE}"
+  CADDY_CONFIG_CHANGED=1
 }
 
 stop_caddy_launch_agent() {
@@ -388,6 +401,15 @@ health_ok_https_insecure() {
   curl -kfsS --max-time 3 "${url}" >/dev/null 2>&1
 }
 
+open_url() {
+  local url="$1"
+  if [[ "${LOCALGPT_NO_BROWSER:-0}" == "1" ]]; then
+    echo "[i] Browser opening disabled: ${url}"
+    return 0
+  fi
+  open "${url}"
+}
+
 wait_for_backend_ready() {
   local url="$1"
   local pid="$2"
@@ -509,7 +531,7 @@ start_or_restart_caddy() {
   local caddy_pid=""
   caddy_pid="$(read_pid_file "${CADDY_PID_FILE}")"
 
-  if [[ -n "${caddy_pid}" ]] && is_pid_alive "${caddy_pid}" && health_ok_https_insecure "${https_health_url}"; then
+  if [[ "${CADDY_CONFIG_CHANGED}" != "1" ]] && [[ -n "${caddy_pid}" ]] && is_pid_alive "${caddy_pid}" && health_ok_https_insecure "${https_health_url}"; then
     return 0
   fi
 
@@ -548,6 +570,10 @@ start_or_restart_caddy() {
   return 0
 }
 
+if [[ "${LOCALGPT_LAUNCHER_LIBRARY_ONLY:-0}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 start_backend || exit 1
 
 CADDY_BIN="$(resolve_caddy)"
@@ -555,7 +581,7 @@ if [[ -z "${CADDY_BIN}" ]]; then
   message="Caddy was not found. LAN HTTPS is unavailable; opening LocalGPT on this Mac. Install it with: brew install caddy"
   echo "[!] ${message}" >&2
   osascript -e "display alert \"LocalGPT\" message \"${message}\""
-  open "http://127.0.0.1:${BACKEND_PORT}/ui/gui_html.html"
+  open_url "http://127.0.0.1:${BACKEND_PORT}/ui/gui_html.html"
   exit 0
 fi
 
@@ -575,8 +601,8 @@ if [[ -n "${LAN_IP}" ]]; then
   echo "${LAN_IP}" > "${LAN_IP_FILE}"
   echo "[i] LocalGPT LAN URL: https://${LAN_IP}:${HTTPS_PORT}/ui/gui_html.html"
   echo "[i] Backend remains local: http://127.0.0.1:${BACKEND_PORT}"
-  open "https://${LAN_IP}:${HTTPS_PORT}/ui/gui_html.html"
+  open_url "https://${LAN_IP}:${HTTPS_PORT}/ui/gui_html.html"
 else
   osascript -e 'display alert "LocalGPT" message "LAN IP was not detected. Opening localhost UI instead."'
-  open "http://127.0.0.1:${BACKEND_PORT}/ui/gui_html.html"
+  open_url "http://127.0.0.1:${BACKEND_PORT}/ui/gui_html.html"
 fi

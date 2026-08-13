@@ -17,6 +17,11 @@ SUSPICIOUS_INSTRUCTION_RE = re.compile(
 )
 EXCLUSIVITY_RE = re.compile(r"\b(?:только|исключительно|only|must not|нельзя)\b", re.IGNORECASE)
 ALTERNATIVE_RE = re.compile(r"\b(?:или|либо|or|допуска\w*|depending)\b", re.IGNORECASE)
+CAPABILITY_QUERY_RE = re.compile(
+    r"\b(?:поддерж\w*|работ\w*|дораб\w*|совместим\w*|support\w*|work\w*)\b",
+    re.IGNORECASE,
+)
+PLATFORM_QUERY_RE = re.compile(r"\b(?:cms|платформ\w*|систем\w*|технолог\w*)\b", re.IGNORECASE)
 STOPWORDS = {
     "about",
     "and",
@@ -142,6 +147,16 @@ def _source_bonus(item: dict[str, Any], query_lower: str) -> float:
         bonus += 0.12
     if metadata.get("source_role") == "source_of_truth":
         bonus += 0.08
+    content_lower = str(item.get("content") or "").lower()
+    if CAPABILITY_QUERY_RE.search(query_lower) and PLATFORM_QUERY_RE.search(query_lower):
+        support_mentions = len(re.findall(r"\b(?:поддерж\w*|дораб\w*|support\w*)\b", content_lower))
+        bonus += min(0.88, support_mentions * 0.08)
+        if (
+            re.search(r"\bплатформ\w*\b", content_lower)
+            and re.search(r"\bсистем\w*\b", content_lower)
+            and content_lower.count(",") >= 2
+        ):
+            bonus += 0.6
     return bonus
 
 
@@ -299,9 +314,19 @@ def evidence_diagnostics(query: str, chunks: list[dict[str, Any]]) -> dict[str, 
                 for year in YEAR_RE.findall(str(item.get("content") or ""))
             }
         )
-        has_exclusive = any(EXCLUSIVITY_RE.search(str(item.get("content") or "")) for item in supporting)
-        has_alternative = any(ALTERNATIVE_RE.search(str(item.get("content") or "")) for item in supporting)
-        conflict = len(years) > 1 and has_exclusive and has_alternative
+        exclusive_years = {
+            int(year)
+            for item in supporting
+            if EXCLUSIVITY_RE.search(str(item.get("content") or ""))
+            for year in YEAR_RE.findall(str(item.get("content") or ""))
+        }
+        alternative_years = {
+            int(year)
+            for item in supporting
+            if ALTERNATIVE_RE.search(str(item.get("content") or ""))
+            for year in YEAR_RE.findall(str(item.get("content") or ""))
+        }
+        conflict = bool(exclusive_years and alternative_years and exclusive_years != alternative_years)
         status = "conflict" if conflict else ("supported" if supporting else "not_found")
         evidence = [
             {

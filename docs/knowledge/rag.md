@@ -61,6 +61,8 @@ Default search strategy `hybrid_v1`:
 7. отдельно оценивает facets как `supported`, `partial`, `conflict` или `not_found` и прикладывает короткие evidence spans;
 8. `build_context()` укладывает diagnostics и selected chunks в `max_chars`.
 
+Для capability follow-up с platform/system vocabulary ranking дополнительно повышает chunks с плотным прямым перечнем поддержки/доработки или несколькими платформами/системами. Это общий lexical сигнал без списка конкретных брендов. Conflict diagnostics связывает год с тем же chunk, где найдено exclusive/alternative утверждение, чтобы случайные годы из соседнего boilerplate не создавали ложный конфликт.
+
 Это лёгкий локальный retrieval. Semantic quality всё ещё ограничена hashing/lexical approach; точные headings, ключевые слова и structured facts особенно важны. Локальная semantic embedding dependency была рассмотрена, но не выбрана: в текущей среде она требует отсутствующую модель/dependency и отдельную тяжёлую загрузку, поэтому не удовлетворяет offline reproducibility/resource gate этого этапа.
 
 На synthetic CMS + regions corpus baseline `legacy` дважды выбирал `duplicate-aggregate.md` в top-2. `hybrid_v1` выбрал `cms.md` и `regions.md`, снизив top-2 duplicate-source ratio с 100% до 0% и дав specific facet coverage 2/2 вместо 0/2. Один bounded прогон по 100 запросов показал около 3.14 ms/query и 1.56 MB peak для legacy против 10.59 ms/query и 2.16 MB peak для hybrid; это regression-test observation, не production benchmark.
@@ -69,7 +71,7 @@ Rollback не переиндексирует и не меняет источни
 
 ## Chat integration
 
-`backend/apps/chat/routes.py` проверяет effective `rag_enabled`, собирает query из недавних user queries и текущего сообщения, вызывает `search()` и `build_context()`.
+`backend/apps/chat/routes.py` проверяет effective `rag_enabled`, собирает query из текущего сообщения и максимум трёх недавних user queries, удаляя повторяющиеся turns без изменения их текста, затем вызывает `search()` и `build_context()`.
 
 `backend/apps/chat/service.py` добавляет найденные chunks как current authorized evidence, но сериализует их в structured L4 data envelope с ролью `user`, а не как instruction-bearing `system` content. Данные могут подтверждать факты ответа, но instruction-shaped текст внутри источника не меняет policy, persona, задачу или permissions. Assistant history и assistant-authored Chat exports остаются continuity context и не считаются подтверждением факта без актуального источника. Facet diagnostics требуют ответить на подтверждённую часть, явно отметить `not_found`/partial coverage и не выбирать молча при конфликте.
 

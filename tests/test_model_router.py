@@ -231,7 +231,7 @@ class ModelRouterTestCase(unittest.TestCase):
             "qwen3:8b",
             messages=messages,
             temperature=0.1,
-            max_tokens=5,
+            max_tokens=2053,
             keep_alive="5m",
             think=False,
         )
@@ -323,7 +323,7 @@ class ModelRouterTestCase(unittest.TestCase):
         self.assertEqual(payload["options"]["num_ctx"], 8192)
         self.assertEqual(payload["keep_alive"], "45s")
 
-    def test_ollama_chat_passes_think_false_to_native_chat_payload(self):
+    def test_ollama_chat_keeps_qwen3_reasoning_parser_enabled_when_thinking_is_off(self):
         messages = [{"role": "user", "content": "hello"}]
 
         with patch.object(
@@ -348,10 +348,84 @@ class ModelRouterTestCase(unittest.TestCase):
         self.assertEqual(result.done_reason, "stop")
         self.assertEqual(result.eval_count, 1)
         payload = post_json.call_args.args[1]
-        self.assertIs(payload["think"], False)
+        self.assertNotIn("think", payload)
         self.assertEqual(payload["model"], "qwen3:8b")
         self.assertTrue(payload["messages"][-1]["content"].endswith("/no_think"))
         self.assertEqual(messages, [{"role": "user", "content": "hello"}])
+
+    def test_ollama_chat_keeps_native_think_false_for_non_hybrid_model(self):
+        payload = ollama_runtime._chat_payload(
+            "qwen2.5:7b-instruct",
+            [{"role": "user", "content": "hello"}],
+            stream=False,
+            temperature=None,
+            max_tokens=None,
+            num_ctx=None,
+            keep_alive=None,
+            num_gpu=None,
+            think=False,
+        )
+
+        self.assertIs(payload["think"], False)
+        self.assertEqual(payload["messages"][-1]["content"], "hello")
+
+    def test_chat_completion_hides_structured_reasoning_when_thinking_is_off(self):
+        service = ChatService()
+        result = ollama_runtime.ChatCompletionResult(
+            content="final",
+            reasoning="internal trace",
+            done_reason="stop",
+        )
+
+        with patch.object(ollama_runtime, "chat_completion_result", return_value=result):
+            completed = service.chat_completion_result(
+                "qwen3:8b",
+                [{"role": "user", "content": "hello"}],
+                settings={"max_tokens": 64, "ollama_think": "off"},
+            )
+
+        self.assertEqual(completed.content, "final")
+        self.assertEqual(completed.reasoning, "")
+
+    def test_chat_completion_rejects_content_truncated_at_token_limit(self):
+        service = ChatService()
+        result = ollama_runtime.ChatCompletionResult(
+            content="unfinished visible answer",
+            done_reason="length",
+            eval_count=64,
+        )
+
+        with patch.object(ollama_runtime, "chat_completion_result", return_value=result):
+            with self.assertRaises(HTTPException) as ctx:
+                service.chat_completion_result(
+                    "qwen3:8b",
+                    [{"role": "user", "content": "hello"}],
+                    settings={"max_tokens": 64, "ollama_think": "off"},
+                )
+
+        self.assertEqual(ctx.exception.detail["code"], "chat_final_answer_incomplete")
+
+    def test_chat_completion_stream_hides_reasoning_when_thinking_is_off(self):
+        service = ChatService()
+        events = iter(
+            [
+                ollama_runtime.ChatStreamEvent(reasoning="internal trace"),
+                ollama_runtime.ChatStreamEvent(content="final"),
+                ollama_runtime.ChatStreamEvent(done=True, done_reason="stop"),
+            ]
+        )
+
+        with patch.object(ollama_runtime, "chat_completion_stream_events", return_value=events):
+            result = list(
+                service.chat_completion_stream_events(
+                    "qwen3:8b",
+                    [{"role": "user", "content": "hello"}],
+                    settings={"max_tokens": 64, "ollama_think": "off"},
+                )
+            )
+
+        self.assertEqual("".join(item.content for item in result), "final")
+        self.assertEqual("".join(item.reasoning for item in result), "")
 
     def test_ollama_chat_stream_events_keep_reasoning_out_of_content_wrapper(self):
         messages = [{"role": "user", "content": "hello"}]
@@ -1102,7 +1176,18 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
         self.assertEqual(disabled["generation_budget_policy"], "output_only")
         self.assertFalse(disabled["thinking_budget_applied"])
 
-    def test_runtime_uses_combined_cap_only_when_thinking_is_on(self):
+        qwen3_disabled = apply_generation_budget_policy(
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"},
+            model_name="qwen3:8b",
+        )
+        self.assertEqual(qwen3_disabled["provider_num_predict"], 2000)
+        self.assertEqual(
+            qwen3_disabled["generation_budget_policy"],
+            "qwen3_off_structural_compatibility_cap",
+        )
+        self.assertTrue(qwen3_disabled["thinking_budget_applied"])
+
+    def test_runtime_uses_combined_cap_for_thinking_on_and_qwen3_structural_off(self):
         service = ChatService()
         enabled = service._runtime_kwargs(
             "qwen3:8b",
@@ -1115,8 +1200,15 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
 
         self.assertEqual(enabled["max_tokens"], 2000)
         self.assertTrue(enabled["think"])
-        self.assertEqual(disabled["max_tokens"], 700)
+        self.assertEqual(disabled["max_tokens"], 2000)
         self.assertFalse(disabled["think"])
+
+        instruct_disabled = service._runtime_kwargs(
+            "qwen2.5:7b-instruct",
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"},
+        )
+        self.assertEqual(instruct_disabled["max_tokens"], 700)
+        self.assertFalse(instruct_disabled["think"])
 
     def test_mem_turns_is_profile_setting_not_model_override(self):
         profile = db.update_profile_preferences(self.profile_id, {"settings": {"mem_turns": 10}})

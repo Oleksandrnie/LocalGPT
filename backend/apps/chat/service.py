@@ -120,7 +120,11 @@ def _resolve_ollama_think(value: Any) -> bool | None:
     return None
 
 
-def apply_generation_budget_policy(settings: dict[str, Any] | None) -> dict[str, Any]:
+def apply_generation_budget_policy(
+    settings: dict[str, Any] | None,
+    *,
+    model_name: str | None = None,
+) -> dict[str, Any]:
     effective = dict(settings or {})
 
     def _budget_value(key: str, fallback: int) -> int:
@@ -137,9 +141,17 @@ def apply_generation_budget_policy(settings: dict[str, Any] | None) -> dict[str,
         int(config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens") or 2048),
     )
     think = _resolve_ollama_think(effective.get("ollama_think"))
+    qwen3_structural_off = bool(
+        think is False
+        and ollama_runtime.QWEN3_HYBRID_MODEL_RE.search(str(model_name or ""))
+    )
     if think is True:
         provider_num_predict = min(GENERATION_SAFETY_CAP, output_tokens + thinking_tokens)
         policy = "combined_compatibility_cap"
+        thinking_budget_applied = True
+    elif qwen3_structural_off:
+        provider_num_predict = min(GENERATION_SAFETY_CAP, output_tokens + thinking_tokens)
+        policy = "qwen3_off_structural_compatibility_cap"
         thinking_budget_applied = True
     elif think is False:
         provider_num_predict = output_tokens
@@ -565,7 +577,7 @@ class ChatService:
             LOGGER.warning("Failed to write chat log: %s", type(exc).__name__)
 
     def _runtime_kwargs(self, model: str, settings: dict, *, vision: bool = False) -> dict[str, Any]:
-        request_settings = apply_generation_budget_policy(settings)
+        request_settings = apply_generation_budget_policy(settings, model_name=model)
         request_settings["num_ctx_requested"] = request_settings.get("num_ctx")
         request_settings["num_ctx_applied"] = request_settings.get("num_ctx") is not None
         request_settings["num_ctx_apply_method"] = "native_ollama_options"
@@ -600,22 +612,56 @@ class ChatService:
 
     @staticmethod
     def require_final_answer(result: ollama_runtime.ChatCompletionResult) -> ollama_runtime.ChatCompletionResult:
+        if result.done_reason == "length":
+            exhausted_after_reasoning = bool(result.reasoning.strip())
+            message = (
+                "Thinking budget exhausted before the model produced a final answer."
+                if exhausted_after_reasoning and not result.content.strip()
+                else "The model response reached its token limit before completion."
+            )
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "chat_final_answer_incomplete",
+                    "message": message,
+                    "done_reason": result.done_reason,
+                },
+            )
         if result.content.strip():
             return result
-        exhausted_after_reasoning = bool(result.reasoning.strip()) and result.done_reason == "length"
-        message = (
-            "Thinking budget exhausted before the model produced a final answer."
-            if exhausted_after_reasoning
-            else "The model completed without a final answer."
-        )
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "chat_final_answer_incomplete",
-                "message": message,
+                "message": "The model completed without a final answer.",
                 "done_reason": result.done_reason,
             },
         )
+
+    @classmethod
+    def apply_stream_completion_policy(
+        cls,
+        events: Iterable[ollama_runtime.ChatStreamEvent],
+        *,
+        think: bool | None,
+    ) -> Iterator[ollama_runtime.ChatStreamEvent]:
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        for event in events:
+            if event.content:
+                content_parts.append(event.content)
+            if event.reasoning:
+                reasoning_parts.append(event.reasoning)
+            if event.done:
+                cls.require_final_answer(
+                    ollama_runtime.ChatCompletionResult(
+                        content="".join(content_parts),
+                        reasoning="".join(reasoning_parts),
+                        done_reason=event.done_reason,
+                        eval_count=event.eval_count,
+                    )
+                )
+            yield replace(event, reasoning="" if think is False else event.reasoning)
 
     def chat_completion_result(
         self,
@@ -634,10 +680,12 @@ class ChatService:
             raise
         except Exception as exc:
             raise HTTPException(status_code=502, detail="Local model generation failed.") from exc
+        think = _resolve_ollama_think(settings.get("ollama_think"))
         sanitized = replace(result, content=sanitize_reply(result.content))
         enforce_protected_output(messages, sanitized.content)
         enforce_protected_output(messages, sanitized.reasoning)
-        return self.require_final_answer(sanitized)
+        completed = self.require_final_answer(sanitized)
+        return replace(completed, reasoning="") if think is False else completed
 
     def chat_completion(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> str:
         return self.chat_completion_result(model, messages, settings=settings).content
@@ -649,14 +697,18 @@ class ChatService:
         *,
         settings: dict,
     ) -> Iterator[ollama_runtime.ChatStreamEvent]:
+        think = _resolve_ollama_think(settings.get("ollama_think"))
         try:
-            yield from guard_stream_events(
-                messages,
-                ollama_runtime.chat_completion_stream_events(
-                    model,
-                    messages=messages,
-                    **self._runtime_kwargs(model, settings),
+            yield from self.apply_stream_completion_policy(
+                guard_stream_events(
+                    messages,
+                    ollama_runtime.chat_completion_stream_events(
+                        model,
+                        messages=messages,
+                        **self._runtime_kwargs(model, settings),
+                    ),
                 ),
+                think=think,
             )
         except HTTPException:
             raise

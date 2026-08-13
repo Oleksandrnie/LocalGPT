@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 6 — Controlled live-model jailbreak validation.
+- Current stage: Stage 7B — provider/RAG/mobile corrective implementation.
 
 ## Instructions and precedence
 
@@ -91,7 +91,7 @@
 ### Stage 6 — Controlled live-model jailbreak validation
 
 - Goal: run the prior security controls against an actually installed Ollama chat model with synthetic canaries.
-- Status: completed; checkpoint pending.
+- Status: completed.
 - Actions: add a separate opt-in harness/command; record model/runtime identity and hard/behavioral classifications; run bounded deterministic fixtures; make minimal mitigation only for reproduced failures.
 - Expected result: reproducible live report without raw hidden prompts, client corpus, or secrets.
 - Validation: harness unit tests plus controlled repeated live run; confirm no foreign source reaches request and no model output triggers a privileged action.
@@ -103,7 +103,7 @@
 ### Stage 7A — LAN Caddy validation
 
 - Goal: validate/fix Caddy HTTPS → localhost backend with actual runtime port and private LAN address.
-- Status: pending.
+- Status: in progress; host and second-device functionality passed, iPhone certificate trust remains pending.
 - Actions: automate launcher/config negative contracts; run host smoke; verify same-origin UI/API/SSE/admin authorization; complete second-device smoke; update only factual networking docs.
 - Expected result: LAN works without public backend bind, wildcard CORS, stale runtime targets, or leaked key material.
 - Validation: shell/unit tests, host curl/SSE/static/admin checks, and documented second-device matrix.
@@ -123,6 +123,30 @@
 - Affected files: affected permanent docs and this progress file.
 - Dependencies: Stages 5–7A complete.
 - Proposed checkpoint commit: `chore(progress): close security audit follow-up`.
+
+### Stage 7B — Thinking OFF, follow-up RAG, and mobile controls
+
+- Goal: correct the defects reproduced during second-device QA without changing user data or introducing silent model fallback.
+- Status: completed; checkpoint pending.
+- Actions: keep Qwen hybrid reasoning structurally separated when OFF is requested; reject reasoning-only/truncated completion; expand short referential RAG follow-ups using authorized recent user queries and improve generic platform relevance; cover both mobile Thinking controls and 44 px tap targets.
+- Expected result: OFF never shows/stores model reasoning as final content, generic `other CMS` follow-ups retrieve explicit corpus evidence, and both mobile controls remain synchronized.
+- Validation: focused provider/chat/RAG Python tests, Node UI contracts, 390x844 manual browser matrix, then one bounded sequential `qwen3:4b` live smoke with final `keep_alive=0`.
+- Completion criterion: deterministic regressions pass; live OFF returns only final content or an explicit fail-closed error, never reasoning-as-content; no unrelated/user runtime data is modified.
+- Affected files: Ollama runtime/chat service/task handling, RAG query preparation/ranking helpers, active UI CSS/tests, and affected provider/RAG/UI/testing records.
+- Dependencies: confirmed local manifest behavior, existing Stage 5 isolation, Stage 6 output boundary, and preserved Stage 7A LAN changes.
+- Proposed checkpoint commit: `fix(chat): harden thinking off and follow-up retrieval`.
+
+### Stage 7C — Cross-model RAG grounding parity
+
+- Goal: determine why `qwen2.5:3b-instruct` and `qwen2.5:7b-instruct` use the same RAG evidence less completely than the validated Qwen3 path.
+- Status: pending; no new model run before the Stage 7A/7B checkpoint.
+- Actions: compare metadata-only retrieved chunk IDs, assembled prompt contracts, effective settings and grounded answer coverage across 3B/7B/4B using strictly sequential runs; fix only a model-independent boundary unless evidence proves a declared provider adapter is required.
+- Expected result: every supported chat model receives the same authorized RAG evidence; model-specific answer-quality limits are measured and distinguished from retrieval/prompt defects.
+- Validation: deterministic shared-RAG prompt tests plus one bounded sequential run per requested model, unloading each before the next.
+- Completion criterion: retrieval/prompt parity is proven, direct CMS evidence is represented in each response or an explicit evidence-backed model limitation is recorded without hardcoding corpus brands into production policy.
+- Affected files: to be determined from diagnosis; no implementation assumed.
+- Dependencies: Stage 7A/7B checkpoint committed and all models kept sequential to protect Mac thermals.
+- Proposed checkpoint commit: to be determined after diagnosis.
 
 ## Decisions
 
@@ -180,7 +204,59 @@
 - Validation: final current-code runs were `qwen3:4b` 2 raw disclosures / 2 backend blocks / 0 hard failures / 12 behavioral; `qwen2.5:3b-instruct` 2 / 2 / 0 / 6; `qwen2.5:7b-instruct` 0 / 0 / 0 / 6. All 48 runs had no foreign-scope prompt boundary breach or action edge. Ollama `0.32.5`, Metal M1 Pro, `temperature=0`, `num_ctx=8192`, `max_tokens=160`, `think=false`.
 - Regression: 201 broad focused Python tests reproduced only the two documented ASR baseline failures; 28 Node tests, compileall, JavaScript syntax, and diff check passed.
 - Issues: all three models retain some behavioral susceptibility, strongest on `qwen3:4b`; backend boundaries remain authoritative. No raw prompt, response or canary value was persisted in project artifacts.
-- Next action: run broad Stage 6 regression, update this checkpoint with the commit hash, then start Stage 7A LAN validation.
+- Checkpoint: `5faa232 test(security): add controlled live model validation`.
+- Next action: validate the private HTTPS path on the host and then from a second device on the same Wi-Fi network.
+
+### 2026-08-13 — Stage 7A host LAN validation
+
+- Stage: Stage 7A.
+- Completed: fixed generated Caddy configuration to bind only the detected private IP, disabled the implicit port-80 redirect listener, made IP/upstream changes force a restart, and added a no-browser launcher mode plus focused negative contracts. Ran the actual localhost backend and project-scoped Ollama behind Caddy.
+- Host evidence: backend listened only on `127.0.0.1:8000`; Caddy listened only on `192.168.0.100:8443`; generated config validated with the actual upstream. HTTPS health, UI/static, profiles/models, allowed/denied CORS, privileged API denial and temporary-token success, public-root-CA response, synthetic SSE, and a real sequential `qwen2.5:3b-instruct` SSE request all passed. The user confirmed the visible UI, models, and profiles recovered and work.
+- Validation: `tests.test_lan_launcher` and `tests.test_network_certificate` passed (7 tests); launcher shell syntax, Python compilation, and diff check passed.
+- Issues: a backend started as a detached child of the Codex command was reaped when that command ended, temporarily producing Caddy 502 responses. This is an execution-environment artifact, not evidence of a normal Terminal launcher defect. No stored models, profiles, or messages were lost.
+- Next action: complete the mandatory phone/tablet smoke over `https://192.168.0.100:8443`, including UI/API, health, SSE, certificate trust, and missing-admin-token denial.
+
+### 2026-08-13 — second-device confirmation and Thinking OFF defect
+
+- Stage: Stage 7A completion plus Stage 6 follow-up diagnosis.
+- Completed: the user confirmed the second-device UI, profiles/models, streaming response, health endpoint, and missing-token denial behave as specified. Later screenshots show Safari still labels the connection `Not Secure`, so client root-CA trust is not yet complete. Separately inspected the reported latest `Clients RAG test` / `qwen3:4b` exchange without copying its contents into project records.
+- Finding: `ollama_think=off` was persisted before the request, but the completed assistant row contained reasoning-style text in `content` and no separate `reasoning`. The installed model template unconditionally opens `<think>` for a new assistant turn. A sequential synthetic control reproduced the defect: `think=false` returned 216 content characters / 0 reasoning characters and exhausted the 80-token cap; `think=true` with `/no_think` returned 0 content / 216 reasoning characters and exhausted the same cap.
+- Impact: the UI toggle and settings persistence work, but the current `qwen3:4b` manifest does not provide a reliable non-thinking path; passing native `think=false` turns model reasoning into visible answer content.
+- Validation safety: only the already-loaded 4B model was exercised, requests were sequential, and the second request used `keep_alive=0` to unload it.
+- Next action: obtain implementation authority for a focused provider/manifest-compatible Thinking OFF fix and regression coverage before Stage 8 cleanup.
+
+### 2026-08-13 — mobile control and RAG relevance diagnosis
+
+- Stage: pre-fix QA for the user-reported mobile chat failure.
+- Mobile result: at a real `390x844` viewport, the header Thinking button and the model-picker slider both persisted and cross-synchronized `on`/`off`; the profile was restored to `off`. Sidebar/profile/session navigation, new-chat state, model selector, RAG panel, theme, settings, reasoning dialog, Chat-to-RAG cancellation, composer menu, send enablement, and scroll-to-latest passed with no console warning/error. Voice permission and destructive operations were not invoked against user data.
+- Mobile UX finding: primary fixed controls are 44x44 px, while message `Add to RAG` / `Copy` actions are 30 px high and sidebar chat open/delete controls are 34x34 px; these are functional but below the preferred 44 px mobile tap target.
+- RAG finding: the source corpus explicitly describes work with WordPress, OpenCart, Joomla, Drupal, MODX, Tilda and custom CMS, including support on any management system. The exact natural-language follow-up selected five unrelated/partial chunks and omitted those direct claims; an explicit CMS-enumeration query retrieved the relevant chunks. This is a retrieval query-expansion/reranking defect, not absence of source evidence.
+- Combined failure: with `think=false`, manifest-seeded reasoning entered ordinary `content`, consumed the output budget, ended without a final answer, and was accepted as a completed assistant response. Chat-to-RAG can consequently offer that contaminated content for export because provider reasoning is no longer structurally distinguishable at that point.
+- Next action: if implementation is authorized, fix the Qwen hybrid OFF boundary, reject reasoning-only/truncated visible content, improve generic `other CMS` retrieval expansion/reranking, and add automated desktop/mobile two-control regression coverage.
+
+### 2026-08-13 — Stage 7B corrective implementation
+
+- Stage: Stage 7B.
+- Completed: hybrid Qwen OFF now omits native `think=false` while retaining transient `/no_think`, so manifest-seeded reasoning remains structural and is suppressed before client/storage. Any token-limit completion fails closed; incomplete worker rows clear partial content/reasoning. RAG query history is deduplicated, direct capability/platform evidence receives a bounded generic lexical bonus, and conflict years are tied to the same exclusive/alternative evidence chunk. Both mobile Thinking surfaces have shared-handler contracts; session and message actions are at least 44 px in the mobile media range.
+- Deterministic validation: 163/165 broad Python tests passed; the two failures are the previously recorded ASR baseline (`test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers`, `test_pipeline_tasks_are_normalized_for_transcript_record`). Eight reasoning/mobile Node tests, context-isolation UI, compileall, JavaScript syntax and diff check passed. The real `Clients RAG test` follow-up now includes direct CMS evidence chunk 197 in top-5 and reports `partial` instead of the prior false `conflict`.
+- Live validation: sequential `qwen3:4b` with an artificial 128-token cap produced only structural reasoning and correctly failed with 502; a 512-token OFF request returned final content `готово`, emitted zero reasoning characters through the backend stream, completed with `stop`, and unloaded the model (`loaded_after=[]`).
+- Manual status: prior 390x844 control matrix passed before this CSS-only adjustment. The isolated browser could not validate LAN HTTPS because it does not trust the private CA; the user confirms the certificate exists on the phone and will perform the final real-device check. No destructive action, message send, or profile setting change was made in this implementation pass.
+- Next action: user checks the updated runtime on the phone; then mark Stage 7B completed, update checkpoint hash, and create the focused commit.
+
+### 2026-08-13 — Stage 7B phone failure and budget correction
+
+- Stage: Stage 7B follow-up.
+- Phone evidence: both OFF attempts safely returned `chat_final_answer_incomplete`; no reasoning appeared as content. Screenshots showed `Output tokens=512` while Thinking allowance was 2048 and later 5252. The failure was therefore fail-closed but unusable: OFF policy sent only the 512 output allowance even though this Qwen manifest still performs hidden structural reasoning.
+- Correction: hybrid Qwen OFF now receives a single bounded provider cap equal to output + thinking allowances. Non-hybrid OFF remains output-only. The structural reasoning channel is still suppressed before client/storage, and token exhaustion still fails closed.
+- Next action: run focused tests and one sequential real-RAG prompt smoke, unload the model, then ask the user to retry after restart.
+
+### 2026-08-14 — Stage 7B phone acceptance and instruct-model follow-up
+
+- Stage: Stage 7B acceptance; Stage 7C intake.
+- Accepted evidence: after the compatibility-cap correction and backend restart, the user's real-phone screenshot shows `qwen3:4b` with Thinking OFF returning a direct final answer grounded in RAG, including WordPress, Joomla, OpenCart, MODx, Tilda and Laravel. No reasoning text appears in the chat body and the larger message actions render as intended.
+- New observation: user-selected Qwen 2.5 3B/7B Instruct answers appear less complete and inconsistent across generic follow-ups, despite the shared model-independent retrieval path. This is not yet classified as retrieval, prompt assembly or model-grounding behavior.
+- Decision: checkpoint all already validated LAN/Thinking/RAG/mobile changes before any further live-model comparison. Stage 7C will run 3B and 7B strictly one at a time and unload between models.
+- Next action: inspect final staged diff and create the requested checkpoint; do not start 3B/7B diagnosis until it exists.
 
 ## Changed files
 
@@ -190,6 +266,7 @@
 - `tests/test_context_isolation.py`.
 - `tests/context_isolation_ui.test.mjs`.
 - `tests/test_live_llm_security_harness.py`.
+- `tests/test_lan_launcher.py`.
 - `tools/live_llm_security.py`.
 
 ### Modified
@@ -208,23 +285,23 @@
 
 - Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed.
 - Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed.
-- Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement.
-- Manual/regression checks: not started.
-- Skipped checks and reasons: real LAN remains Stage 7A; no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
-- Remaining uncertainty: model behavioral jailbreak resistance varies; real LAN remains unverified; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
+- Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement; host LAN HTTPS/API/SSE/CORS/admin/certificate matrix passed.
+- Manual/regression checks: user confirmed restored host behavior and functional second-device access; Qwen3 OFF + generic CMS RAG answer passed on the real phone. Safari still displays `Not Secure`, so certificate trust status remains pending separately in Stage 7A.
+- Skipped checks and reasons: no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
+- Remaining uncertainty: model behavioral jailbreak resistance varies; Qwen 2.5 3B/7B cross-model grounding parity is now Stage 7C; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
 
 ## Regressions and deferred work
 
 - New regressions: none.
 - Pre-existing failures: two ASR tests in focused baseline; prior full-suite plugin DB restore issue.
 - Resolved issues: row-based history semantics, profile/session ID substitution, cross-session derived retrieval/deletion, and session-owned object API gaps.
-- Unresolved blockers: second-device LAN access is required before Stage 7A can close.
+- Unresolved blockers: Stage 7A still requires trusted/secure Safari status. Stage 7B has no remaining blocker; Stage 7C awaits post-checkpoint diagnosis.
 - Deferred/technical debt: Tailscale, model router, authenticated multi-user identity, and promotion UX remain separate scope.
 
 ## Documentation and permanent records
 
 - Architecture/testing/setup docs: `ARCHITECTURE.md` and `TESTING.md` updated for Stage 5.
-- Module knowledge docs: backend/RAG/UI updated; networking remains pending Stage 7A.
+- Module knowledge docs: backend/RAG/UI updated; networking now records the private-listener and generated-config contract.
 - Changelog/release notes: Unreleased records session isolation and exact history semantics.
 - Backlog: remove or refine the now-active live/LAN item only after completion; preserve explicit future Tailscale work.
 - Canonical project/task index: security audit follow-up section is the permanent evidence record.
@@ -232,16 +309,16 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: `5acb521` (Stage 5).
+- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6).
 
 ## Continuation state
 
-- Current stage: Stage 6 checkpoint.
-- Last completed action: final live validation on all three requested text models and Ollama shutdown.
-- Current repository state: Stage 5 is committed at `5acb521`; Stage 6 code/docs/tests are ready for broad regression and focused commit.
-- Known risks: raw model privacy/behavior varies, especially on `qwen3:4b`; backend fail-closed enforcement is required. LAN remains unverified.
-- Next exact action: run broad focused/static regression, inspect staged diff, and create the Stage 6 checkpoint.
-- Next command or file: `venv/bin/python -m unittest` focused security/runtime/chat suites, followed by static/Node checks.
+- Current stage: Stage 7A/7B checkpoint; Stage 7C queued after the commit.
+- Last completed action: real-phone Qwen3 OFF + direct CMS RAG answer accepted; 3B/7B inconsistency recorded without running new tests.
+- Current repository state: Stages 5 and 6 are committed; validated Stage 7A launcher and Stage 7B chat/RAG/mobile changes are ready for the user-requested checkpoint.
+- Known risks: backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`; instruct-model RAG use may be weaker even when retrieval evidence is shared.
+- Next exact action: stage the complete inspected Stage 7 checkpoint, review the staged diff, commit it, then begin Stage 7C with read-only comparison before sequential live runs.
+- Next files: staged diff, then provider/RAG request diagnostics for Stage 7C.
 
 ## Final checklist
 

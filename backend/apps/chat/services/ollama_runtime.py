@@ -141,6 +141,20 @@ def _messages_with_thinking_instruction(
     return prepared
 
 
+def _native_think_value(model_name: str, think: bool | None) -> bool | None:
+    """Keep Qwen3 hybrid reasoning parseable while /no_think requests a direct answer.
+
+    Some Qwen3 templates open a ``<think>`` block unconditionally. Ollama's
+    native ``think=false`` then exposes that block as ordinary content instead
+    of parsing it into ``message.thinking``. Omitting the native flag preserves
+    the structural boundary; the transient user directive still selects the
+    requested OFF behavior.
+    """
+    if think is False and QWEN3_HYBRID_MODEL_RE.search(str(model_name or "")):
+        return None
+    return think
+
+
 def _chat_payload(
     model_name: str,
     messages: list[dict[str, Any]],
@@ -168,8 +182,9 @@ def _chat_payload(
         "messages": _messages_with_thinking_instruction(model_name, messages, think),
         "stream": stream,
     }
-    if think is not None:
-        payload["think"] = bool(think)
+    native_think = _native_think_value(model_name, think)
+    if native_think is not None:
+        payload["think"] = bool(native_think)
     if options:
         payload["options"] = options
     if keep_alive is not None:

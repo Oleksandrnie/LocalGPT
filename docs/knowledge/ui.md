@@ -72,7 +72,7 @@ Settings tab `Vision` не смешан с обычной chat library. Он п�
 
 После завершённого анализа действие Vision → RAG открывает dialog с редактируемым title/text. Export выполняется только после подтверждения пользователя и не переносит image binary.
 
-Settings → Chat / LLM показывает отдельные `Output tokens` и `Thinking tokens`. Быстрый Thinking ON/OFF видим для thinking-capable модели (для Auto — по profile preference) и сохраняет оба budget override без сброса.
+Settings → Chat / LLM показывает отдельные `Output tokens` и `Thinking tokens`. Быстрый Thinking ON/OFF видим для thinking-capable модели (для Auto — по profile preference) и сохраняет оба budget override без сброса. Desktop/mobile header menu и slider в desktop/mobile model picker используют один save handler и после изменения синхронно рендерят общее effective состояние.
 
 Там же `История чата, пар сообщений` задаёт profile default 6 в диапазоне 0–100. Один turn — завершённая пара `user + assistant` только текущего chat; `0` отключает short history. Setting сохраняется в profile preferences и применяется ко всем chat-моделям, но не смешивает sessions.
 
@@ -83,6 +83,8 @@ Dark/light theme переключается topbar control и сохраняет
 ## Responsive strategy
 
 CSS содержит отдельные ranges для узких телефонов, 391–430, 431–480, tablet/mobile до 768, landscape-height и более широких layout transitions. Не добавляйте breakpoint только под один screenshot; сначала используйте общие mobile constraints.
+
+В mobile/short-landscape media range session open/delete и message `Добавить в RAG`/`Скопировать` имеют минимум 44 px по высоте; круглые session actions также 44×44 px.
 
 Проверять:
 

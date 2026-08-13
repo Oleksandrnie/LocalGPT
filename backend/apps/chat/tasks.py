@@ -463,6 +463,7 @@ def _chat_worker(
         message = "Local model generation failed."
         safe_messages = {
             "Thinking budget exhausted before the model produced a final answer.",
+            "The model response reached its token limit before completion.",
             "The model completed without a final answer.",
         }
         detail_message = str(detail.get("message") or "") if isinstance(detail, dict) else ""
@@ -470,13 +471,15 @@ def _chat_worker(
             message = detail_message
         if assistant_message_id:
             try:
-                db.update_message(
-                    assistant_message_id,
-                    status="failed",
-                    model=model_name,
-                    error=str(message),
-                    is_partial=False,
-                )
+                update_fields: dict[str, Any] = {
+                    "status": "failed",
+                    "model": model_name,
+                    "error": str(message),
+                    "is_partial": False,
+                }
+                if error_code == "chat_final_answer_incomplete":
+                    update_fields.update({"content": "", "reasoning": ""})
+                db.update_message(assistant_message_id, **update_fields)
             except Exception:
                 pass
         _set_attachment_status(attachment_ids, "failed", error=str(message))

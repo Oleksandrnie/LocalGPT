@@ -623,7 +623,50 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         updated = db.get_message(assistant_message["id"])
         self.assertEqual(updated["status"], "failed")
         self.assertEqual(updated["content"], "")
-        self.assertEqual(updated["reasoning"], "unfinished reasoning")
+        self.assertFalse(updated["reasoning"])
+
+    def test_visible_length_exhaustion_clears_partial_assistant_content(self):
+        session = db.create_session(self.profile_id, "Visible exhaustion", "qwen3:4b")
+        assistant_message = db.create_assistant_message(session["id"], model="qwen3:4b")
+        root = Path(self.tmpdir.name)
+        result_path = root / "visible-exhausted.result.json"
+        error_path = root / "visible-exhausted.error.json"
+        delta_path = root / "visible-exhausted.deltas.jsonl"
+        reasoning_path = root / "visible-exhausted.reasoning.jsonl"
+        status_path = root / "visible-exhausted.status.json"
+
+        events = iter(
+            [
+                ollama_runtime.ChatStreamEvent(content="unfinished visible answer"),
+                ollama_runtime.ChatStreamEvent(done=True, done_reason="length", eval_count=64),
+            ]
+        )
+        with patch(
+            "backend.apps.chat.tasks.ChatService.chat_completion_stream_events",
+            return_value=events,
+        ):
+            chat_tasks._chat_worker(
+                "qwen3:4b",
+                [{"role": "user", "content": "hello"}],
+                {"streaming_enabled": True, "ollama_think": "off"},
+                session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                True,
+                str(delta_path),
+                str(reasoning_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+            )
+
+        error = json.loads(error_path.read_text(encoding="utf-8"))
+        self.assertEqual(error["code"], "chat_final_answer_incomplete")
+        self.assertIn("token limit", error["message"])
+        updated = db.get_message(assistant_message["id"])
+        self.assertEqual(updated["status"], "failed")
+        self.assertEqual(updated["content"], "")
+        self.assertFalse(updated["reasoning"])
 
     def test_cancelled_task_keeps_reasoning_received_before_cancellation(self):
         session = db.create_session(self.profile_id, "Cancelled reasoning", "qwen3:4b")

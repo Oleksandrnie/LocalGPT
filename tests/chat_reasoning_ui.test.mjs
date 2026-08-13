@@ -17,6 +17,16 @@ test("quick Thinking control is visible for declared thinking-capable models", (
   assert.match(javascript, /quickThinkingMobileControl\.hidden = !shouldShowThinkingToggleForModel\(modelName\)/);
   assert.match(javascript, /MODEL_SETTINGS_OVERRIDE_KEYS = \[[\s\S]*"output_tokens",[\s\S]*"thinking_tokens",/);
   assert.match(javascript, /buildModelSettingsPayload\(\{ ollama_think: nextMode \}\)/);
+  assert.match(javascript, /quickThinkingMenu\?\.addEventListener\("click", handleQuickThinkingMenuClick\)/);
+  assert.match(javascript, /quickThinkingMobileMenu\?\.addEventListener\("click", handleQuickThinkingMenuClick\)/);
+  assert.match(javascript, /quickModelMenu\?\.addEventListener\("change", handleQuickModelMenuChange\)/);
+  assert.match(javascript, /quickModelMobileMenu\?\.addEventListener\("change", handleQuickModelMenuChange\)/);
+  assert.match(javascript, /quickThinkingMobileControl\.dataset\.thinkingMode = nextMode/);
+});
+
+test("mobile chat and session actions meet the 44px tap target", () => {
+  assert.match(css, /@media \(max-width: 768px\)[\s\S]*\.session-mini-button \{[\s\S]*min-height: var\(--mobile-touch-target\)/);
+  assert.match(css, /@media \(max-width: 768px\)[\s\S]*\.message-copy-button \{[\s\S]*min-height: var\(--mobile-touch-target\)/);
 });
 
 test("reasoning is lazy-loaded into an accessible read-only dialog", () => {

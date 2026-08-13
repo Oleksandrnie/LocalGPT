@@ -104,11 +104,11 @@ Smoke считается пройденным, если `/health` возвращ
 - missing/partial/installed/active states не смешиваются;
 - `stream=true` создаёт раздельные SSE `reasoning`/`delta`, а replay/reconnect не дублирует ни reasoning, ни final text;
 - non-streaming сохраняет тот же assistant lifecycle;
-- native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history, а reasoning-only length exhaustion завершается ошибкой;
+- native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history; hybrid Qwen OFF сохраняет structural parser, использует output + thinking compatibility cap, скрывает reasoning, а любое `done_reason=length` завершается ошибкой и очищает partial assistant row;
 - protected L1/L2/private-session literal блокируется до non-streaming выдачи/сохранения; streaming/vision guard не выпускает полное значение даже при разбиении между chunks; user attack marker не считается protected автоматически;
 - `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
 - RAG context попадает в prompt только активного профиля;
-- RAG data остаётся L4 envelope; hybrid retrieval покрывает multi-part facets разными источниками, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
+- RAG data остаётся L4 envelope; hybrid retrieval покрывает multi-part facets разными источниками, generic platform follow-up получает direct capability evidence, repeated recent turns дедуплицируются, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
 - short history использует default 6 и проверяется для `0/1/6/100`: один turn равен завершённой паре `user + assistant` только активной session; orphan/active/failed/cancelled rows и текущий query не считаются;
 - messages/criteria, transcript/pipeline, reasoning, attachment, task и derived-RAG endpoints отклоняют foreign profile/session тем же not-found contract, что unknown ID;
@@ -138,6 +138,21 @@ System Settings LAN certificate controls:
 ```bash
 node tests/lan_certificate_ui.test.mjs
 ```
+
+### LAN/Caddy
+
+Проверка launcher-контрактов не поднимает тяжёлые модели и не открывает браузер:
+
+```bash
+/bin/zsh -n tools/LTrnsrb.sh
+venv/bin/python -m unittest tests.test_lan_launcher tests.test_network_certificate
+```
+
+Для реального LAN smoke запускайте launcher с `LOCALGPT_NO_BROWSER=1`, если автоматическое открытие окна не нужно. Проверяйте, что backend слушает только фактический `127.0.0.1:<runtime-port>`, а Caddy — только выбранный частный LAN IP и HTTPS-порт; listener на `0.0.0.0`, `*:80` или устаревший upstream недопустим.
+
+Через HTTPS проверяются `/health`, UI и static assets, profile/model API, потоковый chat SSE, разрешённый и запрещённый CORS Origin, отказ privileged API без `ADMIN_TOKEN` и выдача только публичного root CA без private key. После изменения IP или runtime-порта launcher должен пересобрать конфигурацию и перезапустить Caddy.
+
+Stage 7 LAN validation считается завершённой только после проверки со второго устройства в той же частной сети: UI/API открываются, SSE-ответ приходит, `/health` доступен, privileged endpoint без токена получает отказ, а клиент доверяет установленному публичному Caddy root CA. Не включайте Funnel, port forwarding или публичную привязку backend.
 
 Model-transfer tests используют только temporary synthetic files. Реальный export/import локальных моделей запускается отдельно явным действием пользователя.
 
@@ -177,6 +192,7 @@ Model-transfer tests используют только temporary synthetic files
 - force reindex очищает stale JSON records, не удаляя legacy files;
 - chunk overlap, embedding metadata, `hybrid_v1`/`legacy` rollback и diversified top-k search;
 - context assembly соблюдает `max_chars` и содержит bounded facet/provenance diagnostics;
+- generic capability/platform follow-up выбирает direct supported-platform evidence, а query composer не дублирует повторённые recent user turns;
 - search соблюдает query/top-k limits; multi-file upload проверяет count/per-file/total bytes до publication и не оставляет artifacts при 413;
 - file/context deletion очищает DB records.
 - explicit user/completed-assistant export проверяет profile/session ownership, role metadata, отсутствие reasoning и независимое удаление; assistant-authored export не принимается как factual evidence;
@@ -203,7 +219,8 @@ Model-transfer tests используют только temporary synthetic files
 - ASR/TTS/OCR tool docks;
 - RAG panel и context section;
 - image picker/paste/drop, attachment preview/remove/history и Vision → RAG dialog;
-- live reasoning icon/modal, close/reopen и cancel/error retention, два token budget поля, быстрый Thinking, user/assistant Copy и общий Chat → RAG dialog;
+- live reasoning icon/modal, close/reopen и cancel/error retention, два token budget поля, оба mobile Thinking controls и их cross-sync, user/assistant Copy и общий Chat → RAG dialog;
+- mobile session actions и message `Добавить в RAG`/`Скопировать` имеют фактический tap target не меньше 44 px;
 - Vision settings/library, runtime capability state и cache cleanup;
 - Plugins и network-address menu;
 - keyboard focus, aria states и reduced-motion-sensitive flows.

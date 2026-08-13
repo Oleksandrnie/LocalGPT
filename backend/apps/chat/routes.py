@@ -61,6 +61,22 @@ MISTRAL_CODE_REQUEST_HINT = (
 )
 
 
+def compose_rag_query(user_query: str, history_user_queries: list[str], *, history_limit: int = 3) -> str:
+    """Compose bounded recent context without repeating identical user turns."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for value in [user_query, *reversed(history_user_queries)]:
+        cleaned = re.sub(r"\s+", " ", str(value or "")).strip()
+        normalized = cleaned.casefold()
+        if not cleaned or normalized in seen:
+            continue
+        seen.add(normalized)
+        parts.append(cleaned)
+        if len(parts) >= max(1, history_limit + 1):
+            break
+    return "\n".join(parts)
+
+
 def _catalog_title(model_id: str) -> str:
     target = str(model_id or "").strip()
     if target == model_router.LOCAL_CALCULATOR_TARGET:
@@ -432,7 +448,10 @@ def _apply_auto_router(prepared: dict) -> dict:
             prepared["effective_settings"],
             mode="manual",
         )
-        prepared["effective_settings"] = apply_generation_budget_policy(prepared["effective_settings"])
+        prepared["effective_settings"] = apply_generation_budget_policy(
+            prepared["effective_settings"],
+            model_name=selected_model,
+        )
         return prepared
 
     if not _is_model_installed_or_503(model_router.ROUTER_MODEL_ID):
@@ -488,7 +507,10 @@ def _apply_auto_router(prepared: dict) -> dict:
         target_settings,
         mode="auto",
     )
-    prepared["effective_settings"] = apply_generation_budget_policy(prepared["effective_settings"])
+    prepared["effective_settings"] = apply_generation_budget_policy(
+        prepared["effective_settings"],
+        model_name=decision.target_model,
+    )
     return prepared
 
 
@@ -533,7 +555,10 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     profile_preferences = profile.get("preferences") or {}
     profile_system_prompt = str(((profile_preferences.get("chat") or {}).get("system_prompt") or "")).strip()
     settings_bundle = db.effective_settings(profile_id, model_name, config.DEFAULT_SETTINGS)  # type: ignore[arg-type]
-    effective_settings = apply_generation_budget_policy(settings_bundle.get("effective") or {})
+    effective_settings = apply_generation_budget_policy(
+        settings_bundle.get("effective") or {},
+        model_name=target_model,
+    )
     configured_mem_turns = effective_settings.get("mem_turns")
     mem_turns = int(config.SETTINGS.mem_turns if configured_mem_turns is None else configured_mem_turns)
     history = db.get_prompt_history(session_id, limit_turns=mem_turns) if session_id else []
@@ -555,7 +580,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     if rag_enabled:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
-        rag_query = "\n".join([user_query, *reversed(history_user_queries)]).strip()
+        rag_query = compose_rag_query(user_query, history_user_queries)
         rag_result = rag_service.search_with_diagnostics(
             int(profile_id),
             rag_query or user_query,

@@ -116,6 +116,30 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertEqual(rolled_back["strategy"], "legacy")
         self.assertEqual([item["source_id"] for item in rolled_back["results"]], ["duplicate-aggregate.md"] * 2)
 
+    def test_generic_platform_followup_prefers_direct_capability_evidence(self) -> None:
+        result = rag_service.search_with_diagnostics(
+            self.profile_id,
+            "Другие CMS получается не поддерживаете?\nС какими CMS вы работаете?",
+            top_k=3,
+        )
+
+        self.assertIn("cms.md", {item["source_id"] for item in result["results"]})
+
+    def test_rag_query_composition_deduplicates_repeated_recent_turns(self) -> None:
+        query = chat_routes.compose_rag_query(
+            "Другие CMS поддерживаете?",
+            [
+                "С какими CMS вы работаете?",
+                "С какими CMS вы работаете?",
+                "  другие CMS ПОДДЕРЖИВАЕТЕ?  ",
+            ],
+        )
+
+        self.assertEqual(
+            query.splitlines(),
+            ["Другие CMS поддерживаете?", "С какими CMS вы работаете?"],
+        )
+
     def test_missing_and_conflicting_facets_have_explicit_evidence_status(self) -> None:
         missing = rag_service.search_with_diagnostics(
             self.profile_id,
