@@ -66,7 +66,7 @@ def _atomic_write_json(path: Path | str, payload: dict[str, Any]) -> None:
     Path(temp_name).replace(target)
 
 
-def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
+def _append_stream_chunk_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
     if not path or not text:
         return
     target = Path(path)
@@ -75,6 +75,14 @@ def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> No
     with target.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
         fh.flush()
+
+
+def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
+    _append_stream_chunk_jsonl(path, sequence, text)
+
+
+def _append_reasoning_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
+    _append_stream_chunk_jsonl(path, sequence, text)
 
 
 def _public_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -140,6 +148,7 @@ def _chat_worker(
     assistant_message_id: int | None,
     stream: bool,
     delta_path: str,
+    reasoning_path: str,
     status_path: str,
     result_path: str,
     error_path: str,
@@ -253,6 +262,7 @@ def _chat_worker(
             chunks: list[str] = []
             reasoning_chunks: list[str] = []
             sequence = 0
+            reasoning_sequence = 0
             streaming_started = False
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
                 delta_source = vision_runtime.chat_completion_stream(
@@ -276,6 +286,11 @@ def _chat_worker(
                 for event in event_source:
                     if event.reasoning:
                         reasoning_chunks.append(event.reasoning)
+                        reasoning = "".join(reasoning_chunks)
+                        if assistant_message_id:
+                            db.update_message(assistant_message_id, reasoning=reasoning)
+                        reasoning_sequence += 1
+                        _append_reasoning_jsonl(reasoning_path, reasoning_sequence, event.reasoning)
                     if event.done:
                         done_reason = event.done_reason
                         eval_count = event.eval_count
@@ -658,6 +673,7 @@ def start_chat_task(
     result_path = _artifact_path(task_id, "result")
     error_path = _artifact_path(task_id, "error")
     delta_path = _artifact_path(task_id, "deltas")
+    reasoning_path = _artifact_path(task_id, "reasoning")
     status_path = _artifact_path(task_id, "status")
 
     if assistant_message_id:
@@ -689,6 +705,7 @@ def start_chat_task(
             assistant_message_id,
             bool(stream),
             str(delta_path),
+            str(reasoning_path),
             str(status_path),
             str(result_path),
             str(error_path),
@@ -705,6 +722,7 @@ def start_chat_task(
         _safe_unlink(result_path)
         _safe_unlink(error_path)
         _safe_unlink(delta_path)
+        _safe_unlink(reasoning_path)
         _safe_unlink(status_path)
         if assistant_message_id:
             db.update_message(
@@ -737,6 +755,7 @@ def start_chat_task(
         "result_path": str(result_path),
         "error_path": str(error_path),
         "delta_path": str(delta_path),
+        "reasoning_path": str(reasoning_path),
         "status_path": str(status_path),
         "stream": bool(stream),
         "cancel_requested": False,
@@ -766,19 +785,24 @@ def get_chat_task(task_id: str) -> dict[str, Any] | None:
         return _public_task(task)
 
 
-def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+def _read_chat_task_chunks(
+    task_id: str,
+    *,
+    path_key: str,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
     if not task_id:
         return [], offset
     with _LOCK:
         task = _TASKS.get(task_id)
-        delta_path = task.get("delta_path") if task else None
-    if not delta_path:
+        chunk_path = task.get(path_key) if task else None
+    if not chunk_path:
         return [], offset
-    target = Path(str(delta_path))
+    target = Path(str(chunk_path))
     if not target.exists():
         return [], offset
 
-    deltas: list[dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = []
     try:
         with target.open("rb") as fh:
             fh.seek(max(0, int(offset or 0)))
@@ -791,7 +815,7 @@ def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str,
                 except json.JSONDecodeError:
                     continue
                 if isinstance(payload, dict) and payload.get("text"):
-                    deltas.append(
+                    chunks.append(
                         {
                             "sequence": payload.get("sequence"),
                             "text": str(payload.get("text") or ""),
@@ -799,8 +823,16 @@ def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str,
                     )
             next_offset = fh.tell()
     except OSError:
-        return deltas, offset
-    return deltas, next_offset
+        return chunks, offset
+    return chunks, next_offset
+
+
+def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    return _read_chat_task_chunks(task_id, path_key="delta_path", offset=offset)
+
+
+def read_chat_task_reasoning(task_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    return _read_chat_task_chunks(task_id, path_key="reasoning_path", offset=offset)
 
 
 def cancel_chat_task(task_id: str) -> dict[str, Any] | None:

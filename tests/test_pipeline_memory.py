@@ -471,6 +471,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         result_path = Path(self.tmpdir.name) / "non-streaming.result.json"
         error_path = Path(self.tmpdir.name) / "non-streaming.error.json"
         delta_path = Path(self.tmpdir.name) / "non-streaming.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "non-streaming.reasoning.jsonl"
         status_path = Path(self.tmpdir.name) / "non-streaming.status.json"
 
         with (
@@ -493,6 +494,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
                 assistant_message["id"],
                 False,
                 str(delta_path),
+                str(reasoning_path),
                 str(status_path),
                 str(result_path),
                 str(error_path),
@@ -518,20 +520,20 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         result_path = Path(self.tmpdir.name) / "reasoning.result.json"
         error_path = Path(self.tmpdir.name) / "reasoning.error.json"
         delta_path = Path(self.tmpdir.name) / "reasoning.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "reasoning.chunks.jsonl"
         status_path = Path(self.tmpdir.name) / "reasoning.status.json"
 
-        events = iter(
-            [
-                ollama_runtime.ChatStreamEvent(reasoning="internal "),
-                ollama_runtime.ChatStreamEvent(reasoning="trace"),
-                ollama_runtime.ChatStreamEvent(content="Финальный "),
-                ollama_runtime.ChatStreamEvent(content="ответ"),
-                ollama_runtime.ChatStreamEvent(done=True, done_reason="stop", eval_count=12),
-            ]
-        )
+        def events():
+            yield ollama_runtime.ChatStreamEvent(reasoning="internal ")
+            self.assertEqual(db.get_message(assistant_message["id"])["reasoning"], "internal")
+            yield ollama_runtime.ChatStreamEvent(reasoning="trace")
+            yield ollama_runtime.ChatStreamEvent(content="Финальный ")
+            yield ollama_runtime.ChatStreamEvent(content="ответ")
+            yield ollama_runtime.ChatStreamEvent(done=True, done_reason="stop", eval_count=12)
+
         with patch(
             "backend.apps.chat.tasks.ChatService.chat_completion_stream_events",
-            return_value=events,
+            return_value=events(),
         ):
             chat_tasks._chat_worker(
                 "qwen3:4b",
@@ -542,6 +544,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
                 assistant_message["id"],
                 True,
                 str(delta_path),
+                str(reasoning_path),
                 str(status_path),
                 str(result_path),
                 str(error_path),
@@ -556,6 +559,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn("Финальный ", delta_text)
         self.assertIn("ответ", delta_text)
         self.assertNotIn("internal", delta_text)
+        reasoning_events = reasoning_path.read_text(encoding="utf-8")
+        self.assertIn('"sequence":1', reasoning_events)
+        self.assertIn('"text":"internal "', reasoning_events)
+        self.assertIn('"sequence":2', reasoning_events)
+        self.assertIn('"text":"trace"', reasoning_events)
         persisted = db.get_message(assistant_message["id"])
         self.assertEqual(persisted["content"], "Финальный ответ")
         self.assertEqual(persisted["reasoning"], "internal trace")
@@ -570,6 +578,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         result_path = Path(self.tmpdir.name) / "exhausted.result.json"
         error_path = Path(self.tmpdir.name) / "exhausted.error.json"
         delta_path = Path(self.tmpdir.name) / "exhausted.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "exhausted.reasoning.jsonl"
         status_path = Path(self.tmpdir.name) / "exhausted.status.json"
 
         events = iter(
@@ -591,6 +600,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
                 assistant_message["id"],
                 True,
                 str(delta_path),
+                str(reasoning_path),
                 str(status_path),
                 str(result_path),
                 str(error_path),
@@ -603,6 +613,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         updated = db.get_message(assistant_message["id"])
         self.assertEqual(updated["status"], "failed")
         self.assertEqual(updated["content"], "")
+        self.assertEqual(updated["reasoning"], "unfinished reasoning")
 
     def test_chat_task_events_streams_delta_events_from_task_artifact(self):
         session = db.create_session(self.profile_id, "SSE delta", "qwen2.5:7b-instruct")
@@ -642,6 +653,48 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn('"text":"При"', body)
         self.assertIn('"sequence":2', body)
         self.assertIn('"text":"вет"', body)
+        self.assertIn("event: done\n", body)
+
+    def test_chat_task_events_stream_reasoning_separately_from_final_delta(self):
+        session = db.create_session(self.profile_id, "SSE reasoning", "qwen3:4b")
+        delta_path = Path(self.tmpdir.name) / "task-final.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "task-reasoning.deltas.jsonl"
+        task_id = "ct_reasoning_delta_test"
+        chat_tasks._append_reasoning_jsonl(reasoning_path, 1, "reason ")
+        chat_tasks._append_reasoning_jsonl(reasoning_path, 2, "trace")
+        chat_tasks._append_delta_jsonl(delta_path, 1, "final")
+        with chat_tasks._LOCK:
+            chat_tasks._TASKS[task_id] = {
+                "id": task_id,
+                "state": "completed",
+                "created_at": "2026-08-13T10:00:00Z",
+                "updated_at": "2026-08-13T10:00:01Z",
+                "session_id": session["id"],
+                "profile_id": self.profile_id,
+                "model_name": "qwen3:4b",
+                "role": "chat",
+                "assistant_message_id": 43,
+                "message": "Chat generation completed.",
+                "error_code": None,
+                "used_settings": {},
+                "result": {"reply": "final"},
+                "delta_path": str(delta_path),
+                "reasoning_path": str(reasoning_path),
+                "stream": True,
+            }
+
+        app = FastAPI()
+        app.include_router(chat_router)
+        client = TestClient(app)
+        with client.stream("GET", f"/chat/tasks/{task_id}/events") as response:
+            self.assertEqual(response.status_code, 200)
+            body = "".join(response.iter_text())
+
+        self.assertIn('event: reasoning\ndata: {"task_id":"ct_reasoning_delta_test"', body)
+        self.assertIn('"sequence":1,"text":"reason "', body)
+        self.assertIn('"sequence":2,"text":"trace"', body)
+        self.assertIn('event: delta\n', body)
+        self.assertLess(body.index("event: reasoning\n"), body.index("event: delta\n"))
         self.assertIn("event: done\n", body)
 
     def test_missing_runtime_task_marks_active_assistant_message_failed(self):

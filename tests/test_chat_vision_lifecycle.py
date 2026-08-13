@@ -128,6 +128,7 @@ class ChatVisionLifecycleTestCase(unittest.TestCase):
         error_path = Path(self.tmpdir.name) / "error.json"
         status_path = Path(self.tmpdir.name) / "status.json"
         delta_path = Path(self.tmpdir.name) / "deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "reasoning.jsonl"
 
         with patch.object(vision_runtime, "chat_completion", return_value="A local image answer") as completion:
             chat_tasks._chat_worker(
@@ -139,6 +140,7 @@ class ChatVisionLifecycleTestCase(unittest.TestCase):
                 assistant_message["id"],
                 False,
                 str(delta_path),
+                str(reasoning_path),
                 str(status_path),
                 str(result_path),
                 str(error_path),

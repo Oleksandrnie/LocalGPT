@@ -171,6 +171,7 @@ async def _chat_task_event_stream(task_id: str, request: Request) -> AsyncIterat
     last_status: str | None = None
     model_selected_sent = False
     delta_offset = 0
+    reasoning_offset = 0
 
     while True:
         task = chat_tasks.get_chat_task(task_id)
@@ -197,6 +198,17 @@ async def _chat_task_event_stream(task_id: str, request: Request) -> AsyncIterat
         if model_name and not model_selected_sent:
             yield _sse_event("model_selected", {**base_payload, "model": model_name})
             model_selected_sent = True
+
+        reasoning_chunks, reasoning_offset = chat_tasks.read_chat_task_reasoning(task_id, reasoning_offset)
+        for chunk in reasoning_chunks:
+            yield _sse_event(
+                "reasoning",
+                {
+                    **base_payload,
+                    "sequence": chunk.get("sequence"),
+                    "text": chunk.get("text") or "",
+                },
+            )
 
         deltas, delta_offset = chat_tasks.read_chat_task_deltas(task_id, delta_offset)
         for delta in deltas:

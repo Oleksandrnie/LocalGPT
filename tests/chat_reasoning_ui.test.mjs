@@ -28,6 +28,16 @@ test("reasoning is lazy-loaded into an accessible read-only dialog", () => {
   assert.match(javascript, /if \(!els\.reasoningBackdrop\?\.hidden\)/);
 });
 
+test("reasoning SSE reveals the icon and updates an open modal live", () => {
+  assert.match(javascript, /source\.addEventListener\("reasoning"/);
+  assert.match(javascript, /consumeChatTaskReasoning\(task, data\.text, data\.sequence\)/);
+  assert.match(javascript, /reasoning_delta: chunk/);
+  assert.match(javascript, /has_reasoning: Boolean\(current\.has_reasoning \|\| nextReasoning \|\| updates\.has_reasoning\)/);
+  assert.match(javascript, /state\.reasoningMessageId[\s\S]*els\.reasoningContent\.textContent = nextReasoning/);
+  assert.match(javascript, /mergeReasoningSnapshot\(currentMessage\?\.live_reasoning, result\.reasoning\)/);
+  assert.match(javascript, /lastReasoningSequence/);
+});
+
 test("reasoning controls cover focus, themes, and mobile sizing", () => {
   assert.match(javascript, /state\.reasoningReturnFocus = trigger/);
   assert.match(javascript, /returnFocus\?\.focus\?\.\(\)/);

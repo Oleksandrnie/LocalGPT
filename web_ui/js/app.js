@@ -515,6 +515,7 @@ const state = {
   visionRagExportKind: null,
   visionRagReturnFocus: null,
   reasoningReturnFocus: null,
+  reasoningMessageId: null,
   installedModels: [],
   recommendedModels: [],
   visionModels: [],
@@ -1999,12 +2000,17 @@ function prepareChatTaskReplay(task, baseContent = null) {
   }
   const message = findAssistantMessageForTask(task);
   const content = baseContent === null ? String(message?.content || "") : String(baseContent || "");
+  const reasoning = String(message?.live_reasoning || "");
   state.chatTaskReplay = {
     taskId,
     baseContent: content,
     replayedText: "",
     caughtUp: content.length === 0,
     lastSequence: 0,
+    baseReasoning: reasoning,
+    replayedReasoning: "",
+    reasoningCaughtUp: reasoning.length === 0,
+    lastReasoningSequence: 0,
   };
 }
 
@@ -2045,6 +2051,32 @@ function consumeChatTaskDelta(task, text, sequence = null) {
 
   // If persisted partial content was normalized unexpectedly, avoid duplicating old replayed chunks.
   replay.caughtUp = true;
+  return null;
+}
+
+function consumeChatTaskReasoning(task, text, sequence = null) {
+  const taskId = chatTaskIdFrom(task);
+  const chunk = String(text || "");
+  if (!chunk) return "";
+  const replay = state.chatTaskReplay;
+  const chunkSequence = normalizeChatDeltaSequence(sequence);
+  if (replay && replay.taskId === taskId && chunkSequence !== null) {
+    if (chunkSequence <= (replay.lastReasoningSequence || 0)) return null;
+    replay.lastReasoningSequence = chunkSequence;
+  }
+  if (!replay || replay.taskId !== taskId || replay.reasoningCaughtUp) return chunk;
+
+  const previousReplay = replay.replayedReasoning;
+  const nextReplay = `${previousReplay}${chunk}`;
+  const baseReasoning = replay.baseReasoning || "";
+  replay.replayedReasoning = nextReplay;
+  if (baseReasoning.startsWith(nextReplay)) return null;
+  if (nextReplay.startsWith(baseReasoning)) {
+    replay.reasoningCaughtUp = true;
+    const appendFrom = Math.max(0, baseReasoning.length - previousReplay.length);
+    return chunk.slice(appendFrom) || null;
+  }
+  replay.reasoningCaughtUp = true;
   return null;
 }
 
@@ -2230,10 +2262,15 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   const nextContent = Object.prototype.hasOwnProperty.call(updates, "content")
     ? String(updates.content || "")
     : `${current.content || ""}${updates.delta || ""}`;
+  const nextReasoning = Object.prototype.hasOwnProperty.call(updates, "reasoning")
+    ? String(updates.reasoning || "")
+    : `${current.live_reasoning || ""}${updates.reasoning_delta || ""}`;
   const nextMessage = {
     ...current,
     status,
     content: nextContent,
+    live_reasoning: nextReasoning,
+    has_reasoning: Boolean(current.has_reasoning || nextReasoning || updates.has_reasoning),
     model: updates.model || current.model || task?.model_name || "",
     error: Object.prototype.hasOwnProperty.call(updates, "error") ? updates.error : current.error,
     task_id: task?.id || task?.task_id || current.task_id,
@@ -2243,6 +2280,18 @@ function updateAssistantMessageFromTask(task, updates = {}) {
 
   state.messages = state.messages.map((message, itemIndex) => (itemIndex === index ? nextMessage : message));
   renderMessages();
+  if (String(state.reasoningMessageId || "") === String(nextMessage.id || "") && !els.reasoningBackdrop?.hidden) {
+    if (els.reasoningContent) {
+      els.reasoningContent.textContent = nextReasoning;
+      els.reasoningContent.scrollTop = els.reasoningContent.scrollHeight;
+    }
+    const isActiveReasoning = isAssistantMessageActive(nextMessage);
+    setInlineStatus(
+      els.reasoningStatus,
+      isActiveReasoning ? "Reasoning дополняется во время генерации…" : "Reasoning сохранён для выбранного ответа.",
+      isActiveReasoning ? "warning" : "success",
+    );
+  }
   if (state.autoScrollPinned) {
     scrollMessagesToBottom({ force: true });
   }
@@ -2340,6 +2389,18 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
           status: "streaming",
         });
       }
+    });
+
+    source.addEventListener("reasoning", (event) => {
+      if (settled) return;
+      const data = parseSsePayload(event);
+      const chunk = consumeChatTaskReasoning(task, data.text, data.sequence);
+      if (chunk === null || !chunk) return;
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        reasoning_delta: chunk,
+        has_reasoning: true,
+      });
     });
 
     source.addEventListener("done", (event) => {
@@ -3926,29 +3987,75 @@ function closeVisionRagDialog() {
 }
 
 function closeReasoningDialog() {
+  const messageId = state.reasoningMessageId;
   if (els.reasoningBackdrop) els.reasoningBackdrop.hidden = true;
   if (els.reasoningContent) els.reasoningContent.textContent = "";
+  state.reasoningMessageId = null;
   syncMobileScrollLock();
   const returnFocus = state.reasoningReturnFocus;
   state.reasoningReturnFocus = null;
-  window.setTimeout(() => returnFocus?.focus?.(), 0);
+  window.setTimeout(() => {
+    const currentTrigger = Array.from(document.querySelectorAll("[data-reasoning-message-id]"))
+      .find((button) => String(button.dataset.reasoningMessageId || "") === String(messageId || ""));
+    (currentTrigger || returnFocus)?.focus?.();
+  }, 0);
+}
+
+function mergeReasoningSnapshot(currentValue, incomingValue) {
+  const current = String(currentValue || "");
+  const incoming = String(incomingValue || "");
+  if (!current) return incoming;
+  if (!incoming || current.startsWith(incoming)) return current;
+  if (incoming.startsWith(current)) return incoming;
+  return incoming;
 }
 
 async function openReasoningDialog(messageId, trigger = null) {
   const id = Number(messageId || 0);
   if (!id || !state.activeProfileId) return;
   state.reasoningReturnFocus = trigger;
-  if (els.reasoningContent) els.reasoningContent.textContent = "";
-  setInlineStatus(els.reasoningStatus, "Загружаю reasoning…", "warning");
+  state.reasoningMessageId = id;
+  const messageIndex = findMessageIndexById(id);
+  const message = messageIndex >= 0 ? state.messages[messageIndex] : null;
+  const localReasoning = String(message?.live_reasoning || "");
+  if (els.reasoningContent) els.reasoningContent.textContent = localReasoning;
+  setInlineStatus(
+    els.reasoningStatus,
+    isAssistantMessageActive(message) ? "Reasoning дополняется во время генерации…" : "Загружаю reasoning…",
+    "warning",
+  );
   if (els.reasoningBackdrop) els.reasoningBackdrop.hidden = false;
   syncMobileScrollLock();
   try {
     const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}`);
-    if (els.reasoningContent) els.reasoningContent.textContent = String(result.reasoning || "");
-    setInlineStatus(els.reasoningStatus, "Reasoning показан только для выбранного ответа.", "success");
+    const currentIndex = findMessageIndexById(id);
+    const currentMessage = currentIndex >= 0 ? state.messages[currentIndex] : null;
+    const mergedReasoning = mergeReasoningSnapshot(currentMessage?.live_reasoning, result.reasoning);
+    if (currentIndex >= 0) {
+      state.messages[currentIndex] = {
+        ...currentMessage,
+        live_reasoning: mergedReasoning,
+        has_reasoning: Boolean(mergedReasoning),
+      };
+    }
+    if (state.reasoningMessageId === id && els.reasoningContent) {
+      els.reasoningContent.textContent = mergedReasoning;
+    }
+    const isActiveReasoning = isAssistantMessageActive(currentMessage);
+    setInlineStatus(
+      els.reasoningStatus,
+      isActiveReasoning ? "Reasoning дополняется во время генерации…" : "Reasoning показан только для выбранного ответа.",
+      isActiveReasoning ? "warning" : "success",
+    );
     window.setTimeout(() => els.reasoningContent?.focus(), 0);
   } catch (error) {
-    setInlineStatus(els.reasoningStatus, `Не удалось открыть reasoning: ${error.message || error}`, "error");
+    const currentIndex = findMessageIndexById(id);
+    const accumulatedReasoning = currentIndex >= 0 ? String(state.messages[currentIndex]?.live_reasoning || "") : localReasoning;
+    if (accumulatedReasoning) {
+      setInlineStatus(els.reasoningStatus, "Показываю накопленный reasoning; live-обновление продолжается.", "warning");
+    } else {
+      setInlineStatus(els.reasoningStatus, `Не удалось открыть reasoning: ${error.message || error}`, "error");
+    }
   }
 }
 
