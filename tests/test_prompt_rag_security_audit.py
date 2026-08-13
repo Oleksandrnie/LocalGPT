@@ -166,6 +166,17 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
             ["А цены?", "Перечислите тарифы технической поддержки."],
         )
 
+    def test_rag_query_composition_keeps_context_for_three_word_confirmation(self) -> None:
+        query = chat_routes.compose_rag_query(
+            "Точно, проверь информацию.",
+            ["С какими CMS вы работаете?"],
+        )
+
+        self.assertEqual(
+            query.splitlines(),
+            ["Точно, проверь информацию.", "С какими CMS вы работаете?"],
+        )
+
     def test_missing_and_conflicting_facets_have_explicit_evidence_status(self) -> None:
         missing = rag_service.search_with_diagnostics(
             self.profile_id,

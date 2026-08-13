@@ -139,8 +139,8 @@
 ### Stage 7C — Cross-model RAG grounding parity
 
 - Goal: determine why `qwen2.5:3b-instruct` and `qwen2.5:7b-instruct` use the same RAG evidence less completely than the validated Qwen3 path.
-- Status: in progress; 3B checkpoint complete, 7B intentionally deferred to the next bounded run.
-- Actions: compared metadata-only retrieved chunk IDs and effective settings; ran 3B sequentially without chat persistence; changed shared RAG query composition so explicit topics retain only lexically relevant user-history turns while short/deictic follow-ups retain the latest turn. Do not add corpus brands or a per-model prompt.
+- Status: in progress; 3B checkpoint complete, Qwen3 short-confirmation follow-up corrected, 7B intentionally deferred to the next bounded run.
+- Actions: compared metadata-only retrieved chunk IDs and effective settings; ran 3B sequentially without chat persistence; changed shared RAG query composition so explicit topics retain only lexically relevant user-history turns while short/deictic or three-word confirmation follow-ups retain the latest turn. Do not add corpus brands or a per-model prompt.
 - Expected result: every supported chat model receives the same authorized RAG evidence; unrelated history cannot dilute an explicit current topic; model-specific answer-quality limits are measured and distinguished from retrieval/prompt defects.
 - Validation: deterministic shared-RAG prompt tests plus one bounded sequential run per requested model, unloading each before the next.
 - Completion criterion: retrieval/prompt parity is proven, direct capability evidence is represented in each response or an explicit evidence-backed model limitation is recorded without hardcoding corpus brands into production policy.
@@ -225,6 +225,16 @@
 - Regression: `tests.test_prompt_rag_security_audit` plus `tests.test_model_router` passed (92 tests); chat/test compilation and `git diff --check` passed. Test-time local-Ollama access remained sandbox-blocked only inside mocked unit checks, without a test failure.
 - Checkpoint: pending this stage commit.
 - Next action: restart the backend onto this committed code, then perform one real-phone CMS follow-up using 3B. Only after that result is recorded, run the equivalent bounded 7B pass; unload before any model switch.
+
+### 2026-08-14 — Stage 7C Qwen3 short-confirmation correction
+
+- Stage: Stage 7C shared follow-up handling.
+- Finding: three separate sessions with the same initial CMS question were used for 3B, 7B and Qwen3. The Qwen3 failure followed the three-word confirmation “точно, проверь информацию”: the former short-follow-up threshold excluded the preceding CMS turn, leaving a generic retrieval query that selected unrelated chunks and reported `conflict`.
+- Correction: the common composer now treats a three-term confirmation as a short follow-up, retaining its latest authorized user turn. On the recorded Qwen3 session, the composed query now includes the preceding CMS question; selected metadata includes direct capability evidence and diagnostics change to `supported`.
+- Validation: 30 focused prompt/RAG-security tests, chat/test compilation and `git diff --check` passed. No model was loaded for this correction and no chat/profile data was changed.
+- Profile-prompt check: the stored profile prompt ends cleanly at its self-check section and does not contain the code-oriented text visible after the pasted attachment; that text is a copy artifact, not a runtime instruction.
+- Checkpoint: pending this focused commit.
+- Next action: restart backend to load this commit; the user rechecks the Qwen3 confirmation in its existing session. Keep 7B deferred until this result is recorded.
 
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 

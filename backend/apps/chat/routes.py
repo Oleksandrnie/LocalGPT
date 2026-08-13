@@ -92,7 +92,7 @@ def compose_rag_query(user_query: str, history_user_queries: list[str], *, histo
     # Preserve context for genuinely short/deictic follow-ups, without letting
     # unrelated earlier questions dilute an explicit current topic.
     if len(parts) == 1 and recent_history and (
-        len(current_terms) <= 2 or RAG_REFERENTIAL_QUERY_RE.search(current)
+        len(current_terms) <= 3 or RAG_REFERENTIAL_QUERY_RE.search(current)
     ):
         parts.append(recent_history[0][0])
     return "\n".join(parts)
