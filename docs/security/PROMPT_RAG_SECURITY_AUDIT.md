@@ -171,9 +171,18 @@ Stage 2 implements the prompt-source boundary portion of the matrix:
 - PRS-01 and PRS-15 are structurally mitigated: RAG, request context, memory, transcript, OCR/Vision-derived text, criteria and history are uniform L4 data envelopes and are never promoted to instruction-bearing system content.
 - PRS-02 and PRS-14 are structurally mitigated: the global prompt is policy-only, the default behavior/persona is versioned profile configuration, and the one-shot migration preserves every non-empty existing profile prompt byte-for-byte while recording its origin.
 - PRS-03 is partially mitigated: assistant history is marked continuity-only and the immutable guard denies self-citation as evidence. Claim-level evidence status and explicit handling of assistant-authored RAG exports remain Stage 3 work.
-- PRS-04 remains open for Stage 3 claim provenance, coverage, conflict, not-found and inference diagnostics.
+- PRS-04 remained open after Stage 2 for claim provenance, coverage, conflict, not-found and inference diagnostics; its Stage 3 status is recorded below.
 
 The Stage 2 evidence is deterministic prompt composition, ordering, metadata-only snapshot, forged-boundary escaping, migration and ASR/OCR/Vision source tests. No live model was loaded, so these controls do not establish model-level jailbreak resistance; authorization and actions remain code-enforced boundaries.
+
+Stage 3 implements the retrieval and evidence portion of the matrix:
+
+- PRS-03 is mitigated for retrieval: assistant-authored Chat exports remain stored/editable continuity data but are excluded from factual evidence selection; prior assistant output cannot satisfy a facet.
+- PRS-04 is mitigated for internal/test evaluation: query facets carry `supported`, `partial`, `conflict` or `not_found`, with source id, chunk id and a bounded evidence span. These diagnostics are placed inside the L4 RAG envelope; user-facing citation UI remains out of scope.
+- PRS-05 is mitigated by the selected offline `hybrid_v1` candidate: BM25-style lexical ranking, facet-first selection, repetition penalties, near-duplicate suppression and source diversity replace score-only top-k. The legacy candidate remains a data-preserving rollback mode.
+- Corpus hygiene is preview-only and metadata-only. It identifies duplicate/boilerplate, oversized/missing-heading/stale/potential-conflict and suspicious-instruction sources without deleting or rewriting them.
+
+On the synthetic CMS + regions case, legacy top-2 was the same aggregate source twice; hybrid top-2 was the specific CMS and regions sources. A 100-iteration local observation measured approximately 3.14 ms/query and 1.56 MB peak for legacy versus 10.59 ms/query and 2.16 MB peak for hybrid. A semantic model candidate was not eligible without a new model/dependency and heavy download, so it was not loaded. Residual risks are heuristic stemming/conflict detection, context-budget sensitivity, and model-level use of diagnostics.
 
 ## Rollout and rollback
 

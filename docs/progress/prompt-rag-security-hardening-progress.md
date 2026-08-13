@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13 16:10 +0300.
 - Current status: in_progress.
-- Current stage: Stage 2 — Source boundaries and prompt policy (ready for checkpoint).
+- Current stage: Stage 3 — RAG retrieval and grounding quality (ready for checkpoint).
 
 ## Instructions and precedence
 
@@ -99,7 +99,7 @@
 ### Stage 3 — RAG retrieval and grounding quality
 
 - Goal: select and implement retrieval/dedup/diversity/coverage changes by reproducible eval.
-- Status: pending.
+- Status: completed; ready for checkpoint.
 - Actions: compare current local-hash-v1 baseline with lexical/hybrid and optional local semantic candidate; add provenance, coverage/conflict/not_found/inference diagnostics.
 - Expected result: CMS + regions and the synthetic golden set meet the recorded threshold without isolation/resource regressions.
 - Validation: grounding eval, exact-fact regressions, latency/memory/offline checks and RAG unit tests.
@@ -152,6 +152,13 @@
 - Reason: prompt role and source authority must be explicit and testable without logging client values or relying on model obedience.
 - Consequences: new/empty profiles receive the versioned default persona. A one-shot migration preserves every non-empty existing profile prompt exactly, marks its origin, and can be rolled back by removing the migration marker without rewriting user text. Live-model behavior remains a Stage 5 validation, not a Stage 2 claim.
 
+### Select offline hybrid retrieval with a data-preserving rollback
+
+- Context: on the synthetic CMS + regions query, legacy ranking returned two chunks from `duplicate-aggregate.md` before the specific sources. The task required comparing retrieval candidates by coverage, duplicates, latency, memory, offline availability and reproducibility.
+- Decision: select `hybrid_v1`: BM25-style lexical score plus local-hash cosine, facet-first selection, repetition penalty, near-duplicate suppression and source diversity. Preserve `legacy` behind local app setting `rag_retrieval_strategy`. Do not load a semantic model candidate in this stage.
+- Reason: hybrid moved specific facet coverage from 0/2 to 2/2 and top-2 duplicate-source ratio from 100% to 0%, while remaining deterministic and offline. A semantic candidate needs an absent model/dependency and separate heavy download, so it failed the environment/resource eligibility gate before execution.
+- Consequences: the bounded 100-iteration synthetic observation increased time from about 3.14 to 10.59 ms/query and peak traced memory from 1.56 to 2.16 MB. Claim diagnostics evaluate up to 20 diversified candidates but only selected top-k full chunks enter context; rollback changes ranking only and does not reindex or mutate corpus data.
+
 ## Progress log
 
 ### 2026-08-13 16:10 +0300
@@ -190,6 +197,25 @@
 - Issues: no new regression found. Structural prompt tests do not substitute for bounded live-model evaluation; claim-level grounding diagnostics remain Stage 3.
 - Next action: inspect/stage the complete Stage 2 diff and create `feat(chat): enforce prompt source boundaries`.
 
+### 2026-08-13 Stage 2 checkpoint
+
+- Stage: 2.
+- Completed: reviewed the cached Stage 2 diff and created the focused checkpoint.
+- Commit: `fead0e5` (`feat(chat): enforce prompt source boundaries`).
+- Validation: cached diff passed `git diff --cached --check` and contained only the 17 recorded Stage 2 files.
+- Issues: none beyond the recorded pre-existing ASR baseline failures and deferred live-model validation.
+- Next action: measure the existing RAG candidate on the synthetic golden/conflict/duplicate cases before selecting a Stage 3 retrieval design.
+
+### 2026-08-13 Stage 3 complete
+
+- Stage: 3.
+- Completed: evaluated legacy ranking, implemented offline `hybrid_v1`, facet coverage/provenance/status diagnostics, explicit conflict/not-found behavior, assistant-export evidence exclusion, metadata-only corpus hygiene preview and legacy rollback setting.
+- Changed: pure retrieval module, RAG service/routes, chat RAG preparation, focused RAG/prompt/pipeline tests and affected architecture/backend/RAG/testing/security documentation.
+- Validation: Stage 3 audit harness ran 22 tests with four expected Stage 4 gaps; the 183-test relevant suite had only the two pre-existing ASR baseline failures; full discovery ran 271 tests with exactly the original one failure/two errors and four expected Stage 4 failures. Static diff/compile checks passed.
+- Metrics: legacy top-2 sources were the same aggregate twice; hybrid top-2 were `cms.md` and `regions.md`. Synthetic 100-query observation was ~3.14 ms/query and 1.56 MB peak legacy versus ~10.59 ms/query and 2.16 MB hybrid.
+- Issues: heuristic stemming/conflict detection and context-budget sensitivity remain residual Medium risks; no live semantic model or answer generation was run.
+- Next action: inspect/stage the complete Stage 3 diff and create `feat(rag): improve grounded retrieval and evidence`.
+
 ## Changed files
 
 ### Added
@@ -199,6 +225,7 @@
 - `tests/test_prompt_rag_security_audit.py`.
 - `tests/fixtures/prompt_rag_security/*.md` (six synthetic fixtures).
 - `backend/apps/chat/prompt_policy.py`.
+- `backend/apps/rag/retrieval.py`.
 
 ### Modified
 
@@ -209,6 +236,8 @@
 - `backend/apps/asr/pipeline.py`.
 - `tests/test_chat_vision_context.py`, `tests/test_pipeline_memory.py`, `tests/test_prompt_rag_security_audit.py`.
 - `docs/ARCHITECTURE.md`, `docs/knowledge/backend.md`, `docs/knowledge/rag.md`, `docs/security/PROMPT_RAG_SECURITY_AUDIT.md`.
+- `backend/apps/chat/routes.py`, `backend/apps/rag/routes.py`, `backend/apps/rag/service.py`.
+- `tests/test_chat_rag.py`, `docs/TESTING.md`.
 
 ### Deleted
 
@@ -218,6 +247,7 @@
 
 - Static checks: `git diff --check`, `venv/bin/python -m compileall -q app backend tests`, `node --check web_ui/js/app.js` passed.
 - Unit/contract tests: Stage 1 targeted 73 Python tests passed with 7 expected baseline failures and 4 Node Markdown tests passed. Stage 2 audit harness has 17 successes plus 4 expected Stage 4 gaps; the 172-test relevant run has only two matching pre-existing ASR pipeline failures.
+- Stage 3 unit/contract tests: audit harness 22 tests with four expected Stage 4 gaps; 183 relevant tests with only the two pre-existing ASR failures; full discovery 271 tests with exactly the baseline three failures and four expected Stage 4 gaps.
 - Integration/smoke tests: pending.
 - Manual/regression checks: pending.
 - Skipped checks and reasons: live model/hardware/network checks deferred until scoped and explicitly safe.
@@ -241,16 +271,17 @@
 ## Checkpoints
 
 - Stage 1: `f01424c` (`test(security): add prompt and rag audit baseline`).
-- Stage 2 is complete and ready for checkpoint; commit hash pending.
+- Stage 2: `fead0e5` (`feat(chat): enforce prompt source boundaries`).
+- Stage 3 is complete and ready for checkpoint; commit hash pending.
 
 ## Continuation state
 
-- Current stage: Stage 2 checkpoint.
-- Last completed action: updated affected permanent documentation after passing the focused Stage 2 validation.
-- Current repository state: Stage 2 code/test/document changes are unstaged on top of the clean Stage 1 checkpoint.
-- Known risks: natural-language envelopes remain defense-in-depth, and migration behavior must not overwrite custom profile prompts.
-- Next exact action: inspect the complete Stage 2 diff, stage only task-owned files and create the authorized focused commit.
-- Next command or file: `git diff --check`, `git diff`, then `git add` for the Stage 2 file set and cached-diff review.
+- Current stage: Stage 3 checkpoint.
+- Last completed action: completed full-suite baseline comparison and affected-document updates.
+- Current repository state: unstaged Stage 3 code/test/document changes on top of checkpoint `fead0e5`.
+- Known risks: conflict/staleness detection is heuristic and must be described as diagnostic, not absolute truth; default hybrid adds small bounded latency/memory overhead.
+- Next exact action: inspect the complete Stage 3 diff, stage only task-owned files, review the cached diff and create the authorized focused commit.
+- Next command or file: `git diff`, `git add` for the Stage 3 file set, `git diff --cached --check` and cached-diff review.
 
 ## Final checklist
 

@@ -5,7 +5,7 @@ import json
 import re
 import time
 from datetime import datetime
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -462,6 +462,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     )
     rag_chunks = []
     rag_context = ""
+    rag_diagnostics: dict[str, Any] = {}
     rag_enabled = bool(effective_settings.get("rag_enabled", False))
     history_user_queries = [
         str(item.get("content") or "")
@@ -471,14 +472,22 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     if rag_enabled:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
-        rag_query = "\n".join([*history_user_queries, user_query]).strip()
-        rag_chunks = rag_service.search(int(profile_id), rag_query or user_query, top_k=rag_top_k)
-        rag_context = rag_service.build_context(rag_chunks, max_chars=rag_max_chars)
+        rag_query = "\n".join([user_query, *reversed(history_user_queries)]).strip()
+        rag_result = rag_service.search_with_diagnostics(int(profile_id), rag_query or user_query, top_k=rag_top_k)
+        rag_chunks = rag_result["results"]
+        rag_diagnostics = rag_result["diagnostics"]
+        rag_context = rag_service.build_context(
+            rag_chunks,
+            max_chars=rag_max_chars,
+            diagnostics=rag_diagnostics,
+        )
     effective_settings = {
         **effective_settings,
         "rag_enabled_effective": rag_enabled,
         "rag_chunks_used": len(rag_chunks),
         "rag_context_chars": len(rag_context or ""),
+        "rag_retrieval_strategy": rag_service.retrieval_strategy(),
+        "rag_evidence_status": rag_diagnostics.get("overall_status") if rag_diagnostics else "disabled",
     }
 
     request_criteria = [c for c in (req.criteria or []) if isinstance(c, str)]
@@ -550,6 +559,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "profile_system_prompt": profile_system_prompt,
         "rag_chunks": rag_chunks,
         "rag_context": rag_context,
+        "rag_diagnostics": rag_diagnostics,
         "recent_user_queries": history_user_queries,
         "prompt_warnings": transcript_warnings,
         "calc_result": calc_result,

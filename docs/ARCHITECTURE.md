@@ -67,7 +67,7 @@ flowchart LR
 1. UI отправляет запрос в `POST /chat/tasks`.
 2. Backend проверяет профиль, session и выбранную модель.
 3. Для Auto Router `qwen3:0.6b` классифицирует запрос; backend валидирует/корректирует target model.
-4. При включённом RAG выполняется profile-scoped search и собирается context.
+4. При включённом RAG выполняется profile-scoped `hybrid_v1` search: local-hash dense score дополняется BM25-style lexical relevance, query-facet coverage, repetition penalty и source diversity. Backend формирует claim-evidence diagnostics (`supported`, `partial`, `conflict`, `not_found`) с source/chunk provenance; legacy ranking остаётся локальным rollback mode.
 5. Prompt строится в фиксированном trust order: backend-owned global policy (L1), profile persona/configuration (L2), request data и current authorized evidence (L4), immutable guard, history/current query. RAG, summary, transcript, OCR/Vision-derived text, criteria и history всегда сериализуются как data envelopes и не становятся system-инструкциями.
 6. Assistant message создаётся в SQLite до генерации и проходит состояния `generating`, `streaming`, `completed`, `failed` или `cancelled`.
 7. `stream=true` отдаёт lifecycle, отдельные `reasoning` chunks и final-answer `delta` через SSE; non-streaming использует тот же persisted lifecycle без chunk events.
@@ -97,7 +97,7 @@ UI обращается к `/tts/*`; service выбирает provider, вали
 
 ### RAG
 
-Файлы профиля Markdown сканируются, текст разбивается на chunks, а deterministic embeddings пишутся в SQLite. Chat получает top-k chunks только активного профиля; каждый файл создаёт один индексируемый источник.
+Файлы профиля Markdown сканируются, текст разбивается на chunks, а deterministic embeddings пишутся в SQLite. Chat получает diversified top-k chunks только активного профиля; каждый файл создаёт один индексируемый источник. Retrieval не загружает внешнюю semantic model и работает offline. Preview-only corpus audit сообщает metadata о дублях/boilerplate, oversized/missing-heading/stale/conflicting и suspicious instruction-like sources, но ничего не удаляет.
 
 Chat и Vision-ответы не индексируются автоматически. Пользователь может открыть общий редактируемый export: user или completed assistant message создаёт `chat_context`, а Vision flow — `vision_context`. В index попадает только подтверждённый текст и безопасные ссылки/metadata, без reasoning, image binary и storage paths.
 

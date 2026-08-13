@@ -67,6 +67,8 @@ Chat runtime возвращает reasoning и final content раздельно.
 
 Prompt composition разделяет backend-owned global policy (L1), editable profile persona/configuration (L2) и untrusted evidence/data (L4). RAG, request context, summary memory, ASR transcript/analysis evidence, OCR/Vision-derived text, criteria и chat history проходят через uniform structured data envelopes; их instruction-shaped content не получает system authority. Assistant history используется только для continuity, не как factual evidence. Metadata snapshot показывает order/trust/owner/role без raw prompt values.
 
+RAG API дополнительно возвращает structured retrieval diagnostics: `POST /rag/search` содержит strategy, selected chunks и facet-level evidence state; `GET /rag/audit?profile_id=...` создаёт metadata-only preview corpus hygiene без изменения файлов/index. Default `hybrid_v1` можно локально откатить к `legacy` через app setting `rag_retrieval_strategy`; storage и corpus при переключении не меняются.
+
 ## API boundaries
 
 Routers отвечают за HTTP validation/serialization и вызывают service/repository functions. Бизнес-логика не должна переноситься в `backend/server.py`.

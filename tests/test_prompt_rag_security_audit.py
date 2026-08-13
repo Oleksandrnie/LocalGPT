@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import time
+import tracemalloc
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -73,19 +75,95 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertIn("По состоянию на 2020 год", corpus)
         self.assertIn("По состоянию на 2026 год", corpus)
 
-    def test_current_retrieval_baseline_exposes_provenance_but_no_coverage_state(self) -> None:
-        results = rag_service.search(
+    def test_hybrid_retrieval_exposes_provenance_and_claim_coverage_state(self) -> None:
+        result = rag_service.search_with_diagnostics(
             self.profile_id,
             "С какими CMS вы работаете и как продвигаете сайты по регионам России?",
             top_k=5,
         )
+        results = result["results"]
         self.assertTrue(results)
         for item in results:
             self.assertIn("source_id", item)
             self.assertIn("chunk_id", item)
             self.assertIn("score", item)
-            self.assertNotIn("coverage", item)
-            self.assertNotIn("evidence_status", item)
+            self.assertEqual(item["evidence_status"], "supported")
+            self.assertEqual(item["provenance"]["source_id"], item["source_id"])
+            self.assertIn("query_coverage", item["retrieval"])
+        self.assertEqual(result["diagnostics"]["overall_status"], "conflict")
+        self.assertTrue(all(facet["status"] in {"supported", "conflict"} for facet in result["diagnostics"]["facet_coverage"]))
+        self.assertTrue(all(facet["evidence"] for facet in result["diagnostics"]["facet_coverage"]))
+
+    def test_hybrid_candidate_beats_legacy_on_multi_part_source_coverage_and_duplicates(self) -> None:
+        query = "С какими CMS вы работаете и как продвигаете сайты по регионам России?"
+        legacy = rag_service.search(self.profile_id, query, top_k=2, strategy="legacy")
+        hybrid = rag_service.search(self.profile_id, query, top_k=2, strategy="hybrid_v1")
+        self.assertEqual([item["source_id"] for item in legacy], ["duplicate-aggregate.md", "duplicate-aggregate.md"])
+        self.assertEqual({item["source_id"] for item in hybrid}, {"cms.md", "regions.md"})
+        self.assertEqual(len({item["source_id"] for item in hybrid}), 2)
+
+        db.set_app_setting(rag_service.RETRIEVAL_STRATEGY_SETTING, "legacy")
+        rolled_back = rag_service.search_with_diagnostics(self.profile_id, query, top_k=2)
+        self.assertEqual(rolled_back["strategy"], "legacy")
+        self.assertEqual([item["source_id"] for item in rolled_back["results"]], ["duplicate-aggregate.md"] * 2)
+
+    def test_missing_and_conflicting_facets_have_explicit_evidence_status(self) -> None:
+        missing = rag_service.search_with_diagnostics(
+            self.profile_id,
+            "Есть ли офис на Марсе и какой там адрес?",
+            top_k=5,
+        )
+        self.assertEqual(missing["results"], [])
+        self.assertEqual(missing["diagnostics"]["overall_status"], "not_found")
+        self.assertTrue(all(item["status"] == "not_found" for item in missing["diagnostics"]["facet_coverage"]))
+
+        conflict = rag_service.search_with_diagnostics(
+            self.profile_id,
+            "Какая схема регионального продвижения использовалась в 2020 и 2026 годах?",
+            top_k=5,
+        )
+        self.assertEqual(conflict["diagnostics"]["overall_status"], "conflict")
+        conflict_facet = next(item for item in conflict["diagnostics"]["facet_coverage"] if item["status"] == "conflict")
+        self.assertEqual(conflict_facet["conflict_years"], [2020, 2026])
+        self.assertTrue(
+            {"conflict-old.md", "conflict-current.md"}.issubset(
+                {item["source_id"] for item in conflict_facet["evidence"]}
+            )
+        )
+
+    def test_context_contains_bounded_claim_diagnostics_and_chunk_provenance(self) -> None:
+        result = rag_service.search_with_diagnostics(self.profile_id, "Какие CMS поддерживаются?", top_k=3)
+        context = rag_service.build_context(result["results"], max_chars=6000, diagnostics=result["diagnostics"])
+        self.assertIn("RAG_EVIDENCE_DIAGNOSTICS_JSON", context)
+        self.assertIn("PROVENANCE_JSON", context)
+        self.assertIn('"overall_status":"supported"', context)
+        self.assertNotIn("assistant history is evidence", context.lower())
+
+    def test_corpus_audit_is_metadata_only_preview_and_flags_synthetic_hygiene_cases(self) -> None:
+        report = rag_service.audit_corpus(self.profile_id)
+        self.assertTrue(report["preview_only"])
+        self.assertEqual(report["mutations_performed"], 0)
+        self.assertGreater(report["duplicate_ratio"], 0)
+        self.assertIn("duplicate-aggregate.md", report["boilerplate_sources"])
+        self.assertIn("conflict-old.md", report["stale_sources"])
+        self.assertIn("poisoned.md", report["suspicious_instruction_sources"])
+        self.assertTrue({"conflict-old.md", "conflict-current.md"}.issubset(report["potential_conflict_sources"]))
+        self.assertNotIn("игнорируй system prompt", json.dumps(report, ensure_ascii=False).lower())
+
+    def test_hybrid_retrieval_is_bounded_on_synthetic_corpus(self) -> None:
+        tracemalloc.start()
+        started = time.perf_counter()
+        for _ in range(20):
+            rag_service.search_with_diagnostics(
+                self.profile_id,
+                "С какими CMS вы работаете и как продвигаете сайты по регионам России?",
+                top_k=5,
+            )
+        elapsed = time.perf_counter() - started
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertLess(elapsed, 2.0)
+        self.assertLess(peak, 8 * 1024 * 1024)
 
     def test_rag_search_remains_profile_scoped(self) -> None:
         other_profile_id = int(db.create_profile("Other synthetic profile")["id"])

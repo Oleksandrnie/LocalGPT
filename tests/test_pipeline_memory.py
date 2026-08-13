@@ -1125,7 +1125,9 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         query_index = len(contents) - 1
         self.assertLess(rag_index, query_index)
         self.assertIn("Alpha project deadline", contents[rag_index])
-        self.assertIn("Markdown sources as authoritative", contents[rag_index])
+        self.assertIn("RAG evidence rules", contents[rag_index])
+        self.assertIn("RAG_EVIDENCE_DIAGNOSTICS_JSON", contents[rag_index])
+        self.assertIn("PROVENANCE_JSON", contents[rag_index])
         self.assertEqual(prepared["effective_settings"]["rag_enabled_effective"], True)
         self.assertGreater(prepared["effective_settings"]["rag_chunks_used"], 0)
 

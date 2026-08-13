@@ -50,6 +50,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | --- | --- |
 | Chat routing, Ollama lifecycle, SSE и RAG integration | `venv/bin/python -m unittest tests.test_model_router -v` |
 | Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
+| Prompt/RAG security, hybrid retrieval и grounding diagnostics | `venv/bin/python -m unittest tests.test_prompt_rag_security_audit tests.test_chat_rag tests.test_vision_rag -v` |
 | Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
@@ -93,6 +94,7 @@ Smoke считается пройденным, если `/health` возвращ
 - native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history, а reasoning-only length exhaustion завершается ошибкой;
 - `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
 - RAG context попадает в prompt только активного профиля;
+- RAG data остаётся L4 envelope; hybrid retrieval покрывает multi-part facets разными источниками, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
 - PNG/JPEG/WebP upload проверяет profile ownership, count/byte/pixel/side limits и не сохраняет binary в message/RAG;
 - direct image route доступен только при runtime-confirmed `vision`, а text-only model использует явный context route;
@@ -154,10 +156,11 @@ Model-transfer tests используют только temporary synthetic files
 - profile isolation;
 - validation только `.md` и отклонение legacy `.txt`/`.json`;
 - force reindex очищает stale JSON records, не удаляя legacy files;
-- chunk overlap, embedding metadata и top-k search;
-- context assembly соблюдает `max_chars`;
+- chunk overlap, embedding metadata, `hybrid_v1`/`legacy` rollback и diversified top-k search;
+- context assembly соблюдает `max_chars` и содержит bounded facet/provenance diagnostics;
 - file/context deletion очищает DB records.
-- explicit user/completed-assistant export проверяет profile ownership, role metadata, отсутствие reasoning, retrieval и независимое удаление.
+- explicit user/completed-assistant export проверяет profile ownership, role metadata, отсутствие reasoning и независимое удаление; assistant-authored export не принимается как factual evidence;
+- corpus audit metadata-only, preview-only и не изменяет source/index (`mutations_performed=0`).
 
 ### Plugins и networking
 

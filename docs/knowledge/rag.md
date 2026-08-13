@@ -48,24 +48,30 @@ Service старается резать по абзацам, а длинные �
 
 ## Embeddings и search
 
-`EMBEDDING_MODEL = local-hash-v1` — deterministic local hashing vector, не внешняя neural embedding model. Индексация не требует Ollama и не загружает chat LLM.
+`EMBEDDING_MODEL = local-hash-v1` — deterministic local hashing vector, не внешняя neural embedding model. Индексация и retrieval не требуют Ollama, не загружают chat LLM и не отправляют corpus наружу.
 
-Search:
+Default search strategy `hybrid_v1`:
 
-1. строит embedding запроса;
-2. загружает embeddings только активного профиля и текущей model id;
-3. вычисляет cosine similarity;
-4. сортирует по score;
-5. возвращает top-k;
-6. `build_context()` собирает блок до `max_chars`.
+1. делит multi-part query максимум на восемь bounded facets;
+2. загружает chunks/embeddings только активного профиля и `local-hash-v1`;
+3. объединяет cosine score с BM25-style lexical score и inflection-tolerant token coverage;
+4. штрафует повторяющийся boilerplate и сначала выбирает разные источники, покрывающие разные facets;
+5. исключает assistant-authored Chat exports из factual evidence;
+6. возвращает top-k chunks с source/chunk provenance и внутренними score components;
+7. отдельно оценивает facets как `supported`, `partial`, `conflict` или `not_found` и прикладывает короткие evidence spans;
+8. `build_context()` укладывает diagnostics и selected chunks в `max_chars`.
 
-Это лёгкий локальный retrieval. Semantic quality ограничена hashing approach; точные headings, ключевые слова и structured facts особенно важны.
+Это лёгкий локальный retrieval. Semantic quality всё ещё ограничена hashing/lexical approach; точные headings, ключевые слова и structured facts особенно важны. Локальная semantic embedding dependency была рассмотрена, но не выбрана: в текущей среде она требует отсутствующую модель/dependency и отдельную тяжёлую загрузку, поэтому не удовлетворяет offline reproducibility/resource gate этого этапа.
+
+На synthetic CMS + regions corpus baseline `legacy` дважды выбирал `duplicate-aggregate.md` в top-2. `hybrid_v1` выбрал `cms.md` и `regions.md`, снизив top-2 duplicate-source ratio с 100% до 0% и дав specific facet coverage 2/2 вместо 0/2. Один bounded прогон по 100 запросов показал около 3.14 ms/query и 1.56 MB peak для legacy против 10.59 ms/query и 2.16 MB peak для hybrid; это regression-test observation, не production benchmark.
+
+Rollback не переиндексирует и не меняет источники: app setting `rag_retrieval_strategy=legacy` возвращает прежнее ранжирование; отсутствие/неизвестное значение выбирает `hybrid_v1`.
 
 ## Chat integration
 
 `backend/apps/chat/routes.py` проверяет effective `rag_enabled`, собирает query из недавних user queries и текущего сообщения, вызывает `search()` и `build_context()`.
 
-`backend/apps/chat/service.py` добавляет найденные chunks как current authorized evidence, но сериализует их в structured L4 data envelope с ролью `user`, а не как instruction-bearing `system` content. Данные могут подтверждать факты ответа, но instruction-shaped текст внутри источника не меняет policy, persona, задачу или permissions. Assistant history остаётся continuity context и не считается подтверждением факта без актуального источника. Если данных недостаточно или они конфликтуют, global guard требует явно это отметить, а не выдумывать отсутствующие факты.
+`backend/apps/chat/service.py` добавляет найденные chunks как current authorized evidence, но сериализует их в structured L4 data envelope с ролью `user`, а не как instruction-bearing `system` content. Данные могут подтверждать факты ответа, но instruction-shaped текст внутри источника не меняет policy, persona, задачу или permissions. Assistant history и assistant-authored Chat exports остаются continuity context и не считаются подтверждением факта без актуального источника. Facet diagnostics требуют ответить на подтверждённую часть, явно отметить `not_found`/partial coverage и не выбирать молча при конфликте.
 
 Настройки профиля определяют:
 
@@ -117,6 +123,10 @@ Profile deletion/reset удаляет profile source directory и DB records. Gi
 - retrieval не находит новый документ.
 
 Force ingest нужен только для намеренной полной перестройки. Перед ним сохраните важные runtime sources.
+
+## Corpus hygiene audit
+
+`GET /rag/audit?profile_id=<id>` формирует preview-only metadata report: exact/near duplicate ratio, repeated boilerplate, oversized sources, missing headings, stale dated sources, potential conflicts и suspicious instruction-like content. Report содержит source ids/counts, но не копирует payload фрагменты и выполняет `mutations_performed=0`. Он не является абсолютным injection detector и не удаляет/редактирует пользовательские файлы.
 
 ## Типовые ошибки
 
