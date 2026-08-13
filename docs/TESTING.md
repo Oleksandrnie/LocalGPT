@@ -51,6 +51,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Chat routing, Ollama lifecycle, SSE и RAG integration | `venv/bin/python -m unittest tests.test_model_router -v` |
 | Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
 | Prompt/RAG security, hybrid retrieval и grounding diagnostics | `venv/bin/python -m unittest tests.test_prompt_rag_security_audit tests.test_chat_rag tests.test_vision_rag -v` |
+| Runtime authorization, ownership, redaction, limits и cleanup | `venv/bin/python -m unittest tests.test_runtime_security -v` |
 | Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
@@ -96,6 +97,9 @@ Smoke считается пройденным, если `/health` возвращ
 - RAG context попадает в prompt только активного профиля;
 - RAG data остаётся L4 envelope; hybrid retrieval покрывает multi-part facets разными источниками, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
+- max-valid request проходит, а oversized block/aggregate/assembled prompt возвращает bounded 4xx до generation;
+- task status/events/cancel отклоняет foreign profile/session тем же contract, что unknown task; concurrency, timeout, cancel/error cleanup и SSE connection limit завершаются terminal state без partial artifacts;
+- runtime/database/storage/debug без `ADMIN_TOKEN` не выполняют side effect, а public/log/debug/provider failures не содержат synthetic secret/path marker;
 - PNG/JPEG/WebP upload проверяет profile ownership, count/byte/pixel/side limits и не сохраняет binary в message/RAG;
 - direct image route доступен только при runtime-confirmed `vision`, а text-only model использует явный context route;
 - Vision context size сохраняется в profile settings и уходит в native Ollama как `options.num_ctx` для direct/streaming inference;
@@ -158,6 +162,7 @@ Model-transfer tests используют только temporary synthetic files
 - force reindex очищает stale JSON records, не удаляя legacy files;
 - chunk overlap, embedding metadata, `hybrid_v1`/`legacy` rollback и diversified top-k search;
 - context assembly соблюдает `max_chars` и содержит bounded facet/provenance diagnostics;
+- search соблюдает query/top-k limits; multi-file upload проверяет count/per-file/total bytes до publication и не оставляет artifacts при 413;
 - file/context deletion очищает DB records.
 - explicit user/completed-assistant export проверяет profile ownership, role metadata, отсутствие reasoning и независимое удаление; assistant-authored export не принимается как factual evidence;
 - corpus audit metadata-only, preview-only и не изменяет source/index (`mutations_performed=0`).

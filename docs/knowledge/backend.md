@@ -61,13 +61,17 @@ Chat attachment HTTP boundary:
 - `DELETE /chat/attachments/{id}` — удаление неактивного attachment;
 - `GET /chat/attachments/cache` и `POST /chat/attachments/cleanup` — статистика и явная очистка cache.
 
-`POST /chat/tasks` принимает только attachment ids. Router до запуска worker проверяет profile/session ownership, status, count и общий размер, связывает записи с единственным persisted user message/task и передаёт task-safe descriptors без публикации filesystem paths.
+`POST /chat/tasks` принимает только attachment ids. Router до запуска worker проверяет profile/session ownership, status, count и общий размер, связывает записи с единственным persisted user message/task и передаёт task-safe descriptors без публикации filesystem paths. Request blocks, runtime settings и собранный prompt имеют code-enforced budgets до inference.
 
 Chat runtime возвращает reasoning и final content раздельно. Worker пишет reasoning chunks в отдельный task artifact, инкрементально сохраняет их в `chat_messages.reasoning` и публикует replay-safe SSE `reasoning` с собственной sequence; SSE `delta` и `chat_messages.content` содержат только final content. После terminal state полный reasoning доступен через `GET /chat/messages/{message_id}/reasoning?profile_id=...` после проверки profile/session ownership. Обычный history endpoint возвращает только `has_reasoning`, поэтому reasoning не участвует в следующем prompt.
+
+Task status/events/cancel принимают обязательные `profile_id` и `session_id` и возвращают одинаковый not-found contract для чужого и неизвестного task. Runtime ограничивает active generation до 2/profile и 4 total, SSE до 3 connections/task и завершает worker по timeout через terminal failed state с очисткой partial artifacts.
 
 Prompt composition разделяет backend-owned global policy (L1), editable profile persona/configuration (L2) и untrusted evidence/data (L4). RAG, request context, summary memory, ASR transcript/analysis evidence, OCR/Vision-derived text, criteria и chat history проходят через uniform structured data envelopes; их instruction-shaped content не получает system authority. Assistant history используется только для continuity, не как factual evidence. Metadata snapshot показывает order/trust/owner/role без raw prompt values.
 
 RAG API дополнительно возвращает structured retrieval diagnostics: `POST /rag/search` содержит strategy, selected chunks и facet-level evidence state; `GET /rag/audit?profile_id=...` создаёт metadata-only preview corpus hygiene без изменения файлов/index. Default `hybrid_v1` можно локально откатить к `legacy` через app setting `rag_retrieval_strategy`; storage и corpus при переключении не меняются.
+
+`ADMIN_TOKEN` обязателен для runtime shutdown/restart, database cleanup/reset, storage paths и chat debug. Token сравнивается constant-time; Web UI передаёт его header-ом и сохраняет только в `sessionStorage`. Public health/version и runtime diagnostics не публикуют filesystem/network details; chat event log и debug prompt/pipeline остаются metadata-only.
 
 ## API boundaries
 

@@ -27,7 +27,7 @@ rag_sources/
 6. синхронизирует `source_documents`, `document_chunks`, `document_embeddings`;
 7. удаляет stale records, включая прежние JSON-записи индекса.
 
-Upload endpoint сохраняет только Markdown после suffix/path validation. Force ingest пересобирает index, но не удаляет legacy JSON-файлы с диска.
+Upload endpoint сохраняет только Markdown после suffix/path validation. Один запрос ограничен 12 файлами, 5 MiB на файл и 20 MiB суммарно; чтение bounded, а при превышении лимита ни один файл запроса не публикуется. Force ingest пересобирает index, но не удаляет legacy JSON-файлы с диска.
 
 ## Markdown sources
 
@@ -78,6 +78,8 @@ Rollback не переиндексирует и не меняет источни
 - `rag_enabled`;
 - `rag_top_k`;
 - `rag_max_context_chars`.
+
+HTTP search ограничивает query 16 000 символами и `top_k` диапазоном 1–20; profile/model settings дополнительно ограничивают RAG context budget.
 
 ## ASR context
 

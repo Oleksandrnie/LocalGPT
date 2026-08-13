@@ -81,6 +81,8 @@ Setup (технически — bootstrap):
    cp .env.example .env
    ```
 
+   Задайте в `.env` непустой случайный `ADMIN_TOKEN`, если нужны restart/shutdown, database cleanup/reset, изменение model storage paths или защищённая prompt/runtime diagnostics. Web UI запрашивает его только при такой операции и хранит лишь до закрытия browser session.
+
 2. Запустите приложение:
 
    macOS / Linux:
@@ -113,7 +115,7 @@ venv/bin/python run_localgpt.py --no-reload
 venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 ```
 
-Параметры окружения, model paths, CORS и ASR/TTS настройки перечислены в [`.env.example`](.env.example).
+Параметры окружения, `ADMIN_TOKEN`, model paths, CORS и ASR/TTS настройки перечислены в [`.env.example`](.env.example).
 
 ## LAN и Tailscale
 

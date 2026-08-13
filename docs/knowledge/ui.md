@@ -27,6 +27,8 @@ FastAPI отдаёт статические assets из `web_ui/`.
 
 State частично хранится в profile preferences/backend, частично — в `localStorage` для чисто UI-настроек.
 
+`ADMIN_TOKEN` не относится к обычному UI state: privileged action запрашивает его интерактивно, передаёт через `X-LocalGPT-Admin-Token` и хранит только в `sessionStorage`. Не переносите token в `localStorage`, URL или persisted profile preferences.
+
 ## Component conventions
 
 ### Buttons
@@ -119,6 +121,7 @@ Settings → System содержит компактные соседние де�
 ## Regression considerations
 
 - SSE `delta` дедуплицируется по sequence; pagehide/close переходит к polling fallback.
+- task status/events/cancel URL всегда несёт active `profile_id` и `session_id`; 429 на SSE connection limit должен перейти в существующий polling/error recovery без reconnect storm.
 - Scroll-to-latest не должен ломать auto-scroll пользователя, который читает историю.
 - RAG indicator отражает active profile.
 - Network address button: 0 адресов disabled, 1 копируется, 2+ открывают menu.

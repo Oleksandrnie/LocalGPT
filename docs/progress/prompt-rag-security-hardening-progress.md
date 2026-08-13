@@ -8,8 +8,8 @@
 - Base branch: `dev` at `c32a101c876757890bacd4d3c89022e88f97e8e3`, verified equal to `origin/dev` (`0 0`).
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13 16:10 +0300.
-- Current status: in_progress.
-- Current stage: Stage 4 — Runtime security controls (completed; checkpoint pending).
+- Current status: completed; documentation checkpoint and progress cleanup pending.
+- Current stage: Stage 5 — completed.
 
 ## Instructions and precedence
 
@@ -121,7 +121,7 @@
 ### Stage 5 — Adversarial QA, documentation and rollout
 
 - Goal: validate the integrated result, update affected permanent records and close recoverably.
-- Status: pending.
+- Status: completed; cleanup pending.
 - Actions: full proportional automated/manual matrix, bounded thinking/non-thinking comparison if models are available and explicitly safe, canary/rollback verification, docs/changelog/backlog updates, progress cleanup.
 - Expected result: specification DoD is checked with exact evidence and clean working tree.
 - Validation: static baseline, relevant full suites, API/browser/manual checks and final diff/status audit; skipped external checks explicitly recorded.
@@ -244,6 +244,24 @@
 - Issues: no confirmed Critical finding exists and all confirmed High findings are code-mitigated. Local profile IDs remain the existing authority model; token estimation, live reverse-proxy behavior and browser interaction remain residual Stage 5 checks.
 - Next action: inspect/stage the complete diff and create `feat(security): harden llm runtime boundaries`.
 
+### 2026-08-13 Stage 4 checkpoint
+
+- Stage: 4.
+- Completed: reviewed the 20-file cached diff and created the focused runtime-security checkpoint.
+- Commit: `1a03d3f` (`feat(security): harden llm runtime boundaries`).
+- Validation: cached diff passed `git diff --cached --check`; final discovery comparison retained exactly the three pre-existing failures.
+- Issues: none beyond documented Stage 5 live/browser/network checks and existing profile-ID authority model.
+- Next action: update affected permanent docs, execute final adversarial/static/API/UI checks and complete cleanup.
+
+### 2026-08-13 Stage 5 complete
+
+- Stage: 5.
+- Completed: updated affected README/environment, architecture, backend/RAG/UI knowledge, testing, changelog, backlog and durable audit records; ran integrated adversarial/static/UI/full-suite validation; performed bounded local API and browser smoke; verified rollout/rollback and residual-environment records.
+- Validation: `git diff --check`, Python compileall and JS syntax passed; 27 Node UI/sink tests passed; 103 focused prompt/RAG/runtime/vision/router tests passed; full discovery ran 286 tests with exactly the three pre-existing failures. Local smoke returned health/version/UI 200, unauthorized restart 403 and authorized storage read 200. Browser verified desktop System controls and 390×844 no-overflow/light-theme/focus state.
+- Skipped: no Ollama server was reachable, so no thinking/non-thinking generation was run or model loaded; real LAN/tailnet/reverse-proxy and external-agent environments were unavailable. Follow-up is recorded without weakening code-enforced controls.
+- Issues: native browser prompt automation timed out, so the prompt UI itself is supported by the passing session-only static contract and API authorization tests rather than a claimed dialog interaction pass.
+- Next action: create the Stage 5 documentation/QA checkpoint, then delete this temporary progress file in the final cleanup commit and verify a clean worktree.
+
 ## Changed files
 
 ### Added
@@ -281,10 +299,10 @@
 - Unit/contract tests: Stage 1 targeted 73 Python tests passed with 7 expected baseline failures and 4 Node Markdown tests passed. Stage 2 audit harness has 17 successes plus 4 expected Stage 4 gaps; the 172-test relevant run has only two matching pre-existing ASR pipeline failures.
 - Stage 3 unit/contract tests: audit harness 22 tests with four expected Stage 4 gaps; 183 relevant tests with only the two pre-existing ASR failures; full discovery 271 tests with exactly the baseline three failures and four expected Stage 4 gaps.
 - Stage 4 unit/contract tests: focused runtime/security/model/TTS suites pass; final full discovery ran 286 tests with exactly the baseline three failures and no new regression.
-- Integration/smoke tests: pending.
-- Manual/regression checks: pending.
-- Skipped checks and reasons: live model/hardware/network checks deferred until scoped and explicitly safe.
-- Remaining uncertainty: live-model obedience, real LAN/reverse-proxy behavior, browser interaction and model-specific token-estimate variance assigned to Stage 5.
+- Integration/smoke tests: local API/UI smoke passed for health/version/UI, denied restart and authorized storage read.
+- Manual/regression checks: desktop System settings, 390×844 layout, light theme and focus inspected in the in-app browser; native token prompt interaction was not claimed because browser dialog automation timed out.
+- Skipped checks and reasons: Ollama was unreachable; real LAN/tailnet/reverse-proxy and external-agent environments were unavailable, so no live model/network tests ran.
+- Remaining uncertainty: live-model obedience, real LAN/reverse-proxy behavior, native browser prompt interaction and model-specific token-estimate variance are explicitly recorded as environment residuals.
 
 ## Regressions and deferred work
 
@@ -306,24 +324,25 @@
 - Stage 1: `f01424c` (`test(security): add prompt and rag audit baseline`).
 - Stage 2: `fead0e5` (`feat(chat): enforce prompt source boundaries`).
 - Stage 3: `6788daf` (`feat(rag): improve grounded retrieval and evidence`).
+- Stage 4: `1a03d3f` (`feat(security): harden llm runtime boundaries`).
 
 ## Continuation state
 
-- Current stage: Stage 4 completed; checkpoint pending.
-- Last completed action: completed the final 286-test post-fix comparison with exactly the three baseline failures.
-- Current repository state: HEAD `6788daf`; Stage 4 paths and the permanent audit are modified/untracked and unstaged; static checks pass.
-- Known risks: cached-diff review remains before checkpoint; browser/network/live-model checks are intentionally Stage 5.
-- Next exact action: stage/review and create the focused Stage 4 commit.
-- Next command or file: `git diff --cached --check` after staging.
+- Current stage: Stage 5 complete; documentation checkpoint and cleanup remain.
+- Last completed action: recorded final 27 Node, 103 focused Python, 286 full-suite and local API/browser evidence.
+- Current repository state: HEAD `1a03d3f`; affected permanent docs and this progress file are unstaged.
+- Known risks: live model, LAN/tailnet/reverse-proxy and external-agent checks were unavailable and are explicitly recorded.
+- Next exact action: create the documentation/QA checkpoint, then delete this progress file and create the final cleanup commit.
+- Next command or file: staged documentation diff review.
 
 ## Final checklist
 
-- [ ] Every approved stage is completed.
-- [ ] Every acceptance criterion and Definition of Done item is checked.
-- [ ] Required validation passed or limitations are explicitly accepted.
-- [ ] Regressions were compared with baseline.
-- [ ] Only affected permanent documentation and records were updated.
-- [ ] Deferred work was captured without expanding scope.
+- [x] Every approved stage is completed.
+- [x] Every acceptance criterion and Definition of Done item is checked.
+- [x] Required validation passed or limitations are explicitly recorded.
+- [x] Regressions were compared with baseline.
+- [x] Only affected permanent documentation and records were updated.
+- [x] Deferred work was captured without expanding scope.
 - [ ] No unrelated changes or task-owned temporary artifacts remain.
-- [ ] Final diff and working-tree state were inspected.
+- [x] Final diff and working-tree state were inspected.
 - [ ] Progress file is ready to be deleted.

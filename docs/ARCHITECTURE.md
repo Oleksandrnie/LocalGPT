@@ -72,11 +72,15 @@ flowchart LR
 6. Assistant message создаётся в SQLite до генерации и проходит состояния `generating`, `streaming`, `completed`, `failed` или `cancelled`.
 7. `stream=true` отдаёт lifecycle, отдельные `reasoning` chunks и final-answer `delta` через SSE; non-streaming использует тот же persisted lifecycle без chunk events.
 
+До запуска generation backend проверяет per-block/aggregate input и assembled-prompt budget. Одновременно допускаются не более двух активных chat tasks на профиль и четырёх на runtime; worker имеет пятиминутный timeout с termination и удалением partial delta/reasoning artifacts. Status/events/cancel требуют совпадающие `profile_id` и `session_id`, а SSE ограничен тремя соединениями на task.
+
 Native Ollama `message.thinking` отделяется от `message.content`: worker инкрементально сохраняет reasoning в поле assistant message и публикует его по отдельному replay-safe SSE `reasoning` channel. Terminal modal может показывать накопленный reasoning во время генерации, а после terminal state загружает persisted snapshot через ownership-checked запрос. Reasoning не попадает в SSE `delta`, обычную history/prompt или RAG. `output_tokens` задаёт бюджет финального ответа, `thinking_tokens` — allowance для рассуждения; когда provider не поддерживает два hard limits, backend выполняет один inference с явно отмеченным bounded combined cap и не считает reasoning-only exhaustion завершённым ответом.
 
 Если к сообщению приложены изображения, UI сначала загружает их через `POST /chat/attachments`. Backend валидирует ownership и лимиты, декодирует/нормализует PNG, JPEG или WebP, создаёт thumbnail и передаёт worker только internal descriptors. Модель с подтверждённой Ollama capability `vision` получает изображения напрямую через native `/api/chat`; при выбранной text-only модели vision-анализ создаёт производный текстовый context для конечного ответа. Base64 существует только в transient Ollama request и не сохраняется в chat messages, SQLite или RAG.
 
 Attachment связан с profile, session, user message и task. Его persisted status следует стадиям `preparing`, `analyzing`, `loading_model`, `generating`, `completed`, `failed` и `cancelled`; после process loss reconciliation завершает оборванное состояние как failed. Удаление session/profile и database reset очищает принадлежащие им файлы.
+
+Operational boundaries (`runtime` restart/shutdown, database cleanup/reset, storage paths и metadata-only debug) требуют непустой `ADMIN_TOKEN`; local/dev mode не является bypass. Public health/version, model inventory, TTS health и RAG status возвращают минимальные/безопасные metadata без filesystem paths и runtime host; routed chat/router/criteria/TTS 5xx не возвращают raw provider exceptions. Chat logs хранят длины/идентификаторы вместо query/reply/error payload.
 
 ### ASR
 

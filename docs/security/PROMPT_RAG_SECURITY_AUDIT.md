@@ -186,7 +186,7 @@ On the synthetic CMS + regions case, legacy top-2 was the same aggregate source 
 
 Stage 4 implements the runtime-control portion of the matrix:
 
-- PRS-06, PRS-07, PRS-11, PRS-13 and PRS-16 are mitigated by metadata-only chat logging and debug responses, mandatory constant-time admin-token checks, generic provider/criteria failures, and public health/model/TTS/RAG responses without absolute paths, hosts or raw runtime errors.
+- PRS-06, PRS-07, PRS-11, PRS-13 and PRS-16 are mitigated by metadata-only chat logging and debug responses, mandatory constant-time admin-token checks, generic routed provider/criteria failures, and public health/version/model-inventory/TTS-health/RAG-status responses without absolute paths or hosts.
 - PRS-08 and PRS-12 are mitigated by per-block and aggregate Chat/RAG schema limits, bounded profile/model runtime settings, an assembled-prompt character budget derived from the configured context/output budget, and RAG upload count/per-file/total-byte checks before any file is committed.
 - PRS-09 is mitigated by mandatory profile/session matching for task status, events and cancellation. Foreign and unknown tasks return the same not-found contract; the UI includes scope on every task request.
 - PRS-10 is mitigated for runtime shutdown/restart, database cleanup/reset and storage-path operations by an `ADMIN_TOKEN` header contract. The browser retains the token in session storage only and never writes it to persistent local storage.
@@ -206,9 +206,17 @@ All confirmed High findings are closed by code-enforced controls. Remaining Medi
 
 ## Residual risks and untested environments
 
-- Live-model resistance varies by model and quantization; Stage 1 did not load any model. At least one thinking and one non-thinking model require a bounded Stage 5 comparison.
+- Live-model resistance varies by model and quantization. The final environment had no reachable Ollama runtime, so no answer-generation comparison was attempted and no model was loaded or downloaded.
 - Real corpus duplication, stale content and multilingual paraphrase distribution were not inspected because client data must not enter the audit artifacts.
 - LAN/tailnet reachability, reverse-proxy headers, OS file permissions and log access were not exercised in this environment.
-- Browser desktop/mobile/theme/accessibility and session-only admin-token interaction checks remain pending Stage 5.
+- Browser smoke covered desktop System controls, 390×844 overflow, light theme and focus. Native prompt-dialog automation timed out; session-only token transport is instead covered by static UI and API authorization tests.
 - No external-agent channel exists to test. Future connectors must add authenticated principals, capability scopes, schema validation, replay/idempotency protection, confirmation and loop budgets before accepting messages.
 - Prompt/data envelopes reduce ambiguity but cannot guarantee model obedience. Authorization, limits, ownership and safe sinks must remain code-enforced.
+
+## Final validation evidence
+
+- 103 focused prompt/RAG/runtime/vision/router tests passed; all seven synthetic red-team categories and max-valid/over-limit/ownership/timeout/cancel/reconnect paths are represented.
+- Full discovery ran 286 tests with exactly the three failures reproduced on the base commit: two ASR pipeline expectation mismatches and one plugin-registry restored-database issue. No new regression remained.
+- 27 static UI tests passed, including escaped Markdown/model output, task reasoning/reconnect behavior, responsive/focus/theme contracts and privileged-request transport.
+- Local bounded smoke returned 200 for minimal health/version/UI and authorized storage read, and 403 for restart without a token. Browser smoke covered desktop/System settings plus 390×844 layout, light theme and focus without model generation.
+- Live Ollama, real LAN/tailnet/reverse-proxy headers and an external-agent channel were not available. These are environment limitations, not claimed passes.
