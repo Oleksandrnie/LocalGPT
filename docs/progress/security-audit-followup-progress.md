@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 8 pending — domain-independent retrieval evaluation baseline.
+- Current stage: Stage 9 pending — local multilingual embedding infrastructure.
 
 ## Instructions and precedence
 
@@ -113,7 +113,7 @@
 - Dependencies: Caddy, private LAN IP, trusted client certificate, second device, configured `ADMIN_TOKEN` for the positive privileged case.
 - Proposed checkpoint commit: `fix(networking): validate secure LAN runtime path`.
 
-### Stage 8 — Regression, records, and cleanup
+### Stage 14 — Regression, records, and cleanup
 
 - Goal: recheck every acceptance criterion and close temporary execution state.
 - Status: pending.
@@ -122,7 +122,7 @@
 - Validation: static baseline, full Python and Node suites, final diff/status/log inspection.
 - Completion criterion: Definition of Done satisfied and cleanup checkpoint created.
 - Affected files: affected permanent docs and this progress file.
-- Dependencies: Stages 5–7A complete.
+- Dependencies: Stages 5–13 complete.
 - Proposed checkpoint commit: `chore(progress): close security audit follow-up`.
 
 ### Stage 7B — Thinking OFF, follow-up RAG, and mobile controls
@@ -164,7 +164,7 @@
 ### Stage 8 — Domain-independent retrieval evaluation baseline
 
 - Goal: measure retrieval quality before choosing or integrating a semantic model.
-- Status: pending.
+- Status: completed.
 - Actions: add small synthetic corpora from multiple unrelated domains, paraphrase/typo/negative/conflict queries, and metadata-only recall@k/MRR/context-inclusion/resource metrics; record current hashing/lexical baseline.
 - Expected result: future retrieval changes are accepted by cross-domain evidence rather than one company corpus.
 - Validation: deterministic offline eval tests and bounded performance check.
@@ -211,15 +211,15 @@
 - Completion criterion: users can identify stale/ready/failed index state and recover without editing code or database rows.
 - Proposed checkpoint commit: `feat(rag): expose semantic reindex lifecycle`.
 
-### Stage 13 — Sequential model validation and cleanup
+### Stage 13 — Sequential model validation
 
-- Goal: prove that shared retrieval supplies stable evidence to supported chat models and close temporary execution state.
+- Goal: prove that shared retrieval supplies stable evidence to supported chat models.
 - Status: pending.
-- Actions: run cross-domain deterministic suite, then strictly sequential bounded 3B, 7B and 4B smokes with unload verification; separate retrieval metrics from generation quality; update affected permanent records and remove this progress file only after all accepted stages complete.
+- Actions: run cross-domain deterministic suite, then strictly sequential bounded 3B, 7B and 4B smokes with unload verification; separate retrieval metrics from generation quality.
 - Expected result: retrieval behavior is model-independent; remaining LLM limitations are recorded honestly; repository returns clean.
-- Validation: full proportional Python/Node/static suite, metadata-only eval report, sequential live observations, final diff/status audit.
-- Completion criterion: accepted quality/resource gates pass, no model overlap occurs, permanent docs are current, and cleanup commit closes the task.
-- Proposed checkpoint commit: `docs(rag): close semantic retrieval rollout`.
+- Validation: metadata-only eval report and sequential live observations with loaded-model checks.
+- Completion criterion: accepted quality/resource gates pass and no model overlap occurs; remaining generation limitations are recorded separately from retrieval.
+- Proposed checkpoint commit: `test(rag): validate retrieval across local models`.
 
 ## Decisions
 
@@ -317,8 +317,20 @@
 - Changed: RAG context builder, two domain-neutral regression tests, RAG knowledge contract, and this progress plan.
 - Decision: the external work corpus is temporary test input only. Production retrieval must not contain its brands, company vocabulary, or business-specific capability patterns.
 - Legacy note: the already committed retrieval layer contains an earlier CMS/capability lexical bonus from Stage 7B. Stage 7D does not expand it; Stage 8 must measure it explicitly and Stage 10 must remove it when domain-neutral hybrid fusion satisfies the recorded quality gate.
-- Checkpoint: `fix(rag): distribute context budget across evidence` pending commit creation after this progress snapshot.
+- Checkpoint: `844ac95 fix(rag): distribute context budget across evidence`.
 - Next action: stop after the focused commit. On explicit user continuation, begin Stage 8 by adding cross-domain synthetic eval fixtures and recording the current lexical/hashing baseline; do not install an embedding model in Stage 8.
+
+### 2026-08-14 — Stage 8 cross-domain retrieval baseline
+
+- Stage: Stage 8.
+- Completed: added a reusable offline eval runner plus 12 synthetic documents across library, observatory, greenhouse, warehouse, museum and microgrid domains; added 10 exact, identifier, paraphrase, typo, conflict and negative cases. The report contains aggregates and case IDs only, uses temporary DB/RAG directories, and does not read user data or load any model.
+- Baseline (`local-hash-v1`, `hybrid_v1`, top-5): positive recall@5/MRR/context recall `0.875`; full-hit rate `0.875`; grounded-hit rate `0.5`; paraphrase raw recall `1.0` but grounded-hit `0.0`; typo recall `0.5`; negative rejection `0.5`; expected conflict-status accuracy `0.0`.
+- Resource observation: one 10-query run took 68.875 ms total / 6.887 ms mean with 204,043 peak traced bytes. This is a local observation, not a stable performance claim.
+- Interpretation: raw top-5 presence overstates quality because hashing collisions can select the expected file while facet diagnostics still report `not_found`. The baseline proves the need for a real semantic provider and later fusion/status calibration; it does not justify tuning against the temporary work corpus.
+- Validation: 39 focused eval/prompt-RAG-security/chat tests passed, including deterministic eval results excluding timing and direct CLI output; runner/test compilation, RAG/test compileall and `git diff --check` passed. No LLM, embedding dependency or network access was used.
+- Changed: cross-domain fixtures/case manifest, metadata-only eval tool/tests, testing and RAG knowledge docs, active progress record.
+- Checkpoint: `test(rag): add cross-domain retrieval baseline` pending commit creation after this progress snapshot.
+- Next action: stop after the focused commit. On explicit user continuation, begin Stage 9 with primary-source model/provider research and resource/compatibility gates before installing or downloading anything.
 
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 
@@ -388,7 +400,7 @@
 ## Validation results
 
 - Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed. Stage 7D repeated RAG/test compileall and diff check successfully.
-- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D added two domain-neutral packing regressions and passed 36 focused prompt/RAG/chat tests.
+- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D passed 36 focused prompt/RAG/chat tests. Stage 8 passed 39 eval/prompt-RAG-security/chat tests.
 - Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement; host LAN HTTPS/API/SSE/CORS/admin/certificate matrix passed.
 - Manual/regression checks: user confirmed restored host behavior and functional second-device access; Qwen3 OFF + generic CMS RAG answer passed on the real phone. Safari still displays `Not Secure`, so certificate trust status remains pending separately in Stage 7A.
 - Skipped checks and reasons: no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
@@ -413,16 +425,16 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6).
+- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D).
 
 ## Continuation state
 
-- Current stage: Stage 8 pending; stop required after the Stage 7D commit until the user explicitly resumes.
-- Last completed action: domain-neutral RAG context packing validated with all selected chunks represented under the configured character budget.
-- Current repository state: Stage 7D owns only the RAG context builder, focused tests, affected RAG documentation, and this progress update; semantic dependencies/models were not installed or run.
-- Known risks: better packing cannot repair weak candidate ranking by itself; current hashing/lexical baseline must be measured before selecting embeddings; backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`.
-- Next exact action: after manual continuation, create cross-domain synthetic eval cases and metrics for the unchanged lexical/hashing retrieval baseline. Do not modify retrieval ranking or install models in Stage 8.
-- Next files: focused eval fixtures/tool/tests under existing test conventions, then this progress record.
+- Current stage: Stage 9 pending; stop required after the Stage 8 commit until the user explicitly resumes.
+- Last completed action: deterministic metadata-only baseline recorded for the unchanged `local-hash-v1` / `hybrid_v1` retrieval path.
+- Current repository state: Stage 8 owns only synthetic fixtures, eval tool/tests, affected testing/RAG docs, and this progress update; production retrieval code and dependencies are unchanged.
+- Known risks: raw recall overstates grounded quality; paraphrase diagnostics, typo tolerance, negative rejection and conflict status need improvement. Backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`.
+- Next exact action: after manual continuation, research a small local multilingual embedding provider from primary documentation; record model size, languages, dimensions, license/runtime support and Mac resource gate before any dependency/download or implementation.
+- Next files: provider/RAG docs and current dependency/setup contracts; then versioned embedding adapter/schema/tests if the resource gate is accepted within Stage 9.
 
 ## Final checklist
 

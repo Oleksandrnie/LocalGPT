@@ -67,6 +67,8 @@ Default search strategy `hybrid_v1`:
 
 На synthetic CMS + regions corpus baseline `legacy` дважды выбирал `duplicate-aggregate.md` в top-2. `hybrid_v1` выбрал `cms.md` и `regions.md`, снизив top-2 duplicate-source ratio с 100% до 0% и дав specific facet coverage 2/2 вместо 0/2. Один bounded прогон по 100 запросов показал около 3.14 ms/query и 1.56 MB peak для legacy против 10.59 ms/query и 2.16 MB peak для hybrid; это regression-test observation, не production benchmark.
 
+Отдельный cross-domain eval находится в `tools/rag_retrieval_eval.py` и `tests/fixtures/rag_retrieval_eval/`. Он использует unrelated synthetic domains, exact/paraphrase/typo/conflict/negative cases и metadata-only report. Это канонический quality gate для будущих embeddings/reranking; временный пользовательский corpus в fixtures и production heuristics не переносится.
+
 Rollback не переиндексирует и не меняет источники: app setting `rag_retrieval_strategy=legacy` возвращает прежнее ранжирование; отсутствие/неизвестное значение выбирает `hybrid_v1`.
 
 ## Chat integration

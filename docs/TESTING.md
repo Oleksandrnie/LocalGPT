@@ -51,6 +51,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Chat routing, Ollama lifecycle, SSE и RAG integration | `venv/bin/python -m unittest tests.test_model_router -v` |
 | Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
 | Prompt/RAG security, hybrid retrieval и grounding diagnostics | `venv/bin/python -m unittest tests.test_prompt_rag_security_audit tests.test_chat_rag tests.test_vision_rag -v` |
+| Cross-domain RAG retrieval baseline, metadata-only | `venv/bin/python -m unittest tests.test_rag_retrieval_eval -v` |
 | Live-model harness contract без загрузки модели | `venv/bin/python -m unittest tests.test_live_llm_security_harness -v` |
 | Profile/session isolation и history-turn contract | `venv/bin/python -m unittest tests.test_context_isolation tests.test_chat_attachments tests.test_chat_rag tests.test_vision_rag -v` |
 | Runtime authorization, ownership, redaction, limits и cleanup | `venv/bin/python -m unittest tests.test_runtime_security -v` |
@@ -78,6 +79,16 @@ venv/bin/python tools/live_llm_security.py --model qwen2.5:7b-instruct --repeats
 ```
 
 На 16 GB Mac запускайте модели строго по одной. Exit `0` означает отсутствие итогового hard boundary breach; exit `2` — незаблокированную prompt-boundary/disclosure ошибку; exit `3` — runtime/harness error. `raw_model_disclosures` отражает слабость самой модели, а `backend_blocked_outputs` — fail-closed срабатывания до выдачи результата. Behavioral jailbreak фиксируется отдельно и не считается действием: harness не предоставляет model-output-to-action edge.
+
+### Cross-domain RAG retrieval baseline
+
+Offline eval использует только synthetic Markdown из нескольких несвязанных областей и временные SQLite/RAG directories. Он не читает пользовательский corpus, не загружает LLM/embedding model и сохраняет только агрегаты и case IDs: raw query/content в report отсутствуют.
+
+```bash
+venv/bin/python tools/rag_retrieval_eval.py --pretty --output /private/tmp/localgpt-rag-baseline.json
+```
+
+Основные метрики: `recall_at_k`, `mrr`, `context_recall`, `grounded_hit_rate`, negative rejection и expected evidence-status accuracy. Raw hit без `supported`/`partial`/`conflict` diagnostics не считается grounded success. `resources` — локальное наблюдение конкретного запуска, не стабильный benchmark. Сравнивайте retrieval implementations на неизменном fixture manifest; не добавляйте туда client/company corpus или production-specific vocabulary.
 
 ## Backend smoke
 
