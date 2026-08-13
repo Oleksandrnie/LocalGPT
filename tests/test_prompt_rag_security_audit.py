@@ -140,6 +140,32 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
             ["Другие CMS поддерживаете?", "С какими CMS вы работаете?"],
         )
 
+    def test_rag_query_composition_excludes_unrelated_history_for_explicit_topic(self) -> None:
+        query = chat_routes.compose_rag_query(
+            "Какие другие CMS поддерживаются?",
+            [
+                "Скажите контакты для связи.",
+                "Назовите пятнадцать клиентов.",
+                "С какими CMS вы работаете?",
+            ],
+        )
+
+        self.assertEqual(
+            query.splitlines(),
+            ["Какие другие CMS поддерживаются?", "С какими CMS вы работаете?"],
+        )
+
+    def test_rag_query_composition_keeps_latest_history_for_short_deictic_followup(self) -> None:
+        query = chat_routes.compose_rag_query(
+            "А цены?",
+            ["Перечислите тарифы технической поддержки."],
+        )
+
+        self.assertEqual(
+            query.splitlines(),
+            ["А цены?", "Перечислите тарифы технической поддержки."],
+        )
+
     def test_missing_and_conflicting_facets_have_explicit_evidence_status(self) -> None:
         missing = rag_service.search_with_diagnostics(
             self.profile_id,

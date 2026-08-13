@@ -71,7 +71,7 @@ Rollback не переиндексирует и не меняет источни
 
 ## Chat integration
 
-`backend/apps/chat/routes.py` проверяет effective `rag_enabled`, собирает query из текущего сообщения и максимум трёх недавних user queries, удаляя повторяющиеся turns без изменения их текста, затем вызывает `search()` и `build_context()`.
+`backend/apps/chat/routes.py` проверяет effective `rag_enabled`, собирает query из текущего сообщения и максимум трёх недавних релевантных user queries: явная тема удерживает только историю с общими meaningful terms, а короткое/deictic уточнение получает последний turn. Повторы удаляются без изменения текста; затем вызываются `search()` и `build_context()`.
 
 `backend/apps/chat/service.py` добавляет найденные chunks как current authorized evidence, но сериализует их в structured L4 data envelope с ролью `user`, а не как instruction-bearing `system` content. Данные могут подтверждать факты ответа, но instruction-shaped текст внутри источника не меняет policy, persona, задачу или permissions. Assistant history и assistant-authored Chat exports остаются continuity context и не считаются подтверждением факта без актуального источника. Facet diagnostics требуют ответить на подтверждённую часть, явно отметить `not_found`/partial coverage и не выбирать молча при конфликте.
 

@@ -139,12 +139,12 @@
 ### Stage 7C — Cross-model RAG grounding parity
 
 - Goal: determine why `qwen2.5:3b-instruct` and `qwen2.5:7b-instruct` use the same RAG evidence less completely than the validated Qwen3 path.
-- Status: pending; no new model run before the Stage 7A/7B checkpoint.
-- Actions: compare metadata-only retrieved chunk IDs, assembled prompt contracts, effective settings and grounded answer coverage across 3B/7B/4B using strictly sequential runs; fix only a model-independent boundary unless evidence proves a declared provider adapter is required.
-- Expected result: every supported chat model receives the same authorized RAG evidence; model-specific answer-quality limits are measured and distinguished from retrieval/prompt defects.
+- Status: in progress; 3B checkpoint complete, 7B intentionally deferred to the next bounded run.
+- Actions: compared metadata-only retrieved chunk IDs and effective settings; ran 3B sequentially without chat persistence; changed shared RAG query composition so explicit topics retain only lexically relevant user-history turns while short/deictic follow-ups retain the latest turn. Do not add corpus brands or a per-model prompt.
+- Expected result: every supported chat model receives the same authorized RAG evidence; unrelated history cannot dilute an explicit current topic; model-specific answer-quality limits are measured and distinguished from retrieval/prompt defects.
 - Validation: deterministic shared-RAG prompt tests plus one bounded sequential run per requested model, unloading each before the next.
-- Completion criterion: retrieval/prompt parity is proven, direct CMS evidence is represented in each response or an explicit evidence-backed model limitation is recorded without hardcoding corpus brands into production policy.
-- Affected files: to be determined from diagnosis; no implementation assumed.
+- Completion criterion: retrieval/prompt parity is proven, direct capability evidence is represented in each response or an explicit evidence-backed model limitation is recorded without hardcoding corpus brands into production policy.
+- Affected files: chat RAG query preparation, RAG knowledge contract, focused security/RAG regression tests, active progress record.
 - Dependencies: Stage 7A/7B checkpoint committed and all models kept sequential to protect Mac thermals.
 - Proposed checkpoint commit: to be determined after diagnosis.
 
@@ -215,6 +215,16 @@
 - Validation: `tests.test_lan_launcher` and `tests.test_network_certificate` passed (7 tests); launcher shell syntax, Python compilation, and diff check passed.
 - Issues: a backend started as a detached child of the Codex command was reaped when that command ended, temporarily producing Caddy 502 responses. This is an execution-environment artifact, not evidence of a normal Terminal launcher defect. No stored models, profiles, or messages were lost.
 - Next action: complete the mandatory phone/tablet smoke over `https://192.168.0.100:8443`, including UI/API, health, SSE, certificate trust, and missing-admin-token denial.
+
+### 2026-08-14 — Stage 7C 3B grounding checkpoint
+
+- Stage: Stage 7C, first bounded model pass.
+- Finding: `qwen2.5:3b-instruct`, `qwen2.5:7b-instruct`, and `qwen3:4b` use the same effective RAG boundary in the inspected profile (`rag_enabled`, top-5 retrieval, and 6,000-character context). The observed weak answers were not caused by a 3B-only RAG integration.
+- Root cause addressed: the former query composer appended up to three prior user turns unconditionally. A real session therefore mixed an explicit CMS request with unrelated earlier topics, widening retrieval diagnostics and diluting evidence for smaller models. The common composer now retains history only when it shares meaningful terms with the explicit current topic; a short or deictic follow-up still gets its newest context turn.
+- Live validation: one clean, non-persistent sequential `qwen2.5:3b-instruct` request with the profile RAG boundary, Thinking off, and a 512-token cap completed with `stop`; it produced no exposed reasoning, covered 6/7 expected supported-platform terms, introduced no observed unconfirmed platform, and unloaded successfully (`loaded_after=[]`). Two prior identical attempts also unloaded successfully but their local metadata printer failed after completion; neither wrote a message, changed settings, nor loaded another model.
+- Regression: `tests.test_prompt_rag_security_audit` plus `tests.test_model_router` passed (92 tests); chat/test compilation and `git diff --check` passed. Test-time local-Ollama access remained sandbox-blocked only inside mocked unit checks, without a test failure.
+- Checkpoint: pending this stage commit.
+- Next action: restart the backend onto this committed code, then perform one real-phone CMS follow-up using 3B. Only after that result is recorded, run the equivalent bounded 7B pass; unload before any model switch.
 
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 

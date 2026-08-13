@@ -51,6 +51,10 @@ CODE_REQUEST_RE = re.compile(
     r"(?i)(\bhtml\b|\bcss\b|\bjavascript\b|\bjs\b|\btypescript\b|\bts\b|\breact\b|\bvue\b|\bsvelte\b|"
     r"\bpython\b|\bfastapi\b|\bdocker\b|\bsql\b|код|скрипт|компонент|верстк|рефактор|отлад)",
 )
+RAG_QUERY_TOKEN_RE = re.compile(r"(?iu)[^\W_]{3,}")
+RAG_REFERENTIAL_QUERY_RE = re.compile(
+    r"(?iu)\b(?:это|эт[аоие]|так(?:ой|ая|ие|ого|ому|им)?|него|не[ёе]|там|тогда|последн\w*)\b"
+)
 MISTRAL_CODE_REQUEST_HINT = (
     "Суть запроса: пользователь просит обычный безопасный программный код. "
     "Повторяющиеся фразы в исходном тексте могут быть шумом распознавания; игнорируй повторы и извлеки требования. "
@@ -62,18 +66,35 @@ MISTRAL_CODE_REQUEST_HINT = (
 
 
 def compose_rag_query(user_query: str, history_user_queries: list[str], *, history_limit: int = 3) -> str:
-    """Compose bounded recent context without repeating identical user turns."""
-    parts: list[str] = []
-    seen: set[str] = set()
-    for value in [user_query, *reversed(history_user_queries)]:
+    """Compose bounded RAG context from the current query and relevant user history."""
+    current = re.sub(r"\s+", " ", str(user_query or "")).strip()
+    if not current:
+        return ""
+
+    parts = [current]
+    seen = {current.casefold()}
+    current_terms = {token.casefold() for token in RAG_QUERY_TOKEN_RE.findall(current)}
+    recent_history: list[tuple[str, set[str]]] = []
+    for value in reversed(history_user_queries):
         cleaned = re.sub(r"\s+", " ", str(value or "")).strip()
         normalized = cleaned.casefold()
         if not cleaned or normalized in seen:
             continue
         seen.add(normalized)
-        parts.append(cleaned)
+        recent_history.append((cleaned, {token.casefold() for token in RAG_QUERY_TOKEN_RE.findall(cleaned)}))
+
+    for cleaned, terms in recent_history:
+        if current_terms.intersection(terms):
+            parts.append(cleaned)
         if len(parts) >= max(1, history_limit + 1):
-            break
+            return "\n".join(parts)
+
+    # Preserve context for genuinely short/deictic follow-ups, without letting
+    # unrelated earlier questions dilute an explicit current topic.
+    if len(parts) == 1 and recent_history and (
+        len(current_terms) <= 2 or RAG_REFERENTIAL_QUERY_RE.search(current)
+    ):
+        parts.append(recent_history[0][0])
     return "\n".join(parts)
 
 
