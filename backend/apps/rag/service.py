@@ -15,6 +15,7 @@ from app import config, db
 SOURCE_TYPE = "manual_file"
 ASR_CONTEXT_SOURCE_TYPE = "asr_context"
 VISION_CONTEXT_SOURCE_TYPE = "vision_context"
+CHAT_CONTEXT_SOURCE_TYPE = "chat_context"
 EMBEDDING_MODEL = "local-hash-v1"
 SUPPORTED_SUFFIXES = {".md"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -424,6 +425,21 @@ def vision_context_source_id(message_id: int | str) -> str:
     return f"message:{int(message_id)}"
 
 
+def chat_context_source_id(message_id: int | str) -> str:
+    return f"chat-message:{int(message_id)}"
+
+
+def _validated_edited_context(text: str, *, prefix: str) -> str:
+    edited_text = str(text or "").strip()
+    if not edited_text:
+        raise HTTPException(status_code=422, detail=f"{prefix}_empty")
+    if len(edited_text) > 100_000:
+        raise HTTPException(status_code=413, detail=f"{prefix}_too_large")
+    if re.search(r"data:image/[^;]+;base64,", edited_text, flags=re.IGNORECASE):
+        raise HTTPException(status_code=422, detail=f"{prefix}_binary_forbidden")
+    return edited_text
+
+
 def index_vision_context(
     *,
     profile_id: int,
@@ -453,13 +469,7 @@ def index_vision_context(
     if not attachments:
         raise HTTPException(status_code=422, detail="vision_context_attachments_required")
 
-    edited_text = str(text or "").strip()
-    if not edited_text:
-        raise HTTPException(status_code=422, detail="vision_context_empty")
-    if len(edited_text) > 100_000:
-        raise HTTPException(status_code=413, detail="vision_context_too_large")
-    if re.search(r"data:image/[^;]+;base64,", edited_text, flags=re.IGNORECASE):
-        raise HTTPException(status_code=422, detail="vision_context_binary_forbidden")
+    edited_text = _validated_edited_context(text, prefix="vision_context")
 
     source_id = vision_context_source_id(message_id)
     clean_title = str(title or "").strip()[:160] or f"Vision context: {message.get('content') or source_id}"
@@ -478,6 +488,56 @@ def index_vision_context(
         profile_id=int(profile_id),
         session_id=str(session_id),
         source_type=VISION_CONTEXT_SOURCE_TYPE,
+        source_id=source_id,
+        title=clean_title,
+        text=edited_text,
+        metadata=metadata,
+    )
+
+
+def index_chat_context(
+    *,
+    profile_id: int,
+    session_id: str,
+    message_id: int,
+    title: str | None,
+    text: str,
+) -> dict[str, Any]:
+    profile = db.get_profile(profile_id)
+    if not profile or not profile.get("is_active", 1):
+        raise HTTPException(status_code=404, detail="profile_not_found")
+    session = db.get_session(session_id)
+    if not session or int(session.get("profile_id") or 0) != int(profile_id):
+        raise HTTPException(status_code=403, detail="chat_context_session_mismatch")
+    message = db.get_message(message_id)
+    role = str(message.get("role") or "") if message else ""
+    if not message or str(message.get("session_id") or "") != str(session_id) or role not in {"user", "assistant"}:
+        raise HTTPException(status_code=403, detail="chat_context_message_mismatch")
+    if role == "assistant" and str(message.get("status") or "") != "completed":
+        raise HTTPException(status_code=422, detail="chat_context_assistant_incomplete")
+    if not str(message.get("content") or "").strip():
+        raise HTTPException(status_code=422, detail="chat_context_message_empty")
+
+    edited_text = _validated_edited_context(text, prefix="chat_context")
+    source_id = chat_context_source_id(message_id)
+    default_title = f"Chat {role}: {str(message.get('content') or source_id).strip()[:120]}"
+    clean_title = str(title or "").strip()[:160] or default_title
+    metadata = {
+        "source_kind": "chat_message",
+        "source_role": "derived_context",
+        "truth_priority": 50,
+        "origin": "explicit_chat_export",
+        "message_id": int(message_id),
+        "session_id": str(session_id),
+        "message_role": role,
+        "editable": True,
+        "reasoning_ingested": False,
+        "binary_ingested": False,
+    }
+    return _index_text_document(
+        profile_id=int(profile_id),
+        session_id=str(session_id),
+        source_type=CHAT_CONTEXT_SOURCE_TYPE,
         source_id=source_id,
         title=clean_title,
         text=edited_text,
@@ -510,6 +570,20 @@ def _context_items(profile_id: int) -> list[dict[str, Any]]:
                 "session_id": document.get("session_id"),
                 "message_id": metadata.get("message_id"),
                 "attachment_ids": metadata.get("attachment_ids") or [],
+                "created_at": document.get("created_at"),
+                "updated_at": document.get("updated_at"),
+            }
+        )
+    for document in db.list_source_documents(profile_id=profile_id, source_type=CHAT_CONTEXT_SOURCE_TYPE):
+        metadata = document.get("metadata") or {}
+        items.append(
+            {
+                "source_type": CHAT_CONTEXT_SOURCE_TYPE,
+                "source_id": document.get("source_id") or "",
+                "title": document.get("title") or "Chat context",
+                "session_id": document.get("session_id"),
+                "message_id": metadata.get("message_id"),
+                "message_role": metadata.get("message_role"),
                 "created_at": document.get("created_at"),
                 "updated_at": document.get("updated_at"),
             }
@@ -561,9 +635,20 @@ def delete_context_source(profile_id: int, source_id: str) -> dict[str, Any]:
         ),
         None,
     )
+    source_type = VISION_CONTEXT_SOURCE_TYPE
     if not vision_document:
-        return delete_asr_context_source(profile_id, target)
-    deleted_docs = db.delete_source_document(profile_id, VISION_CONTEXT_SOURCE_TYPE, target)
+        chat_document = next(
+            (
+                item
+                for item in db.list_source_documents(profile_id=profile_id, source_type=CHAT_CONTEXT_SOURCE_TYPE)
+                if str(item.get("source_id") or "") == target
+            ),
+            None,
+        )
+        if not chat_document:
+            return delete_asr_context_source(profile_id, target)
+        source_type = CHAT_CONTEXT_SOURCE_TYPE
+    deleted_docs = db.delete_source_document(profile_id, source_type, target)
     return {
         "profile_id": profile_id,
         "deleted": [target] if deleted_docs else [],

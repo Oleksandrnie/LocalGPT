@@ -9,7 +9,7 @@
 - Branch: `feature/chat-thinking-reasoning-rag`, created from clean `dev` aligned with `origin/dev` on 2026-08-13.
 - Started: 2026-08-13.
 - Current status: in_progress.
-- Current stage: Stage 4 — Chat messages to RAG.
+- Current stage: Stage 5 — regression, live acceptance, docs, and cleanup.
 
 ## Instructions and precedence
 
@@ -111,7 +111,7 @@
 ### Stage 4 — Chat messages to RAG
 
 - Goal: explicitly export editable user or completed assistant content through a shared profile-isolated derived-text pipeline.
-- Status: in_progress.
+- Status: completed.
 - Actions: generalize/reuse text indexing; add ownership/status/role validation and metadata; adapt the existing modal/action UI; keep Vision export compatibility; add retrieval/delete/isolation tests.
 - Validation: focused RAG API/service tests and Node UI tests for both roles, cancel/confirm, metadata, absence of reasoning, retrieval, and independent deletion.
 - Completion criterion: both roles support manual edit → ingest → retrieval with correct role metadata and no reasoning leakage.
@@ -121,7 +121,7 @@
 ### Stage 5 — Regression, live acceptance, docs, and cleanup
 
 - Goal: satisfy the complete DoD and leave a review-ready clean branch.
-- Status: pending.
+- Status: in_progress.
 - Actions: full static/unit suite, clean/existing DB migration smoke, controlled live Qwen flows, manual UI matrix, affected docs/changelog, final diff/status review, then delete this progress file.
 - Validation: specification command set plus new focused tests and documented manual/live evidence.
 - Completion criterion: all acceptance criteria pass or an exact external blocker remains documented; no temporary/debug/unrelated changes; clean working tree after final cleanup commit.
@@ -183,13 +183,23 @@
 - Issues: browser viewport/theme/focus matrix remains scheduled for Stage 5 after the shared Chat → RAG modal is complete.
 - Next action: add the profile-isolated Chat → RAG backend contract and reuse the editable derived-text UI for user and completed assistant messages.
 
+### 2026-08-13 — Stage 4 explicit Chat → RAG
+
+- Stage: 4 completed; Stage 5 started.
+- Completed: shared editable Chat/Vision dialog, actions for every non-empty user and completed assistant message, typed request schema/route, profile/session/message/role/status validation, shared text indexing, role/source metadata, retrieval/status listing, independent deletion, and explicit reasoning/binary exclusion.
+- Changed: RAG schemas/routes/service, active HTML/JS, focused Python/Node tests.
+- Validation: diff/compile/JS checks; 10 focused Python RAG/Vision tests and 13 focused Node UI/markdown tests.
+- Issues: none; browser viewport/theme/focus validation remains in Stage 5.
+- Next action: create the Stage 4 checkpoint, then run full regressions, controlled live Qwen acceptance, interactive UI matrix, and affected-doc review.
+
 ## Validation results
 
 - Static checks: baseline passed.
 - Unit/contract tests: Stage 1 focused set passed 62 tests after changes.
 - Stage 2 unit/contract tests: 67 focused tests passed, including settings validation, legacy migration, profile isolation, storage cap, and both worker modes.
 - Integration/smoke tests: native qwen3:4b audit exposed an incompatible OFF manifest; adapter ON/OFF acceptance passed on installed qwen3:0.6b with `keep_alive=0`.
-- Manual/regression checks: static UI contracts passed; interactive browser matrix deferred until the final shared modal is implemented.
+- Chat → RAG integration: 10 Python endpoint/service tests passed for user/assistant roles, isolation, retrieval, deletion, reasoning exclusion, and Vision compatibility.
+- Manual/regression checks: 13 static UI/markdown contracts passed; interactive browser matrix pending Stage 5.
 - Skipped checks: full Python suite and browser/UI matrix deferred to Stage 5; no changes exist yet.
 - Remaining uncertainty: exact combined safety cap/defaults must be reconciled with existing config ranges and context limits during Stage 2.
 
@@ -218,19 +228,26 @@
 
 ### Stage 3
 
-- Commit hash: pending creation.
+- Commit hash: `af9679a`.
 - Message: `feat(ui): expose reasoning and separate chat budgets`.
 - Files: active HTML/JS/CSS and focused Node UI contract tests.
 - Validation: diff/JS checks and 12 focused Node tests.
 
+### Stage 4
+
+- Commit hash: pending creation.
+- Message: `feat(rag): add explicit chat message export`.
+- Files: schemas, RAG route/service, shared modal/actions, and focused Python/Node tests.
+- Validation: static checks, 10 Python tests, and 13 Node tests.
+
 ## Continuation state
 
-- Current stage: Stage 4 — Chat messages to RAG.
-- Last completed action: Stage 3 static UI validation and progress update.
-- Current repository state: Stages 1–2 committed; validated Stage 3 diff pending checkpoint commit.
-- Known risks: shared Chat/Vision modal state and mobile action density.
-- Next exact action: create the Stage 3 checkpoint, then implement Chat → RAG request/ownership/indexing tests before wiring UI actions.
-- Next files: `backend/apps/rag/routes.py`, `backend/apps/rag/service.py`, request schema, focused Python tests, then active UI files.
+- Current stage: Stage 5 — regression, live acceptance, docs, and cleanup.
+- Last completed action: Stage 4 focused backend/UI validation and progress update.
+- Current repository state: Stages 1–3 committed; validated Stage 4 diff pending checkpoint commit.
+- Known risks: interactive modal focus/layout and the installed qwen3:4b OFF incompatibility.
+- Next exact action: create the Stage 4 checkpoint, then run the full safe test matrix and browser UI checks before updating affected documentation.
+- Next files: affected permanent docs after validation evidence is final.
 
 ## Final checklist
 

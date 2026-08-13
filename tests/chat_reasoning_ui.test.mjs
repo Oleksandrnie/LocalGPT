@@ -33,3 +33,12 @@ test("reasoning controls cover focus, themes, and mobile sizing", () => {
   assert.match(css, /body\.theme-light \.reasoning-dialog__content/);
   assert.match(css, /@media[\s\S]*\.reasoning-dialog__content/);
 });
+
+test("user and completed assistant messages share an editable Chat to RAG dialog", () => {
+  assert.match(javascript, /const canExportChat = hasContent && \(role === "user" \|\| \(role === "assistant" && status === "completed"\)\)/);
+  assert.match(javascript, /data-chat-rag-index=/);
+  assert.match(javascript, /openChatRagDialog\(chatRagButton\.dataset\.chatRagIndex, chatRagButton\)/);
+  assert.match(javascript, /isChatExport \? "\/rag\/chat-contexts" : "\/rag\/vision-contexts"/);
+  assert.match(javascript, /visionRagTextInput\.value = content/);
+  assert.match(javascript, /state\.visionRagReturnFocus = trigger/);
+});

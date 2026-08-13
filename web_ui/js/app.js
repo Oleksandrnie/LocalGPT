@@ -510,6 +510,8 @@ const state = {
   messages: [],
   messageAttachments: {},
   visionRagSourceMessageId: null,
+  visionRagExportKind: null,
+  visionRagReturnFocus: null,
   reasoningReturnFocus: null,
   installedModels: [],
   recommendedModels: [],
@@ -3913,8 +3915,12 @@ function visionSourceUserMessageForIndex(messageIndex) {
 
 function closeVisionRagDialog() {
   state.visionRagSourceMessageId = null;
+  state.visionRagExportKind = null;
   if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = true;
   syncMobileScrollLock();
+  const returnFocus = state.visionRagReturnFocus;
+  state.visionRagReturnFocus = null;
+  window.setTimeout(() => returnFocus?.focus?.(), 0);
 }
 
 function closeReasoningDialog() {
@@ -3944,7 +3950,7 @@ async function openReasoningDialog(messageId, trigger = null) {
   }
 }
 
-function openVisionRagDialog(messageIndex) {
+function openVisionRagDialog(messageIndex, trigger = null) {
   const index = Number(messageIndex);
   const assistantMessage = Number.isFinite(index) ? state.messages[index] : null;
   const sourceMessage = visionSourceUserMessageForIndex(index);
@@ -3953,6 +3959,8 @@ function openVisionRagDialog(messageIndex) {
     return;
   }
   state.visionRagSourceMessageId = Number(sourceMessage.id);
+  state.visionRagExportKind = "vision";
+  state.visionRagReturnFocus = trigger;
   if (els.visionRagTitleInput) {
     els.visionRagTitleInput.value = String(sourceMessage.content || "Vision context").trim().slice(0, 160);
   }
@@ -3960,6 +3968,30 @@ function openVisionRagDialog(messageIndex) {
     els.visionRagTextInput.value = String(assistantMessage.content || "").trim();
   }
   setInlineStatus(els.visionRagStatus, "Проверьте и при необходимости отредактируйте производный текст.", "warning");
+  if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = false;
+  syncMobileScrollLock();
+  window.setTimeout(() => els.visionRagTextInput?.focus(), 0);
+}
+
+function openChatRagDialog(messageIndex, trigger = null) {
+  const index = Number(messageIndex);
+  const message = Number.isFinite(index) ? state.messages[index] : null;
+  const role = message?.role === "user" ? "user" : message?.role === "assistant" ? "assistant" : "";
+  const status = normalizeMessageStatus(message);
+  const content = String(message?.content || "").trim();
+  if (!message || !content || !role || (role === "assistant" && status !== "completed")) {
+    setFooter("В RAG можно добавить user-сообщение или завершённый ответ LocalGPT.", "warning");
+    return;
+  }
+  state.visionRagSourceMessageId = Number(message.id);
+  state.visionRagExportKind = "chat";
+  state.visionRagReturnFocus = trigger;
+  if (els.visionRagTitleInput) {
+    const prefix = role === "user" ? "Chat: вопрос" : "Chat: ответ";
+    els.visionRagTitleInput.value = `${prefix} — ${content}`.slice(0, 160);
+  }
+  if (els.visionRagTextInput) els.visionRagTextInput.value = content;
+  setInlineStatus(els.visionRagStatus, "Проверьте и при необходимости отредактируйте текст перед добавлением.", "warning");
   if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = false;
   syncMobileScrollLock();
   window.setTimeout(() => els.visionRagTextInput?.focus(), 0);
@@ -3975,7 +4007,8 @@ async function saveVisionContextToRag() {
   els.visionRagSaveButton.disabled = true;
   setInlineStatus(els.visionRagStatus, "Индексирую только текстовый контекст…", "warning");
   try {
-    await request("/rag/vision-contexts", {
+    const isChatExport = state.visionRagExportKind === "chat";
+    await request(isChatExport ? "/rag/chat-contexts" : "/rag/vision-contexts", {
       method: "POST",
       body: {
         profile_id: state.activeProfileId,
@@ -3987,7 +4020,7 @@ async function saveVisionContextToRag() {
     });
     await loadRagStatus();
     closeVisionRagDialog();
-    setFooter("Текстовый vision-контекст сохранён в RAG.", "success");
+    setFooter(isChatExport ? "Сообщение добавлено в RAG." : "Текстовый vision-контекст сохранён в RAG.", "success");
   } catch (error) {
     setInlineStatus(els.visionRagStatus, `Не удалось сохранить: ${error.message || error}`, "error");
   } finally {
@@ -4017,6 +4050,7 @@ function renderMessages() {
         && status === "completed"
         && hasContent
         && Boolean(visionSourceUserMessageForIndex(index));
+      const canExportChat = hasContent && (role === "user" || (role === "assistant" && status === "completed"));
       const body = (() => {
         if (role !== "assistant") return formatRichMessage(content);
         if (status === "failed") {
@@ -4070,10 +4104,11 @@ function renderMessages() {
             </div>
             ${attachmentsMarkup}
             <div class="message-card__body">${body}</div>
-            ${canCopy || canExportVision || (role === "assistant" && status === "failed")
+            ${canCopy || canExportVision || canExportChat || (role === "assistant" && status === "failed")
               ? `<div class="message-card__actions">
                   ${role === "assistant" && status === "failed" ? `<button class="message-copy-button" type="button" data-retry-message-index="${index}">Повторить</button>` : ""}
                   ${canExportVision ? `<button class="message-copy-button" type="button" data-vision-rag-index="${index}">В RAG</button>` : ""}
+                  ${canExportChat ? `<button class="message-copy-button" type="button" data-chat-rag-index="${index}">Добавить в RAG</button>` : ""}
                   ${canCopy ? `<button class="message-copy-button" type="button" data-copy-index="${index}">Скопировать</button>` : ""}
                 </div>`
               : ""}
@@ -10488,7 +10523,13 @@ function bindEvents() {
 
     const visionRagButton = event.target.closest("[data-vision-rag-index]");
     if (visionRagButton) {
-      openVisionRagDialog(visionRagButton.dataset.visionRagIndex);
+      openVisionRagDialog(visionRagButton.dataset.visionRagIndex, visionRagButton);
+      return;
+    }
+
+    const chatRagButton = event.target.closest("[data-chat-rag-index]");
+    if (chatRagButton) {
+      openChatRagDialog(chatRagButton.dataset.chatRagIndex, chatRagButton);
       return;
     }
 
