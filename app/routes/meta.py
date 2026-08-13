@@ -10,12 +10,13 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi import Request
 from fastapi.responses import FileResponse
 
 from .. import chat_tasks, config, db
 from ..schemas import DatabaseCleanupRequest, DatabaseResetRequest
+from ..security import ADMIN_TOKEN_HEADER, require_admin_token
 from .. import transcribe_tasks
 from ..services import tts_service
 from backend.apps.rag import service as rag_service
@@ -292,61 +293,46 @@ def _restart_backend_worker() -> None:
 
 
 @router.get("/health")
-def health(request: Request):
-    tts_health = tts_service.get_health()
-    return {
-        "status": "ok",
-        "env": config.SETTINGS.env,
-        "model": config.SETTINGS.model,
-        "num_ctx": config.SETTINGS.num_ctx,
-        "max_tokens": config.SETTINGS.max_tokens,
-        "mem_turns": config.SETTINGS.mem_turns,
-        "temperature": config.SETTINGS.temperature,
-        "models_dir": str(config.MODEL_PATHS.base),
-        "chat_models_dir": str(config.MODEL_PATHS.ollama),
-        "asr_models_dir": str(config.MODEL_PATHS.whisper),
-        "tts_models_dir": str(config.MODEL_PATHS.tts),
-        "piper_models_dir": str(config.MODEL_PATHS.piper),
-        "ollama_models_dir": str(config.MODEL_PATHS.ollama),
-        "whisper_models_dir": str(config.MODEL_PATHS.whisper),
-        "tts": {
-            "enabled": tts_health.get("tts_enabled"),
-            "provider": tts_health.get("default_provider"),
-            "available": tts_health.get("provider", {}).get("available"),
-            "voices_count": tts_health.get("provider", {}).get("voices_count"),
-        },
-        "access_url": _get_access_url(request),
-        "lan_url": _get_lan_url(request),
-        "ios_url": _get_lan_url(request),
-    }
+def health():
+    return {"status": "ok"}
 
 
 @router.get("/version")
 def version():
-    return {"env": config.SETTINGS.env, "model": config.SETTINGS.model, "base_url": config.SETTINGS.base_url}
+    return {"service": "LocalGPT", "api_version": 1}
 
 
 @router.post("/runtime/shutdown")
-def shutdown_runtime():
+def shutdown_runtime(admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER)):
+    require_admin_token(admin_token)
     worker = threading.Thread(target=_shutdown_worker, daemon=True)
     worker.start()
     return {"status": "accepted", "message": "Shutdown started"}
 
 
 @router.post("/runtime/restart")
-def restart_backend_runtime():
+def restart_backend_runtime(admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER)):
+    require_admin_token(admin_token)
     worker = threading.Thread(target=_restart_backend_worker, daemon=True)
     worker.start()
     return {"status": "accepted", "message": "Backend restart started"}
 
 
 @router.post("/database/cleanup")
-def cleanup_database(req: DatabaseCleanupRequest):
+def cleanup_database(
+    req: DatabaseCleanupRequest,
+    admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER),
+):
+    require_admin_token(req.admin_token or admin_token)
     return db.cleanup_database_garbage(vacuum=req.vacuum)
 
 
 @router.post("/database/reset")
-def reset_database(req: DatabaseResetRequest):
+def reset_database(
+    req: DatabaseResetRequest,
+    admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER),
+):
+    require_admin_token(req.admin_token or admin_token)
     if req.confirm != "RESET_DATABASE":
         raise HTTPException(
             status_code=422,

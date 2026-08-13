@@ -22,8 +22,49 @@ TASKS_DIR.mkdir(parents=True, exist_ok=True)
 _PROCESS_CTX = mp.get_context("spawn")
 _LOCK = threading.Lock()
 _TASKS: dict[str, dict[str, Any]] = {}
+_STARTING_BY_PROFILE: dict[int, int] = {}
 _FINAL_STATES = {"completed", "failed", "error", "cancelled"}
 _ACTIVE_VISION_STATES = {"preparing", "analyzing", "loading_model", "generating", "streaming"}
+CHAT_TASK_MAX_ACTIVE_PER_PROFILE = max(1, int(os.getenv("CHAT_TASK_MAX_ACTIVE_PER_PROFILE", "2")))
+CHAT_TASK_MAX_ACTIVE_TOTAL = max(CHAT_TASK_MAX_ACTIVE_PER_PROFILE, int(os.getenv("CHAT_TASK_MAX_ACTIVE_TOTAL", "4")))
+CHAT_TASK_TIMEOUT_SECONDS = max(30, int(os.getenv("CHAT_TASK_TIMEOUT_SECONDS", "300")))
+
+
+class ChatTaskCapacityError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _reserve_starting_slot(profile_id: int | None) -> int:
+    profile_key = int(profile_id or 0)
+    with _LOCK:
+        active_tasks = [task for task in _TASKS.values() if task.get("state") not in _FINAL_STATES]
+        active_for_profile = sum(1 for task in active_tasks if int(task.get("profile_id") or 0) == profile_key)
+        starting_for_profile = int(_STARTING_BY_PROFILE.get(profile_key) or 0)
+        starting_total = sum(_STARTING_BY_PROFILE.values())
+        if active_for_profile + starting_for_profile >= CHAT_TASK_MAX_ACTIVE_PER_PROFILE:
+            raise ChatTaskCapacityError(
+                "chat_profile_concurrency_exceeded",
+                "The active profile has reached its chat task limit.",
+            )
+        if len(active_tasks) + starting_total >= CHAT_TASK_MAX_ACTIVE_TOTAL:
+            raise ChatTaskCapacityError(
+                "chat_runtime_concurrency_exceeded",
+                "The LocalGPT runtime has reached its chat task limit.",
+            )
+        _STARTING_BY_PROFILE[profile_key] = starting_for_profile + 1
+    return profile_key
+
+
+def _release_starting_slot(profile_key: int) -> None:
+    with _LOCK:
+        remaining = max(0, int(_STARTING_BY_PROFILE.get(profile_key) or 1) - 1)
+        if remaining:
+            _STARTING_BY_PROFILE[profile_key] = remaining
+        else:
+            _STARTING_BY_PROFILE.pop(profile_key, None)
 
 
 def _utc_now() -> str:
@@ -106,7 +147,6 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "task_id": task.get("id"),
         "message": task.get("message"),
         "error_code": task.get("error_code"),
-        "pid": task.get("pid"),
         "used_settings": task.get("used_settings"),
         "router_notice": task.get("router_notice"),
         "result": result,
@@ -400,11 +440,17 @@ def _chat_worker(
     except Exception as exc:  # pragma: no cover - runtime path
         detail = getattr(exc, "detail", None)
         if isinstance(detail, dict):
-            message = detail.get("message") or detail.get("detail") or str(detail)
             error_code = str(detail.get("code") or getattr(exc, "code", None) or "chat_generation_failed")
         else:
-            message = getattr(exc, "message", None) or detail or str(exc) or "chat_generation_failed"
             error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
+        message = "Local model generation failed."
+        safe_messages = {
+            "Thinking budget exhausted before the model produced a final answer.",
+            "The model completed without a final answer.",
+        }
+        detail_message = str(detail.get("message") or "") if isinstance(detail, dict) else ""
+        if error_code == "chat_final_answer_incomplete" and detail_message in safe_messages:
+            message = detail_message
         if assistant_message_id:
             try:
                 db.update_message(
@@ -424,6 +470,11 @@ def _cleanup_task_files(task: dict[str, Any]) -> None:
     _safe_unlink(task.get("result_path"))
     _safe_unlink(task.get("error_path"))
     _safe_unlink(task.get("status_path"))
+
+
+def _cleanup_failed_stream_artifacts(task: dict[str, Any]) -> None:
+    _safe_unlink(task.get("delta_path"))
+    _safe_unlink(task.get("reasoning_path"))
 
 
 def _finalize_task_locked(task: dict[str, Any]) -> None:
@@ -475,6 +526,8 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
     task.pop("_process", None)
     task.pop("_monitor", None)
     _cleanup_task_files(task)
+    if task.get("state") != "completed":
+        _cleanup_failed_stream_artifacts(task)
 
 
 def _update_assistant_from_task(
@@ -527,7 +580,35 @@ def _monitor_task(task_id: str) -> None:
             process = task.get("_process")
 
     if process is not None:
-        process.join()
+        process.join(timeout=CHAT_TASK_TIMEOUT_SECONDS)
+        if process.is_alive():
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            process.join(timeout=1.5)
+            if process.is_alive():
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                process.join(timeout=1.0)
+            with _LOCK:
+                task = _TASKS.get(task_id)
+                if task and task.get("state") not in _FINAL_STATES:
+                    task["state"] = "failed"
+                    task["message"] = "Chat generation exceeded the runtime timeout."
+                    task["error_code"] = "chat_task_timeout"
+                    task["result"] = None
+                    task["updated_at"] = _utc_now()
+                    task["pid"] = None
+                    _update_assistant_from_task(task, status="failed", error=task["message"])
+                    _set_attachment_status(list(task.get("attachment_ids") or []), "failed", error=task["message"])
+                    task.pop("_process", None)
+                    task.pop("_monitor", None)
+                    _cleanup_task_files(task)
+                    _cleanup_failed_stream_artifacts(task)
+            return
 
     with _LOCK:
         task = _TASKS.get(task_id)
@@ -700,31 +781,32 @@ def start_chat_task(
             error=None,
         )
 
-    process = _PROCESS_CTX.Process(
-        target=_chat_worker,
-        args=(
-            model_name,
-            messages,
-            used_settings,
-            session_id,
-            profile_id,
-            assistant_message_id,
-            bool(stream),
-            str(delta_path),
-            str(reasoning_path),
-            str(status_path),
-            str(result_path),
-            str(error_path),
-            descriptors,
-            vision_route,
-        ),
-        daemon=True,
-        name=f"localgpt_chat_{task_id}",
-    )
-
+    profile_key = _reserve_starting_slot(profile_id)
     try:
+        process = _PROCESS_CTX.Process(
+            target=_chat_worker,
+            args=(
+                model_name,
+                messages,
+                used_settings,
+                session_id,
+                profile_id,
+                assistant_message_id,
+                bool(stream),
+                str(delta_path),
+                str(reasoning_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+                descriptors,
+                vision_route,
+            ),
+            daemon=True,
+            name=f"localgpt_chat_{task_id}",
+        )
         process.start()
     except Exception:
+        _release_starting_slot(profile_key)
         _safe_unlink(result_path)
         _safe_unlink(error_path)
         _safe_unlink(delta_path)
@@ -775,6 +857,7 @@ def start_chat_task(
 
     with _LOCK:
         _TASKS[task_id] = task
+    _release_starting_slot(profile_key)
 
     monitor.start()
     return _public_task(task)

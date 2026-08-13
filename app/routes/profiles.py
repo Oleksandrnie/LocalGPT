@@ -254,6 +254,20 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         )
     if preset is not None:
         cleaned["default_pipeline_preset"] = str(preset).strip().lower()
+    bounded_positive_ints = {
+        "mem_turns": 100,
+        "max_transcript_chars": 100_000,
+        "max_context_chars": 256_000,
+        "summary_memory_limit": 100,
+        "rag_top_k": 20,
+        "rag_max_context_chars": 128_000,
+        "max_resident_target_models": 5,
+        "max_images_per_message": 10,
+        "chat_image_max_file_bytes": 50 * 1024 * 1024,
+        "chat_image_max_total_bytes": 100 * 1024 * 1024,
+        "chat_image_max_pixels": 100_000_000,
+        "chat_image_max_side": 32_768,
+    }
     for key in (
         "mem_turns",
         "max_transcript_chars",
@@ -271,18 +285,16 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         if key in cleaned and cleaned[key] is not None:
             try:
                 parsed = max(1, int(cleaned[key]))
-                if key == "max_resident_target_models":
-                    cleaned[key] = min(5, parsed)
-                elif key == "max_images_per_message":
-                    if parsed > 10:
-                        raise ValueError
-                    cleaned[key] = parsed
-                else:
-                    cleaned[key] = parsed
+                if parsed > bounded_positive_ints[key]:
+                    raise ValueError
+                cleaned[key] = parsed
             except (TypeError, ValueError) as exc:
                 raise HTTPException(
                     status_code=422,
-                    detail={"code": f"invalid_{key}", "message": f"{key} must be a positive integer."},
+                    detail={
+                        "code": f"invalid_{key}",
+                        "message": f"{key} must be between 1 and {bounded_positive_ints[key]}.",
+                    },
                 ) from exc
     for key in (
         "streaming_enabled",

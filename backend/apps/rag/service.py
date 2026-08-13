@@ -22,6 +22,8 @@ RETRIEVAL_STRATEGY_SETTING = "rag_retrieval_strategy"
 DEFAULT_RETRIEVAL_STRATEGY = "hybrid_v1"
 SUPPORTED_SUFFIXES = {".md"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_UPLOAD_FILES = 12
+MAX_UPLOAD_TOTAL_BYTES = 20 * 1024 * 1024
 CHUNK_CHARS = 1200
 CHUNK_OVERLAP = 180
 VECTOR_DIMS = 256
@@ -751,8 +753,8 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     stats = db.rag_stats(profile_id)
     return {
         "profile_id": profile_id,
-        "source_dir": str(source_dir(profile_id)),
-        "profile_source_dir": str(source_dir(profile_id)),
+        "source_dir": f"profile:{profile_id}",
+        "source_scope": "active_profile",
         "embedding_model": EMBEDDING_MODEL,
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "scanned": scanned,
@@ -766,7 +768,6 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
 
 
 def status(profile_id: int | None = None) -> dict[str, Any]:
-    root = source_dir(profile_id)
     files = _iter_source_files(profile_id) if profile_id is not None else []
     if profile_id is not None:
         valid_source_ids = {_relative_source_id(path, profile_id) for path in files}
@@ -775,8 +776,8 @@ def status(profile_id: int | None = None) -> dict[str, Any]:
             if source_id and source_id not in valid_source_ids:
                 db.delete_source_document(profile_id, SOURCE_TYPE, source_id)
     return {
-        "source_dir": str(root),
-        "root_source_dir": str(source_root()),
+        "source_dir": f"profile:{profile_id}" if profile_id is not None else "profile-scoped",
+        "source_scope": "active_profile" if profile_id is not None else "profile_required",
         "embedding_model": EMBEDDING_MODEL,
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "file_count": len(files),
@@ -956,9 +957,16 @@ def build_context(
 
 
 def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, Any]:
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail={"code": "rag_upload_file_count_exceeded", "max_files": MAX_UPLOAD_FILES},
+        )
     target_dir = source_dir(profile_id)
     saved: list[str] = []
     errors: list[dict[str, str]] = []
+    pending: list[tuple[str, Path, bytes]] = []
+    total_bytes = 0
     for upload in files:
         original_name = Path(upload.filename or "").name
         if not original_name:
@@ -969,17 +977,31 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
             continue
         safe_name = _slug(Path(original_name).stem) + suffix
         target = target_dir / safe_name
-        data = upload.file.read()
+        data = upload.file.read(MAX_FILE_BYTES + 1)
         if len(data) > MAX_FILE_BYTES:
             errors.append({"file": original_name, "error": "file_too_large"})
             continue
-        target.write_bytes(data)
+        total_bytes += len(data)
+        if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail={"code": "rag_upload_total_bytes_exceeded", "max_bytes": MAX_UPLOAD_TOTAL_BYTES},
+            )
+        pending.append((original_name, target, data))
+    for original_name, target, data in pending:
+        try:
+            target.write_bytes(data)
+        except OSError:
+            errors.append({"file": original_name, "error": "file_write_failed"})
+            continue
         saved.append(_relative_source_id(target, profile_id))
     return {
         "profile_id": profile_id,
-        "source_dir": str(target_dir),
+        "source_dir": f"profile:{profile_id}",
+        "source_scope": "active_profile",
         "saved": saved,
         "errors": errors,
+        "uploaded_bytes": sum(len(data) for _, _, data in pending),
         "status": status(profile_id),
     }
 

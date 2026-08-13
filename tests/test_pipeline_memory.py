@@ -426,7 +426,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         app.include_router(chat_router)
         client = TestClient(app)
 
-        with client.stream("GET", f"/chat/tasks/{task['id']}/events") as response:
+        with client.stream(
+            "GET",
+            f"/chat/tasks/{task['id']}/events",
+            params={"profile_id": self.profile_id, "session_id": session["id"]},
+        ) as response:
             self.assertEqual(response.status_code, 200)
             body = "".join(response.iter_text())
 
@@ -666,7 +670,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         app.include_router(chat_router)
         client = TestClient(app)
 
-        with client.stream("GET", f"/chat/tasks/{task_id}/events") as response:
+        with client.stream(
+            "GET",
+            f"/chat/tasks/{task_id}/events",
+            params={"profile_id": self.profile_id, "session_id": session["id"]},
+        ) as response:
             self.assertEqual(response.status_code, 200)
             body = "".join(response.iter_text())
 
@@ -708,7 +716,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         app = FastAPI()
         app.include_router(chat_router)
         client = TestClient(app)
-        with client.stream("GET", f"/chat/tasks/{task_id}/events") as response:
+        with client.stream(
+            "GET",
+            f"/chat/tasks/{task_id}/events",
+            params={"profile_id": self.profile_id, "session_id": session["id"]},
+        ) as response:
             self.assertEqual(response.status_code, 200)
             body = "".join(response.iter_text())
 
@@ -730,7 +742,10 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         app = FastAPI()
         app.include_router(chat_router)
         client = TestClient(app)
-        response = client.get("/chat/tasks/ct_missing_runtime")
+        response = client.get(
+            "/chat/tasks/ct_missing_runtime",
+            params={"profile_id": self.profile_id, "session_id": session["id"]},
+        )
 
         self.assertEqual(response.status_code, 404)
         updated_message = db.get_message(assistant_message["id"])
@@ -747,7 +762,12 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         )
 
         with self.assertRaises(HTTPException) as ctx:
-            chat_routes.get_chat_task_events("ct_missing_sse", request=None)
+            chat_routes.get_chat_task_events(
+                "ct_missing_sse",
+                request=None,
+                profile_id=self.profile_id,
+                session_id=session["id"],
+            )
 
         self.assertEqual(ctx.exception.status_code, 404)
         updated_message = db.get_message(assistant_message["id"])

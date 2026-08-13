@@ -45,6 +45,8 @@ const STORAGE_KEYS = {
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
   settingsTab: "localgpt_simple_settings_tab",
 };
+const ADMIN_TOKEN_SESSION_KEY = "localgpt_admin_token";
+const ADMIN_TOKEN_HEADER = "X-LocalGPT-Admin-Token";
 
 const MESSAGE_STATUSES = new Set(["generating", "streaming", "completed", "failed", "cancelled"]);
 const MESSAGE_FINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
@@ -1109,8 +1111,6 @@ function renderLibraryPanels() {
   const utilityCatalog = getUtilityModels();
   const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
   const chatTotal = utilityCatalog.length + chatCatalog.length;
-  const ollamaHost = state.modelDiagnostics?.ollama_host || state.modelDiagnostics?.base_url || "";
-  const chatRuntimeLabel = ollamaHost ? ` • ${ollamaHost}` : "";
   const asrInstalled = state.asrModels.filter((item) => isWhisperItemReady(item)).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
@@ -1124,7 +1124,7 @@ function renderLibraryPanels() {
       toggle: els.chatLibraryToggle,
       panel: els.chatLibraryPanel,
       meta: els.chatLibraryMeta,
-      metaText: `${chatInstalled} runtime • ${chatTotal} вариантов${chatRuntimeLabel}`,
+      metaText: `${chatInstalled} runtime • ${chatTotal} вариантов`,
     },
     {
       kind: "asr",
@@ -2300,10 +2300,22 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   }
 }
 
-async function waitForChatTask(taskId, { timeoutMs = 300000 } = {}) {
+function chatTaskScopedUrl(taskId, suffix = "", task = null) {
+  const profileId = task?.profile_id ?? state.activeProfileId;
+  const sessionId = task?.session_id || task?.conversation_id || state.currentSessionId;
+  const params = new URLSearchParams({
+    profile_id: String(profileId ?? ""),
+    session_id: String(sessionId || ""),
+  });
+  return `/chat/tasks/${encodeURIComponent(taskId)}${suffix}?${params.toString()}`;
+}
+
+async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
+  const taskId = typeof taskOrId === "object" ? (taskOrId?.id || taskOrId?.task_id || "") : taskOrId;
+  const taskScope = typeof taskOrId === "object" ? taskOrId : null;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const task = await request(`/chat/tasks/${encodeURIComponent(taskId)}`);
+    const task = await request(chatTaskScopedUrl(taskId, "", taskScope));
     const taskState = String(task?.state || "");
     if (taskState === "completed" || taskState === "cancelled") {
       return task;
@@ -2325,7 +2337,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
   return new Promise((resolve, reject) => {
     interruptChatTaskEventStream("Открывается новое SSE-соединение.");
     prepareChatTaskReplay(task, replayBaseContent);
-    const source = new window.EventSource(`/chat/tasks/${encodeURIComponent(taskId)}/events`);
+    const source = new window.EventSource(chatTaskScopedUrl(taskId, "/events", task));
     let settled = false;
     let terminalEventReceived = false;
     let timeoutId = null;
@@ -2512,7 +2524,7 @@ async function recoverActiveChatTaskFromMessages() {
   try {
     task = {
       ...fallbackTask,
-      ...await request(`/chat/tasks/${encodeURIComponent(taskId)}`),
+      ...await request(chatTaskScopedUrl(taskId, "", fallbackTask)),
       assistant_message_id: activeMessage.id,
     };
     if (isFinalChatTaskState(task.state)) {
@@ -2532,10 +2544,10 @@ async function recoverActiveChatTaskFromMessages() {
           throw streamError;
         }
         setFooter("Поток ответа прервался, жду финальный результат…", "warning");
-        completedTask = await waitForChatTask(taskId);
+        completedTask = await waitForChatTask(task);
       }
     } else {
-      completedTask = await waitForChatTask(taskId);
+      completedTask = await waitForChatTask(task);
     }
 
     await refreshCurrentSessionMessages({ sessionId, scroll: true });
@@ -2578,11 +2590,11 @@ async function cancelCurrentChatGeneration() {
 
   if (taskId) {
     try {
-      await request(`/chat/tasks/${encodeURIComponent(taskId)}/cancel`, {
+      await request(chatTaskScopedUrl(taskId, "/cancel"), {
         method: "POST",
         body: {},
       });
-    } catch {
+    } catch (error) {
       if ((error?.status || 0) !== 404) {
         setFooter(`Не удалось остановить генерацию: ${error.message || error}`, "error");
         return;
@@ -3769,6 +3781,59 @@ async function request(path, options = {}) {
   error.code = detail?.code || payload?.code || null;
   error.payload = payload;
   throw error;
+}
+
+function cachedAdminToken() {
+  try {
+    return String(window.sessionStorage.getItem(ADMIN_TOKEN_SESSION_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function cacheAdminToken(token) {
+  try {
+    if (token) {
+      window.sessionStorage.setItem(ADMIN_TOKEN_SESSION_KEY, token);
+    } else {
+      window.sessionStorage.removeItem(ADMIN_TOKEN_SESSION_KEY);
+    }
+  } catch {
+    // A private/locked browser session may disable sessionStorage.
+  }
+}
+
+function requestAdminToken({ interactive = true } = {}) {
+  const cached = cachedAdminToken();
+  if (cached || !interactive) return cached;
+  const entered = window.prompt("Введите ADMIN_TOKEN для привилегированной операции LocalGPT", "");
+  const token = String(entered || "").trim();
+  if (token) cacheAdminToken(token);
+  return token;
+}
+
+async function privilegedRequest(path, options = {}, { interactive = true, retry = true } = {}) {
+  const token = requestAdminToken({ interactive });
+  if (!token) {
+    if (!interactive) return null;
+    const error = new Error("Для операции требуется ADMIN_TOKEN из .env.");
+    error.code = "admin_token_required";
+    throw error;
+  }
+  try {
+    return await request(path, {
+      ...options,
+      headers: { ...(options.headers || {}), [ADMIN_TOKEN_HEADER]: token },
+    });
+  } catch (error) {
+    if (error?.status === 403) {
+      cacheAdminToken("");
+      if (interactive && retry) {
+        return privilegedRequest(path, options, { interactive: true, retry: false });
+      }
+    }
+    throw error;
+  }
 }
 
 function syncDownloadsPolling() {
@@ -8921,7 +8986,8 @@ async function loadWhisperModels({ silent = false } = {}) {
 
 async function loadStoragePaths() {
   try {
-    const data = await request("/storage/paths");
+    const data = await privilegedRequest("/storage/paths", {}, { interactive: false });
+    if (!data) return;
     state.modelsDir = data?.paths?.base || state.modelsDir || "";
     if (els.modelsDirInput) {
       els.modelsDirInput.value = state.modelsDir;
@@ -9676,10 +9742,10 @@ async function sendPromptText(
           throw streamError;
         }
         setFooter("Поток ответа прервался, жду финальный результат…", "warning");
-        completedTask = await waitForChatTask(task?.id || "");
+        completedTask = await waitForChatTask(task);
       }
     } else {
-      completedTask = await waitForChatTask(task?.id || "");
+      completedTask = await waitForChatTask(task);
     }
     state.chatTaskId = null;
 
@@ -10067,7 +10133,7 @@ async function saveModelsDir(moveExisting) {
   }
 
   try {
-    const data = await request("/storage/paths", {
+    const data = await privilegedRequest("/storage/paths", {
       method: "POST",
       body: { models_dir: target, move_existing: moveExisting },
     });
@@ -10247,7 +10313,7 @@ async function restartBackendRuntime() {
   setHealthBadge("Перезапуск…", "warning");
 
   try {
-    await request("/runtime/restart", { method: "POST", body: {} });
+    await privilegedRequest("/runtime/restart", { method: "POST", body: {} });
   } catch (error) {
     if (!isExpectedShutdownError(error)) {
       setInlineStatus(els.appRuntimeStatus, `Не удалось запустить перезапуск: ${error.message || error}`, "error");
@@ -10291,7 +10357,7 @@ async function shutdownRuntime() {
   renderAppRuntimeMaintenance();
   setInlineStatus(els.appRuntimeStatus, "Остановка приложения…", "warning");
   try {
-    await request("/runtime/shutdown", { method: "POST", body: {} });
+    await privilegedRequest("/runtime/shutdown", { method: "POST", body: {} });
     setFooter("Остановка запущена. Для нового старта снова откройте launcher.", "warning");
     setHealthBadge("Остановка…", "error");
   } catch (error) {
@@ -10363,7 +10429,7 @@ async function cleanupDatabaseGarbage() {
   setInlineStatus(els.databaseStatus, "Очистка БД…", "warning");
 
   try {
-    const result = await request("/database/cleanup", { method: "POST", body: { vacuum: true } });
+    const result = await privilegedRequest("/database/cleanup", { method: "POST", body: { vacuum: true } });
     setInlineStatus(els.databaseStatus, formatDatabaseDeleted(result, "Мусор не найден."), "success");
     setFooter("Очистка БД завершена.", "success");
     await Promise.all([
@@ -10395,7 +10461,7 @@ async function resetDatabaseFully() {
   setInlineStatus(els.databaseStatus, "Полная очистка БД…", "warning");
 
   try {
-    const result = await request("/database/reset", {
+    const result = await privilegedRequest("/database/reset", {
       method: "POST",
       body: { confirm: "RESET_DATABASE", vacuum: true },
     });

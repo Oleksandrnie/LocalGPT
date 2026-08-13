@@ -184,6 +184,17 @@ Stage 3 implements the retrieval and evidence portion of the matrix:
 
 On the synthetic CMS + regions case, legacy top-2 was the same aggregate source twice; hybrid top-2 was the specific CMS and regions sources. A 100-iteration local observation measured approximately 3.14 ms/query and 1.56 MB peak for legacy versus 10.59 ms/query and 2.16 MB peak for hybrid. A semantic model candidate was not eligible without a new model/dependency and heavy download, so it was not loaded. Residual risks are heuristic stemming/conflict detection, context-budget sensitivity, and model-level use of diagnostics.
 
+Stage 4 implements the runtime-control portion of the matrix:
+
+- PRS-06, PRS-07, PRS-11, PRS-13 and PRS-16 are mitigated by metadata-only chat logging and debug responses, mandatory constant-time admin-token checks, generic provider/criteria failures, and public health/model/TTS/RAG responses without absolute paths, hosts or raw runtime errors.
+- PRS-08 and PRS-12 are mitigated by per-block and aggregate Chat/RAG schema limits, bounded profile/model runtime settings, an assembled-prompt character budget derived from the configured context/output budget, and RAG upload count/per-file/total-byte checks before any file is committed.
+- PRS-09 is mitigated by mandatory profile/session matching for task status, events and cancellation. Foreign and unknown tasks return the same not-found contract; the UI includes scope on every task request.
+- PRS-10 is mitigated for runtime shutdown/restart, database cleanup/reset and storage-path operations by an `ADMIN_TOKEN` header contract. The browser retains the token in session storage only and never writes it to persistent local storage.
+- Chat generation is bounded to two active tasks per profile and four total, with a five-minute timeout, terminal failure state, process termination and partial delta/reasoning artifact cleanup. SSE event streams are bounded to three concurrent connections per task.
+- Markdown rendering remains escaped/inert, the calculator remains constrained to its AST allowlist, plugin behavior remains backend-owned, and no model-output-to-action edge was added.
+
+All confirmed High findings are closed by code-enforced controls. Remaining Medium risk is the local profile-ID authority model itself: LocalGPT does not yet implement user identities, and a caller who is already authorized to operate a profile retains that profile's capabilities. Character-to-token estimation is deliberately conservative but remains approximate across model tokenizers. Live network/reverse-proxy and model behavior remain Stage 5 checks.
+
 ## Rollout and rollback
 
 1. Ship prompt boundaries behind deterministic builder contracts, with snapshot metadata that never includes raw secret values.
@@ -198,6 +209,6 @@ On the synthetic CMS + regions case, legacy top-2 was the same aggregate source 
 - Live-model resistance varies by model and quantization; Stage 1 did not load any model. At least one thinking and one non-thinking model require a bounded Stage 5 comparison.
 - Real corpus duplication, stale content and multilingual paraphrase distribution were not inspected because client data must not enter the audit artifacts.
 - LAN/tailnet reachability, reverse-proxy headers, OS file permissions and log access were not exercised in this environment.
-- Browser desktop/mobile/theme/accessibility checks remain pending until a user-visible UI change exists.
+- Browser desktop/mobile/theme/accessibility and session-only admin-token interaction checks remain pending Stage 5.
 - No external-agent channel exists to test. Future connectors must add authenticated principals, capability scopes, schema validation, replay/idempotency protection, confirmation and loop budgets before accepting messages.
 - Prompt/data envelopes reduce ambiguity but cannot guarantee model obedience. Authorization, limits, ownership and safe sinks must remain code-enforced.

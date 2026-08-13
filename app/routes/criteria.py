@@ -77,7 +77,7 @@ def parse_criteria(
     except Exception as exc:
         raise HTTPException(
             status_code=502,
-            detail={"code": "criteria_fetch_failed", "message": str(exc)},
+            detail={"code": "criteria_fetch_failed", "message": "Не удалось получить или обработать источник критериев."},
         ) from exc
     if not criteria:
         raise HTTPException(

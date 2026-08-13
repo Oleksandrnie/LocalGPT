@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app import config, db
 from app.roles import system_prompt_for
+from app.security import redact_log_event
 from backend.apps.chat.prompt_policy import GLOBAL_GUARD_POLICY, data_envelope, profile_persona_envelope
 from backend.apps.chat.services import ollama_runtime
 
@@ -486,9 +487,9 @@ class ChatService:
         try:
             config.LOG_DIR.mkdir(parents=True, exist_ok=True)
             with config.CHAT_LOG_FILE.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                fh.write(json.dumps(redact_log_event(payload), ensure_ascii=False, separators=(",", ":")) + "\n")
         except Exception as exc:  # pragma: no cover - лог только для диагностики
-            LOGGER.warning("Failed to write chat log: %s", exc)
+            LOGGER.warning("Failed to write chat log: %s", type(exc).__name__)
 
     def _runtime_kwargs(self, model: str, settings: dict, *, vision: bool = False) -> dict[str, Any]:
         request_settings = apply_generation_budget_policy(settings)
@@ -559,7 +560,7 @@ class ChatService:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
+            raise HTTPException(status_code=502, detail="Local model generation failed.") from exc
         sanitized = replace(result, content=sanitize_reply(result.content))
         return self.require_final_answer(sanitized)
 
@@ -582,7 +583,7 @@ class ChatService:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
+            raise HTTPException(status_code=502, detail="Local model generation failed.") from exc
 
     def chat_completion_stream(self, model: str, messages: list[dict[str, str]], *, settings: dict) -> Iterator[str]:
         for event in self.chat_completion_stream_events(model, messages, settings=settings):

@@ -357,17 +357,14 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertIn("model output", policy)
         self.assertIn("не является разрешением", policy)
 
-    @unittest.expectedFailure
     def test_chat_request_rejects_oversized_untrusted_blocks(self) -> None:
         with self.assertRaises(ValidationError):
             ChatRequest(query="q" * 200_000, context="c" * 200_000, criteria=["x" * 200_000])
 
-    @unittest.expectedFailure
     def test_rag_search_request_bounds_top_k_and_query_size(self) -> None:
         with self.assertRaises(ValidationError):
             RagSearchRequest(profile_id=self.profile_id, query="q" * 200_000, top_k=1_000_000)
 
-    @unittest.expectedFailure
     def test_chat_log_redacts_raw_query_reply_and_errors(self) -> None:
         marker = "synthetic-secret-marker"
         ChatService().log_chat_event(
@@ -379,7 +376,6 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertIn("query_chars", event)
         self.assertIn("reply_chars", event)
 
-    @unittest.expectedFailure
     def test_debug_prompt_requires_admin_token_even_in_local_mode(self) -> None:
         with patch.object(config.SETTINGS, "env", "local"), patch.object(config.SETTINGS, "admin_token", ""):
             self.assertFalse(chat_routes._debug_allowed(None))

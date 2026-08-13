@@ -531,7 +531,6 @@ def get_health() -> dict[str, Any]:
         provider_payload = {
             "name": provider.name,
             "available": provider_available,
-            "message": provider_message,
             "voices_count": len(voices),
         }
     except TTSServiceError as exc:
@@ -540,7 +539,6 @@ def get_health() -> dict[str, Any]:
         provider_payload = {
             "name": provider_name,
             "available": False,
-            "message": exc.message,
             "voices_count": 0,
         }
 
@@ -550,17 +548,11 @@ def get_health() -> dict[str, Any]:
 
     return {
         "status": status,
-        "env": config.SETTINGS.env,
         "tts_enabled": config.SETTINGS.tts_enabled,
         "default_provider": config.SETTINGS.tts_default_provider,
         "audio_format": config.SETTINGS.tts_audio_format,
         "max_text_chars": config.SETTINGS.tts_max_text_chars,
         "speed_options": list(config.SETTINGS.tts_speed_options),
-        "models_dir": str(config.TTS_MODELS_DIR),
-        "piper_models_dir": str(config.PIPER_MODELS_DIR),
-        "output_dir": str(config.TTS_OUTPUT_DIR),
-        "history_dir": str(config.TTS_HISTORY_DIR),
-        "temp_dir": str(config.TTS_TEMP_DIR),
         "provider": provider_payload,
     }
 

@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13 16:10 +0300.
 - Current status: in_progress.
-- Current stage: Stage 3 — RAG retrieval and grounding quality (ready for checkpoint).
+- Current stage: Stage 4 — Runtime security controls (completed; checkpoint pending).
 
 ## Instructions and precedence
 
@@ -110,7 +110,7 @@
 ### Stage 4 — Runtime security controls
 
 - Goal: close confirmed Critical/High gaps and proportionally address Medium ownership/resource/rendering/action-sink risks.
-- Status: pending.
+- Status: completed; ready for checkpoint.
 - Actions: implement code-enforced ownership, redaction, budgets, concurrency/timeout/cancel cleanup and safe output/action boundaries only where findings prove a gap.
 - Expected result: failure paths are terminal, bounded and side-effect free; model output alone cannot authorize or execute actions.
 - Validation: targeted API/unit negative tests for every remediation and safe rendering tests.
@@ -216,6 +216,34 @@
 - Issues: heuristic stemming/conflict detection and context-budget sensitivity remain residual Medium risks; no live semantic model or answer generation was run.
 - Next action: inspect/stage the complete Stage 3 diff and create `feat(rag): improve grounded retrieval and evidence`.
 
+### 2026-08-13 Stage 3 checkpoint
+
+- Stage: 3.
+- Completed: reviewed the cached 13-file Stage 3 diff and created the focused checkpoint.
+- Commit: `6788daf` (`feat(rag): improve grounded retrieval and evidence`).
+- Validation: cached diff passed `git diff --cached --check`; no source/corpus mutation or external model dependency was included.
+- Issues: heuristic retrieval residual risks remain documented; no new regression was found.
+- Next action: verify each remaining runtime/API/logging/ownership/resource finding against current code and implement Stage 4 controls with negative tests.
+
+### 2026-08-13 Stage 4 pause checkpoint (uncommitted)
+
+- Stage: 4, paused at user request before completion or commit.
+- Completed so far: added a shared admin-token/redaction helper; bounded Chat/RAG request schemas and profile prompt sizes; changed chat log writes to metadata-only redacted events; changed debug prompt/pipeline output toward admin-only metadata; added admin authorization to runtime/database/storage operations; began task profile/session ownership enforcement and matching UI scoped task URLs; bounded RAG upload count/bytes/read size; replaced public RAG path values and health/version path/runtime metadata with safe labels.
+- Changed but not checkpointed: `app/security.py`, `app/schemas/core.py`, `app/routes/meta.py`, `app/routes/storage.py`, `backend/apps/chat/routes.py`, `backend/apps/chat/service.py`, `backend/apps/rag/service.py`, `web_ui/js/app.js`, `tests/test_pipeline_memory.py`, and this progress file.
+- Validation so far: `git diff --check` and Python compileall passed after the current edits. The four Stage 4 expected-failure reproductions became unexpected successes (request bounds, RAG bounds, log redaction, local debug denial), so their decorators still need removal. A 100-test partial run otherwise showed only the two known ASR baseline failures; it was intentionally not treated as a Stage 4 pass.
+- Incomplete/unsafe to commit: task ownership API/UI tests are not complete; admin-token compatibility and UI transport are not complete; privileged meta/storage tests are missing; RAG upload no-artifact tests are missing; task timeout/concurrency controls are not implemented; provider/criteria error redaction and public metadata inventory are not fully closed; current API changes may break callers until tests/UI are updated.
+- Repository state: branch `feature/prompt-rag-security-hardening`, HEAD `6788daf`; ten Stage 4 paths are modified/untracked and unstaged. No Stage 4 commit exists.
+- Resume exact action: first run the focused tests to inventory current compatibility failures, then finish task ownership/admin-token negative tests and UI request propagation before adding timeout/concurrency or further controls. Do not stage/commit until Stage 4 criteria and full baseline comparison pass.
+
+### 2026-08-13 Stage 4 resumed and completed
+
+- Stage: 4.
+- Completed: enforced admin authorization on operational/storage/debug routes; metadata-only logs/debug and public runtime responses; task profile/session ownership; session-scoped UI token transport; request, assembled-prompt, runtime-setting and RAG-upload bounds; per-profile/total task concurrency; generation timeout/termination and failed-task artifact cleanup; per-task SSE connection bounds; stable generic provider errors with an allowlist for safe domain failures.
+- Changed: shared security helpers, Chat/RAG/model/TTS/meta/storage/profile/criteria routes and services, chat task lifecycle, UI task/admin request transport, focused runtime-security tests and the permanent security audit.
+- Validation: static Python/JavaScript/diff checks and the four Markdown sink tests passed. An initial full run found one new over-redaction regression; it was fixed with an allowlisted safe domain message and the affected security/runtime suite passed. Final full discovery ran 286 tests with exactly the original one failure/two errors and no new regression.
+- Issues: no confirmed Critical finding exists and all confirmed High findings are code-mitigated. Local profile IDs remain the existing authority model; token estimation, live reverse-proxy behavior and browser interaction remain residual Stage 5 checks.
+- Next action: inspect/stage the complete diff and create `feat(security): harden llm runtime boundaries`.
+
 ## Changed files
 
 ### Added
@@ -226,6 +254,8 @@
 - `tests/fixtures/prompt_rag_security/*.md` (six synthetic fixtures).
 - `backend/apps/chat/prompt_policy.py`.
 - `backend/apps/rag/retrieval.py`.
+- `app/security.py`.
+- `tests/test_runtime_security.py`.
 
 ### Modified
 
@@ -238,6 +268,8 @@
 - `docs/ARCHITECTURE.md`, `docs/knowledge/backend.md`, `docs/knowledge/rag.md`, `docs/security/PROMPT_RAG_SECURITY_AUDIT.md`.
 - `backend/apps/chat/routes.py`, `backend/apps/rag/routes.py`, `backend/apps/rag/service.py`.
 - `tests/test_chat_rag.py`, `docs/TESTING.md`.
+- `app/routes/criteria.py`, `app/routes/meta.py`, `app/routes/storage.py`, `app/schemas/core.py`, `app/services/models.py`.
+- `backend/apps/chat/services/model_router.py`, `backend/apps/tts/router.py`, `backend/apps/tts/service.py`, `web_ui/js/app.js`.
 
 ### Deleted
 
@@ -248,10 +280,11 @@
 - Static checks: `git diff --check`, `venv/bin/python -m compileall -q app backend tests`, `node --check web_ui/js/app.js` passed.
 - Unit/contract tests: Stage 1 targeted 73 Python tests passed with 7 expected baseline failures and 4 Node Markdown tests passed. Stage 2 audit harness has 17 successes plus 4 expected Stage 4 gaps; the 172-test relevant run has only two matching pre-existing ASR pipeline failures.
 - Stage 3 unit/contract tests: audit harness 22 tests with four expected Stage 4 gaps; 183 relevant tests with only the two pre-existing ASR failures; full discovery 271 tests with exactly the baseline three failures and four expected Stage 4 gaps.
+- Stage 4 unit/contract tests: focused runtime/security/model/TTS suites pass; final full discovery ran 286 tests with exactly the baseline three failures and no new regression.
 - Integration/smoke tests: pending.
 - Manual/regression checks: pending.
 - Skipped checks and reasons: live model/hardware/network checks deferred until scoped and explicitly safe.
-- Remaining uncertainty: live-model obedience to the structural boundary, claim-level grounding/provenance behavior, and current output-sink/resource/ownership gaps assigned to later stages.
+- Remaining uncertainty: live-model obedience, real LAN/reverse-proxy behavior, browser interaction and model-specific token-estimate variance assigned to Stage 5.
 
 ## Regressions and deferred work
 
@@ -272,16 +305,16 @@
 
 - Stage 1: `f01424c` (`test(security): add prompt and rag audit baseline`).
 - Stage 2: `fead0e5` (`feat(chat): enforce prompt source boundaries`).
-- Stage 3 is complete and ready for checkpoint; commit hash pending.
+- Stage 3: `6788daf` (`feat(rag): improve grounded retrieval and evidence`).
 
 ## Continuation state
 
-- Current stage: Stage 3 checkpoint.
-- Last completed action: completed full-suite baseline comparison and affected-document updates.
-- Current repository state: unstaged Stage 3 code/test/document changes on top of checkpoint `fead0e5`.
-- Known risks: conflict/staleness detection is heuristic and must be described as diagnostic, not absolute truth; default hybrid adds small bounded latency/memory overhead.
-- Next exact action: inspect the complete Stage 3 diff, stage only task-owned files, review the cached diff and create the authorized focused commit.
-- Next command or file: `git diff`, `git add` for the Stage 3 file set, `git diff --cached --check` and cached-diff review.
+- Current stage: Stage 4 completed; checkpoint pending.
+- Last completed action: completed the final 286-test post-fix comparison with exactly the three baseline failures.
+- Current repository state: HEAD `6788daf`; Stage 4 paths and the permanent audit are modified/untracked and unstaged; static checks pass.
+- Known risks: cached-diff review remains before checkpoint; browser/network/live-model checks are intentionally Stage 5.
+- Next exact action: stage/review and create the focused Stage 4 commit.
+- Next command or file: `git diff --cached --check` after staging.
 
 ## Final checklist
 

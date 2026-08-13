@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 import time
 from datetime import datetime
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app import config, db
+from app.security import ADMIN_TOKEN_HEADER, admin_token_matches, public_error_detail, require_admin_token
 from app.schemas import ChatDebugPromptRequest, ChatRequest, ResetRequest
 from app.services import criteria as criteria_service
 from app.services import models as model_service
@@ -42,6 +44,9 @@ chat_service = ChatService()
 CHAT_ROLE = "chat"
 MISTRAL_NEMO_MODEL_ID = "mistral-nemo:12b"
 CHAT_TASK_EVENT_POLL_INTERVAL_SECONDS = 0.5
+CHAT_TASK_EVENT_MAX_CONNECTIONS = 3
+_CHAT_TASK_EVENT_CONNECTIONS: dict[str, int] = {}
+_CHAT_TASK_EVENT_CONNECTIONS_LOCK = threading.Lock()
 CODE_REQUEST_RE = re.compile(
     r"(?i)(\bhtml\b|\bcss\b|\bjavascript\b|\bjs\b|\btypescript\b|\bts\b|\breact\b|\bvue\b|\bsvelte\b|"
     r"\bpython\b|\bfastapi\b|\bdocker\b|\bsql\b|код|скрипт|компонент|верстк|рефактор|отлад)",
@@ -149,9 +154,16 @@ def _chat_task_not_found_detail() -> dict[str, str]:
     return {"code": "chat_task_not_found", "message": "Задача генерации ответа не найдена"}
 
 
-def _mark_missing_chat_task_failed(task_id: str) -> None:
+def _mark_missing_chat_task_failed(task_id: str, *, profile_id: int, session_id: str) -> None:
     message = db.get_message_by_task_id(task_id)
     if not message or message.get("status") not in db.MESSAGE_ACTIVE_STATUSES:
+        return
+    session = db.get_session(str(message.get("session_id") or ""))
+    if (
+        str(message.get("session_id") or "") != str(session_id)
+        or not session
+        or int(session.get("profile_id") or 0) != int(profile_id)
+    ):
         return
     db.update_message(
         message["id"],
@@ -167,7 +179,26 @@ def _mark_missing_chat_task_failed(task_id: str) -> None:
         )
 
 
-async def _chat_task_event_stream(task_id: str, request: Request) -> AsyncIterator[str]:
+def _owned_chat_task(task_id: str, *, profile_id: int, session_id: str) -> dict[str, object]:
+    task = chat_tasks.get_chat_task(task_id)
+    if (
+        not task
+        or int(task.get("profile_id") or 0) != int(profile_id)
+        or str(task.get("session_id") or "") != str(session_id)
+    ):
+        if not task:
+            _mark_missing_chat_task_failed(task_id, profile_id=profile_id, session_id=session_id)
+        raise HTTPException(status_code=404, detail=_chat_task_not_found_detail())
+    return task
+
+
+async def _chat_task_event_stream(
+    task_id: str,
+    request: Request,
+    *,
+    profile_id: int,
+    session_id: str,
+) -> AsyncIterator[str]:
     last_status: str | None = None
     model_selected_sent = False
     delta_offset = 0
@@ -175,8 +206,13 @@ async def _chat_task_event_stream(task_id: str, request: Request) -> AsyncIterat
 
     while True:
         task = chat_tasks.get_chat_task(task_id)
-        if not task:
-            _mark_missing_chat_task_failed(task_id)
+        if (
+            not task
+            or int(task.get("profile_id") or 0) != int(profile_id)
+            or str(task.get("session_id") or "") != str(session_id)
+        ):
+            if not task:
+                _mark_missing_chat_task_failed(task_id, profile_id=profile_id, session_id=session_id)
             yield _sse_event(
                 "error",
                 {
@@ -247,6 +283,43 @@ async def _chat_task_event_stream(task_id: str, request: Request) -> AsyncIterat
         await asyncio.sleep(CHAT_TASK_EVENT_POLL_INTERVAL_SECONDS)
 
 
+def _reserve_chat_task_event_connection(task_id: str) -> bool:
+    with _CHAT_TASK_EVENT_CONNECTIONS_LOCK:
+        current = int(_CHAT_TASK_EVENT_CONNECTIONS.get(task_id) or 0)
+        if current >= CHAT_TASK_EVENT_MAX_CONNECTIONS:
+            return False
+        _CHAT_TASK_EVENT_CONNECTIONS[task_id] = current + 1
+        return True
+
+
+def _release_chat_task_event_connection(task_id: str) -> None:
+    with _CHAT_TASK_EVENT_CONNECTIONS_LOCK:
+        remaining = int(_CHAT_TASK_EVENT_CONNECTIONS.get(task_id) or 0) - 1
+        if remaining > 0:
+            _CHAT_TASK_EVENT_CONNECTIONS[task_id] = remaining
+        else:
+            _CHAT_TASK_EVENT_CONNECTIONS.pop(task_id, None)
+
+
+async def _bounded_chat_task_event_stream(
+    task_id: str,
+    request: Request,
+    *,
+    profile_id: int,
+    session_id: str,
+) -> AsyncIterator[str]:
+    try:
+        async for event in _chat_task_event_stream(
+            task_id,
+            request,
+            profile_id=profile_id,
+            session_id=session_id,
+        ):
+            yield event
+    finally:
+        _release_chat_task_event_connection(task_id)
+
+
 def _require_chat_model_selected(model_name: str | None) -> str:
     target = (model_name or "").strip()
     if target:
@@ -255,9 +328,19 @@ def _require_chat_model_selected(model_name: str | None) -> str:
 
 
 def _debug_allowed(admin_token: str | None = None) -> bool:
-    if config.SETTINGS.env in {"local", "dev", "development"}:
-        return True
-    return bool(config.SETTINGS.admin_token and admin_token == config.SETTINGS.admin_token)
+    return admin_token_matches(admin_token)
+
+
+def _debug_prompt_metadata(prepared: dict[str, Any]) -> dict[str, object]:
+    return {
+        "blocks": prepared["prompt_blocks"],
+        "input_chars": prepared["prompt_input_chars"],
+        "message_count": len(prepared.get("messages") or []),
+        "used_settings_keys": sorted(str(key) for key in (prepared.get("effective_settings") or {})),
+        "profile_id": prepared["profile_id"],
+        "active_model": prepared["target_model"],
+        "warning_codes": [str(item) for item in (prepared.get("prompt_warnings") or [])],
+    }
 
 
 def _ensure_chat_model_available(model_name: str) -> None:
@@ -525,6 +608,18 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         summary_memory=summary_memory,
         rag_context=rag_context,
     )
+    prompt_input_chars = estimate_messages_chars(messages)
+    num_ctx = int(effective_settings.get("num_ctx") or config.SETTINGS.num_ctx)
+    output_tokens = int(effective_settings.get("provider_num_predict") or effective_settings.get("output_tokens") or 1)
+    prompt_budget_chars = min(256_000, max(8_000, (num_ctx - output_tokens) * 4))
+    if prompt_input_chars > prompt_budget_chars:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "chat_prompt_budget_exceeded",
+                "max_chars": prompt_budget_chars,
+            },
+        )
     if _apply_mistral_code_request_hint(target_model, user_query, messages):
         effective_settings = {
             **effective_settings,
@@ -554,7 +649,8 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "active_criteria": active_criteria,
         "messages": messages,
         "prompt_blocks": blocks,
-        "prompt_input_chars": estimate_messages_chars(messages),
+        "prompt_input_chars": prompt_input_chars,
+        "prompt_budget_chars": prompt_budget_chars,
         "summary_memory": summary_memory,
         "profile_system_prompt": profile_system_prompt,
         "rag_chunks": rag_chunks,
@@ -677,7 +773,10 @@ def chat(req: ChatRequest):
         raise
     except Exception as e:
         _log("error", error=str(e))
-        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=public_error_detail("chat_generation_failed", "Local model generation failed."),
+        ) from e
 
 
 @router.post("/chat/tasks")
@@ -853,6 +952,23 @@ def start_chat_task(req: ChatRequest):
         )
         task["warnings"] = prompt_warnings
         return task
+    except chat_tasks.ChatTaskCapacityError as exc:
+        task = chat_tasks.create_failed_task(
+            session_id=session_id or "",
+            profile_id=profile_id,
+            model_name=target_model,
+            role=role_key,
+            used_settings=effective_settings,
+            message=exc.message,
+            error_code=exc.code,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            router_notice=router_notice,
+            attachment_descriptors=attachment_descriptors,
+            vision_route=vision_route,
+        )
+        task["warnings"] = prompt_warnings
+        return task
     except Exception as exc:
         task = chat_tasks.create_failed_task(
             session_id=session_id or "",
@@ -860,7 +976,7 @@ def start_chat_task(req: ChatRequest):
             model_name=target_model,
             role=role_key,
             used_settings=effective_settings,
-            message=f"LLM task error: {exc}",
+            message="Local model task failed to start.",
             error_code="chat_task_start_failed",
             user_message_id=user_message_id,
             assistant_message_id=assistant_message_id,
@@ -873,12 +989,12 @@ def start_chat_task(req: ChatRequest):
 
 
 @router.get("/chat/tasks/{task_id}")
-def get_chat_task(task_id: str) -> dict[str, object]:
-    task = chat_tasks.get_chat_task(task_id)
-    if not task:
-        _mark_missing_chat_task_failed(task_id)
-        raise HTTPException(status_code=404, detail=_chat_task_not_found_detail())
-    return task
+def get_chat_task(
+    task_id: str,
+    profile_id: int = Query(...),
+    session_id: str = Query(..., min_length=1, max_length=128),
+) -> dict[str, object]:
+    return _owned_chat_task(task_id, profile_id=profile_id, session_id=session_id)
 
 
 @router.get("/chat/messages/{message_id}/reasoning")
@@ -910,12 +1026,23 @@ def get_chat_message_reasoning(message_id: int, profile_id: int = Query(...)) ->
 
 
 @router.get("/chat/tasks/{task_id}/events")
-def get_chat_task_events(task_id: str, request: Request) -> StreamingResponse:
-    if not chat_tasks.get_chat_task(task_id):
-        _mark_missing_chat_task_failed(task_id)
-        raise HTTPException(status_code=404, detail=_chat_task_not_found_detail())
+def get_chat_task_events(
+    task_id: str,
+    request: Request,
+    profile_id: int = Query(...),
+    session_id: str = Query(..., min_length=1, max_length=128),
+) -> StreamingResponse:
+    _owned_chat_task(task_id, profile_id=profile_id, session_id=session_id)
+    if not _reserve_chat_task_event_connection(task_id):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "chat_task_event_connection_limit",
+                "message": "Слишком много подключений к потоку задачи.",
+            },
+        )
     return StreamingResponse(
-        _chat_task_event_stream(task_id, request),
+        _bounded_chat_task_event_stream(task_id, request, profile_id=profile_id, session_id=session_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -926,10 +1053,14 @@ def get_chat_task_events(task_id: str, request: Request) -> StreamingResponse:
 
 
 @router.post("/chat/tasks/{task_id}/cancel")
-def cancel_chat_task(task_id: str) -> dict[str, object]:
+def cancel_chat_task(
+    task_id: str,
+    profile_id: int = Query(...),
+    session_id: str = Query(..., min_length=1, max_length=128),
+) -> dict[str, object]:
+    _owned_chat_task(task_id, profile_id=profile_id, session_id=session_id)
     task = chat_tasks.cancel_chat_task(task_id)
     if not task:
-        _mark_missing_chat_task_failed(task_id)
         raise HTTPException(status_code=404, detail=_chat_task_not_found_detail())
     return task
 
@@ -940,53 +1071,49 @@ def debug_prompt_get(
     profile_id: int | None = None,
     query: str = "debug",
     model_name: str | None = None,
-    admin_token: str | None = Query(default=None),
+    admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER),
 ):
-    if not _debug_allowed(admin_token):
-        raise HTTPException(status_code=403, detail="forbidden")
+    require_admin_token(admin_token)
     req = ChatRequest(query=query, session_id=session_id, profile_id=profile_id, model_name=model_name)
     prepared = _prepare_chat_request(req)
-    return {
-        "messages": prepared["messages"],
-        "blocks": prepared["prompt_blocks"],
-        "input_chars": prepared["prompt_input_chars"],
-        "used_settings": prepared["effective_settings"],
-        "active_profile": db.get_profile(prepared["profile_id"]),
-        "active_model": prepared["target_model"],
-        "warnings": prepared.get("prompt_warnings") or [],
-    }
+    return _debug_prompt_metadata(prepared)
 
 
 @router.post("/chat/debug/prompt")
-def debug_prompt_post(req: ChatDebugPromptRequest):
-    if not _debug_allowed(req.admin_token):
-        raise HTTPException(status_code=403, detail="forbidden")
+def debug_prompt_post(
+    req: ChatDebugPromptRequest,
+    admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER),
+):
+    require_admin_token(req.admin_token or admin_token)
     prepared = _prepare_chat_request(req)
-    return {
-        "messages": prepared["messages"],
-        "blocks": prepared["prompt_blocks"],
-        "input_chars": prepared["prompt_input_chars"],
-        "used_settings": prepared["effective_settings"],
-        "active_profile": db.get_profile(prepared["profile_id"]),
-        "active_model": prepared["target_model"],
-        "warnings": prepared.get("prompt_warnings") or [],
-    }
+    return _debug_prompt_metadata(prepared)
 
 
 @router.get("/chat/debug/pipeline")
-def debug_pipeline(run_id: int, admin_token: str | None = Query(default=None)):
-    if not _debug_allowed(admin_token):
-        raise HTTPException(status_code=403, detail="forbidden")
+def debug_pipeline(
+    run_id: int,
+    admin_token: str | None = Header(default=None, alias=ADMIN_TOKEN_HEADER),
+):
+    require_admin_token(admin_token)
     run = db.get_pipeline_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="pipeline_run_not_found")
-    return run
+    return {
+        "id": run.get("id"),
+        "transcript_id": run.get("transcript_id"),
+        "status": run.get("status"),
+        "action": run.get("action"),
+        "summary_chars": len(str(run.get("summary") or "")),
+        "cleaned_transcript_chars": len(str(run.get("cleaned_transcript") or "")),
+        "has_structured_json": run.get("structured_json") is not None,
+        "created_at": run.get("created_at"),
+        "updated_at": run.get("updated_at"),
+    }
 
 
 @router.post("/session/reset")
 def reset_session(req: ResetRequest):
-    if config.SETTINGS.admin_token and req.admin_token != config.SETTINGS.admin_token:
-        raise HTTPException(status_code=403, detail="forbidden")
+    require_admin_token(req.admin_token)
     sid = req.session_id.strip()
     attachment_storage.delete_session_attachments(sid)
     db.reset_session(sid)

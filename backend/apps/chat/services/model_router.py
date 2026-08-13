@@ -302,7 +302,7 @@ def route_model(
             status_code=502,
             detail={
                 "code": "router_failed",
-                "message": f"Router-модель {ROUTER_MODEL_ID} не смогла обработать запрос: {exc}",
+                "message": f"Router-модель {ROUTER_MODEL_ID} не смогла обработать запрос.",
             },
         ) from exc
 

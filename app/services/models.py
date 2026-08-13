@@ -288,6 +288,38 @@ def _partial_models_by_name(partials: list[dict[str, Any]]) -> dict[str, dict[st
     return result
 
 
+def _public_storage_summary(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not value:
+        return None
+    return {
+        "model": value.get("model"),
+        "storage_present": bool(value.get("storage_present")),
+        "storage_size": value.get("storage_size"),
+        "storage_size_gb": value.get("storage_size_gb"),
+        "stores_count": len(value.get("stores") or []),
+    }
+
+
+def _public_partial_summary(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not value:
+        return None
+    return {
+        "model": value.get("model"),
+        "count": int(value.get("count") or 0),
+        "size": int(value.get("size") or 0),
+        "size_gb": value.get("size_gb"),
+    }
+
+
+def _public_partial_blob(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "size": value.get("size"),
+        "size_gb": value.get("size_gb"),
+        "modified_at": value.get("modified_at"),
+        "model_candidates": list(value.get("model_candidates") or []),
+    }
+
+
 def _normalize_capabilities(value: Any) -> list[str]:
     if isinstance(value, str):
         raw_items = re.split(r"[\s,]+", value)
@@ -533,6 +565,7 @@ def _public_pull_status(data: dict[str, Any]) -> dict[str, Any]:
     copy = dict(data)
     copy.pop("_last_completed", None)
     copy.pop("_last_ts", None)
+    copy.pop("output_tail", None)
     return copy
 
 
@@ -924,7 +957,7 @@ def pause_model_pull(task_id: str) -> dict[str, Any]:
         process.send_signal(signal.SIGSTOP)
         _update_pull(task_id, state="paused", message="Пауза", finished_at=None)
     except Exception as exc:  # pragma: no cover - сигналы зависят от ОС
-        raise HTTPException(status_code=500, detail=f"Не удалось поставить на паузу: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Не удалось поставить загрузку модели на паузу.") from exc
     return _public_pull_status(MODEL_PULLS[task_id])
 
 
@@ -940,7 +973,7 @@ def resume_model_pull(task_id: str) -> dict[str, Any]:
         process.send_signal(signal.SIGCONT)
         _update_pull(task_id, state="running", message="Возобновлено", finished_at=None)
     except Exception as exc:  # pragma: no cover - сигналы зависят от ОС
-        raise HTTPException(status_code=500, detail=f"Не удалось возобновить: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Не удалось возобновить загрузку модели.") from exc
     return _public_pull_status(MODEL_PULLS[task_id])
 
 
@@ -998,7 +1031,7 @@ def list_models() -> dict[str, Any]:
         item["status"] = item["state"]
         item["status_label"] = _status_label(item["state"])
         if storage_by_model.get(name):
-            item["storage"] = storage_by_model[name]
+            item["storage"] = _public_storage_summary(storage_by_model[name])
 
     def _catalog_item(item: dict[str, Any]) -> dict[str, Any]:
         model_id = str(item.get("id") or "").strip()
@@ -1050,8 +1083,8 @@ def list_models() -> dict[str, Any]:
                 and runtime_capabilities
             ),
             "download": download_info,
-            "partial_info": partial_info,
-            "storage": storage_info,
+            "partial_info": _public_partial_summary(partial_info),
+            "storage": _public_storage_summary(storage_info),
         }
 
     catalog = [_catalog_item(item) for item in config.MODEL_CATALOG]
@@ -1066,21 +1099,21 @@ def list_models() -> dict[str, Any]:
         "utility": utility,
         "recommended": catalog,
         "downloads": downloads,
-        "partial_blobs": partial_blobs,
-        "storage_models": list(storage_by_model.values()),
+        "partial_blobs": [_public_partial_blob(item) for item in partial_blobs],
+        "storage_models": [
+            summary
+            for item in storage_by_model.values()
+            if (summary := _public_storage_summary(item)) is not None
+        ],
         "diagnostics": {
-            "runtime_installed_models": sorted(installed_names),
-            "active_models": sorted(active_names),
-            "configured_models": sorted(configured_ids),
-            "configured_ollama_models_dir": str(config.MODEL_PATHS.ollama),
-            "ollama_host": config.OLLAMA_ENV.get("OLLAMA_HOST"),
-            "base_url": config.SETTINGS.base_url,
-            "scanned_ollama_store_dirs": [str(path) for path in _ollama_store_dirs()],
+            "runtime_installed_count": len(installed_names),
+            "active_count": len(active_names),
+            "configured_count": len(configured_ids),
             "partial_blob_count": len(partial_blobs),
             "storage_model_count": len(storage_by_model),
-            "active_error": active_error,
+            "runtime_available": not bool(active_error),
         },
-        "error": error,
+        "error": "model_runtime_unavailable" if error else None,
     }
 
 
