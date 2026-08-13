@@ -164,6 +164,17 @@ Confirmed positive controls:
 | PRS-09 | chat task routes/storage | require and verify profile/session ownership for status/events/cancel; uniform not-found response where appropriate | guessed/foreign task IDs, replay/reconnect and cancel cleanup | possession of the active profile remains the local authority model |
 | PRS-10 | operational routes | admin-token/confirmation policy for destructive/high-impact operations, safe local defaults | unauthorized/authorized shutdown/restart/reset/cleanup contract tests | OS-level local users remain outside application auth scope |
 
+## Remediation status
+
+Stage 2 implements the prompt-source boundary portion of the matrix:
+
+- PRS-01 and PRS-15 are structurally mitigated: RAG, request context, memory, transcript, OCR/Vision-derived text, criteria and history are uniform L4 data envelopes and are never promoted to instruction-bearing system content.
+- PRS-02 and PRS-14 are structurally mitigated: the global prompt is policy-only, the default behavior/persona is versioned profile configuration, and the one-shot migration preserves every non-empty existing profile prompt byte-for-byte while recording its origin.
+- PRS-03 is partially mitigated: assistant history is marked continuity-only and the immutable guard denies self-citation as evidence. Claim-level evidence status and explicit handling of assistant-authored RAG exports remain Stage 3 work.
+- PRS-04 remains open for Stage 3 claim provenance, coverage, conflict, not-found and inference diagnostics.
+
+The Stage 2 evidence is deterministic prompt composition, ordering, metadata-only snapshot, forged-boundary escaping, migration and ASR/OCR/Vision source tests. No live model was loaded, so these controls do not establish model-level jailbreak resistance; authorization and actions remain code-enforced boundaries.
+
 ## Rollout and rollback
 
 1. Ship prompt boundaries behind deterministic builder contracts, with snapshot metadata that never includes raw secret values.

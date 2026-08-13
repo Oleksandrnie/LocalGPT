@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from app import config, db
 from app.services import models as model_service
+from backend.apps.chat.prompt_policy import GLOBAL_GUARD_POLICY, data_envelope, profile_configuration_envelope
 from backend.apps.chat.service import ChatService
 from backend.apps.chat.services import model_residency, ollama_runtime
 
@@ -1248,18 +1249,32 @@ def run_transcript_pipeline(
     structured: dict[str, Any] | list[Any] | None = None
     summary: str | None = None
     analysis_context = _asr_analysis_context(settings)
-    analysis_context_block = f"Контекст анализа профиля:\n{analysis_context}\n\n" if analysis_context else ""
+    analysis_context_block = (
+        profile_configuration_envelope(
+            "asr_analysis_prompt",
+            analysis_context,
+            allowed_influence="analysis_focus_and_output_format",
+        )
+        + "\n\n"
+        if analysis_context
+        else ""
+    )
 
     if stage_enabled["cleaner"]:
         stage_cfg = _stage_settings(settings, "cleaner")
         for chunk_id, raw_chunk in enumerate(raw_chunks, start=1):
             prompt = [
                 {"role": "system", "content": "Clean ASR text without changing meaning. Do not add facts."},
+                {"role": "system", "content": GLOBAL_GUARD_POLICY},
                 {
                     "role": "user",
                     "content": (
                         "Убери явный ASR-мусор, повторы и слова-паразиты. Не меняй смысл и не добавляй факты.\n\n"
-                        f"{raw_chunk}"
+                        + data_envelope(
+                            "asr_transcript_chunk",
+                            raw_chunk,
+                            provenance={"chunk_id": chunk_id, "derived": False},
+                        )
                     ),
                 },
             ]
@@ -1285,12 +1300,17 @@ def run_transcript_pipeline(
         for chunk_id, cleaned_chunk in enumerate(cleaned_chunks, start=1):
             prompt = [
                 {"role": "system", "content": "Return only JSON array. Do not assign speakers."},
+                {"role": "system", "content": GLOBAL_GUARD_POLICY},
                 {
                     "role": "user",
                     "content": (
                         "Разбей transcript на логические реплики или смысловые блоки. "
                         "Верни JSON array: [{\"segment_id\":1,\"text\":\"...\"}].\n\n"
-                        f"{cleaned_chunk}"
+                        + data_envelope(
+                            "asr_cleaned_chunk",
+                            cleaned_chunk,
+                            provenance={"chunk_id": chunk_id, "derived": True},
+                        )
                     ),
                 },
             ]
@@ -1339,12 +1359,17 @@ def run_transcript_pipeline(
                         "Include confidence from 0 to 1."
                     ),
                 },
+                {"role": "system", "content": GLOBAL_GUARD_POLICY},
                 {
                     "role": "user",
                     "content": (
                         "Попробуй сгруппировать сегменты по говорящим, но не придумывай личности. "
                         "Если уверенности нет, ставь Unknown speaker.\n\n"
-                        f"{json.dumps(chunk_segments, ensure_ascii=False)}"
+                        + data_envelope(
+                            "asr_segments",
+                            json.dumps(chunk_segments, ensure_ascii=False),
+                            provenance={"chunk_id": chunk_id, "derived": True},
+                        )
                     ),
                 },
             ]
@@ -1388,13 +1413,19 @@ def run_transcript_pipeline(
                         f"{_summary_guardrails(output_language)}"
                     ),
                 },
+                {"role": "system", "content": GLOBAL_GUARD_POLICY},
                 {
                     "role": "user",
                     "content": (
                         f"{_structurer_task_instruction(output_language, chunk_id, len(cleaned_chunks))}\n"
                         f"Do not switch away from {_language_name(output_language)} for human-readable values.\n\n"
                         f"{analysis_context_block}"
-                        f"{json.dumps(chunk_mapping, ensure_ascii=False)}"
+                        + data_envelope(
+                            "asr_speaker_mapping",
+                            json.dumps(chunk_mapping, ensure_ascii=False),
+                            provenance={"chunk_id": chunk_id, "derived": True},
+                            allowed_influence="transcript_evidence_only",
+                        )
                     ),
                 },
             ]
@@ -1985,8 +2016,16 @@ def generate_summary(
         chunk_count=chunk_count,
     )
     analysis_context = _asr_analysis_context(settings)
-    analysis_context_block = f"Контекст анализа профиля:\n{analysis_context}\n\n" if analysis_context else ""
-    retry_analysis_context_block = f"profile_analysis_context:\n{analysis_context}\n\n" if analysis_context else ""
+    analysis_context_block = (
+        profile_configuration_envelope(
+            "asr_analysis_prompt",
+            analysis_context,
+            allowed_influence="analysis_focus_and_output_format",
+        )
+        + "\n\n"
+        if analysis_context
+        else ""
+    )
     output_language = _asr_output_language(settings)
     summary_input["output_language"] = output_language
     prompt = [
@@ -2005,12 +2044,18 @@ def generate_summary(
                 f"{_summary_guardrails(output_language)}"
             ),
         },
+        {"role": "system", "content": GLOBAL_GUARD_POLICY},
         {
             "role": "user",
             "content": (
                 f"{_summary_format_instruction(output_language)}\n\n"
                 f"{analysis_context_block}"
-                f"EVIDENCE_JSON:\n{json.dumps(summary_input, ensure_ascii=False)}"
+                + data_envelope(
+                    "asr_summary_evidence",
+                    json.dumps(summary_input, ensure_ascii=False),
+                    provenance={"derived": True, "chunk_count": chunk_count},
+                    allowed_influence="transcript_evidence_only",
+                )
             ),
         },
     ]
@@ -2072,14 +2117,25 @@ def generate_summary(
                     f"{_summary_guardrails(output_language)}"
                 ),
             },
+            {"role": "system", "content": GLOBAL_GUARD_POLICY},
             {
                 "role": "user",
                 "content": (
                     f"{_summary_format_instruction(output_language)}\n\n"
-                    f"validation_failures:\n{json.dumps(grounding_reasons, ensure_ascii=False)}\n\n"
-                    f"invalid_previous_summary:\n{checked_summary}\n\n"
                     f"{analysis_context_block}"
-                    f"EVIDENCE_JSON:\n{evidence_text}"
+                    + data_envelope(
+                        "asr_summary_repair_evidence",
+                        json.dumps(
+                            {
+                                "validation_failures": grounding_reasons,
+                                "invalid_previous_summary": checked_summary,
+                                "evidence": evidence_text,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        provenance={"derived": True, "retry": "grounding"},
+                        allowed_influence="transcript_evidence_and_validation_only",
+                    )
                 ),
             },
         ]
@@ -2164,14 +2220,25 @@ def generate_summary(
                 f"{_summary_guardrails(output_language)}"
             ),
         },
+        {"role": "system", "content": GLOBAL_GUARD_POLICY},
         {
             "role": "user",
             "content": (
                 retry_intro +
-                f"missing_topics:\n{json.dumps(missing_topics, ensure_ascii=False, indent=2)}\n\n"
-                f"previous_summary:\n{checked_summary}\n\n"
-                f"{retry_analysis_context_block}"
-                f"EVIDENCE_JSON:\n{json.dumps(summary_input, ensure_ascii=False)}"
+                f"{analysis_context_block}"
+                + data_envelope(
+                    "asr_summary_coverage_retry",
+                    json.dumps(
+                        {
+                            "missing_topics": missing_topics,
+                            "previous_summary": checked_summary,
+                            "evidence": summary_input,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    provenance={"derived": True, "retry": "coverage"},
+                    allowed_influence="transcript_evidence_and_coverage_only",
+                )
             ),
         },
     ]

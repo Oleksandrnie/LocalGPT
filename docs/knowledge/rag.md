@@ -65,7 +65,7 @@ Search:
 
 `backend/apps/chat/routes.py` проверяет effective `rag_enabled`, собирает query из недавних user queries и текущего сообщения, вызывает `search()` и `build_context()`.
 
-`backend/apps/chat/service.py` добавляет RAG как authoritative local system context после profile/memory blocks. Если данных недостаточно, prompt запрещает выдумывать отсутствующие факты.
+`backend/apps/chat/service.py` добавляет найденные chunks как current authorized evidence, но сериализует их в structured L4 data envelope с ролью `user`, а не как instruction-bearing `system` content. Данные могут подтверждать факты ответа, но instruction-shaped текст внутри источника не меняет policy, persona, задачу или permissions. Assistant history остаётся continuity context и не считается подтверждением факта без актуального источника. Если данных недостаточно или они конфликтуют, global guard требует явно это отметить, а не выдумывать отсутствующие факты.
 
 Настройки профиля определяют:
 

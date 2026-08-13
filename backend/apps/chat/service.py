@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app import config, db
 from app.roles import system_prompt_for
+from backend.apps.chat.prompt_policy import GLOBAL_GUARD_POLICY, data_envelope, profile_persona_envelope
 from backend.apps.chat.services import ollama_runtime
 
 LOGGER = logging.getLogger(__name__)
@@ -197,35 +198,81 @@ def build_messages(
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt_for(role)}]
     if profile_system_prompt:
-        messages.append({"role": "system", "content": f"Профильный system prompt:\n{profile_system_prompt}"})
+        messages.append({"role": "system", "content": profile_persona_envelope(profile_system_prompt)})
     if context:
-        messages.append({"role": "user", "content": f"Контекст профиля/пользователя:\n{context}"})
+        messages.append(
+            {
+                "role": "user",
+                "content": data_envelope(
+                    "request_context",
+                    context,
+                    provenance={"owner": "request_caller", "scope": "active_profile_request"},
+                ),
+            }
+        )
     memory_items = [item for item in (summary_memory or []) if item and item.get("summary")]
     if memory_items:
         memory_block = "\n\n".join(
             f"- [{item.get('source_type') or 'memory'}] {item.get('summary')}" for item in memory_items
         )
-        messages.append({"role": "user", "content": f"Summary memory:\n{memory_block}"})
+        messages.append(
+            {
+                "role": "user",
+                "content": data_envelope(
+                    "summary_memory",
+                    f"Summary memory:\n{memory_block}",
+                    provenance={"owner": "active_profile_session", "items": len(memory_items)},
+                ),
+            }
+        )
     if rag_context:
         messages.append(
             {
-                "role": "system",
-                "content": (
-                    "Authoritative local RAG context for the active profile follows. "
-                    "Use it when answering questions about the user's profile, company, tariffs, templates, rules, or local documents. "
-                    "If the answer is not present in this context, say that the local RAG context does not contain enough data instead of inventing facts.\n\n"
-                    f"Relevant RAG context:\n{rag_context}"
+                "role": "user",
+                "content": data_envelope(
+                    "rag_context",
+                    f"Relevant RAG context:\n{rag_context}",
+                    provenance={"owner": "active_profile", "retrieval": "current_request"},
+                    allowed_influence="factual_evidence_only",
                 ),
             }
         )
     if processed_transcript:
-        messages.append({"role": "user", "content": f"Обработанный transcript/context:\n{processed_transcript}"})
+        messages.append(
+            {
+                "role": "user",
+                "content": data_envelope(
+                    "processed_transcript",
+                    processed_transcript,
+                    provenance={"owner": "active_profile_session", "derived": True},
+                ),
+            }
+        )
     elif transcript:
-        messages.append({"role": "user", "content": f"Короткий transcript/context:\n{transcript}"})
+        messages.append(
+            {
+                "role": "user",
+                "content": data_envelope(
+                    "request_transcript",
+                    transcript,
+                    provenance={"owner": "request_caller", "derived": False},
+                ),
+            }
+        )
     criteria_list = [c for c in criteria if c]
     if criteria_list:
         criteria_block = "\n".join(f"- {item}" for item in criteria_list)
-        messages.append({"role": "user", "content": f"Критерии оценки:\n{criteria_block}"})
+        messages.append(
+            {
+                "role": "user",
+                "content": data_envelope(
+                    "evaluation_criteria",
+                    criteria_block,
+                    provenance={"owner": "active_profile_session", "items": len(criteria_list)},
+                    allowed_influence="answer_quality_and_format_only",
+                ),
+            }
+        )
     messages.append(
         {
             "role": "system",
@@ -236,8 +283,24 @@ def build_messages(
             ),
         }
     )
+    messages.append({"role": "system", "content": GLOBAL_GUARD_POLICY})
     if history:
-        messages.extend(history)
+        messages.extend(
+            {
+                "role": str(item.get("role") or "user"),
+                "content": data_envelope(
+                    "chat_history",
+                    str(item.get("content") or ""),
+                    provenance={
+                        "owner": "active_profile_session",
+                        "original_role": str(item.get("role") or "unknown"),
+                    },
+                    allowed_influence="conversation_continuity_only",
+                ),
+            }
+            for item in history
+            if str(item.get("content") or "").strip()
+        )
     messages.append({"role": "user", "content": user_query})
     return messages
 
@@ -255,19 +318,80 @@ def prompt_blocks(
     user_query: str,
 ) -> list[dict[str, Any]]:
     return [
-        {"name": "profile_system_prompt", "included": bool(profile_system_prompt), "chars": len(profile_system_prompt or "")},
-        {"name": "profile_context", "included": bool(context), "chars": len(context or "")},
+        {"name": "global_system_policy", "included": True, "trust_class": "L1", "role": "system", "owner": "backend"},
+        {
+            "name": "profile_persona",
+            "included": bool(profile_system_prompt),
+            "chars": len(profile_system_prompt or ""),
+            "trust_class": "L2",
+            "role": "system",
+            "owner": "active_profile",
+        },
+        {
+            "name": "request_context",
+            "included": bool(context),
+            "chars": len(context or ""),
+            "trust_class": "L4",
+            "role": "user",
+            "owner": "request_caller",
+        },
         {
             "name": "summary_memory",
             "included": bool([item for item in (summary_memory or []) if item.get("summary")]),
             "items": len([item for item in (summary_memory or []) if item.get("summary")]),
+            "trust_class": "L4",
+            "role": "user",
+            "owner": "active_profile_session",
         },
-        {"name": "rag_context", "included": bool(rag_context), "chars": len(rag_context or "")},
-        {"name": "processed_transcript", "included": bool(processed_transcript), "chars": len(processed_transcript or "")},
-        {"name": "raw_transcript_fallback", "included": bool(transcript and not processed_transcript), "chars": len(transcript or "")},
-        {"name": "criteria", "included": bool([item for item in criteria if item]), "items": len([item for item in criteria if item])},
-        {"name": "short_raw_history", "included": bool(history), "messages": len(history)},
-        {"name": "current_user_query", "included": bool(user_query), "chars": len(user_query or "")},
+        {
+            "name": "rag_context",
+            "included": bool(rag_context),
+            "chars": len(rag_context or ""),
+            "trust_class": "L4",
+            "role": "user",
+            "owner": "active_profile",
+        },
+        {
+            "name": "processed_transcript",
+            "included": bool(processed_transcript),
+            "chars": len(processed_transcript or ""),
+            "trust_class": "L4",
+            "role": "user",
+            "owner": "active_profile_session",
+        },
+        {
+            "name": "raw_transcript_fallback",
+            "included": bool(transcript and not processed_transcript),
+            "chars": len(transcript or ""),
+            "trust_class": "L4",
+            "role": "user",
+            "owner": "request_caller",
+        },
+        {
+            "name": "evaluation_criteria",
+            "included": bool([item for item in criteria if item]),
+            "items": len([item for item in criteria if item]),
+            "trust_class": "L4",
+            "role": "user",
+            "owner": "active_profile_session",
+        },
+        {"name": "immutable_guard", "included": True, "trust_class": "L1", "role": "system", "owner": "backend"},
+        {
+            "name": "chat_history",
+            "included": bool(history),
+            "messages": len(history),
+            "trust_class": "L4/L5",
+            "role": "original_wrapped",
+            "owner": "active_profile_session",
+        },
+        {
+            "name": "current_user_query",
+            "included": bool(user_query),
+            "chars": len(user_query or ""),
+            "trust_class": "L3",
+            "role": "user",
+            "owner": "request_caller",
+        },
     ]
 
 
@@ -322,12 +446,18 @@ def maybe_compress_session_history(
             "role": "system",
             "content": "Сожми старую часть диалога в краткую summary memory. Не добавляй факты от себя.",
         },
+        {"role": "system", "content": GLOBAL_GUARD_POLICY},
         {
             "role": "user",
             "content": (
                 "Сохрани решения, задачи, предпочтения пользователя и важный контекст. "
                 "Не пересказывай малозначимые реплики.\n\n"
-                f"{history_text[: int(settings.get('max_context_chars') or 16000)]}"
+                + data_envelope(
+                    "chat_history_for_summary",
+                    history_text[: int(settings.get("max_context_chars") or 16000)],
+                    provenance={"owner": "active_profile_session", "session_id": session_id},
+                    allowed_influence="conversation_memory_only",
+                )
             ),
         },
     ]

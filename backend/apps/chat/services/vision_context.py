@@ -6,6 +6,7 @@ from typing import Any, Iterable
 
 from fastapi import HTTPException, UploadFile
 
+from backend.apps.chat.prompt_policy import data_envelope
 from backend.apps.chat.services.vision_runtime import VisionRuntimeError
 from backend.apps.ocr.service import extract_text_from_image
 
@@ -113,10 +114,15 @@ def append_ocr_evidence(
         *messages,
         {
             "role": "user",
-            "content": (
-                "Локальный OCR извлёк следующий текст из приложенных изображений. "
-                "Считай его вспомогательным evidence: проверяй по самому изображению и явно отмечай расхождения.\n\n"
-                f"{evidence.text}"
+            "content": data_envelope(
+                "ocr_text",
+                evidence.text,
+                provenance={
+                    "derived": True,
+                    "engines": list(evidence.engines),
+                    "languages": list(evidence.languages),
+                },
+                allowed_influence="auxiliary_visual_evidence_only",
             ),
         },
     ]

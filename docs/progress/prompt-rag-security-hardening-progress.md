@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13 16:10 +0300.
 - Current status: in_progress.
-- Current stage: Stage 1 — Evidence-based audit and test harness (ready for checkpoint).
+- Current stage: Stage 2 — Source boundaries and prompt policy (ready for checkpoint).
 
 ## Instructions and precedence
 
@@ -57,7 +57,7 @@
 
 ## Baseline
 
-- Current behavior: not yet fully mapped; known reference failure is incomplete multi-part retrieval/answer grounding and assistant-history self-citation.
+- Current behavior: Stage 1 mapped the prompt/data/action flow and established the synthetic baseline; Stage 2 now separates global policy, profile configuration and all untrusted prompt data. Retrieval quality, claim-level evidence diagnostics and runtime/API controls remain unchanged until their stages.
 - Existing tests: repository `unittest` suite plus targeted chat/RAG/UI tests documented in `docs/TESTING.md`.
 - Validation commands: targeted synthetic tests per finding, repository static baseline, full unit suite where safe, bounded UI/live checks only when applicable.
 - Pre-existing failures: full baseline ran 248 tests with one failure and two errors, all reproducible before task source changes: `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers`, `test_pipeline_tasks_are_normalized_for_transcript_record`, and `test_get_plugin_doc_reads_manifest_doc_only`.
@@ -88,7 +88,7 @@
 ### Stage 2 — Source boundaries and prompt policy
 
 - Goal: enforce prompt trust hierarchy while preserving editable profile persona and existing behavior.
-- Status: pending.
+- Status: completed; ready for checkpoint.
 - Actions: trust-aware prompt builder/data envelopes, compact immutable global guard, profile/default-persona migration, ordering/snapshot and injection tests.
 - Expected result: L4 text cannot become instructions; assistant history is not evidence; profile persona remains effective only inside L0/L1 constraints.
 - Validation: focused chat/model-router/prompt tests and regression snapshots without secret values.
@@ -145,6 +145,13 @@
 - Reason: audit evidence remains reviewable after final progress cleanup without duplicating raw specification or sensitive values.
 - Consequences: later stages update the audit report only when a control, finding state or residual risk changes.
 
+### Prompt boundary and persona migration contract
+
+- Context: the former base prompt mixed global security/grounding rules with a default assistant persona, while multiple untrusted sources were distinguished only by labels and RAG was promoted to `system`.
+- Decision: keep a compact backend-owned policy plus immutable guard at L1; serialize profile persona/configuration as bounded-influence L2; serialize every mapped evidence/history source as structured L4 data, including forged-boundary escaping. Keep the metadata snapshot value-free.
+- Reason: prompt role and source authority must be explicit and testable without logging client values or relying on model obedience.
+- Consequences: new/empty profiles receive the versioned default persona. A one-shot migration preserves every non-empty existing profile prompt exactly, marks its origin, and can be rolled back by removing the migration marker without rewriting user text. Live-model behavior remains a Stage 5 validation, not a Stage 2 claim.
+
 ## Progress log
 
 ### 2026-08-13 16:10 +0300
@@ -165,6 +172,24 @@
 - Issues: full baseline has three reproducible pre-existing ASR/plugin failures; live models, LAN/tailnet and manual browser matrix were not run in Stage 1.
 - Next action: create the focused Stage 1 checkpoint, then implement the prompt boundary contract and profile-persona migration tests for Stage 2.
 
+### 2026-08-13 Stage 1 checkpoint
+
+- Stage: 1.
+- Completed: reviewed the staged audit/test/specification diff and created the focused checkpoint.
+- Commit: `f01424c` (`test(security): add prompt and rag audit baseline`).
+- Validation: cached diff contained only task-owned Stage 1 files; checkpoint completed without rewriting history.
+- Issues: none beyond the three recorded pre-existing baseline failures.
+- Next action: implement Stage 2 prompt-source boundaries and migration contract.
+
+### 2026-08-13 Stage 2 complete
+
+- Stage: 2.
+- Completed: added global policy/immutable guard, L2 profile configuration envelopes, uniform L4 data envelopes for every mapped chat/ASR/OCR/Vision input, evidence-safe history behavior, metadata-only prompt snapshot and versioned default-persona migration that preserves existing prompts.
+- Changed: chat prompt policy/composition, ASR analysis composition, derived Vision/OCR context, profile defaults/migration/write metadata, focused regression tests and affected architecture/RAG/backend/security docs.
+- Validation: audit harness reports 17 tests successful with four intentional expected failures reserved for Stage 4; combined relevant Python run executed 172 tests with only the two matching pre-existing ASR pipeline failures; `git diff --check`, Python compileall and `node --check web_ui/js/app.js` passed.
+- Issues: no new regression found. Structural prompt tests do not substitute for bounded live-model evaluation; claim-level grounding diagnostics remain Stage 3.
+- Next action: inspect/stage the complete Stage 2 diff and create `feat(chat): enforce prompt source boundaries`.
+
 ## Changed files
 
 ### Added
@@ -173,11 +198,17 @@
 - `docs/security/PROMPT_RAG_SECURITY_AUDIT.md`.
 - `tests/test_prompt_rag_security_audit.py`.
 - `tests/fixtures/prompt_rag_security/*.md` (six synthetic fixtures).
+- `backend/apps/chat/prompt_policy.py`.
 
 ### Modified
 
 - `docs/PROMPT_RAG_SECURITY_AUDIT_SPEC.md` (user-supplied authoritative specification, verified equal to external source).
 - `tests/markdown_rendering.test.mjs`.
+- `app/db.py`, `app/prompts/system_base.md`, `app/roles.py`, `app/routes/profiles.py`.
+- `backend/apps/chat/service.py`, `backend/apps/chat/services/vision_context.py`, `backend/apps/chat/tasks.py`.
+- `backend/apps/asr/pipeline.py`.
+- `tests/test_chat_vision_context.py`, `tests/test_pipeline_memory.py`, `tests/test_prompt_rag_security_audit.py`.
+- `docs/ARCHITECTURE.md`, `docs/knowledge/backend.md`, `docs/knowledge/rag.md`, `docs/security/PROMPT_RAG_SECURITY_AUDIT.md`.
 
 ### Deleted
 
@@ -186,11 +217,11 @@
 ## Validation results
 
 - Static checks: `git diff --check`, `venv/bin/python -m compileall -q app backend tests`, `node --check web_ui/js/app.js` passed.
-- Unit/contract tests: targeted 73 Python tests passed with 7 expected baseline failures; 4 Node Markdown tests passed.
+- Unit/contract tests: Stage 1 targeted 73 Python tests passed with 7 expected baseline failures and 4 Node Markdown tests passed. Stage 2 audit harness has 17 successes plus 4 expected Stage 4 gaps; the 172-test relevant run has only two matching pre-existing ASR pipeline failures.
 - Integration/smoke tests: pending.
 - Manual/regression checks: pending.
 - Skipped checks and reasons: live model/hardware/network checks deferred until scoped and explicitly safe.
-- Remaining uncertainty: actual prompt block ordering, all L4 ingress paths, output sinks and current resource/ownership gaps.
+- Remaining uncertainty: live-model obedience to the structural boundary, claim-level grounding/provenance behavior, and current output-sink/resource/ownership gaps assigned to later stages.
 
 ## Regressions and deferred work
 
@@ -209,16 +240,17 @@
 
 ## Checkpoints
 
-- Stage 1 is complete and ready for checkpoint; commit hash pending.
+- Stage 1: `f01424c` (`test(security): add prompt and rag audit baseline`).
+- Stage 2 is complete and ready for checkpoint; commit hash pending.
 
 ## Continuation state
 
-- Current stage: Stage 1 checkpoint.
-- Last completed action: targeted Stage 1 validation passed.
-- Current repository state: Stage 1 audit/test/document changes are unstaged; task progress remains ignored until force-added for the checkpoint.
-- Known risks: audit breadth can obscure concrete data flows; inventory will remain tied to exact symbols/tests.
-- Next exact action: inspect the complete Stage 1 diff, stage only task-owned files including the forced progress file, and create the authorized focused commit.
-- Next command or file: `git diff --stat`, `git diff`, then `git add -f docs/progress/prompt-rag-security-hardening-progress.md` with the Stage 1 files.
+- Current stage: Stage 2 checkpoint.
+- Last completed action: updated affected permanent documentation after passing the focused Stage 2 validation.
+- Current repository state: Stage 2 code/test/document changes are unstaged on top of the clean Stage 1 checkpoint.
+- Known risks: natural-language envelopes remain defense-in-depth, and migration behavior must not overwrite custom profile prompts.
+- Next exact action: inspect the complete Stage 2 diff, stage only task-owned files and create the authorized focused commit.
+- Next command or file: `git diff --check`, `git diff`, then `git add` for the Stage 2 file set and cached-diff review.
 
 ## Final checklist
 

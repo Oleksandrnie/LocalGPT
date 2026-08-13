@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import config
+from .roles import DEFAULT_PROFILE_PERSONA, DEFAULT_PROFILE_PERSONA_VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("LOCALGPT_DB_PATH", str(PROJECT_ROOT / "db" / "localgpt.db"))).expanduser()
@@ -37,6 +38,7 @@ ATTACHMENT_STATUSES = {
 _MESSAGE_UNSET = object()
 _ATTACHMENT_UNSET = object()
 TRANSCRIPT_NAME_MAX_LEN = 120
+DEFAULT_PROFILE_PERSONA_MIGRATION_KEY = f"migration_default_profile_persona_v{DEFAULT_PROFILE_PERSONA_VERSION}"
 
 
 def _utcnow() -> str:
@@ -166,7 +168,9 @@ def _default_profile_preferences() -> dict[str, Any]:
     preferences = {
         "chat": {
             "dictation_model": whisper_model,
-            "system_prompt": "",
+            "system_prompt": DEFAULT_PROFILE_PERSONA,
+            "persona_origin": f"default_v{DEFAULT_PROFILE_PERSONA_VERSION}",
+            "persona_version": DEFAULT_PROFILE_PERSONA_VERSION,
         },
         "asr": {
             "studio_model": config.ASR_STUDIO_DEFAULT_MODEL,
@@ -234,6 +238,38 @@ def _migrate_asr_studio_default(conn: sqlite3.Connection) -> None:
             (_to_json(preferences), now, row["id"]),
         )
 
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        (migration_key, "1", now),
+    )
+
+
+def _migrate_default_profile_persona(conn: sqlite3.Connection) -> None:
+    migration_key = DEFAULT_PROFILE_PERSONA_MIGRATION_KEY
+    existing = conn.execute("SELECT value FROM app_settings WHERE key = ?", (migration_key,)).fetchone()
+    if existing:
+        return
+    now = _utcnow()
+    rows = conn.execute("SELECT id, preferences_json FROM profiles").fetchall()
+    for row in rows:
+        preferences = _from_json(row["preferences_json"], {})
+        if not isinstance(preferences, dict):
+            preferences = {}
+        chat = preferences.get("chat")
+        if not isinstance(chat, dict):
+            chat = {}
+            preferences["chat"] = chat
+        current_prompt = str(chat.get("system_prompt") or "")
+        if not current_prompt.strip():
+            chat["system_prompt"] = DEFAULT_PROFILE_PERSONA
+            chat["persona_origin"] = f"default_v{DEFAULT_PROFILE_PERSONA_VERSION}"
+        else:
+            chat.setdefault("persona_origin", "existing_user_prompt")
+        chat["persona_version"] = DEFAULT_PROFILE_PERSONA_VERSION
+        conn.execute(
+            "UPDATE profiles SET preferences_json = ?, updated_at = ? WHERE id = ?",
+            (_to_json(preferences), now, int(row["id"])),
+        )
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
         (migration_key, "1", now),
@@ -638,6 +674,7 @@ def init_db() -> None:
         _migrate_whisper_cpp_dictation_default(conn)
         _migrate_asr_prompt_none_to_auto(conn)
         _migrate_asr_pipeline_summary_default_qwen3(conn)
+        _migrate_default_profile_persona(conn)
         conn.commit()
     ensure_default_profile()
 

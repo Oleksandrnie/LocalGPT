@@ -56,7 +56,7 @@ flowchart LR
 - `routes/` — profiles, sessions, models, storage, health/runtime и criteria;
 - `services/` — shared model/storage/UI-support logic;
 - `schemas/` — общие Pydantic contracts;
-- `roles.py` и `prompts/` — base system prompt.
+- `roles.py` и `prompts/` — backend-owned global policy и versioned default profile persona.
 
 Старые feature imports в `app/` могут оставаться для совместимости, но новая реализация должна предпочитать `backend/apps/`.
 
@@ -68,7 +68,7 @@ flowchart LR
 2. Backend проверяет профиль, session и выбранную модель.
 3. Для Auto Router `qwen3:0.6b` классифицирует запрос; backend валидирует/корректирует target model.
 4. При включённом RAG выполняется profile-scoped search и собирается context.
-5. Prompt строится из base system prompt, profile prompt/context, summary memory, RAG, transcript/criteria, короткой истории и текущего запроса.
+5. Prompt строится в фиксированном trust order: backend-owned global policy (L1), profile persona/configuration (L2), request data и current authorized evidence (L4), immutable guard, history/current query. RAG, summary, transcript, OCR/Vision-derived text, criteria и history всегда сериализуются как data envelopes и не становятся system-инструкциями.
 6. Assistant message создаётся в SQLite до генерации и проходит состояния `generating`, `streaming`, `completed`, `failed` или `cancelled`.
 7. `stream=true` отдаёт lifecycle, отдельные `reasoning` chunks и final-answer `delta` через SSE; non-streaming использует тот же persisted lifecycle без chunk events.
 
@@ -138,7 +138,7 @@ SQLite содержит profiles, sessions, messages, chat attachment metadata, 
 
 ## Runtime prompt
 
-Канонический base prompt — [`app/prompts/system_base.md`](../app/prompts/system_base.md). `app/roles.py` читает его при построении system prompt и применяет fallback только при ошибке/пустом файле. Копии этого файла в документации не являются runtime-источником и не нужны.
+Каноническая глобальная policy (L1) — [`app/prompts/system_base.md`](../app/prompts/system_base.md). `app/roles.py` читает её при построении system prompt и применяет policy-only fallback только при ошибке/пустом файле. Persona/style не смешиваются с глобальной policy: versioned default persona хранится в profile preferences, а непустой существующий profile prompt при one-shot migration сохраняется без изменений. `backend/apps/chat/prompt_policy.py` владеет компактным immutable guard и structured envelopes для L2/L4 blocks. `prompt_blocks()` возвращает только metadata об order/trust/owner/role и не раскрывает prompt values. Копии runtime policy в документации не являются источником.
 
 ## Legacy и transitional architecture
 

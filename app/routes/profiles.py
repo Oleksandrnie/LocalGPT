@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from .. import config, db
+from ..roles import DEFAULT_PROFILE_PERSONA_VERSION
 from ..schemas import (
     ModelSettingsRequest,
     ModelSettingsReset,
@@ -381,7 +382,16 @@ def create_profile(req: ProfileCreate):
         profile = db.create_profile(req.name, req.description, req.color)
         system_prompt = str(req.system_prompt or "").strip()
         if system_prompt:
-            profile = db.update_profile_preferences(int(profile["id"]), {"chat": {"system_prompt": system_prompt}}) or profile
+            profile = db.update_profile_preferences(
+                int(profile["id"]),
+                {
+                    "chat": {
+                        "system_prompt": system_prompt,
+                        "persona_origin": "user",
+                        "persona_version": DEFAULT_PROFILE_PERSONA_VERSION,
+                    }
+                },
+            ) or profile
         rag_service.ensure_profile_source_dir(int(profile["id"]))
         return profile
     except ValueError:
@@ -411,7 +421,13 @@ def update_profile(profile_id: int, req: ProfileUpdate):
     if "system_prompt" in fields_set:
         profile = db.update_profile_preferences(
             profile_id,
-            {"chat": {"system_prompt": str(req.system_prompt or "").strip()}},
+            {
+                "chat": {
+                    "system_prompt": str(req.system_prompt or "").strip(),
+                    "persona_origin": "user",
+                    "persona_version": DEFAULT_PROFILE_PERSONA_VERSION,
+                }
+            },
         ) or profile
     return profile
 
@@ -426,6 +442,8 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
         updates.setdefault("chat", {})["dictation_model"] = _normalize_whisper_model(req.chat.dictation_model)
     if req.chat and req.chat.system_prompt is not None:
         updates.setdefault("chat", {})["system_prompt"] = req.chat.system_prompt.strip()
+        updates.setdefault("chat", {})["persona_origin"] = "user"
+        updates.setdefault("chat", {})["persona_version"] = DEFAULT_PROFILE_PERSONA_VERSION
 
     if req.asr:
         if req.asr.studio_model is not None:

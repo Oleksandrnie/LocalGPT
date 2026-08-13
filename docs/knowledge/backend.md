@@ -65,6 +65,8 @@ Chat attachment HTTP boundary:
 
 Chat runtime возвращает reasoning и final content раздельно. Worker пишет reasoning chunks в отдельный task artifact, инкрементально сохраняет их в `chat_messages.reasoning` и публикует replay-safe SSE `reasoning` с собственной sequence; SSE `delta` и `chat_messages.content` содержат только final content. После terminal state полный reasoning доступен через `GET /chat/messages/{message_id}/reasoning?profile_id=...` после проверки profile/session ownership. Обычный history endpoint возвращает только `has_reasoning`, поэтому reasoning не участвует в следующем prompt.
 
+Prompt composition разделяет backend-owned global policy (L1), editable profile persona/configuration (L2) и untrusted evidence/data (L4). RAG, request context, summary memory, ASR transcript/analysis evidence, OCR/Vision-derived text, criteria и chat history проходят через uniform structured data envelopes; их instruction-shaped content не получает system authority. Assistant history используется только для continuity, не как factual evidence. Metadata snapshot показывает order/trust/owner/role без raw prompt values.
+
 ## API boundaries
 
 Routers отвечают за HTTP validation/serialization и вызывают service/repository functions. Бизнес-логика не должна переноситься в `backend/server.py`.
