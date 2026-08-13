@@ -35,6 +35,13 @@ def _get_profile_or_404(profile_id: int) -> dict:
     return profile
 
 
+def _get_owned_session_or_404(profile_id: int, session_id: str) -> dict:
+    session = db.get_session(session_id)
+    if not session or int(session.get("profile_id") or 0) != int(profile_id):
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return session
+
+
 def _normalize_whisper_model(model_name: str) -> str:
     normalized = (model_name or "").strip()
     if normalized not in config.ALLOWED_WHISPER_MODELS:
@@ -284,7 +291,10 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
     ):
         if key in cleaned and cleaned[key] is not None:
             try:
-                parsed = max(1, int(cleaned[key]))
+                parsed = int(cleaned[key])
+                minimum = 0 if key == "mem_turns" else 1
+                if parsed < minimum:
+                    raise ValueError
                 if parsed > bounded_positive_ints[key]:
                     raise ValueError
                 cleaned[key] = parsed
@@ -293,7 +303,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                     status_code=422,
                     detail={
                         "code": f"invalid_{key}",
-                        "message": f"{key} must be between 1 and {bounded_positive_ints[key]}.",
+                        "message": f"{key} must be between {minimum} and {bounded_positive_ints[key]}.",
                     },
                 ) from exc
     for key in (
@@ -545,20 +555,16 @@ def create_chat_session(req: SessionCreate):
 
 
 @router.delete("/sessions/{session_id}")
-def delete_chat_session(session_id: str):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def delete_chat_session(session_id: str, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     attachment_storage.delete_session_attachments(session_id)
     db.delete_session(session_id)
     return {"deleted": session_id}
 
 
 @router.patch("/sessions/{session_id}")
-def update_chat_session(session_id: str, req: SessionUpdate):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def update_chat_session(session_id: str, req: SessionUpdate, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     new_model = normalize_model_name(req.model_name) if req.model_name else None
     updated = db.update_session(session_id, title=req.title, model_name=new_model, role=None)
     if not updated:
@@ -567,10 +573,8 @@ def update_chat_session(session_id: str, req: SessionUpdate):
 
 
 @router.get("/sessions/{session_id}/messages")
-def get_session_messages(session_id: str, limit: int | None = None):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def get_session_messages(session_id: str, profile_id: int, limit: int | None = None):
+    _get_owned_session_or_404(profile_id, session_id)
     messages = db.get_messages(session_id, limit_pairs=limit if limit else None)
     return {"session_id": session_id, "messages": messages}
 
@@ -580,19 +584,15 @@ class SessionCriteriaPayload(BaseModel):
 
 
 @router.get("/sessions/{session_id}/criteria")
-def get_session_criteria(session_id: str):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def get_session_criteria(session_id: str, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     criteria = db.get_session_criteria(session_id) or []
     return {"session_id": session_id, "criteria": criteria}
 
 
 @router.post("/sessions/{session_id}/criteria")
-def save_session_criteria(session_id: str, payload: SessionCriteriaPayload):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def save_session_criteria(session_id: str, payload: SessionCriteriaPayload, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     cleaned = criteria_service.normalize_criteria_list(payload.criteria or [])
     db.save_session_criteria(session_id, cleaned)
     return {"session_id": session_id, "criteria": cleaned}

@@ -2496,7 +2496,7 @@ function taskFromAssistantMessage(message) {
 async function refreshCurrentSessionMessages({ sessionId = state.currentSessionId, scroll = false } = {}) {
   const targetSessionId = String(sessionId || "").trim();
   if (!targetSessionId) return false;
-  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages`);
+  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`);
   if (String(state.currentSessionId || "") !== targetSessionId) {
     return false;
   }
@@ -4099,7 +4099,7 @@ async function openReasoningDialog(messageId, trigger = null) {
     return;
   }
   try {
-    const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+    const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(state.currentSessionId)}`);
     const currentIndex = findMessageIndexById(id);
     const currentMessage = currentIndex >= 0 ? state.messages[currentIndex] : null;
     const mergedReasoning = mergeReasoningSnapshot(currentMessage?.live_reasoning, result.reasoning);
@@ -4807,7 +4807,7 @@ function renderModelSettings() {
   if (els.memTurnsInput) {
     els.memTurnsInput.disabled = disabled;
     els.memTurnsInput.value = values.mem_turns === "" ? "" : String(values.mem_turns);
-    els.memTurnsInput.title = "Общая память диалога для активного профиля. Применяется ко всем chat-моделям, включая Auto.";
+    els.memTurnsInput.title = "Число последних завершённых пар user + assistant только из текущего чата. 0 отключает историю.";
   }
   if (els.streamingEnabledToggle) {
     els.streamingEnabledToggle.disabled = profileDisabled;
@@ -6571,12 +6571,22 @@ function renderAsrTool() {
   queueSyncAppSelects();
 }
 
+function transcriptScopeUrl(transcriptId, suffix = "", transcript = null) {
+  const targetId = String(transcriptId || "");
+  const candidate = transcript
+    || (String(state.asrToolSelectedTranscript?.id || "") === targetId ? state.asrToolSelectedTranscript : null)
+    || (String(state.latestTranscript?.id || "") === targetId ? state.latestTranscript : null);
+  const query = new URLSearchParams({ profile_id: String(state.activeProfileId) });
+  if (candidate?.session_id) query.set("session_id", String(candidate.session_id));
+  return `/transcripts/${encodeURIComponent(targetId)}${suffix}?${query.toString()}`;
+}
+
 async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
   const target = Number(transcriptId || 0);
   if (!Number.isFinite(target) || target <= 0) return;
 
   try {
-    const transcript = await request(`/transcripts/${encodeURIComponent(target)}`);
+    const transcript = await request(transcriptScopeUrl(target));
     if (String(transcript?.labels?.origin || "") !== ASR_TOOL_ORIGIN) {
       throw new Error("Эта запись не относится к ASR Studio.");
     }
@@ -6587,7 +6597,7 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
       els.asrToolOutput.value = transcript.content || "";
     }
     try {
-      const latestRun = await request(`/transcripts/${encodeURIComponent(target)}/pipeline/latest`);
+      const latestRun = await request(transcriptScopeUrl(target, "/pipeline/latest", transcript));
       state.asrToolPipelineRun = latestRun || null;
     } catch {
       state.asrToolPipelineRun = null;
@@ -6804,7 +6814,7 @@ async function saveAsrToolTranscript() {
   try {
     let transcript;
     if (state.asrToolSelectedTranscriptId) {
-      transcript = await request(`/transcripts/${encodeURIComponent(state.asrToolSelectedTranscriptId)}`, {
+      transcript = await request(transcriptScopeUrl(state.asrToolSelectedTranscriptId), {
         method: "PATCH",
         body: { content },
       });
@@ -6857,7 +6867,7 @@ async function deleteAsrToolTranscript(transcriptId, { clearIfSelected = false }
   if (!window.confirm("Удалить выбранную запись транскрибации?")) return;
 
   try {
-    await request(`/transcripts/${encodeURIComponent(targetId)}`, { method: "DELETE" });
+    await request(transcriptScopeUrl(targetId), { method: "DELETE" });
     if (clearIfSelected || Number(state.asrToolSelectedTranscriptId || 0) === targetId) {
       clearAsrToolEditor();
     }
@@ -7137,7 +7147,7 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   renderAsrTool();
   setInlineStatus(els.asrToolStatus, "Идёт обработка транскрипта…", "warning");
   try {
-    const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
+    const run = await request(transcriptScopeUrl(transcript.id, "/pipeline", transcript), {
       method: "POST",
       body: { action, preset, model_name: ASR_PIPELINE_SETTINGS_MODEL_ID },
       signal: controller.signal,
@@ -7147,7 +7157,7 @@ async function runAsrPipelineAction(action, preset = "balanced") {
       els.asrToolOutput.value = run.cleaned_transcript;
     }
     try {
-      state.asrToolSelectedTranscript = await request(`/transcripts/${encodeURIComponent(transcript.id)}`);
+      state.asrToolSelectedTranscript = await request(transcriptScopeUrl(transcript.id, "", transcript));
       state.asrToolSelectedTranscriptId = state.asrToolSelectedTranscript?.id || transcript.id;
       await loadAsrToolHistory({ silent: true });
     } catch {
@@ -7243,7 +7253,7 @@ async function saveAsrSpeakerOverrides() {
   renderAsrTool();
   try {
     const updated = await request(
-      `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/speakers`,
+      transcriptScopeUrl(transcriptId, `/pipeline/${encodeURIComponent(run.id)}/speakers`),
       { method: "PATCH", body: { overrides } },
     );
     state.asrToolPipelineRun = updated;
@@ -7268,12 +7278,12 @@ async function regenerateAsrSummary() {
   renderAsrTool();
   try {
     const updated = await request(
-      `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/summary`,
+      transcriptScopeUrl(transcriptId, `/pipeline/${encodeURIComponent(run.id)}/summary`),
       { method: "POST", body: { save_memory: true }, signal: controller.signal },
     );
     state.asrToolPipelineRun = updated;
     try {
-      state.asrToolSelectedTranscript = await request(`/transcripts/${encodeURIComponent(transcriptId)}`);
+      state.asrToolSelectedTranscript = await request(transcriptScopeUrl(transcriptId));
       await loadAsrToolHistory({ silent: true });
     } catch {
       // Summary was regenerated; stale history title is non-blocking.
@@ -8606,7 +8616,9 @@ function renderRagPanel() {
 
 async function loadRagStatus({ silent = false } = {}) {
   try {
-    const query = state.activeProfileId ? `?profile_id=${encodeURIComponent(state.activeProfileId)}` : "";
+    const query = state.activeProfileId
+      ? `?profile_id=${encodeURIComponent(state.activeProfileId)}${state.currentSessionId ? `&session_id=${encodeURIComponent(state.currentSessionId)}` : ""}`
+      : "";
     state.ragStatus = await request(`/rag/status${query}`);
     renderRagPanel();
   } catch (error) {
@@ -8747,7 +8759,7 @@ async function deleteRagFile(sourceId, returnFocus = null) {
 
 async function deleteRagContext(sourceId, returnFocus = null) {
   const target = String(sourceId || "").trim();
-  if (!target || !state.activeProfileId) return;
+  if (!target || !state.activeProfileId || !state.currentSessionId) return;
   const approved = await openConfirmDialog({
     eyebrow: "RAG",
     title: "Удалить контекст?",
@@ -8760,7 +8772,11 @@ async function deleteRagContext(sourceId, returnFocus = null) {
   state.ragBusy = true;
   renderRagPanel();
   try {
-    const query = new URLSearchParams({ profile_id: String(state.activeProfileId), source_id: target });
+    const query = new URLSearchParams({
+      profile_id: String(state.activeProfileId),
+      session_id: String(state.currentSessionId),
+      source_id: target,
+    });
     const result = await request(`/rag/contexts?${query.toString()}`, { method: "DELETE" });
     state.ragStatus = result?.status || state.ragStatus;
     await loadRagStatus({ silent: true });
@@ -9132,7 +9148,7 @@ async function openSession(sessionId) {
 
   try {
     const [messagesData, transcriptsData, attachmentsData] = await Promise.all([
-      request(`/sessions/${encodeURIComponent(sessionId)}/messages`),
+      request(`/sessions/${encodeURIComponent(sessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`),
       request(`/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
       request(`/chat/attachments?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
     ]);
@@ -10047,7 +10063,7 @@ async function previewTtsVoice(voiceKey) {
 async function updateCurrentSessionMeta(patch) {
   if (!state.currentSessionId) return;
   try {
-    const updated = await request(`/sessions/${encodeURIComponent(state.currentSessionId)}`, {
+    const updated = await request(`/sessions/${encodeURIComponent(state.currentSessionId)}?profile_id=${encodeURIComponent(state.activeProfileId)}`, {
       method: "PATCH",
       body: patch,
     });
@@ -10073,7 +10089,7 @@ async function renameSessionById(sessionId) {
   if (title === currentTitle) return;
 
   try {
-    const updated = await request(`/sessions/${encodeURIComponent(sessionId)}`, {
+    const updated = await request(`/sessions/${encodeURIComponent(sessionId)}?profile_id=${encodeURIComponent(state.activeProfileId)}`, {
       method: "PATCH",
       body: { title },
     });
@@ -10108,7 +10124,7 @@ async function renameAsrToolTranscriptById(transcriptId) {
   if (title === currentTitle) return;
 
   try {
-    const updated = await request(`/transcripts/${encodeURIComponent(targetId)}`, {
+    const updated = await request(transcriptScopeUrl(targetId, "", transcript), {
       method: "PATCH",
       body: { name: title },
     });
@@ -10152,7 +10168,7 @@ async function deleteSessionById(sessionId) {
   if (!window.confirm("Удалить этот диалог и историю сообщений?")) return;
 
   try {
-    await request(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    await request(`/sessions/${encodeURIComponent(sessionId)}?profile_id=${encodeURIComponent(state.activeProfileId)}`, { method: "DELETE" });
     const nextSession = state.sessions.find((item) => item.id !== sessionId)?.id || null;
     state.sessions = state.sessions.filter((item) => item.id !== sessionId);
     if (state.currentSessionId === sessionId) {
@@ -10180,7 +10196,7 @@ async function deleteCurrentContext() {
   });
   if (!approved) return;
   try {
-    await request(`/transcripts/${encodeURIComponent(transcriptId)}`, { method: "DELETE" });
+    await request(transcriptScopeUrl(transcriptId, "", state.latestTranscript), { method: "DELETE" });
     state.latestTranscript = null;
     renderTranscriptStrip();
     renderContextSummary();

@@ -433,7 +433,8 @@ def maybe_compress_session_history(
 ) -> dict[str, Any] | None:
     if not settings.get("summary_memory_enabled", True):
         return None
-    mem_turns = max(1, int(settings.get("mem_turns") or config.SETTINGS.mem_turns))
+    configured_mem_turns = settings.get("mem_turns")
+    mem_turns = max(0, int(config.SETTINGS.mem_turns if configured_mem_turns is None else configured_mem_turns))
     old_messages = db.get_messages_before_latest(session_id, keep_pairs=mem_turns)
     if len(old_messages) < max(8, mem_turns * 2):
         return None

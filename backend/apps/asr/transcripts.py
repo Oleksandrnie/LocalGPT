@@ -16,6 +16,23 @@ def _get_profile_or_404(profile_id: int) -> dict:
     return profile
 
 
+def _get_owned_transcript_or_404(
+    transcript_id: int,
+    *,
+    profile_id: int,
+    session_id: str | None,
+) -> dict:
+    transcript = db.get_transcript(transcript_id)
+    owned_session = str((transcript or {}).get("session_id") or "")
+    if (
+        not transcript
+        or int(transcript.get("profile_id") or 0) != int(profile_id)
+        or (owned_session and owned_session != str(session_id or ""))
+    ):
+        raise HTTPException(status_code=404, detail="transcript_not_found")
+    return transcript
+
+
 def _is_asr_context(transcript: dict) -> bool:
     labels = transcript.get("labels") if isinstance(transcript.get("labels"), dict) else {}
     return str((labels or {}).get("origin") or "").strip() == "asr_context"
@@ -60,15 +77,18 @@ def create_transcript(req: TranscriptCreate):
 
 
 @router.get("/transcripts/{transcript_id}")
-def get_transcript(transcript_id: int):
-    transcript = db.get_transcript(transcript_id)
-    if not transcript:
-        raise HTTPException(status_code=404, detail="transcript_not_found")
-    return transcript
+def get_transcript(transcript_id: int, profile_id: int, session_id: str | None = None):
+    return _get_owned_transcript_or_404(transcript_id, profile_id=profile_id, session_id=session_id)
 
 
 @router.patch("/transcripts/{transcript_id}")
-def update_transcript(transcript_id: int, req: TranscriptUpdate):
+def update_transcript(
+    transcript_id: int,
+    req: TranscriptUpdate,
+    profile_id: int,
+    session_id: str | None = None,
+):
+    _get_owned_transcript_or_404(transcript_id, profile_id=profile_id, session_id=session_id)
     updated = db.update_transcript(
         transcript_id,
         name=req.name,
@@ -87,10 +107,8 @@ def update_transcript(transcript_id: int, req: TranscriptUpdate):
 
 
 @router.delete("/transcripts/{transcript_id}")
-def delete_transcript(transcript_id: int):
-    transcript = db.get_transcript(transcript_id)
-    if not transcript:
-        raise HTTPException(status_code=404, detail="transcript_not_found")
+def delete_transcript(transcript_id: int, profile_id: int, session_id: str | None = None):
+    transcript = _get_owned_transcript_or_404(transcript_id, profile_id=profile_id, session_id=session_id)
     if _is_asr_context(transcript):
         rag_service.delete_asr_context_for_transcript(int(transcript["profile_id"]), transcript_id)
     db.delete_transcript(transcript_id)

@@ -64,9 +64,19 @@ class ChatRagExportTestCase(unittest.TestCase):
         self.assertEqual(assistant_document["content"], "Проверенный ответ про кварцит.")
         self.assertFalse(assistant_document["metadata"]["reasoning_ingested"])
         self.assertNotIn("reasoning-marker", str(assistant_document))
-        assistant_results = rag_service.search(self.profile_id, "кварцит", top_k=3)
+        assistant_results = rag_service.search(
+            self.profile_id,
+            "кварцит",
+            top_k=3,
+            session_id=self.session["id"],
+        )
         self.assertFalse(any(item["document_metadata"].get("message_role") == "assistant" for item in assistant_results))
-        user_results = rag_service.search(self.profile_id, "пользовательский контекст", top_k=3)
+        user_results = rag_service.search(
+            self.profile_id,
+            "пользовательский контекст",
+            top_k=3,
+            session_id=self.session["id"],
+        )
         self.assertTrue(any(item["document_metadata"].get("message_role") == "user" for item in user_results))
 
     def test_profile_ownership_and_incomplete_assistant_are_rejected(self) -> None:
@@ -97,7 +107,12 @@ class ChatRagExportTestCase(unittest.TestCase):
 
         searched = self.client.post(
             "/rag/search",
-            json={"profile_id": self.profile_id, "query": "Как работает региональное продвижение?", "top_k": 3},
+            json={
+                "profile_id": self.profile_id,
+                "session_id": self.session["id"],
+                "query": "Как работает региональное продвижение?",
+                "top_k": 3,
+            },
         )
         self.assertEqual(searched.status_code, 200, searched.text)
         self.assertEqual(searched.json()["strategy"], "hybrid_v1")
@@ -115,7 +130,11 @@ class ChatRagExportTestCase(unittest.TestCase):
 
         deleted = self.client.delete(
             "/rag/contexts",
-            params={"profile_id": self.profile_id, "source_id": first["source_id"]},
+            params={
+                "profile_id": self.profile_id,
+                "session_id": self.session["id"],
+                "source_id": first["source_id"],
+            },
         )
 
         self.assertEqual(deleted.status_code, 200, deleted.text)

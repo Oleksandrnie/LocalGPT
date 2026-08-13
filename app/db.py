@@ -853,6 +853,7 @@ def create_session(
 
 def delete_session(session_id: str) -> None:
     with closing(_connect()) as conn:
+        conn.execute("DELETE FROM source_documents WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
         conn.commit()
 
@@ -1107,6 +1108,28 @@ def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[s
     messages = [item for row in rows if (item := _message_row_dict(row))]
     messages.reverse()
     return messages
+
+
+def get_prompt_history(session_id: str, *, limit_turns: int) -> list[dict[str, Any]]:
+    """Return the latest completed user/assistant conversation turns for one session."""
+    if int(limit_turns or 0) <= 0:
+        return []
+    messages = get_messages(session_id)
+    turns: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    pending_user: dict[str, Any] | None = None
+    for message in messages:
+        role = str(message.get("role") or "").strip().lower()
+        status = str(message.get("status") or "completed").strip().lower()
+        if role == "user":
+            pending_user = message if status == "completed" else None
+            continue
+        if role != "assistant":
+            continue
+        if pending_user is not None and status == "completed" and not bool(message.get("is_partial")):
+            turns.append((pending_user, message))
+        pending_user = None
+    selected = turns[-int(limit_turns) :]
+    return [message for turn in selected for message in turn]
 
 
 def create_chat_attachment(
@@ -2053,7 +2076,12 @@ def create_document_embedding(
         return int(cur.lastrowid)
 
 
-def list_rag_chunks(profile_id: int, embedding_model: str | None = None) -> list[dict[str, Any]]:
+def list_rag_chunks(
+    profile_id: int,
+    embedding_model: str | None = None,
+    *,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
     query = """
         SELECT
             c.id AS chunk_id,
@@ -2074,8 +2102,24 @@ def list_rag_chunks(profile_id: int, embedding_model: str | None = None) -> list
         JOIN source_documents d ON d.id = c.document_id
         JOIN document_embeddings e ON e.chunk_id = c.id
         WHERE c.profile_id = ?
+          AND (
+            (
+              d.source_type NOT IN ('asr_context', 'vision_context', 'chat_context')
+              AND d.session_id IS NULL
+              AND c.session_id IS NULL
+            )
     """
     params: list[Any] = [profile_id]
+    if session_id:
+        query += """
+            OR (
+              d.source_type IN ('asr_context', 'vision_context', 'chat_context')
+              AND d.session_id = ?
+              AND c.session_id = ?
+            )
+        """
+        params.extend([session_id, session_id])
+    query += ")"
     if embedding_model:
         query += " AND e.embedding_model = ?"
         params.append(embedding_model)

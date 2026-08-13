@@ -454,16 +454,22 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
         response = client.get(
             f"/chat/messages/{assistant['id']}/reasoning",
-            params={"profile_id": self.profile_id},
+            params={"profile_id": self.profile_id, "session_id": session["id"]},
         )
         forbidden = client.get(
             f"/chat/messages/{assistant['id']}/reasoning",
-            params={"profile_id": other_profile["id"]},
+            params={"profile_id": other_profile["id"], "session_id": session["id"]},
+        )
+        sibling = db.create_session(self.profile_id, "Sibling reasoning", "qwen3:4b")
+        foreign_session = client.get(
+            f"/chat/messages/{assistant['id']}/reasoning",
+            params={"profile_id": self.profile_id, "session_id": sibling["id"]},
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["reasoning"], "Сохранённое рассуждение")
-        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(forbidden.status_code, 404)
+        self.assertEqual(foreign_session.status_code, 404)
 
     def test_non_streaming_worker_uses_full_response_and_updates_assistant_message(self):
         session = db.create_session(self.profile_id, "Non-streaming fallback", "qwen2.5:7b-instruct")
@@ -856,14 +862,15 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         )
 
         db.delete_session(session["id"])
+        self.assertIsNone(db.get_source_document(orphan_doc["id"]))
         result = db.cleanup_database_garbage(vacuum=False)
 
         self.assertGreaterEqual(result["deleted"]["transcripts"], 1)
         self.assertGreaterEqual(result["deleted"]["transcript_pipeline_runs"], 1)
         self.assertGreaterEqual(result["deleted"]["session_summaries"], 1)
-        self.assertGreaterEqual(result["deleted"]["source_documents"], 1)
-        self.assertGreaterEqual(result["deleted"]["document_chunks"], 1)
-        self.assertGreaterEqual(result["deleted"]["document_embeddings"], 1)
+        self.assertEqual(result["deleted"]["source_documents"], 0)
+        self.assertEqual(result["deleted"]["document_chunks"], 0)
+        self.assertEqual(result["deleted"]["document_embeddings"], 0)
         self.assertIsNone(db.get_transcript(chat_transcript["id"]))
         self.assertIsNotNone(db.get_transcript(asr_transcript["id"]))
         documents = db.list_source_documents(self.profile_id)
@@ -1045,7 +1052,14 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
             structured_json=None,
         )
 
-        prepared = _prepare_chat_request(ChatRequest(query="continue", session_id=session["id"], model_name="qwen2.5:3b"))
+        prepared = _prepare_chat_request(
+            ChatRequest(
+                query="continue",
+                profile_id=self.profile_id,
+                session_id=session["id"],
+                model_name="qwen2.5:3b",
+            )
+        )
         contents = [item["content"] for item in prepared["messages"]]
         summary_index = next(idx for idx, item in enumerate(contents) if "Summary memory" in item)
         history_index = next(
@@ -1164,7 +1178,12 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         db.add_message(session["id"], "assistant", "Уточню интересы.")
 
         prepared = _prepare_chat_request(
-            ChatRequest(query="для этого есть rag", session_id=session["id"], model_name="qwen2.5:3b")
+            ChatRequest(
+                query="для этого есть rag",
+                profile_id=self.profile_id,
+                session_id=session["id"],
+                model_name="qwen2.5:3b",
+            )
         )
         contents = [item["content"] for item in prepared["messages"]]
         rag_block = next(item for item in contents if "Relevant RAG context" in item)
@@ -1267,19 +1286,33 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         source_id = f"transcript:{transcript['id']}"
         self.assertEqual(transcript["rag_index"]["source_id"], source_id)
         self.assertGreater(transcript["rag_index"]["chunks_indexed"], 0)
-        self.assertTrue(rag_service.search(self.profile_id, "unique_asr_context_fact", top_k=3))
+        self.assertTrue(
+            rag_service.search(
+                self.profile_id,
+                "unique_asr_context_fact",
+                top_k=3,
+                session_id=session["id"],
+            )
+        )
 
-        status = rag_service.status(self.profile_id)
+        status = rag_service.status(self.profile_id, session_id=session["id"])
         self.assertEqual(status["contexts"][0]["source_id"], source_id)
 
         delete_response = client.delete(
             "/rag/contexts",
-            params={"profile_id": self.profile_id, "source_id": source_id},
+            params={"profile_id": self.profile_id, "session_id": session["id"], "source_id": source_id},
         )
 
         self.assertEqual(delete_response.status_code, 200)
         self.assertIsNone(db.get_transcript(transcript["id"]))
-        self.assertFalse(rag_service.search(self.profile_id, "unique_asr_context_fact", top_k=3))
+        self.assertFalse(
+            rag_service.search(
+                self.profile_id,
+                "unique_asr_context_fact",
+                top_k=3,
+                session_id=session["id"],
+            )
+        )
 
     def test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers(self):
         db.update_profile_preferences(self.profile_id, {"settings": {"asr_full_analysis_enabled": True}})

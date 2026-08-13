@@ -596,7 +596,7 @@ def _context_items(profile_id: int) -> list[dict[str, Any]]:
     return items
 
 
-def delete_asr_context_source(profile_id: int, source_id: str) -> dict[str, Any]:
+def delete_asr_context_source(profile_id: int, session_id: str, source_id: str) -> dict[str, Any]:
     target = str(source_id or "").strip()
     if not target:
         raise HTTPException(status_code=422, detail="rag_context_required")
@@ -605,6 +605,7 @@ def delete_asr_context_source(profile_id: int, source_id: str) -> dict[str, Any]
             item
             for item in db.list_source_documents(profile_id=profile_id, source_type=ASR_CONTEXT_SOURCE_TYPE)
             if str(item.get("source_id") or "") == target
+            and str(item.get("session_id") or "") == str(session_id)
         ),
         None,
     )
@@ -624,11 +625,11 @@ def delete_asr_context_source(profile_id: int, source_id: str) -> dict[str, Any]
         "profile_id": profile_id,
         "deleted": [target] if deleted_docs else [],
         "deleted_transcript": deleted_transcript,
-        "status": status(profile_id),
+        "status": status(profile_id, session_id=session_id),
     }
 
 
-def delete_context_source(profile_id: int, source_id: str) -> dict[str, Any]:
+def delete_context_source(profile_id: int, session_id: str, source_id: str) -> dict[str, Any]:
     target = str(source_id or "").strip()
     if not target:
         raise HTTPException(status_code=422, detail="rag_context_required")
@@ -637,6 +638,7 @@ def delete_context_source(profile_id: int, source_id: str) -> dict[str, Any]:
             item
             for item in db.list_source_documents(profile_id=profile_id, source_type=VISION_CONTEXT_SOURCE_TYPE)
             if str(item.get("source_id") or "") == target
+            and str(item.get("session_id") or "") == str(session_id)
         ),
         None,
     )
@@ -647,18 +649,19 @@ def delete_context_source(profile_id: int, source_id: str) -> dict[str, Any]:
                 item
                 for item in db.list_source_documents(profile_id=profile_id, source_type=CHAT_CONTEXT_SOURCE_TYPE)
                 if str(item.get("source_id") or "") == target
+                and str(item.get("session_id") or "") == str(session_id)
             ),
             None,
         )
         if not chat_document:
-            return delete_asr_context_source(profile_id, target)
+            return delete_asr_context_source(profile_id, session_id, target)
         source_type = CHAT_CONTEXT_SOURCE_TYPE
     deleted_docs = db.delete_source_document(profile_id, source_type, target)
     return {
         "profile_id": profile_id,
         "deleted": [target] if deleted_docs else [],
         "deleted_transcript": False,
-        "status": status(profile_id),
+        "status": status(profile_id, session_id=session_id),
     }
 
 
@@ -767,7 +770,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     }
 
 
-def status(profile_id: int | None = None) -> dict[str, Any]:
+def status(profile_id: int | None = None, *, session_id: str | None = None) -> dict[str, Any]:
     files = _iter_source_files(profile_id) if profile_id is not None else []
     if profile_id is not None:
         valid_source_ids = {_relative_source_id(path, profile_id) for path in files}
@@ -775,6 +778,16 @@ def status(profile_id: int | None = None) -> dict[str, Any]:
             source_id = str(document.get("source_id") or "")
             if source_id and source_id not in valid_source_ids:
                 db.delete_source_document(profile_id, SOURCE_TYPE, source_id)
+    scoped_chunks = (
+        db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL, session_id=session_id)
+        if profile_id is not None
+        else []
+    )
+    scoped_stats = {
+        "documents": len({int(item.get("document_id") or 0) for item in scoped_chunks}),
+        "chunks": len(scoped_chunks),
+        "embeddings": len(scoped_chunks),
+    }
     return {
         "source_dir": f"profile:{profile_id}" if profile_id is not None else "profile-scoped",
         "source_scope": "active_profile" if profile_id is not None else "profile_required",
@@ -782,12 +795,22 @@ def status(profile_id: int | None = None) -> dict[str, Any]:
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "file_count": len(files),
         "files": [_relative_source_id(path, profile_id) for path in files[:100]],
-        "contexts": _context_items(profile_id) if profile_id is not None else [],
-        "stats": db.rag_stats(profile_id),
+        "contexts": [
+            item
+            for item in (_context_items(profile_id) if profile_id is not None else [])
+            if session_id and str(item.get("session_id") or "") == session_id
+        ],
+        "stats": scoped_stats,
     }
 
 
-def _legacy_search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[str, Any]]:
+def _legacy_search(
+    profile_id: int,
+    query: str,
+    *,
+    top_k: int = 5,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
     cleaned_query = (query or "").strip()
     if not cleaned_query or top_k <= 0:
         return []
@@ -795,7 +818,7 @@ def _legacy_search(profile_id: int, query: str, *, top_k: int = 5) -> list[dict[
     query_tokens = set(TOKEN_RE.findall(cleaned_query.lower()))
     query_lower = cleaned_query.lower()
     scored: list[dict[str, Any]] = []
-    for chunk in db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL):
+    for chunk in db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL, session_id=session_id):
         score = _cosine(query_vector, chunk.get("embedding") or [])
         haystack = " ".join(
             str(value or "")
@@ -859,10 +882,11 @@ def search_with_diagnostics(
     *,
     top_k: int = 5,
     strategy: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     selected_strategy = str(strategy or retrieval_strategy()).strip().lower()
     if selected_strategy == "legacy":
-        results = _legacy_search(profile_id, query, top_k=top_k)
+        results = _legacy_search(profile_id, query, top_k=top_k, session_id=session_id)
         return {
             "strategy": "legacy",
             "results": results,
@@ -879,7 +903,7 @@ def search_with_diagnostics(
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [])
         return {"strategy": DEFAULT_RETRIEVAL_STRATEGY, "results": [], "diagnostics": diagnostics}
     query_vector = embed_text(cleaned_query)
-    raw_chunks = db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL)
+    raw_chunks = db.list_rag_chunks(profile_id, embedding_model=EMBEDDING_MODEL, session_id=session_id)
     evaluated = retrieval.rank_hybrid(
         raw_chunks,
         cleaned_query,
@@ -900,8 +924,15 @@ def search(
     *,
     top_k: int = 5,
     strategy: str | None = None,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    return search_with_diagnostics(profile_id, query, top_k=top_k, strategy=strategy)["results"]
+    return search_with_diagnostics(
+        profile_id,
+        query,
+        top_k=top_k,
+        strategy=strategy,
+        session_id=session_id,
+    )["results"]
 
 
 def audit_corpus(profile_id: int) -> dict[str, Any]:

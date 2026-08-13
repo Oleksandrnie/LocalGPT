@@ -129,7 +129,7 @@ class ModelSettingsRequest(BaseModel):
     output_tokens: int | None = None
     thinking_tokens: int | None = None
     num_ctx: int | None = Field(default=None, ge=1_024, le=262_144)
-    mem_turns: int | None = Field(default=None, ge=1, le=100)
+    mem_turns: int | None = Field(default=None, ge=0, le=100)
     ollama_keep_alive: str | None = None
     ollama_think: str | None = None
     pipeline_enabled: bool | None = None
@@ -151,6 +151,7 @@ class RagIngestRequest(BaseModel):
 
 class RagSearchRequest(BaseModel):
     profile_id: int
+    session_id: str | None = Field(default=None, max_length=128)
     query: str = Field(min_length=1, max_length=RAG_QUERY_MAX_CHARS)
     top_k: int | None = Field(default=None, ge=1, le=RAG_TOP_K_MAX)
 

@@ -9,8 +9,11 @@ router = APIRouter()
 
 
 @router.get("/rag/status")
-def rag_status(profile_id: int | None = Query(default=None)) -> dict[str, object]:
-    return service.status(profile_id)
+def rag_status(
+    profile_id: int | None = Query(default=None),
+    session_id: str | None = Query(default=None),
+) -> dict[str, object]:
+    return service.status(profile_id, session_id=session_id)
 
 
 @router.get("/rag/audit")
@@ -34,8 +37,12 @@ def rag_delete_file(profile_id: int = Query(...), path: str = Query(...)) -> dic
 
 
 @router.delete("/rag/contexts")
-def rag_delete_context(profile_id: int = Query(...), source_id: str = Query(...)) -> dict[str, object]:
-    return service.delete_context_source(profile_id, source_id)
+def rag_delete_context(
+    profile_id: int = Query(...),
+    session_id: str = Query(...),
+    source_id: str = Query(...),
+) -> dict[str, object]:
+    return service.delete_context_source(profile_id, session_id, source_id)
 
 
 @router.post("/rag/vision-contexts")
@@ -67,7 +74,12 @@ def rag_migrate_legacy(req: RagIngestRequest) -> dict[str, object]:
 
 @router.post("/rag/search")
 def rag_search(req: RagSearchRequest) -> dict[str, object]:
-    result = service.search_with_diagnostics(req.profile_id, req.query, top_k=req.top_k or 5)
+    result = service.search_with_diagnostics(
+        req.profile_id,
+        req.query,
+        top_k=req.top_k or 5,
+        session_id=req.session_id,
+    )
     return {
         "profile_id": req.profile_id,
         **result,

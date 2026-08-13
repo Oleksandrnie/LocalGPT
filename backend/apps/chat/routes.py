@@ -509,9 +509,8 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
 
     if session_id:
         session = db.get_session(session_id)
-        if not session:
+        if not session or profile_id is None or int(session.get("profile_id") or 0) != int(profile_id):
             raise HTTPException(status_code=404, detail="session_not_found")
-        profile_id = session["profile_id"]
         desired_model = normalize_model_name(req.model or req.model_name, fallback=session.get("model_name"))
         desired_model = _require_chat_model_selected(desired_model)
         if desired_model != session.get("model_name"):
@@ -535,8 +534,9 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     profile_system_prompt = str(((profile_preferences.get("chat") or {}).get("system_prompt") or "")).strip()
     settings_bundle = db.effective_settings(profile_id, model_name, config.DEFAULT_SETTINGS)  # type: ignore[arg-type]
     effective_settings = apply_generation_budget_policy(settings_bundle.get("effective") or {})
-    mem_turns = int(effective_settings.get("mem_turns") or config.SETTINGS.mem_turns)
-    history = db.get_messages(session_id, limit_pairs=mem_turns) if session_id else []
+    configured_mem_turns = effective_settings.get("mem_turns")
+    mem_turns = int(config.SETTINGS.mem_turns if configured_mem_turns is None else configured_mem_turns)
+    history = db.get_prompt_history(session_id, limit_turns=mem_turns) if session_id else []
     summary_limit = int(effective_settings.get("summary_memory_limit") or 0)
     summary_memory = (
         db.list_session_summaries(session_id, limit=summary_limit)
@@ -556,7 +556,12 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
         rag_query = "\n".join([user_query, *reversed(history_user_queries)]).strip()
-        rag_result = rag_service.search_with_diagnostics(int(profile_id), rag_query or user_query, top_k=rag_top_k)
+        rag_result = rag_service.search_with_diagnostics(
+            int(profile_id),
+            rag_query or user_query,
+            top_k=rag_top_k,
+            session_id=session_id,
+        )
         rag_chunks = rag_result["results"]
         rag_diagnostics = rag_result["diagnostics"]
         rag_context = rag_service.build_context(
@@ -998,7 +1003,11 @@ def get_chat_task(
 
 
 @router.get("/chat/messages/{message_id}/reasoning")
-def get_chat_message_reasoning(message_id: int, profile_id: int = Query(...)) -> dict[str, object]:
+def get_chat_message_reasoning(
+    message_id: int,
+    profile_id: int = Query(...),
+    session_id: str = Query(..., min_length=1, max_length=128),
+) -> dict[str, object]:
     _get_profile_or_404(profile_id)
     message = db.get_message(message_id)
     if not message or str(message.get("role") or "") != "assistant":
@@ -1007,10 +1016,14 @@ def get_chat_message_reasoning(message_id: int, profile_id: int = Query(...)) ->
             detail={"code": "chat_reasoning_not_found", "message": "Reasoning is not available for this message."},
         )
     session = db.get_session(str(message.get("session_id") or ""))
-    if not session or int(session.get("profile_id") or 0) != int(profile_id):
+    if (
+        not session
+        or int(session.get("profile_id") or 0) != int(profile_id)
+        or str(session.get("id") or "") != session_id
+    ):
         raise HTTPException(
-            status_code=403,
-            detail={"code": "chat_reasoning_profile_mismatch", "message": "Message does not belong to this profile."},
+            status_code=404,
+            detail={"code": "chat_reasoning_not_found", "message": "Reasoning is not available for this message."},
         )
     reasoning = str(message.get("reasoning") or "").strip()
     if not reasoning:

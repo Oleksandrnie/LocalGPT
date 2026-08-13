@@ -81,9 +81,16 @@ Rollback не переиндексирует и не меняет источни
 
 HTTP search ограничивает query 16 000 символами и `top_k` диапазоном 1–20; profile/model settings дополнительно ограничивают RAG context budget.
 
+Retrieval имеет два независимых ownership scope:
+
+- Markdown files из `rag_sources/profile-<id>/` являются явно profile-wide;
+- `chat_context`, `vision_context` и `asr_context` сохраняют `profile_id + session_id` и доступны только исходной session.
+
+Запрос без `session_id` возвращает только profile-wide sources. Derived row с отсутствующим/неоднозначным legacy `session_id` сохраняется в SQLite, но исключается из chat retrieval вместо неявного расширения scope. Promotion derived content в profile-wide RAG не реализован; для общего знания пользователь создаёт/редактирует обычный Markdown source отдельно.
+
 ## ASR context
 
-Transcript с `labels.origin=asr_context` индексируется как отдельный source type:
+Transcript с `labels.origin=asr_context` индексируется как отдельный session-owned source type:
 
 - source id связан с transcript id;
 - status возвращает contexts отдельно от обычных files;
@@ -112,7 +119,7 @@ SQLite:
 - `document_chunks` — text и position;
 - `document_embeddings` — vector JSON/model id.
 
-Profile deletion/reset удаляет profile source directory и DB records. Git не является хранилищем пользовательского RAG.
+Session deletion удаляет принадлежащие ей derived documents/chunks/embeddings, но не profile-wide Markdown и не соседние sessions. Profile deletion/reset удаляет profile source directory и все дочерние DB records. Git не является хранилищем пользовательского RAG.
 
 ## Reindexing
 

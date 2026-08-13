@@ -66,9 +66,14 @@ class VisionRagExportTestCase(unittest.TestCase):
         self.assertNotIn("private.png", str(document))
         self.assertNotIn("storage_path", str(document))
 
-        search = rag_service.search(self.profile_id, "локальная модель", top_k=3)
+        search = rag_service.search(
+            self.profile_id,
+            "локальная модель",
+            top_k=3,
+            session_id=self.session["id"],
+        )
         self.assertTrue(any(item["source_type"] == "vision_context" for item in search))
-        status = rag_service.status(self.profile_id)
+        status = rag_service.status(self.profile_id, session_id=self.session["id"])
         self.assertTrue(any(item["source_type"] == "vision_context" for item in status["contexts"]))
 
     def test_binary_data_uri_and_unrelated_message_are_rejected(self) -> None:
@@ -102,7 +107,7 @@ class VisionRagExportTestCase(unittest.TestCase):
             text="Производный текст для удаления.",
         )
 
-        deleted = rag_service.delete_context_source(self.profile_id, result["source_id"])
+        deleted = rag_service.delete_context_source(self.profile_id, self.session["id"], result["source_id"])
 
         self.assertEqual(deleted["deleted"], [result["source_id"]])
         self.assertEqual(db.list_source_documents(profile_id=self.profile_id, source_type="vision_context"), [])

@@ -71,8 +71,8 @@ export const updateSession = (id, payload) => apiPatch(`/sessions/${id}`, payloa
 export const deleteSession = (id) => apiDelete(`/sessions/${id}`);
 export const fetchSessionMessages = (id, limit) =>
   apiGet(`/sessions/${encodeURIComponent(id)}/messages${limit ? `?limit=${limit}` : ""}`);
-export const fetchSessionCriteria = (id) => apiGet(`/sessions/${encodeURIComponent(id)}/criteria`);
-export const saveSessionCriteria = (id, payload) => apiPost(`/sessions/${encodeURIComponent(id)}/criteria`, payload);
+export const fetchSessionCriteria = (id, profileId) => apiGet(`/sessions/${encodeURIComponent(id)}/criteria?profile_id=${encodeURIComponent(profileId)}`);
+export const saveSessionCriteria = (id, profileId, payload) => apiPost(`/sessions/${encodeURIComponent(id)}/criteria?profile_id=${encodeURIComponent(profileId)}`, payload);
 
 // Model settings
 export const fetchModelSettings = (profileId, modelName) =>

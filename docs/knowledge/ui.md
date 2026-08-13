@@ -74,6 +74,8 @@ Settings tab `Vision` не смешан с обычной chat library. Он п�
 
 Settings → Chat / LLM показывает отдельные `Output tokens` и `Thinking tokens`. Быстрый Thinking ON/OFF видим для thinking-capable модели (для Auto — по profile preference) и сохраняет оба budget override без сброса.
 
+Там же `История чата, пар сообщений` задаёт profile default 6 в диапазоне 0–100. Один turn — завершённая пара `user + assistant` только текущего chat; `0` отключает short history. Setting сохраняется в profile preferences и применяется ко всем chat-моделям, но не смешивает sessions.
+
 ## Themes
 
 Dark/light theme переключается topbar control и сохраняется в `localStorage`. Новые компоненты должны использовать существующие CSS tokens и проверяться в обеих темах, включая hover, focus, disabled, warning и overlay states.

@@ -38,7 +38,10 @@ def _effective_image_settings(profile_id: int, session_id: str | None) -> dict[s
 
 def _public_attachment(record: dict[str, Any]) -> ChatAttachmentResponse:
     profile_id = int(record["profile_id"])
-    query = urlencode({"profile_id": profile_id})
+    query_params: dict[str, object] = {"profile_id": profile_id}
+    if record.get("session_id"):
+        query_params["session_id"] = str(record["session_id"])
+    query = urlencode(query_params)
     attachment_id = str(record["id"])
     return ChatAttachmentResponse(
         id=attachment_id,
@@ -86,7 +89,7 @@ def upload_chat_attachment(
 @router.get("/chat/attachments", response_model=ChatAttachmentListResponse)
 def list_chat_attachments(
     profile_id: int,
-    session_id: str | None = None,
+    session_id: str,
     message_id: int | None = None,
 ) -> ChatAttachmentListResponse:
     profile = db.get_profile(profile_id)
@@ -94,7 +97,7 @@ def list_chat_attachments(
         raise HTTPException(status_code=404, detail={"code": "PROFILE_NOT_FOUND", "message": "Профиль не найден."})
     records = db.list_chat_attachments(
         profile_id=profile_id,
-        session_id=(session_id or "").strip() or None,
+        session_id=session_id.strip(),
         message_id=message_id,
     )
     return ChatAttachmentListResponse(attachments=[_public_attachment(record) for record in records])
@@ -108,17 +111,42 @@ def get_chat_attachment_cache(profile_id: int) -> dict[str, Any]:
         _raise_storage_error(exc)
 
 
-def _owned_path(attachment_id: str, profile_id: int, field: str) -> tuple[dict[str, Any], Path]:
+def _owned_attachment(
+    attachment_id: str,
+    profile_id: int,
+    session_id: str | None,
+) -> dict[str, Any]:
     try:
         record = attachment_storage.get_owned_attachment(attachment_id, profile_id)
-        return record, attachment_storage.resolve_storage_path(str(record.get(field) or ""))
+        owned_session = str(record.get("session_id") or "").strip()
+        if owned_session and owned_session != str(session_id or "").strip():
+            raise attachment_storage.AttachmentStorageError(
+                "ATTACHMENT_NOT_FOUND",
+                "Вложение не найдено.",
+                status_code=404,
+            )
+        return record
     except attachment_storage.AttachmentStorageError as exc:
         _raise_storage_error(exc)
 
 
+def _owned_path(
+    attachment_id: str,
+    profile_id: int,
+    session_id: str | None,
+    field: str,
+) -> tuple[dict[str, Any], Path]:
+    record = _owned_attachment(attachment_id, profile_id, session_id)
+    return record, attachment_storage.resolve_storage_path(str(record.get(field) or ""))
+
+
 @router.get("/chat/attachments/{attachment_id}")
-def get_chat_attachment_media(attachment_id: str, profile_id: int = Query(...)) -> FileResponse:
-    record, path = _owned_path(attachment_id, profile_id, "storage_path")
+def get_chat_attachment_media(
+    attachment_id: str,
+    profile_id: int = Query(...),
+    session_id: str | None = Query(default=None),
+) -> FileResponse:
+    record, path = _owned_path(attachment_id, profile_id, session_id, "storage_path")
     if not path.is_file():
         raise HTTPException(status_code=404, detail={"code": "ATTACHMENT_NOT_FOUND", "message": "Файл вложения не найден."})
     return FileResponse(
@@ -129,16 +157,25 @@ def get_chat_attachment_media(attachment_id: str, profile_id: int = Query(...)) 
 
 
 @router.get("/chat/attachments/{attachment_id}/thumbnail")
-def get_chat_attachment_thumbnail(attachment_id: str, profile_id: int = Query(...)) -> FileResponse:
-    _, path = _owned_path(attachment_id, profile_id, "thumbnail_path")
+def get_chat_attachment_thumbnail(
+    attachment_id: str,
+    profile_id: int = Query(...),
+    session_id: str | None = Query(default=None),
+) -> FileResponse:
+    _, path = _owned_path(attachment_id, profile_id, session_id, "thumbnail_path")
     if not path.is_file():
         raise HTTPException(status_code=404, detail={"code": "ATTACHMENT_NOT_FOUND", "message": "Thumbnail не найден."})
     return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, no-store"})
 
 
 @router.delete("/chat/attachments/{attachment_id}")
-def delete_chat_attachment(attachment_id: str, profile_id: int = Query(...)) -> dict[str, Any]:
+def delete_chat_attachment(
+    attachment_id: str,
+    profile_id: int = Query(...),
+    session_id: str | None = Query(default=None),
+) -> dict[str, Any]:
     try:
+        _owned_attachment(attachment_id, profile_id, session_id)
         return {"deleted": True, **attachment_storage.delete_attachment(attachment_id, profile_id)}
     except attachment_storage.AttachmentStorageError as exc:
         _raise_storage_error(exc)

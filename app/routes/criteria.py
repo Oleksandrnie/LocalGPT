@@ -86,10 +86,9 @@ def parse_criteria(
         )
     if sid:
         session = db.get_session(sid)
-        if not session:
+        if not session or not profile_id or int(session.get("profile_id") or 0) != int(profile_id):
             raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "Сессия не найдена"})
         db.save_session_criteria(sid, criteria)
-        profile_id = session["profile_id"]
     elif profile_id:
         profile = db.get_profile(profile_id)
         if not profile:

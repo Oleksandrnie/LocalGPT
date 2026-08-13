@@ -81,7 +81,7 @@ export class CriteriaManager {
   async persistToBackend() {
     if (!this.sessionId) return;
     try {
-      await saveSessionCriteria(this.sessionId, { criteria: this.criteria });
+      await saveSessionCriteria(this.sessionId, this.profileId, { criteria: this.criteria });
     } catch (error) {
       this.updateStatus(`❌ Не удалось сохранить критерии: ${error?.message || error}`, "error");
     }
@@ -131,7 +131,7 @@ export class CriteriaManager {
     this.busy = true;
     this.updateStatus("Загружаю критерии…");
     try {
-      const data = await fetchSessionCriteria(sessionId);
+      const data = await fetchSessionCriteria(sessionId, profileId);
       const items = Array.isArray(data?.criteria) ? data.criteria : [];
       await this.setCriteria(items, { persist: false, source: "session" });
       if (!items.length) {

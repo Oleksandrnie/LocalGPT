@@ -212,7 +212,7 @@ class RuntimeSecurityTestCase(unittest.TestCase):
         self.assertNotIn(marker, str(raised.exception.detail))
 
     def test_prompt_budget_rejects_assembled_history_before_generation(self) -> None:
-        request = ChatRequest(query="bounded request", session_id=self.session["id"])
+        request = ChatRequest(query="bounded request", profile_id=self.profile_id, session_id=self.session["id"])
         with patch.object(
             chat_routes,
             "build_messages",
@@ -224,7 +224,7 @@ class RuntimeSecurityTestCase(unittest.TestCase):
         self.assertEqual(raised.exception.detail["code"], "chat_prompt_budget_exceeded")
 
     def test_prompt_budget_records_bound_for_valid_assembled_prompt(self) -> None:
-        request = ChatRequest(query="bounded request", session_id=self.session["id"])
+        request = ChatRequest(query="bounded request", profile_id=self.profile_id, session_id=self.session["id"])
         with patch.object(
             chat_routes,
             "build_messages",
