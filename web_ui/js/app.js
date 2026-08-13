@@ -4153,7 +4153,7 @@ function renderMessages() {
       const errorText = String(message.error || "").trim();
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
-      const canCopy = role !== "user" && hasContent;
+      const canCopy = hasContent && (role === "user" || role === "assistant");
       const hasReasoning = role === "assistant" && Boolean(message.has_reasoning);
       const canExportVision = role === "assistant"
         && status === "completed"

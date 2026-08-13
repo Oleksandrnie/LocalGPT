@@ -54,3 +54,11 @@ test("user and completed assistant messages share an editable Chat to RAG dialog
   assert.match(javascript, /visionRagTextInput\.value = content/);
   assert.match(javascript, /state\.visionRagReturnFocus = trigger/);
 });
+
+test("user and assistant Copy share the raw message clipboard path", () => {
+  assert.match(javascript, /const canCopy = hasContent && \(role === "user" \|\| role === "assistant"\)/);
+  assert.match(javascript, /data-copy-index="\$\{index\}"/);
+  assert.match(javascript, /const message = Number\.isFinite\(index\) \? state\.messages\[index\] : null;[\s\S]*await copyText\(message\?\.content \|\| ""\)/);
+  assert.match(javascript, /setFooter\("Сообщение скопировано\.", "success"\)/);
+  assert.match(javascript, /data-chat-rag-index=/);
+});

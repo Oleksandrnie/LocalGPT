@@ -9,7 +9,7 @@
 - Branch: `feature/chat-thinking-reasoning-rag`; continue in place, no new branch.
 - Started: 2026-08-13.
 - Current status: in_progress.
-- Current stage: Stage 2 — user message Copy.
+- Current stage: Stage 3 — regression, docs, and cleanup.
 
 ## Instructions and precedence
 
@@ -84,7 +84,7 @@
 ### Stage 2 — User message Copy
 
 - Goal: add Copy to every non-empty user message without changing RAG or assistant Copy.
-- Status: in_progress.
+- Status: completed.
 - Actions: generalize action eligibility, reuse `data-copy-index` and `copyText`, add exact-text static/browser coverage.
 - Expected result: user actions include RAG and Copy; clipboard receives the selected raw content unchanged.
 - Validation: focused Node contract plus desktop/mobile and light/dark smoke.
@@ -96,7 +96,7 @@
 ### Stage 3 — Regression, docs, and cleanup
 
 - Goal: verify the combined lifecycle and leave a clean review-ready branch.
-- Status: pending.
+- Status: in_progress.
 - Actions: proportional Python/Node regression, browser smoke, affected-doc update, final diff review, delete this progress file.
 - Expected result: DoD evidence is recorded and no task-owned temporary artifact remains.
 - Validation: safe baseline plus focused suites and manual UI matrix.
@@ -134,6 +134,15 @@
 - Validation: diff/compile/JS checks; 69 focused Python tests; reasoning UI 6, attachment UI 6, markdown 2 Node tests.
 - Issues: none; persisted normalization trims trailing outer whitespace between chunks while the live SSE preserves exact chunks and final accumulated reasoning remains unchanged.
 - Next action: generalize `canCopy` to non-empty user messages and add exact raw-text clipboard contracts without changing RAG.
+
+### 2026-08-13 — Stage 2 user Copy
+
+- Stage: Stage 2 completed; Stage 3 started.
+- Completed: Copy eligibility now includes non-empty user and assistant messages while retaining the existing raw `message.content` → `copyText()` path, success/error feedback, and unchanged RAG action.
+- Changed: active UI and reasoning/action Node contract test.
+- Validation: diff/JS checks; reasoning UI 7, attachment UI 6, markdown 2 Node tests.
+- Issues: none; interactive clipboard and action-density checks remain in Stage 3 browser smoke.
+- Next action: create Stage 2 checkpoint, then run proportional regression and browser QA with a multiline Markdown/special-character user message and a controlled slow reasoning stream.
 
 ## Changed files
 
@@ -180,20 +189,28 @@
 
 ### Stage 1
 
-- Commit hash: pending creation.
+- Commit hash: `b6a540f`.
 - Message: `feat(chat): stream live reasoning to terminal modal`.
 - Files: task/SSE reasoning artifact, UI live/replay/modal state, and focused tests.
 - Validation: 69 focused Python and 14 Node tests plus static checks.
 - Notes: final-answer delta remains reasoning-free; failure path retains persisted reasoning.
 
+### Stage 2
+
+- Commit hash: pending creation.
+- Message: `feat(ui): add copy action to user messages`.
+- Files: active message renderer and focused Node contract.
+- Validation: 15 Node tests plus diff/JS checks.
+- Notes: RAG and assistant Copy markup/handlers are unchanged.
+
 ## Continuation state
 
-- Current stage: Stage 2 — user message Copy.
-- Last completed action: Stage 1 focused validation and progress update.
-- Current repository state: validated Stage 1 diff pending checkpoint commit.
-- Known risks: message action density on mobile.
-- Next exact action: create Stage 1 checkpoint, then reuse the existing `data-copy-index` path for non-empty user messages and extend UI tests.
-- Next command or file: edit `web_ui/js/app.js` and `tests/chat_reasoning_ui.test.mjs` after checkpoint.
+- Current stage: Stage 3 — regression, docs, and cleanup.
+- Last completed action: Stage 2 Node validation and progress update.
+- Current repository state: Stage 1 committed; validated Stage 2 diff pending checkpoint commit.
+- Known risks: live browser timing and message action density on mobile.
+- Next exact action: create Stage 2 checkpoint, then run full proportional tests and interactive localhost QA.
+- Next command or file: checkpoint Stage 2, then launch a temporary-DB backend for browser smoke.
 
 ## Final checklist
 
