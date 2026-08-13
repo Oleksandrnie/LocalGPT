@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import Any, Iterator
 from urllib import error, request
 from urllib.parse import urlsplit, urlunsplit
@@ -25,6 +27,24 @@ METAL_BACKEND_ERROR_MARKERS = (
     "failed to initialize the metal library",
     "failed to allocate context",
 )
+QWEN3_HYBRID_MODEL_RE = re.compile(r"(?:^|/)qwen3(?::|-)(?!.*(?:instruct|thinking))", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class ChatCompletionResult:
+    content: str
+    reasoning: str = ""
+    done_reason: str | None = None
+    eval_count: int | None = None
+
+
+@dataclass(frozen=True)
+class ChatStreamEvent:
+    content: str = ""
+    reasoning: str = ""
+    done: bool = False
+    done_reason: str | None = None
+    eval_count: int | None = None
 
 
 def _normalize_keep_alive(value: Any) -> str | None:
@@ -101,6 +121,60 @@ def _cpu_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
     fallback["options"] = options
     fallback["keep_alive"] = 0
     return fallback
+
+
+def _messages_with_thinking_instruction(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    think: bool | None,
+) -> list[dict[str, Any]]:
+    if think is None or not QWEN3_HYBRID_MODEL_RE.search(str(model_name or "")):
+        return messages
+    prepared = [dict(message) for message in messages]
+    marker = "/think" if think else "/no_think"
+    for index in range(len(prepared) - 1, -1, -1):
+        if str(prepared[index].get("role") or "") != "user":
+            continue
+        content = str(prepared[index].get("content") or "").rstrip()
+        prepared[index]["content"] = f"{content}\n\n{marker}" if content else marker
+        break
+    return prepared
+
+
+def _chat_payload(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    *,
+    stream: bool,
+    temperature: float | None,
+    max_tokens: int | None,
+    num_ctx: int | None,
+    keep_alive: str | None,
+    num_gpu: int | None,
+    think: bool | None,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    if temperature is not None:
+        options["temperature"] = temperature
+    if max_tokens is not None:
+        options["num_predict"] = int(max_tokens)
+    if num_ctx is not None:
+        options["num_ctx"] = int(num_ctx)
+    if num_gpu is not None:
+        options["num_gpu"] = int(num_gpu)
+
+    payload: dict[str, Any] = {
+        "model": model_name,
+        "messages": _messages_with_thinking_instruction(model_name, messages, think),
+        "stream": stream,
+    }
+    if think is not None:
+        payload["think"] = bool(think)
+    if options:
+        payload["options"] = options
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
+    return payload
 
 
 def _post_json(path: str, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
@@ -218,7 +292,7 @@ def _post_json_stream(path: str, payload: dict[str, Any], *, timeout: float | No
         raise RuntimeError(f"Ollama API request failed: {exc}") from exc
 
 
-def chat_completion(
+def chat_completion_result(
     model_name: str,
     messages: list[dict[str, Any]],
     *,
@@ -229,28 +303,18 @@ def chat_completion(
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
     think: bool | None = None,
-) -> str:
-    options: dict[str, Any] = {}
-    if temperature is not None:
-        options["temperature"] = temperature
-    if max_tokens is not None:
-        options["num_predict"] = int(max_tokens)
-    if num_ctx is not None:
-        options["num_ctx"] = int(num_ctx)
-    if num_gpu is not None:
-        options["num_gpu"] = int(num_gpu)
-
-    payload: dict[str, Any] = {
-        "model": model_name,
-        "messages": messages,
-        "stream": False,
-    }
-    if think is not None:
-        payload["think"] = bool(think)
-    if options:
-        payload["options"] = options
-    if keep_alive is not None:
-        payload["keep_alive"] = keep_alive
+) -> ChatCompletionResult:
+    payload = _chat_payload(
+        model_name,
+        messages,
+        stream=False,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        num_ctx=num_ctx,
+        keep_alive=keep_alive,
+        num_gpu=num_gpu,
+        think=think,
+    )
 
     if num_gpu == 0:
         unload_model(model_name, timeout=1.5)
@@ -262,10 +326,23 @@ def chat_completion(
         allow_cpu_fallback=allow_cpu_fallback,
     )
     message = response.get("message") if isinstance(response.get("message"), dict) else {}
-    return str(message.get("content") or response.get("response") or "")
+    return ChatCompletionResult(
+        content=str(message.get("content") or response.get("response") or ""),
+        reasoning=str(message.get("thinking") or response.get("thinking") or ""),
+        done_reason=str(response.get("done_reason") or "").strip() or None,
+        eval_count=int(response["eval_count"]) if isinstance(response.get("eval_count"), int) else None,
+    )
 
 
-def chat_completion_stream(
+def chat_completion(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    **kwargs: Any,
+) -> str:
+    return chat_completion_result(model_name, messages, **kwargs).content
+
+
+def chat_completion_stream_events(
     model_name: str,
     messages: list[dict[str, Any]],
     *,
@@ -276,28 +353,18 @@ def chat_completion_stream(
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
     think: bool | None = None,
-) -> Iterator[str]:
-    options: dict[str, Any] = {}
-    if temperature is not None:
-        options["temperature"] = temperature
-    if max_tokens is not None:
-        options["num_predict"] = int(max_tokens)
-    if num_ctx is not None:
-        options["num_ctx"] = int(num_ctx)
-    if num_gpu is not None:
-        options["num_gpu"] = int(num_gpu)
-
-    payload: dict[str, Any] = {
-        "model": model_name,
-        "messages": messages,
-        "stream": True,
-    }
-    if think is not None:
-        payload["think"] = bool(think)
-    if options:
-        payload["options"] = options
-    if keep_alive is not None:
-        payload["keep_alive"] = keep_alive
+) -> Iterator[ChatStreamEvent]:
+    payload = _chat_payload(
+        model_name,
+        messages,
+        stream=True,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        num_ctx=num_ctx,
+        keep_alive=keep_alive,
+        num_gpu=num_gpu,
+        think=think,
+    )
 
     if num_gpu == 0:
         unload_model(model_name, timeout=1.5)
@@ -310,10 +377,17 @@ def chat_completion_stream(
         try:
             for parsed in _post_json_stream("/api/chat", current_payload):
                 message = parsed.get("message") if isinstance(parsed.get("message"), dict) else {}
-                text = str(message.get("content") or parsed.get("response") or "")
-                if text:
+                event = ChatStreamEvent(
+                    content=str(message.get("content") or parsed.get("response") or ""),
+                    reasoning=str(message.get("thinking") or parsed.get("thinking") or ""),
+                    done=bool(parsed.get("done")),
+                    done_reason=str(parsed.get("done_reason") or "").strip() or None,
+                    eval_count=int(parsed["eval_count"]) if isinstance(parsed.get("eval_count"), int) else None,
+                )
+                if event.content or event.reasoning:
                     yielded = True
-                    yield text
+                if event.content or event.reasoning or event.done:
+                    yield event
             return
         except RuntimeError as exc:
             if yielded or not is_metal_backend_error(exc) or attempt_index >= len(attempts) - 1:
@@ -326,6 +400,16 @@ def chat_completion_stream(
                 LOGGER.warning("Ollama Metal backend still unavailable for %s; retrying with CPU fallback.", model_name)
                 unload_model(model_name, timeout=1.5)
                 time.sleep(0.75)
+
+
+def chat_completion_stream(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    **kwargs: Any,
+) -> Iterator[str]:
+    for event in chat_completion_stream_events(model_name, messages, **kwargs):
+        if event.content:
+            yield event.content
 
 
 def load_model(model_name: str, *, keep_alive: str | None = None, timeout: float = 30.0) -> bool:

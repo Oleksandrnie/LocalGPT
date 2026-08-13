@@ -70,7 +70,9 @@ flowchart LR
 4. При включённом RAG выполняется profile-scoped search и собирается context.
 5. Prompt строится из base system prompt, profile prompt/context, summary memory, RAG, transcript/criteria, короткой истории и текущего запроса.
 6. Assistant message создаётся в SQLite до генерации и проходит состояния `generating`, `streaming`, `completed`, `failed` или `cancelled`.
-7. `stream=true` отдаёт lifecycle и `delta` через SSE; non-streaming использует тот же persisted lifecycle без `delta`.
+7. `stream=true` отдаёт lifecycle, отдельные `reasoning` chunks и final-answer `delta` через SSE; non-streaming использует тот же persisted lifecycle без chunk events.
+
+Native Ollama `message.thinking` отделяется от `message.content`: worker инкрементально сохраняет reasoning в поле assistant message и публикует его по отдельному replay-safe SSE `reasoning` channel. Terminal modal может показывать накопленный reasoning во время генерации, а после terminal state загружает persisted snapshot через ownership-checked запрос. Reasoning не попадает в SSE `delta`, обычную history/prompt или RAG. `output_tokens` задаёт бюджет финального ответа, `thinking_tokens` — allowance для рассуждения; когда provider не поддерживает два hard limits, backend выполняет один inference с явно отмеченным bounded combined cap и не считает reasoning-only exhaustion завершённым ответом.
 
 Если к сообщению приложены изображения, UI сначала загружает их через `POST /chat/attachments`. Backend валидирует ownership и лимиты, декодирует/нормализует PNG, JPEG или WebP, создаёт thumbnail и передаёт worker только internal descriptors. Модель с подтверждённой Ollama capability `vision` получает изображения напрямую через native `/api/chat`; при выбранной text-only модели vision-анализ создаёт производный текстовый context для конечного ответа. Base64 существует только в transient Ollama request и не сохраняется в chat messages, SQLite или RAG.
 
@@ -97,7 +99,7 @@ UI обращается к `/tts/*`; service выбирает provider, вали
 
 Файлы профиля Markdown сканируются, текст разбивается на chunks, а deterministic embeddings пишутся в SQLite. Chat получает top-k chunks только активного профиля; каждый файл создаёт один индексируемый источник.
 
-Vision-ответ не индексируется автоматически. Пользователь может открыть редактируемый export и явно создать source type `vision_context`; в index попадает только производный текст и безопасные ссылки на message/session/attachment ids, без image binary и storage paths.
+Chat и Vision-ответы не индексируются автоматически. Пользователь может открыть общий редактируемый export: user или completed assistant message создаёт `chat_context`, а Vision flow — `vision_context`. В index попадает только подтверждённый текст и безопасные ссылки/metadata, без reasoning, image binary и storage paths.
 
 ### Plugins
 

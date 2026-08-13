@@ -152,6 +152,24 @@ def _normalize_ollama_think(value: str | None) -> str | None:
     )
 
 
+def _normalize_token_budget(value: int | None, key: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": f"invalid_{key}", "message": f"{key} must be an integer."},
+        ) from exc
+    if normalized < 1 or normalized > 32768:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": f"invalid_{key}", "message": f"{key} must be between 1 and 32768."},
+        )
+    return normalized
+
+
 def _asr_diagnostics_profile_dir(profile_id: int) -> Path:
     return config.ASR_DIAGNOSTICS_DIR / f"profile_{int(profile_id)}"
 
@@ -561,11 +579,18 @@ def get_model_settings(profile_id: int, model_name: str):
 def save_model_settings(req: ModelSettingsRequest):
     _get_profile_or_404(req.profile_id)
     model = normalize_model_name(req.model_name)
+    output_tokens = _normalize_token_budget(
+        req.output_tokens if req.output_tokens is not None else req.max_tokens,
+        "output_tokens",
+    )
+    thinking_tokens = _normalize_token_budget(req.thinking_tokens, "thinking_tokens")
     db.upsert_model_settings(
         req.profile_id,
         model,
         temperature=req.temperature,
-        max_tokens=req.max_tokens,
+        max_tokens=output_tokens,
+        output_tokens=output_tokens,
+        thinking_tokens=thinking_tokens,
         num_ctx=req.num_ctx,
         mem_turns=None,
         ollama_keep_alive=(req.ollama_keep_alive.strip() if isinstance(req.ollama_keep_alive, str) and req.ollama_keep_alive.strip() else None),

@@ -39,7 +39,7 @@ test("vision context export is explicit, editable, and text-only", () => {
   assert.match(html, /id="visionRagTextInput"/);
   assert.match(html, /Изображение, base64 и локальный путь не индексируются/);
   assert.match(javascript, /data-vision-rag-index/);
-  assert.match(javascript, /request\("\/rag\/vision-contexts"/);
+  assert.match(javascript, /isChatExport \? "\/rag\/chat-contexts" : "\/rag\/vision-contexts"/);
   assert.match(javascript, /text,\s*\n\s*\},/);
 });
 

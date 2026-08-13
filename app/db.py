@@ -18,6 +18,8 @@ if not DB_PATH.is_absolute():
 MESSAGE_STATUSES = {"generating", "streaming", "completed", "failed", "cancelled"}
 MESSAGE_ACTIVE_STATUSES = {"generating", "streaming"}
 MESSAGE_FINAL_STATUSES = {"completed", "failed", "cancelled"}
+REASONING_MAX_CHARS = 200_000
+REASONING_TRUNCATED_MARKER = "\n\n[Reasoning truncated by LocalGPT storage limit.]"
 ATTACHMENT_STATUSES = {
     "temporary",
     "ready",
@@ -67,7 +69,21 @@ def _message_row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     data["status"] = _normalize_message_status(data.get("status"))
     data["updated_at"] = data.get("updated_at") or data.get("created_at")
     data["is_partial"] = bool(data.get("is_partial"))
+    if "has_reasoning" in data:
+        data["has_reasoning"] = bool(data.get("has_reasoning"))
+    elif "reasoning" in data:
+        data["has_reasoning"] = bool(str(data.get("reasoning") or "").strip())
     return data
+
+
+def _normalize_reasoning(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) <= REASONING_MAX_CHARS:
+        return text
+    keep_chars = max(0, REASONING_MAX_CHARS - len(REASONING_TRUNCATED_MARKER))
+    return text[:keep_chars].rstrip() + REASONING_TRUNCATED_MARKER
 
 
 def _attachment_row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -364,6 +380,7 @@ def init_db() -> None:
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                reasoning TEXT NULL,
                 status TEXT NOT NULL DEFAULT 'completed',
                 model TEXT NULL,
                 updated_at DATETIME NOT NULL,
@@ -443,6 +460,8 @@ def init_db() -> None:
                 model_name TEXT NOT NULL,
                 temperature REAL NULL,
                 max_tokens INTEGER NULL,
+                output_tokens INTEGER NULL,
+                thinking_tokens INTEGER NULL,
                 num_ctx INTEGER NULL,
                 mem_turns INTEGER NULL,
                 ollama_keep_alive TEXT NULL,
@@ -576,10 +595,13 @@ def init_db() -> None:
         _ensure_column(conn, "chat_messages", "generation_finished_at", "ALTER TABLE chat_messages ADD COLUMN generation_finished_at DATETIME NULL;")
         _ensure_column(conn, "chat_messages", "is_partial", "ALTER TABLE chat_messages ADD COLUMN is_partial INTEGER NOT NULL DEFAULT 0;")
         _ensure_column(conn, "chat_messages", "task_id", "ALTER TABLE chat_messages ADD COLUMN task_id TEXT NULL;")
+        _ensure_column(conn, "chat_messages", "reasoning", "ALTER TABLE chat_messages ADD COLUMN reasoning TEXT NULL;")
         _ensure_column(conn, "profiles", "preferences_json", "ALTER TABLE profiles ADD COLUMN preferences_json TEXT NULL;")
         _ensure_column(conn, "model_settings", "pipeline_enabled", "ALTER TABLE model_settings ADD COLUMN pipeline_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "ollama_keep_alive", "ALTER TABLE model_settings ADD COLUMN ollama_keep_alive TEXT NULL;")
         _ensure_column(conn, "model_settings", "ollama_think", "ALTER TABLE model_settings ADD COLUMN ollama_think TEXT NULL;")
+        _ensure_column(conn, "model_settings", "output_tokens", "ALTER TABLE model_settings ADD COLUMN output_tokens INTEGER NULL;")
+        _ensure_column(conn, "model_settings", "thinking_tokens", "ALTER TABLE model_settings ADD COLUMN thinking_tokens INTEGER NULL;")
         _ensure_column(conn, "model_settings", "summary_memory_enabled", "ALTER TABLE model_settings ADD COLUMN summary_memory_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "rag_enabled", "ALTER TABLE model_settings ADD COLUMN rag_enabled INTEGER NULL;")
         _ensure_column(conn, "model_settings", "default_pipeline_preset", "ALTER TABLE model_settings ADD COLUMN default_pipeline_preset TEXT NULL;")
@@ -595,6 +617,7 @@ def init_db() -> None:
         conn.execute("UPDATE chat_messages SET status = 'completed' WHERE status IS NULL OR status = ''")
         conn.execute("UPDATE chat_messages SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''")
         conn.execute("UPDATE chat_messages SET is_partial = 0 WHERE is_partial IS NULL")
+        conn.execute("UPDATE model_settings SET output_tokens = max_tokens WHERE output_tokens IS NULL AND max_tokens IS NOT NULL")
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_chat_messages_task
@@ -836,6 +859,7 @@ def add_message(
     role: str,
     content: str,
     *,
+    reasoning: str | None = None,
     status: str | None = None,
     model: str | None = None,
     error: str | None = None,
@@ -852,15 +876,16 @@ def add_message(
         cur = conn.execute(
             """
             INSERT INTO chat_messages (
-                session_id, role, content, status, model, created_at, updated_at, error,
+                session_id, role, content, reasoning, status, model, created_at, updated_at, error,
                 generation_started_at, generation_finished_at, is_partial, task_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
                 clean_role,
                 content,
+                _normalize_reasoning(reasoning),
                 clean_status,
                 model,
                 now,
@@ -906,7 +931,7 @@ def get_message(message_id: int | str) -> dict[str, Any] | None:
     with closing(_connect()) as conn:
         row = conn.execute(
             """
-            SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
+            SELECT id, session_id, role, content, reasoning, status, model, created_at, updated_at, error,
                    generation_started_at, generation_finished_at, is_partial, task_id
             FROM chat_messages
             WHERE id = ?
@@ -923,7 +948,7 @@ def get_message_by_task_id(task_id: str) -> dict[str, Any] | None:
     with closing(_connect()) as conn:
         row = conn.execute(
             """
-            SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
+            SELECT id, session_id, role, content, reasoning, status, model, created_at, updated_at, error,
                    generation_started_at, generation_finished_at, is_partial, task_id
             FROM chat_messages
             WHERE task_id = ? AND role = 'assistant'
@@ -939,6 +964,7 @@ def update_message(
     message_id: int | str,
     *,
     content: Any = _MESSAGE_UNSET,
+    reasoning: Any = _MESSAGE_UNSET,
     status: str | None = None,
     model: Any = _MESSAGE_UNSET,
     error: Any = _MESSAGE_UNSET,
@@ -964,6 +990,9 @@ def update_message(
     if content is not _MESSAGE_UNSET:
         fields.append("content = ?")
         params.append(str(content or ""))
+    if reasoning is not _MESSAGE_UNSET:
+        fields.append("reasoning = ?")
+        params.append(_normalize_reasoning(reasoning))
     if next_status is not None:
         fields.append("status = ?")
         params.append(next_status)
@@ -1024,7 +1053,9 @@ def append_message_content(message_id: int | str, delta: str, *, status: str | N
 def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[str, Any]]:
     limit = limit_pairs * 2 if limit_pairs else None
     query = """
-        SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
+        SELECT id, session_id, role, content,
+               CASE WHEN reasoning IS NOT NULL AND TRIM(reasoning) <> '' THEN 1 ELSE 0 END AS has_reasoning,
+               status, model, created_at, updated_at, error,
                generation_started_at, generation_finished_at, is_partial, task_id
         FROM chat_messages
         WHERE session_id = ?
@@ -1426,7 +1457,8 @@ def get_model_settings(profile_id: int, model_name: str) -> dict[str, Any] | Non
     with closing(_connect()) as conn:
         row = conn.execute(
             """
-            SELECT id, profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns, ollama_keep_alive,
+            SELECT id, profile_id, model_name, temperature, max_tokens, output_tokens, thinking_tokens,
+                   num_ctx, mem_turns, ollama_keep_alive,
                    ollama_think,
                    pipeline_enabled, summary_memory_enabled, rag_enabled,
                    default_pipeline_preset, max_transcript_chars, max_context_chars,
@@ -1449,6 +1481,8 @@ def upsert_model_settings(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    output_tokens: int | None = None,
+    thinking_tokens: int | None = None,
     num_ctx: int | None = None,
     mem_turns: int | None = None,
     ollama_keep_alive: str | None = None,
@@ -1470,12 +1504,14 @@ def upsert_model_settings(
     summary_memory_enabled_db = None if summary_memory_enabled is None else int(bool(summary_memory_enabled))
     rag_enabled_db = None if rag_enabled is None else int(bool(rag_enabled))
     pipeline_json = _to_json(pipeline) if pipeline is not None else None
+    output_tokens_db = output_tokens if output_tokens is not None else max_tokens
     with closing(_connect()) as conn:
         if existing:
             conn.execute(
                 """
                 UPDATE model_settings
-                SET temperature = ?, max_tokens = ?, num_ctx = ?, mem_turns = ?, ollama_keep_alive = ?,
+                SET temperature = ?, max_tokens = ?, output_tokens = ?, thinking_tokens = ?,
+                    num_ctx = ?, mem_turns = ?, ollama_keep_alive = ?,
                     ollama_think = ?,
                     pipeline_enabled = ?, summary_memory_enabled = ?, rag_enabled = ?,
                     default_pipeline_preset = ?, max_transcript_chars = ?, max_context_chars = ?,
@@ -1485,7 +1521,9 @@ def upsert_model_settings(
                 """,
                 (
                     temperature,
-                    max_tokens,
+                    output_tokens_db,
+                    output_tokens_db,
+                    thinking_tokens,
                     num_ctx,
                     mem_turns,
                     ollama_keep_alive,
@@ -1509,20 +1547,23 @@ def upsert_model_settings(
             conn.execute(
                 """
                 INSERT INTO model_settings (
-                    profile_id, model_name, temperature, max_tokens, num_ctx, mem_turns, ollama_keep_alive,
+                    profile_id, model_name, temperature, max_tokens, output_tokens, thinking_tokens,
+                    num_ctx, mem_turns, ollama_keep_alive,
                     ollama_think,
                     pipeline_enabled, summary_memory_enabled, rag_enabled,
                     default_pipeline_preset, max_transcript_chars, max_context_chars,
                     summary_memory_limit, rag_top_k, rag_max_context_chars,
                     pipeline_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_id,
                     model_name,
                     temperature,
-                    max_tokens,
+                    output_tokens_db,
+                    output_tokens_db,
+                    thinking_tokens,
                     num_ctx,
                     mem_turns,
                     ollama_keep_alive,
@@ -1561,6 +1602,8 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     keys = (
         "temperature",
         "max_tokens",
+        "output_tokens",
+        "thinking_tokens",
         "num_ctx",
         "ollama_keep_alive",
         "ollama_think",
@@ -1581,6 +1624,14 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
                 effective[key] = bool(override_value)
             else:
                 effective[key] = override_value
+    legacy_output_override = overrides.get("max_tokens")
+    if overrides.get("output_tokens") is None and legacy_output_override is not None:
+        effective["output_tokens"] = legacy_output_override
+    effective["output_tokens"] = int(effective.get("output_tokens") or effective.get("max_tokens") or config.SETTINGS.max_tokens)
+    effective["thinking_tokens"] = int(
+        effective.get("thinking_tokens") or config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens") or 2048
+    )
+    effective["max_tokens"] = effective["output_tokens"]
     if isinstance(overrides.get("pipeline"), dict):
         pipeline = _clone_jsonable(effective.get("pipeline") or {})
         _merge_dict(pipeline, overrides["pipeline"])
@@ -1603,6 +1654,8 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     )
     settings_keys = tuple([*keys, *profile_runtime_keys, "pipeline"])
     returned_overrides = {key: overrides.get(key) for key in settings_keys}
+    if returned_overrides.get("output_tokens") is None and returned_overrides.get("max_tokens") is not None:
+        returned_overrides["output_tokens"] = returned_overrides["max_tokens"]
     for key in profile_runtime_keys:
         if key in profile_settings:
             returned_overrides[key] = profile_settings.get(key)

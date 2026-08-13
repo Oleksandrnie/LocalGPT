@@ -90,6 +90,12 @@ Transcript с `labels.origin=asr_context` индексируется как от
 
 В index передаётся редактируемый производный текст размером до 100 000 символов. Metadata может содержать только безопасные references (`message_id`, `session_id`, `attachment_ids`) и отмечает source как `derived_context`; base64 data URI отклоняется, image files и backend storage paths не копируются. Удаление `vision_context` независимо от chat attachment и не удаляет исходное изображение.
 
+## Chat context
+
+`POST /rag/chat-contexts` явно индексирует отредактированный текст непустого user message или completed assistant message как `chat_context`. Endpoint проверяет active profile, session/message ownership, допустимую роль и terminal status assistant; failed, cancelled или незавершённый assistant не принимается.
+
+Metadata содержит `message_id`, `session_id`, `message_role`, `origin=explicit_chat_export` и `source_role=derived_context`. Reasoning не читается из message row и помечен как не индексированный; binary data URI запрещён. Каждый message имеет независимый `chat-message:<id>` source, который можно удалить через общий context endpoint без удаления сообщения или соседнего source.
+
 ## Storage
 
 SQLite:
@@ -118,6 +124,7 @@ Force ingest нужен только для намеренной полной п
 - пустой или выходящий за source root path;
 - пустой ASR context;
 - пустой, несвязанный или содержащий image data URI Vision context;
+- пустой/несвязанный Chat context или незавершённый assistant message;
 - отсутствующий context/file при удалении;
 - выбран неправильный profile;
 - RAG выключен в effective settings;
@@ -132,6 +139,7 @@ Force ingest нужен только для намеренной полной п
 - presence в debug prompt;
 - delete/reindex cleanup;
 - explicit Vision export и независимое удаление text source без изменения attachment;
+- explicit user/completed-assistant Chat export, role metadata, reasoning exclusion, retrieval и независимое удаление;
 - сравнение source metadata с profile directory.
 
 Команды: [TESTING.md](../TESTING.md).

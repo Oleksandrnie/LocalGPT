@@ -4,6 +4,7 @@
 
 ## Planned
 
+- Выполнить [аудит и усиление RAG grounding, prompt policy и LLM-безопасности](PROMPT_RAG_SECURITY_AUDIT_SPEC.md) в отдельной новой feature-ветке: trust-aware prompt composition, retrieval/grounding eval, injection/leakage/resource/safe-sink controls и external-agent threat inventory.
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
 - Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
 

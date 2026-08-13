@@ -3,6 +3,7 @@
 from .core import (
     AsrPreferencesUpdate,
     ChatDebugPromptRequest,
+    ChatContextExportRequest,
     ChatRequest,
     ChatPreferencesUpdate,
     DatabaseCleanupRequest,
@@ -38,6 +39,7 @@ from .tts import (
 
 __all__ = [
     "ChatRequest",
+    "ChatContextExportRequest",
     "ChatDebugPromptRequest",
     "ChatPreferencesUpdate",
     "DatabaseCleanupRequest",

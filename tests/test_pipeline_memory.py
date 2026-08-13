@@ -14,6 +14,7 @@ from app.routes import profiles as profile_routes
 from app.schemas import (
     AsrPreferencesUpdate,
     ChatRequest,
+    ModelSettingsRequest,
     ModelSettingsReset,
     ProfileCreate,
     ProfilePreferencesUpdate,
@@ -26,6 +27,7 @@ from backend.apps.asr.transcripts import router as transcripts_router
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.routes import _ensure_chat_model_available, _prepare_chat_request, _sse_event, router as chat_router, start_chat_task
 from backend.apps.chat.service import response_language_instruction, sanitize_reply
+from backend.apps.chat.services import ollama_runtime
 from backend.apps.rag import routes as rag_routes
 from backend.apps.rag import service as rag_service
 
@@ -183,6 +185,31 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(effective_pipeline["speaker_resolver"], config.DEFAULT_PIPELINE["speaker_resolver"])
         self.assertEqual(effective_pipeline["structurer"], config.DEFAULT_PIPELINE["structurer"])
         self.assertEqual(effective_pipeline["summary"], config.DEFAULT_PIPELINE["summary"])
+
+    def test_model_settings_validate_and_round_trip_token_budgets(self):
+        result = profile_routes.save_model_settings(
+            ModelSettingsRequest(
+                profile_id=self.profile_id,
+                model_name="qwen3:8b",
+                output_tokens=900,
+                thinking_tokens=1800,
+                ollama_think="on",
+            )
+        )
+
+        self.assertEqual(result["effective"]["output_tokens"], 900)
+        self.assertEqual(result["effective"]["thinking_tokens"], 1800)
+        self.assertEqual(result["effective"]["max_tokens"], 900)
+        with self.assertRaises(HTTPException) as ctx:
+            profile_routes.save_model_settings(
+                ModelSettingsRequest(
+                    profile_id=self.profile_id,
+                    model_name="qwen3:8b",
+                    output_tokens=0,
+                )
+            )
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(ctx.exception.detail["code"], "invalid_output_tokens")
 
     def test_asr_analysis_actions_map_to_generic_stages(self):
         pipeline_cfg = deepcopy(config.DEFAULT_PIPELINE)
@@ -408,6 +435,32 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn("event: done\n", body)
         self.assertIn('"status":"completed"', body)
 
+    def test_reasoning_endpoint_restores_only_profile_owned_assistant_reasoning(self):
+        session = db.create_session(self.profile_id, "Reasoning API", "qwen3:4b")
+        assistant = db.add_message(
+            session["id"],
+            "assistant",
+            "Финальный ответ",
+            reasoning="Сохранённое рассуждение",
+        )
+        other_profile = db.create_profile("Other", None, None)
+        app = FastAPI()
+        app.include_router(chat_router)
+        client = TestClient(app)
+
+        response = client.get(
+            f"/chat/messages/{assistant['id']}/reasoning",
+            params={"profile_id": self.profile_id},
+        )
+        forbidden = client.get(
+            f"/chat/messages/{assistant['id']}/reasoning",
+            params={"profile_id": other_profile["id"]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["reasoning"], "Сохранённое рассуждение")
+        self.assertEqual(forbidden.status_code, 403)
+
     def test_non_streaming_worker_uses_full_response_and_updates_assistant_message(self):
         session = db.create_session(self.profile_id, "Non-streaming fallback", "qwen2.5:7b-instruct")
         assistant_message = db.create_assistant_message(
@@ -418,11 +471,19 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         result_path = Path(self.tmpdir.name) / "non-streaming.result.json"
         error_path = Path(self.tmpdir.name) / "non-streaming.error.json"
         delta_path = Path(self.tmpdir.name) / "non-streaming.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "non-streaming.reasoning.jsonl"
         status_path = Path(self.tmpdir.name) / "non-streaming.status.json"
 
         with (
-            patch("backend.apps.chat.tasks.ChatService.chat_completion", return_value="Полный ответ") as full_response,
-            patch("backend.apps.chat.tasks.ChatService.chat_completion_stream") as stream_response,
+            patch(
+                "backend.apps.chat.tasks.ChatService.chat_completion_result",
+                return_value=ollama_runtime.ChatCompletionResult(
+                    content="Полный ответ",
+                    reasoning="Нестриминговое рассуждение",
+                    done_reason="stop",
+                ),
+            ) as full_response,
+            patch("backend.apps.chat.tasks.ChatService.chat_completion_stream_events") as stream_response,
         ):
             chat_tasks._chat_worker(
                 "qwen2.5:7b-instruct",
@@ -433,6 +494,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
                 assistant_message["id"],
                 False,
                 str(delta_path),
+                str(reasoning_path),
                 str(status_path),
                 str(result_path),
                 str(error_path),
@@ -448,8 +510,132 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         updated_message = db.get_message(assistant_message["id"])
         self.assertEqual(updated_message["status"], "completed")
         self.assertEqual(updated_message["content"], "Полный ответ")
+        self.assertEqual(updated_message["reasoning"], "Нестриминговое рассуждение")
         self.assertFalse(updated_message["is_partial"])
         self.assertIsNone(updated_message["error"])
+
+    def test_streaming_worker_separates_reasoning_from_final_deltas(self):
+        session = db.create_session(self.profile_id, "Reasoning stream", "qwen3:4b")
+        assistant_message = db.create_assistant_message(session["id"], model="qwen3:4b")
+        result_path = Path(self.tmpdir.name) / "reasoning.result.json"
+        error_path = Path(self.tmpdir.name) / "reasoning.error.json"
+        delta_path = Path(self.tmpdir.name) / "reasoning.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "reasoning.chunks.jsonl"
+        status_path = Path(self.tmpdir.name) / "reasoning.status.json"
+
+        def events():
+            yield ollama_runtime.ChatStreamEvent(reasoning="internal ")
+            self.assertEqual(db.get_message(assistant_message["id"])["reasoning"], "internal")
+            yield ollama_runtime.ChatStreamEvent(reasoning="trace")
+            yield ollama_runtime.ChatStreamEvent(content="Финальный ")
+            yield ollama_runtime.ChatStreamEvent(content="ответ")
+            yield ollama_runtime.ChatStreamEvent(done=True, done_reason="stop", eval_count=12)
+
+        with patch(
+            "backend.apps.chat.tasks.ChatService.chat_completion_stream_events",
+            return_value=events(),
+        ):
+            chat_tasks._chat_worker(
+                "qwen3:4b",
+                [{"role": "user", "content": "hello"}],
+                {"streaming_enabled": True, "ollama_think": "on"},
+                session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                True,
+                str(delta_path),
+                str(reasoning_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+            )
+
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual(result["reply"], "Финальный ответ")
+        self.assertEqual(result["reasoning"], "internal trace")
+        self.assertEqual(result["done_reason"], "stop")
+        self.assertEqual(result["eval_count"], 12)
+        delta_text = delta_path.read_text(encoding="utf-8")
+        self.assertIn("Финальный ", delta_text)
+        self.assertIn("ответ", delta_text)
+        self.assertNotIn("internal", delta_text)
+        reasoning_events = reasoning_path.read_text(encoding="utf-8")
+        self.assertIn('"sequence":1', reasoning_events)
+        self.assertIn('"text":"internal "', reasoning_events)
+        self.assertIn('"sequence":2', reasoning_events)
+        self.assertIn('"text":"trace"', reasoning_events)
+        persisted = db.get_message(assistant_message["id"])
+        self.assertEqual(persisted["content"], "Финальный ответ")
+        self.assertEqual(persisted["reasoning"], "internal trace")
+        history_message = db.get_messages(session["id"])[0]
+        self.assertTrue(history_message["has_reasoning"])
+        self.assertNotIn("reasoning", history_message)
+        self.assertFalse(error_path.exists())
+
+    def test_reasoning_only_length_exhaustion_fails_worker(self):
+        session = db.create_session(self.profile_id, "Reasoning exhausted", "qwen3:4b")
+        assistant_message = db.create_assistant_message(session["id"], model="qwen3:4b")
+        result_path = Path(self.tmpdir.name) / "exhausted.result.json"
+        error_path = Path(self.tmpdir.name) / "exhausted.error.json"
+        delta_path = Path(self.tmpdir.name) / "exhausted.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "exhausted.reasoning.jsonl"
+        status_path = Path(self.tmpdir.name) / "exhausted.status.json"
+
+        events = iter(
+            [
+                ollama_runtime.ChatStreamEvent(reasoning="unfinished reasoning"),
+                ollama_runtime.ChatStreamEvent(done=True, done_reason="length", eval_count=64),
+            ]
+        )
+        with patch(
+            "backend.apps.chat.tasks.ChatService.chat_completion_stream_events",
+            return_value=events,
+        ):
+            chat_tasks._chat_worker(
+                "qwen3:4b",
+                [{"role": "user", "content": "hello"}],
+                {"streaming_enabled": True, "ollama_think": "on"},
+                session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                True,
+                str(delta_path),
+                str(reasoning_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+            )
+
+        error = json.loads(error_path.read_text(encoding="utf-8"))
+        self.assertEqual(error["code"], "chat_final_answer_incomplete")
+        self.assertIn("Thinking budget exhausted", error["message"])
+        self.assertFalse(result_path.exists())
+        updated = db.get_message(assistant_message["id"])
+        self.assertEqual(updated["status"], "failed")
+        self.assertEqual(updated["content"], "")
+        self.assertEqual(updated["reasoning"], "unfinished reasoning")
+
+    def test_cancelled_task_keeps_reasoning_received_before_cancellation(self):
+        session = db.create_session(self.profile_id, "Cancelled reasoning", "qwen3:4b")
+        assistant_message = db.create_assistant_message(session["id"], model="qwen3:4b")
+        db.update_message(assistant_message["id"], reasoning="partial reasoning")
+        task = {
+            "id": "ct_cancelled_reasoning",
+            "state": "cancelling",
+            "session_id": session["id"],
+            "profile_id": self.profile_id,
+            "model_name": "qwen3:4b",
+            "assistant_message_id": assistant_message["id"],
+            "attachment_ids": [],
+            "cancel_requested": True,
+        }
+
+        chat_tasks._finalize_task_locked(task)
+
+        updated = db.get_message(assistant_message["id"])
+        self.assertEqual(task["state"], "cancelled")
+        self.assertEqual(updated["status"], "cancelled")
+        self.assertEqual(updated["reasoning"], "partial reasoning")
 
     def test_chat_task_events_streams_delta_events_from_task_artifact(self):
         session = db.create_session(self.profile_id, "SSE delta", "qwen2.5:7b-instruct")
@@ -489,6 +675,48 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn('"text":"При"', body)
         self.assertIn('"sequence":2', body)
         self.assertIn('"text":"вет"', body)
+        self.assertIn("event: done\n", body)
+
+    def test_chat_task_events_stream_reasoning_separately_from_final_delta(self):
+        session = db.create_session(self.profile_id, "SSE reasoning", "qwen3:4b")
+        delta_path = Path(self.tmpdir.name) / "task-final.deltas.jsonl"
+        reasoning_path = Path(self.tmpdir.name) / "task-reasoning.deltas.jsonl"
+        task_id = "ct_reasoning_delta_test"
+        chat_tasks._append_reasoning_jsonl(reasoning_path, 1, "reason ")
+        chat_tasks._append_reasoning_jsonl(reasoning_path, 2, "trace")
+        chat_tasks._append_delta_jsonl(delta_path, 1, "final")
+        with chat_tasks._LOCK:
+            chat_tasks._TASKS[task_id] = {
+                "id": task_id,
+                "state": "completed",
+                "created_at": "2026-08-13T10:00:00Z",
+                "updated_at": "2026-08-13T10:00:01Z",
+                "session_id": session["id"],
+                "profile_id": self.profile_id,
+                "model_name": "qwen3:4b",
+                "role": "chat",
+                "assistant_message_id": 43,
+                "message": "Chat generation completed.",
+                "error_code": None,
+                "used_settings": {},
+                "result": {"reply": "final"},
+                "delta_path": str(delta_path),
+                "reasoning_path": str(reasoning_path),
+                "stream": True,
+            }
+
+        app = FastAPI()
+        app.include_router(chat_router)
+        client = TestClient(app)
+        with client.stream("GET", f"/chat/tasks/{task_id}/events") as response:
+            self.assertEqual(response.status_code, 200)
+            body = "".join(response.iter_text())
+
+        self.assertIn('event: reasoning\ndata: {"task_id":"ct_reasoning_delta_test"', body)
+        self.assertIn('"sequence":1,"text":"reason "', body)
+        self.assertIn('"sequence":2,"text":"trace"', body)
+        self.assertIn('event: delta\n', body)
+        self.assertLess(body.index("event: reasoning\n"), body.index("event: delta\n"))
         self.assertIn("event: done\n", body)
 
     def test_missing_runtime_task_marks_active_assistant_message_failed(self):
@@ -674,17 +902,34 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         completed_message = db.update_message(
             assistant_message["id"],
             content="Привет, готово.",
+            reasoning="Внутреннее рассуждение",
             status="completed",
             error=None,
         )
         self.assertEqual(completed_message["status"], "completed")
         self.assertEqual(completed_message["content"], "Привет, готово.")
+        self.assertEqual(completed_message["reasoning"], "Внутреннее рассуждение")
+        self.assertTrue(completed_message["has_reasoning"])
         self.assertFalse(completed_message["is_partial"])
         self.assertIsNotNone(completed_message["generation_finished_at"])
 
         messages = db.get_messages(session["id"])
         self.assertEqual([item["id"] for item in messages], [user_message["id"], assistant_message["id"]])
         self.assertTrue(all("updated_at" in item for item in messages))
+        self.assertTrue(messages[-1]["has_reasoning"])
+        self.assertNotIn("reasoning", messages[-1])
+
+    def test_reasoning_storage_applies_explicit_size_cap(self):
+        session = db.create_session(self.profile_id, "Reasoning cap", "qwen3:4b")
+        assistant = db.add_message(
+            session["id"],
+            "assistant",
+            "Final",
+            reasoning="x" * (db.REASONING_MAX_CHARS + 100),
+        )
+
+        self.assertLessEqual(len(assistant["reasoning"]), db.REASONING_MAX_CHARS)
+        self.assertTrue(assistant["reasoning"].endswith("[Reasoning truncated by LocalGPT storage limit.]"))
 
     def test_legacy_chat_messages_migrate_to_completed(self):
         legacy_path = Path(self.tmpdir.name) / "legacy-messages.db"
@@ -761,6 +1006,10 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(messages[0]["status"], "completed")
         self.assertEqual(messages[0]["updated_at"], now)
         self.assertFalse(messages[0]["is_partial"])
+        self.assertFalse(messages[0]["has_reasoning"])
+        with sqlite3.connect(legacy_path) as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(chat_messages)").fetchall()}
+        self.assertIn("reasoning", columns)
 
     def test_prompt_uses_summary_memory_before_short_history(self):
         session = db.create_session(self.profile_id, "Memory test", "qwen2.5:3b")

@@ -13,7 +13,7 @@ from typing import Any
 
 from app import config, db
 from backend.apps.chat.service import ChatService, maybe_compress_session_history, sanitize_reply
-from backend.apps.chat.services import vision_context, vision_runtime
+from backend.apps.chat.services import ollama_runtime, vision_context, vision_runtime
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -66,7 +66,7 @@ def _atomic_write_json(path: Path | str, payload: dict[str, Any]) -> None:
     Path(temp_name).replace(target)
 
 
-def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
+def _append_stream_chunk_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
     if not path or not text:
         return
     target = Path(path)
@@ -77,7 +77,19 @@ def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> No
         fh.flush()
 
 
+def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
+    _append_stream_chunk_jsonl(path, sequence, text)
+
+
+def _append_reasoning_jsonl(path: Path | str | None, sequence: int, text: str) -> None:
+    _append_stream_chunk_jsonl(path, sequence, text)
+
+
 def _public_task(task: dict[str, Any]) -> dict[str, Any]:
+    result = dict(task.get("result") or {}) if isinstance(task.get("result"), dict) else task.get("result")
+    if isinstance(result, dict):
+        reasoning = result.pop("reasoning", None)
+        result["has_reasoning"] = bool(str(reasoning or "").strip())
     return {
         "id": task.get("id"),
         "state": task.get("state"),
@@ -96,7 +108,7 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "pid": task.get("pid"),
         "used_settings": task.get("used_settings"),
         "router_notice": task.get("router_notice"),
-        "result": task.get("result"),
+        "result": result,
         "stream": bool(task.get("stream")),
         "streaming_enabled": bool(task.get("stream")),
         "attachment_ids": list(task.get("attachment_ids") or []),
@@ -136,6 +148,7 @@ def _chat_worker(
     assistant_message_id: int | None,
     stream: bool,
     delta_path: str,
+    reasoning_path: str,
     status_path: str,
     result_path: str,
     error_path: str,
@@ -147,6 +160,9 @@ def _chat_worker(
     image_paths = [str(item.get("path") or "") for item in attachment_descriptors if item.get("path")]
     derived_vision_context: str | None = None
     ocr_evidence: vision_context.OcrEvidence | None = None
+    reasoning = ""
+    done_reason: str | None = None
+    eval_count: int | None = None
     try:
         service = ChatService()
         completion_model = model_name
@@ -244,7 +260,9 @@ def _chat_worker(
 
         if stream:
             chunks: list[str] = []
+            reasoning_chunks: list[str] = []
             sequence = 0
+            reasoning_sequence = 0
             streaming_started = False
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
                 delta_source = vision_runtime.chat_completion_stream(
@@ -260,23 +278,49 @@ def _chat_worker(
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
             else:
-                delta_source = service.chat_completion_stream(
+                event_source = service.chat_completion_stream_events(
                     completion_model,
                     completion_messages,
                     settings=settings,
                 )
-            for delta in delta_source:
-                if not delta:
-                    continue
-                if not streaming_started:
-                    _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
-                    _set_attachment_status(attachment_ids, "generating")
-                    streaming_started = True
-                sequence += 1
-                chunks.append(delta)
-                _append_delta_jsonl(delta_path, sequence, delta)
-                if assistant_message_id:
-                    db.append_message_content(assistant_message_id, delta, status="streaming")
+                for event in event_source:
+                    if event.reasoning:
+                        reasoning_chunks.append(event.reasoning)
+                        reasoning = "".join(reasoning_chunks)
+                        if assistant_message_id:
+                            db.update_message(assistant_message_id, reasoning=reasoning)
+                        reasoning_sequence += 1
+                        _append_reasoning_jsonl(reasoning_path, reasoning_sequence, event.reasoning)
+                    if event.done:
+                        done_reason = event.done_reason
+                        eval_count = event.eval_count
+                    delta = event.content
+                    if not delta:
+                        continue
+                    if not streaming_started:
+                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                        _set_attachment_status(attachment_ids, "generating")
+                        streaming_started = True
+                    sequence += 1
+                    chunks.append(delta)
+                    _append_delta_jsonl(delta_path, sequence, delta)
+                    if assistant_message_id:
+                        db.append_message_content(assistant_message_id, delta, status="streaming")
+                delta_source = None
+            if delta_source is not None:
+                for delta in delta_source:
+                    if not delta:
+                        continue
+                    if not streaming_started:
+                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                        _set_attachment_status(attachment_ids, "generating")
+                        streaming_started = True
+                    sequence += 1
+                    chunks.append(delta)
+                    _append_delta_jsonl(delta_path, sequence, delta)
+                    if assistant_message_id:
+                        db.append_message_content(assistant_message_id, delta, status="streaming")
+            reasoning = "".join(reasoning_chunks)
             reply = sanitize_reply("".join(chunks))
         else:
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
@@ -295,8 +339,30 @@ def _chat_worker(
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 reply = ocr_evidence.text if ocr_evidence else ""
             else:
-                reply = service.chat_completion(completion_model, completion_messages, settings=settings)
+                completion_result = service.chat_completion_result(
+                    completion_model,
+                    completion_messages,
+                    settings=settings,
+                )
+                reply = completion_result.content
+                reasoning = completion_result.reasoning
+                done_reason = completion_result.done_reason
+                eval_count = completion_result.eval_count
+        service.require_final_answer(
+            ollama_runtime.ChatCompletionResult(
+                content=reply,
+                reasoning=reasoning,
+                done_reason=done_reason,
+                eval_count=eval_count,
+            )
+        )
         result_payload: dict[str, Any] = {"reply": reply}
+        if reasoning:
+            result_payload["reasoning"] = reasoning
+        if done_reason:
+            result_payload["done_reason"] = done_reason
+        if eval_count is not None:
+            result_payload["eval_count"] = eval_count
         if derived_vision_context:
             result_payload["vision_context"] = derived_vision_context
         if ocr_evidence:
@@ -308,6 +374,7 @@ def _chat_worker(
                 db.update_message(
                     assistant_message_id,
                     content=reply,
+                    reasoning=reasoning,
                     status="completed",
                     model=completion_model,
                     error=None,
@@ -325,8 +392,13 @@ def _chat_worker(
                 except Exception:
                     pass
     except Exception as exc:  # pragma: no cover - runtime path
-        message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc) or "chat_generation_failed"
-        error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict):
+            message = detail.get("message") or detail.get("detail") or str(detail)
+            error_code = str(detail.get("code") or getattr(exc, "code", None) or "chat_generation_failed")
+        else:
+            message = getattr(exc, "message", None) or detail or str(exc) or "chat_generation_failed"
+            error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
         if assistant_message_id:
             try:
                 db.update_message(
@@ -368,7 +440,13 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
         task["message"] = "Chat generation completed."
         task["error_code"] = None
         task["result"] = result
-        _update_assistant_from_task(task, status="completed", content=str(result.get("reply") or ""), error=None)
+        _update_assistant_from_task(
+            task,
+            status="completed",
+            content=str(result.get("reply") or ""),
+            reasoning=str(result.get("reasoning") or ""),
+            error=None,
+        )
         _set_attachment_status(list(task.get("attachment_ids") or []), "completed", error=None)
     elif error:
         task["state"] = "failed"
@@ -398,6 +476,7 @@ def _update_assistant_from_task(
     *,
     status: str,
     content: str | None = None,
+    reasoning: str | None = None,
     error: str | None = None,
 ) -> None:
     assistant_message_id = task.get("assistant_message_id")
@@ -412,6 +491,8 @@ def _update_assistant_from_task(
         }
         if content is not None:
             updates["content"] = content
+        if reasoning is not None:
+            updates["reasoning"] = reasoning
         db.update_message(assistant_message_id, **updates)
     except Exception:
         pass
@@ -592,6 +673,7 @@ def start_chat_task(
     result_path = _artifact_path(task_id, "result")
     error_path = _artifact_path(task_id, "error")
     delta_path = _artifact_path(task_id, "deltas")
+    reasoning_path = _artifact_path(task_id, "reasoning")
     status_path = _artifact_path(task_id, "status")
 
     if assistant_message_id:
@@ -623,6 +705,7 @@ def start_chat_task(
             assistant_message_id,
             bool(stream),
             str(delta_path),
+            str(reasoning_path),
             str(status_path),
             str(result_path),
             str(error_path),
@@ -639,6 +722,7 @@ def start_chat_task(
         _safe_unlink(result_path)
         _safe_unlink(error_path)
         _safe_unlink(delta_path)
+        _safe_unlink(reasoning_path)
         _safe_unlink(status_path)
         if assistant_message_id:
             db.update_message(
@@ -671,6 +755,7 @@ def start_chat_task(
         "result_path": str(result_path),
         "error_path": str(error_path),
         "delta_path": str(delta_path),
+        "reasoning_path": str(reasoning_path),
         "status_path": str(status_path),
         "stream": bool(stream),
         "cancel_requested": False,
@@ -700,19 +785,24 @@ def get_chat_task(task_id: str) -> dict[str, Any] | None:
         return _public_task(task)
 
 
-def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+def _read_chat_task_chunks(
+    task_id: str,
+    *,
+    path_key: str,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
     if not task_id:
         return [], offset
     with _LOCK:
         task = _TASKS.get(task_id)
-        delta_path = task.get("delta_path") if task else None
-    if not delta_path:
+        chunk_path = task.get(path_key) if task else None
+    if not chunk_path:
         return [], offset
-    target = Path(str(delta_path))
+    target = Path(str(chunk_path))
     if not target.exists():
         return [], offset
 
-    deltas: list[dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = []
     try:
         with target.open("rb") as fh:
             fh.seek(max(0, int(offset or 0)))
@@ -725,7 +815,7 @@ def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str,
                 except json.JSONDecodeError:
                     continue
                 if isinstance(payload, dict) and payload.get("text"):
-                    deltas.append(
+                    chunks.append(
                         {
                             "sequence": payload.get("sequence"),
                             "text": str(payload.get("text") or ""),
@@ -733,8 +823,16 @@ def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str,
                     )
             next_offset = fh.tell()
     except OSError:
-        return deltas, offset
-    return deltas, next_offset
+        return chunks, offset
+    return chunks, next_offset
+
+
+def read_chat_task_deltas(task_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    return _read_chat_task_chunks(task_id, path_key="delta_path", offset=offset)
+
+
+def read_chat_task_reasoning(task_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    return _read_chat_task_chunks(task_id, path_key="reasoning_path", offset=offset)
 
 
 def cancel_chat_task(task_id: str) -> dict[str, Any] | None:

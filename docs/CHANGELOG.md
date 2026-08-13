@@ -6,6 +6,9 @@
 
 ### Added
 
+- Chat reasoning теперь отделён от финального ответа в normal/SSE lifecycle, появляется в terminal modal live после первого chunk и остаётся persisted после completion/cancel/error; Thinking имеет рабочие ON/OFF controls и отдельные persisted output/thinking budgets с честной one-pass Ollama policy.
+- User messages получили то же действие `Скопировать`, что и assistant messages: raw multiline/Markdown content передаётся в clipboard без изменения, а Chat → RAG остаётся отдельным действием.
+- Любое user message и completed assistant message можно явно отредактировать и добавить в profile-scoped RAG; role/source metadata сохраняется, reasoning и binary исключены, source удаляется независимо.
 - Settings → System can save Caddy's public LAN root certificate to the current computer for manual iPhone/Android transfer; the guarded no-store endpoint never serves a private key and is unavailable without live LAN HTTPS.
 - Интерактивный cross-platform setup (bootstrap) для macOS, Linux и Windows: native Terminal/PowerShell entry points, OS/package-manager detection, system/project dependency phases и final verification без загрузки моделей или пользовательских данных.
 - Подтверждённый dependency inventory и закреплённые версии прямых Python packages для воспроизводимого первого запуска.

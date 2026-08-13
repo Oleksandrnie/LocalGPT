@@ -10,6 +10,7 @@
 | Запустить или расширить проверки | [TESTING.md](TESTING.md) |
 | Посмотреть значимые изменения | [CHANGELOG.md](CHANGELOG.md) |
 | Спланировать незавершённую работу | [BACKLOG.md](BACKLOG.md) |
+| Реализовать аудит prompt/RAG grounding и LLM-безопасности | [PROMPT_RAG_SECURITY_AUDIT_SPEC.md](PROMPT_RAG_SECURITY_AUDIT_SPEC.md) |
 | Понять контракт и ограничения переноса моделей | [MODEL_TRANSFER_SPEC.md](MODEL_TRANSFER_SPEC.md) |
 | Работать coding-агентом | [AGENTS.md](../AGENTS.md) |
 

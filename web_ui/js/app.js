@@ -133,6 +133,8 @@ const ASR_ANALYSIS_MODES = [
 const MODEL_SETTINGS_OVERRIDE_KEYS = [
   "temperature",
   "max_tokens",
+  "output_tokens",
+  "thinking_tokens",
   "num_ctx",
   "ollama_keep_alive",
   "ollama_think",
@@ -355,6 +357,10 @@ const els = {
   visionRagTitleInput: document.getElementById("visionRagTitleInput"),
   visionRagTextInput: document.getElementById("visionRagTextInput"),
   visionRagStatus: document.getElementById("visionRagStatus"),
+  reasoningBackdrop: document.getElementById("reasoningBackdrop"),
+  reasoningCloseButton: document.getElementById("reasoningCloseButton"),
+  reasoningContent: document.getElementById("reasoningContent"),
+  reasoningStatus: document.getElementById("reasoningStatus"),
   toastStack: document.getElementById("toastStack"),
   toastNotice: document.getElementById("toastNotice"),
   toastTitle: document.getElementById("toastTitle"),
@@ -409,6 +415,7 @@ const els = {
   quickThinkingMobileMenu: document.getElementById("quickThinkingMobileMenu"),
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
+  thinkingTokensInput: document.getElementById("thinkingTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
   streamingEnabledToggle: document.getElementById("streamingEnabledToggle"),
   memTurnsInput: document.getElementById("memTurnsInput"),
@@ -505,6 +512,10 @@ const state = {
   messages: [],
   messageAttachments: {},
   visionRagSourceMessageId: null,
+  visionRagExportKind: null,
+  visionRagReturnFocus: null,
+  reasoningReturnFocus: null,
+  reasoningMessageId: null,
   installedModels: [],
   recommendedModels: [],
   visionModels: [],
@@ -1201,6 +1212,7 @@ function syncMobileScrollLock() {
     els.ragBackdrop,
     els.confirmBackdrop,
     els.visionRagBackdrop,
+    els.reasoningBackdrop,
   ].some(isOverlayOpen);
   const toolOpen = [
     els.asrToolWindow,
@@ -1988,12 +2000,17 @@ function prepareChatTaskReplay(task, baseContent = null) {
   }
   const message = findAssistantMessageForTask(task);
   const content = baseContent === null ? String(message?.content || "") : String(baseContent || "");
+  const reasoning = String(message?.live_reasoning || "");
   state.chatTaskReplay = {
     taskId,
     baseContent: content,
     replayedText: "",
     caughtUp: content.length === 0,
     lastSequence: 0,
+    baseReasoning: reasoning,
+    replayedReasoning: "",
+    reasoningCaughtUp: reasoning.length === 0,
+    lastReasoningSequence: 0,
   };
 }
 
@@ -2034,6 +2051,32 @@ function consumeChatTaskDelta(task, text, sequence = null) {
 
   // If persisted partial content was normalized unexpectedly, avoid duplicating old replayed chunks.
   replay.caughtUp = true;
+  return null;
+}
+
+function consumeChatTaskReasoning(task, text, sequence = null) {
+  const taskId = chatTaskIdFrom(task);
+  const chunk = String(text || "");
+  if (!chunk) return "";
+  const replay = state.chatTaskReplay;
+  const chunkSequence = normalizeChatDeltaSequence(sequence);
+  if (replay && replay.taskId === taskId && chunkSequence !== null) {
+    if (chunkSequence <= (replay.lastReasoningSequence || 0)) return null;
+    replay.lastReasoningSequence = chunkSequence;
+  }
+  if (!replay || replay.taskId !== taskId || replay.reasoningCaughtUp) return chunk;
+
+  const previousReplay = replay.replayedReasoning;
+  const nextReplay = `${previousReplay}${chunk}`;
+  const baseReasoning = replay.baseReasoning || "";
+  replay.replayedReasoning = nextReplay;
+  if (baseReasoning.startsWith(nextReplay)) return null;
+  if (nextReplay.startsWith(baseReasoning)) {
+    replay.reasoningCaughtUp = true;
+    const appendFrom = Math.max(0, baseReasoning.length - previousReplay.length);
+    return chunk.slice(appendFrom) || null;
+  }
+  replay.reasoningCaughtUp = true;
   return null;
 }
 
@@ -2219,10 +2262,15 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   const nextContent = Object.prototype.hasOwnProperty.call(updates, "content")
     ? String(updates.content || "")
     : `${current.content || ""}${updates.delta || ""}`;
+  const nextReasoning = Object.prototype.hasOwnProperty.call(updates, "reasoning")
+    ? String(updates.reasoning || "")
+    : `${current.live_reasoning || ""}${updates.reasoning_delta || ""}`;
   const nextMessage = {
     ...current,
     status,
     content: nextContent,
+    live_reasoning: nextReasoning,
+    has_reasoning: Boolean(current.has_reasoning || nextReasoning || updates.has_reasoning),
     model: updates.model || current.model || task?.model_name || "",
     error: Object.prototype.hasOwnProperty.call(updates, "error") ? updates.error : current.error,
     task_id: task?.id || task?.task_id || current.task_id,
@@ -2231,7 +2279,22 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   };
 
   state.messages = state.messages.map((message, itemIndex) => (itemIndex === index ? nextMessage : message));
-  renderMessages();
+  const shouldRenderMessages = !updates.reasoning_delta || !current.has_reasoning;
+  if (shouldRenderMessages) {
+    renderMessages();
+  }
+  if (String(state.reasoningMessageId || "") === String(nextMessage.id || "") && !els.reasoningBackdrop?.hidden) {
+    if (els.reasoningContent) {
+      els.reasoningContent.textContent = nextReasoning;
+      els.reasoningContent.scrollTop = els.reasoningContent.scrollHeight;
+    }
+    const isActiveReasoning = isAssistantMessageActive(nextMessage);
+    setInlineStatus(
+      els.reasoningStatus,
+      isActiveReasoning ? "Reasoning дополняется во время генерации…" : "Reasoning сохранён для выбранного ответа.",
+      isActiveReasoning ? "warning" : "success",
+    );
+  }
   if (state.autoScrollPinned) {
     scrollMessagesToBottom({ force: true });
   }
@@ -2329,6 +2392,18 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
           status: "streaming",
         });
       }
+    });
+
+    source.addEventListener("reasoning", (event) => {
+      if (settled) return;
+      const data = parseSsePayload(event);
+      const chunk = consumeChatTaskReasoning(task, data.text, data.sequence);
+      if (chunk === null || !chunk) return;
+      updateAssistantMessageFromTask(task, {
+        ...data,
+        reasoning_delta: chunk,
+        has_reasoning: true,
+      });
     });
 
     source.addEventListener("done", (event) => {
@@ -3906,11 +3981,92 @@ function visionSourceUserMessageForIndex(messageIndex) {
 
 function closeVisionRagDialog() {
   state.visionRagSourceMessageId = null;
+  state.visionRagExportKind = null;
   if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = true;
   syncMobileScrollLock();
+  const returnFocus = state.visionRagReturnFocus;
+  state.visionRagReturnFocus = null;
+  window.setTimeout(() => returnFocus?.focus?.(), 0);
 }
 
-function openVisionRagDialog(messageIndex) {
+function closeReasoningDialog() {
+  const messageId = state.reasoningMessageId;
+  if (els.reasoningBackdrop) els.reasoningBackdrop.hidden = true;
+  if (els.reasoningContent) els.reasoningContent.textContent = "";
+  state.reasoningMessageId = null;
+  syncMobileScrollLock();
+  const returnFocus = state.reasoningReturnFocus;
+  state.reasoningReturnFocus = null;
+  window.setTimeout(() => {
+    const currentTrigger = Array.from(document.querySelectorAll("[data-reasoning-message-id]"))
+      .find((button) => String(button.dataset.reasoningMessageId || "") === String(messageId || ""));
+    (currentTrigger || returnFocus)?.focus?.();
+  }, 0);
+}
+
+function mergeReasoningSnapshot(currentValue, incomingValue) {
+  const current = String(currentValue || "");
+  const incoming = String(incomingValue || "");
+  if (!current) return incoming;
+  if (!incoming || current.startsWith(incoming)) return current;
+  if (incoming.startsWith(current)) return incoming;
+  return incoming;
+}
+
+async function openReasoningDialog(messageId, trigger = null) {
+  const id = Number(messageId || 0);
+  if (!id || !state.activeProfileId) return;
+  state.reasoningReturnFocus = trigger;
+  state.reasoningMessageId = id;
+  const messageIndex = findMessageIndexById(id);
+  const message = messageIndex >= 0 ? state.messages[messageIndex] : null;
+  const localReasoning = String(message?.live_reasoning || "");
+  if (els.reasoningContent) els.reasoningContent.textContent = localReasoning;
+  setInlineStatus(
+    els.reasoningStatus,
+    isAssistantMessageActive(message) ? "Reasoning дополняется во время генерации…" : "Загружаю reasoning…",
+    "warning",
+  );
+  if (els.reasoningBackdrop) els.reasoningBackdrop.hidden = false;
+  syncMobileScrollLock();
+  if (isAssistantMessageActive(message)) {
+    window.setTimeout(() => els.reasoningContent?.focus(), 0);
+    return;
+  }
+  try {
+    const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+    const currentIndex = findMessageIndexById(id);
+    const currentMessage = currentIndex >= 0 ? state.messages[currentIndex] : null;
+    const mergedReasoning = mergeReasoningSnapshot(currentMessage?.live_reasoning, result.reasoning);
+    if (currentIndex >= 0) {
+      state.messages[currentIndex] = {
+        ...currentMessage,
+        live_reasoning: mergedReasoning,
+        has_reasoning: Boolean(mergedReasoning),
+      };
+    }
+    if (state.reasoningMessageId === id && els.reasoningContent) {
+      els.reasoningContent.textContent = mergedReasoning;
+    }
+    const isActiveReasoning = isAssistantMessageActive(currentMessage);
+    setInlineStatus(
+      els.reasoningStatus,
+      isActiveReasoning ? "Reasoning дополняется во время генерации…" : "Reasoning показан только для выбранного ответа.",
+      isActiveReasoning ? "warning" : "success",
+    );
+    window.setTimeout(() => els.reasoningContent?.focus(), 0);
+  } catch (error) {
+    const currentIndex = findMessageIndexById(id);
+    const accumulatedReasoning = currentIndex >= 0 ? String(state.messages[currentIndex]?.live_reasoning || "") : localReasoning;
+    if (accumulatedReasoning) {
+      setInlineStatus(els.reasoningStatus, "Показываю накопленный reasoning; live-обновление продолжается.", "warning");
+    } else {
+      setInlineStatus(els.reasoningStatus, `Не удалось открыть reasoning: ${error.message || error}`, "error");
+    }
+  }
+}
+
+function openVisionRagDialog(messageIndex, trigger = null) {
   const index = Number(messageIndex);
   const assistantMessage = Number.isFinite(index) ? state.messages[index] : null;
   const sourceMessage = visionSourceUserMessageForIndex(index);
@@ -3919,6 +4075,8 @@ function openVisionRagDialog(messageIndex) {
     return;
   }
   state.visionRagSourceMessageId = Number(sourceMessage.id);
+  state.visionRagExportKind = "vision";
+  state.visionRagReturnFocus = trigger;
   if (els.visionRagTitleInput) {
     els.visionRagTitleInput.value = String(sourceMessage.content || "Vision context").trim().slice(0, 160);
   }
@@ -3926,6 +4084,30 @@ function openVisionRagDialog(messageIndex) {
     els.visionRagTextInput.value = String(assistantMessage.content || "").trim();
   }
   setInlineStatus(els.visionRagStatus, "Проверьте и при необходимости отредактируйте производный текст.", "warning");
+  if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = false;
+  syncMobileScrollLock();
+  window.setTimeout(() => els.visionRagTextInput?.focus(), 0);
+}
+
+function openChatRagDialog(messageIndex, trigger = null) {
+  const index = Number(messageIndex);
+  const message = Number.isFinite(index) ? state.messages[index] : null;
+  const role = message?.role === "user" ? "user" : message?.role === "assistant" ? "assistant" : "";
+  const status = normalizeMessageStatus(message);
+  const content = String(message?.content || "").trim();
+  if (!message || !content || !role || (role === "assistant" && status !== "completed")) {
+    setFooter("В RAG можно добавить user-сообщение или завершённый ответ LocalGPT.", "warning");
+    return;
+  }
+  state.visionRagSourceMessageId = Number(message.id);
+  state.visionRagExportKind = "chat";
+  state.visionRagReturnFocus = trigger;
+  if (els.visionRagTitleInput) {
+    const prefix = role === "user" ? "Chat: вопрос" : "Chat: ответ";
+    els.visionRagTitleInput.value = `${prefix} — ${content}`.slice(0, 160);
+  }
+  if (els.visionRagTextInput) els.visionRagTextInput.value = content;
+  setInlineStatus(els.visionRagStatus, "Проверьте и при необходимости отредактируйте текст перед добавлением.", "warning");
   if (els.visionRagBackdrop) els.visionRagBackdrop.hidden = false;
   syncMobileScrollLock();
   window.setTimeout(() => els.visionRagTextInput?.focus(), 0);
@@ -3941,7 +4123,8 @@ async function saveVisionContextToRag() {
   els.visionRagSaveButton.disabled = true;
   setInlineStatus(els.visionRagStatus, "Индексирую только текстовый контекст…", "warning");
   try {
-    await request("/rag/vision-contexts", {
+    const isChatExport = state.visionRagExportKind === "chat";
+    await request(isChatExport ? "/rag/chat-contexts" : "/rag/vision-contexts", {
       method: "POST",
       body: {
         profile_id: state.activeProfileId,
@@ -3953,7 +4136,7 @@ async function saveVisionContextToRag() {
     });
     await loadRagStatus();
     closeVisionRagDialog();
-    setFooter("Текстовый vision-контекст сохранён в RAG.", "success");
+    setFooter(isChatExport ? "Сообщение добавлено в RAG." : "Текстовый vision-контекст сохранён в RAG.", "success");
   } catch (error) {
     setInlineStatus(els.visionRagStatus, `Не удалось сохранить: ${error.message || error}`, "error");
   } finally {
@@ -3977,11 +4160,13 @@ function renderMessages() {
       const errorText = String(message.error || "").trim();
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
-      const canCopy = role !== "user" && hasContent;
+      const canCopy = hasContent && (role === "user" || role === "assistant");
+      const hasReasoning = role === "assistant" && Boolean(message.has_reasoning);
       const canExportVision = role === "assistant"
         && status === "completed"
         && hasContent
         && Boolean(visionSourceUserMessageForIndex(index));
+      const canExportChat = hasContent && (role === "user" || (role === "assistant" && status === "completed"));
       const body = (() => {
         if (role !== "assistant") return formatRichMessage(content);
         if (status === "failed") {
@@ -4024,7 +4209,10 @@ function renderMessages() {
         <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}` : ""}">
           <article class="message-card">
             <div class="message-card__top">
-              <span class="message-card__author">${escapeHtml(author)}</span>
+              <span class="message-card__author-group">
+                <span class="message-card__author">${escapeHtml(author)}</span>
+                ${hasReasoning ? `<button class="message-reasoning-button" type="button" data-reasoning-message-id="${escapeHtml(String(message.id))}" aria-label="Открыть reasoning ответа LocalGPT" title="Открыть reasoning">&gt;_</button>` : ""}
+              </span>
               <span class="message-card__top-meta">
                 ${role === "assistant" && statusMeta.label ? `<span class="message-status-badge message-status-badge--${escapeHtml(status)}">${escapeHtml(statusMeta.label)}</span>` : ""}
                 <span class="message-card__time">${escapeHtml(formatDateTime(message.created_at))}</span>
@@ -4032,10 +4220,11 @@ function renderMessages() {
             </div>
             ${attachmentsMarkup}
             <div class="message-card__body">${body}</div>
-            ${canCopy || canExportVision || (role === "assistant" && status === "failed")
+            ${canCopy || canExportVision || canExportChat || (role === "assistant" && status === "failed")
               ? `<div class="message-card__actions">
                   ${role === "assistant" && status === "failed" ? `<button class="message-copy-button" type="button" data-retry-message-index="${index}">Повторить</button>` : ""}
                   ${canExportVision ? `<button class="message-copy-button" type="button" data-vision-rag-index="${index}">В RAG</button>` : ""}
+                  ${canExportChat ? `<button class="message-copy-button" type="button" data-chat-rag-index="${index}">Добавить в RAG</button>` : ""}
                   ${canCopy ? `<button class="message-copy-button" type="button" data-copy-index="${index}">Скопировать</button>` : ""}
                 </div>`
               : ""}
@@ -4514,6 +4703,8 @@ function renderModelSettings() {
   const values = {
     temperature: overrides.temperature ?? effective.temperature ?? "",
     max_tokens: overrides.max_tokens ?? effective.max_tokens ?? "",
+    output_tokens: overrides.output_tokens ?? effective.output_tokens ?? overrides.max_tokens ?? effective.max_tokens ?? "",
+    thinking_tokens: overrides.thinking_tokens ?? effective.thinking_tokens ?? "",
     num_ctx: overrides.num_ctx ?? effective.num_ctx ?? "",
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
     streaming_enabled: activeProfileStreamingEnabled(),
@@ -4538,7 +4729,11 @@ function renderModelSettings() {
   }
   if (els.maxTokensInput) {
     els.maxTokensInput.disabled = disabled;
-    els.maxTokensInput.value = values.max_tokens === "" ? "" : String(values.max_tokens);
+    els.maxTokensInput.value = values.output_tokens === "" ? "" : String(values.output_tokens);
+  }
+  if (els.thinkingTokensInput) {
+    els.thinkingTokensInput.disabled = disabled;
+    els.thinkingTokensInput.value = values.thinking_tokens === "" ? "" : String(values.thinking_tokens);
   }
   if (els.numCtxInput) {
     els.numCtxInput.disabled = disabled;
@@ -4652,14 +4847,14 @@ function renderQuickThinkingControl(rawValue = null) {
   els.quickThinkingControl.dataset.thinkingMode = visibleValue;
   els.quickThinkingButton.disabled = disabled;
   els.quickThinkingButton.textContent = "Thinking";
-  els.quickThinkingControl.hidden = true;
+  els.quickThinkingControl.hidden = !shouldShowThinkingToggleForModel(modelName);
   els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
   els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
   els.quickThinkingControl.title = hint;
 
   if (els.quickThinkingMobileControl) {
     els.quickThinkingMobileControl.dataset.thinkingMode = visibleValue;
-    els.quickThinkingMobileControl.hidden = true;
+    els.quickThinkingMobileControl.hidden = !shouldShowThinkingToggleForModel(modelName);
     els.quickThinkingMobileControl.title = hint;
   }
   if (els.quickThinkingMobileButton) {
@@ -9017,7 +9212,8 @@ async function saveModelSettingsFlow() {
       method: "POST",
       body: buildModelSettingsPayload({
         temperature: parseOptionalNumber(els.temperatureInput?.value, "float"),
-        max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
+        output_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
+        thinking_tokens: parseOptionalNumber(els.thinkingTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         ollama_keep_alive: collectKeepAliveValue(),
         ollama_think: modelSupportsThinking(modelName)
@@ -10443,7 +10639,19 @@ function bindEvents() {
 
     const visionRagButton = event.target.closest("[data-vision-rag-index]");
     if (visionRagButton) {
-      openVisionRagDialog(visionRagButton.dataset.visionRagIndex);
+      openVisionRagDialog(visionRagButton.dataset.visionRagIndex, visionRagButton);
+      return;
+    }
+
+    const chatRagButton = event.target.closest("[data-chat-rag-index]");
+    if (chatRagButton) {
+      openChatRagDialog(chatRagButton.dataset.chatRagIndex, chatRagButton);
+      return;
+    }
+
+    const reasoningButton = event.target.closest("[data-reasoning-message-id]");
+    if (reasoningButton) {
+      await openReasoningDialog(reasoningButton.dataset.reasoningMessageId, reasoningButton);
       return;
     }
 
@@ -10574,6 +10782,10 @@ function bindEvents() {
   els.visionRagSaveButton?.addEventListener("click", saveVisionContextToRag);
   els.visionRagBackdrop?.addEventListener("click", (event) => {
     if (event.target === els.visionRagBackdrop) closeVisionRagDialog();
+  });
+  els.reasoningCloseButton?.addEventListener("click", closeReasoningDialog);
+  els.reasoningBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.reasoningBackdrop) closeReasoningDialog();
   });
 
   els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
@@ -11352,6 +11564,10 @@ function bindEvents() {
       }
       if (!els.visionRagBackdrop?.hidden) {
         closeVisionRagDialog();
+        return;
+      }
+      if (!els.reasoningBackdrop?.hidden) {
+        closeReasoningDialog();
         return;
       }
       if (!els.ragQuickMenu?.hidden) {

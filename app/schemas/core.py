@@ -94,6 +94,8 @@ class ModelSettingsRequest(BaseModel):
     model_name: str
     temperature: float | None = None
     max_tokens: int | None = None
+    output_tokens: int | None = None
+    thinking_tokens: int | None = None
     num_ctx: int | None = None
     mem_turns: int | None = None
     ollama_keep_alive: str | None = None
@@ -122,6 +124,14 @@ class RagSearchRequest(BaseModel):
 
 
 class VisionContextExportRequest(BaseModel):
+    profile_id: int
+    session_id: str
+    message_id: int
+    title: str | None = None
+    text: str
+
+
+class ChatContextExportRequest(BaseModel):
     profile_id: int
     session_id: str
     message_id: int

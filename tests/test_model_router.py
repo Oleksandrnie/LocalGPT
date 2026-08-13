@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from app.schemas import ChatRequest
 from app.services import models as model_service
 from backend.apps.chat.routes import _apply_auto_router, _prepare_chat_request, start_chat_task
 from backend.apps.chat.service import ChatService
+from backend.apps.chat.service import apply_generation_budget_policy
 from backend.apps.chat.services import local_calculator, model_residency, model_router, ollama_runtime
 
 
@@ -153,7 +155,11 @@ class ModelRouterTestCase(unittest.TestCase):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(content="ok"),
+        ) as native_chat:
             reply = service.chat_completion(
                 "qwen2.5:7b-instruct",
                 messages,
@@ -173,7 +179,11 @@ class ModelRouterTestCase(unittest.TestCase):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(content="ok"),
+        ) as native_chat:
             reply = service.chat_completion(
                 "qwen2.5vl:3b",
                 messages,
@@ -205,7 +215,11 @@ class ModelRouterTestCase(unittest.TestCase):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion", return_value="ok") as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(content="ok"),
+        ) as native_chat:
             reply = service.chat_completion(
                 "qwen3:8b",
                 messages,
@@ -222,11 +236,40 @@ class ModelRouterTestCase(unittest.TestCase):
             think=False,
         )
 
+    def test_chat_completion_rejects_reasoning_only_length_exhaustion(self):
+        service = ChatService()
+        result = ollama_runtime.ChatCompletionResult(
+            content="",
+            reasoning="unfinished reasoning",
+            done_reason="length",
+            eval_count=64,
+        )
+
+        with patch.object(ollama_runtime, "chat_completion_result", return_value=result):
+            with self.assertRaises(HTTPException) as ctx:
+                service.chat_completion(
+                    "qwen3:8b",
+                    [{"role": "user", "content": "hello"}],
+                    settings={"max_tokens": 64, "ollama_think": "on"},
+                )
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(ctx.exception.detail["code"], "chat_final_answer_incomplete")
+
     def test_chat_completion_stream_passes_keep_alive_to_native_ollama_request(self):
         service = ChatService()
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "chat_completion_stream", return_value=iter(["при", "вет"])) as native_chat:
+        with patch.object(
+            ollama_runtime,
+            "chat_completion_stream_events",
+            return_value=iter(
+                [
+                    ollama_runtime.ChatStreamEvent(content="при"),
+                    ollama_runtime.ChatStreamEvent(content="вет", done=True, done_reason="stop"),
+                ]
+            ),
+        ) as native_chat:
             chunks = list(
                 service.chat_completion_stream(
                     "qwen2.5:7b-instruct",
@@ -252,9 +295,10 @@ class ModelRouterTestCase(unittest.TestCase):
             "_post_json_stream",
             return_value=iter(
                 [
+                    {"message": {"thinking": "Сначала"}},
                     {"message": {"content": "При"}},
                     {"message": {"content": "вет"}},
-                    {"done": True},
+                    {"done": True, "done_reason": "stop", "eval_count": 4},
                 ]
             ),
         ) as post_stream:
@@ -282,8 +326,16 @@ class ModelRouterTestCase(unittest.TestCase):
     def test_ollama_chat_passes_think_false_to_native_chat_payload(self):
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch.object(ollama_runtime, "_post_json", return_value={"message": {"content": "ok"}}) as post_json:
-            reply = ollama_runtime.chat_completion(
+        with patch.object(
+            ollama_runtime,
+            "_post_json",
+            return_value={
+                "message": {"content": "ok", "thinking": ""},
+                "done_reason": "stop",
+                "eval_count": 1,
+            },
+        ) as post_json:
+            result = ollama_runtime.chat_completion_result(
                 "qwen3:8b",
                 messages=messages,
                 temperature=0.1,
@@ -291,10 +343,42 @@ class ModelRouterTestCase(unittest.TestCase):
                 think=False,
             )
 
-        self.assertEqual(reply, "ok")
+        self.assertEqual(result.content, "ok")
+        self.assertEqual(result.reasoning, "")
+        self.assertEqual(result.done_reason, "stop")
+        self.assertEqual(result.eval_count, 1)
         payload = post_json.call_args.args[1]
         self.assertIs(payload["think"], False)
         self.assertEqual(payload["model"], "qwen3:8b")
+        self.assertTrue(payload["messages"][-1]["content"].endswith("/no_think"))
+        self.assertEqual(messages, [{"role": "user", "content": "hello"}])
+
+    def test_ollama_chat_stream_events_keep_reasoning_out_of_content_wrapper(self):
+        messages = [{"role": "user", "content": "hello"}]
+        with patch.object(
+            ollama_runtime,
+            "_post_json_stream",
+            return_value=iter(
+                [
+                    {"message": {"thinking": "reason ", "content": ""}},
+                    {"message": {"thinking": "trace", "content": ""}},
+                    {"message": {"content": "final"}},
+                    {"done": True, "done_reason": "stop", "eval_count": 7},
+                ]
+            ),
+        ):
+            events = list(
+                ollama_runtime.chat_completion_stream_events(
+                    "qwen3:8b",
+                    messages=messages,
+                    think=True,
+                )
+            )
+
+        self.assertEqual("".join(event.reasoning for event in events), "reason trace")
+        self.assertEqual("".join(event.content for event in events), "final")
+        self.assertTrue(events[-1].done)
+        self.assertEqual(events[-1].done_reason, "stop")
 
     def test_ollama_chat_retries_metal_failure_with_cpu_fallback(self):
         messages = [{"role": "user", "content": "hello"}]
@@ -969,6 +1053,70 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
 
         self.assertEqual(settings["effective"]["ollama_keep_alive"], "45s")
         self.assertEqual(settings["overrides"]["ollama_keep_alive"], "45s")
+
+    def test_model_settings_persist_independent_token_budgets(self):
+        db.upsert_model_settings(
+            self.profile_id,
+            "qwen3:8b",
+            output_tokens=700,
+            thinking_tokens=1300,
+            ollama_think="on",
+        )
+
+        settings = db.effective_settings(self.profile_id, "qwen3:8b", config.DEFAULT_SETTINGS)
+
+        self.assertEqual(settings["effective"]["output_tokens"], 700)
+        self.assertEqual(settings["effective"]["max_tokens"], 700)
+        self.assertEqual(settings["effective"]["thinking_tokens"], 1300)
+        self.assertEqual(settings["overrides"]["output_tokens"], 700)
+        self.assertEqual(settings["overrides"]["thinking_tokens"], 1300)
+
+    def test_legacy_max_tokens_migrates_to_output_tokens(self):
+        db.upsert_model_settings(self.profile_id, "qwen3:8b", max_tokens=777)
+        with sqlite3.connect(db.DB_PATH) as conn:
+            conn.execute(
+                "UPDATE model_settings SET output_tokens = NULL WHERE profile_id = ? AND model_name = ?",
+                (self.profile_id, "qwen3:8b"),
+            )
+            conn.commit()
+
+        db.init_db()
+        settings = db.effective_settings(self.profile_id, "qwen3:8b", config.DEFAULT_SETTINGS)
+
+        self.assertEqual(settings["effective"]["output_tokens"], 777)
+        self.assertEqual(settings["overrides"]["output_tokens"], 777)
+
+    def test_generation_budget_policy_separates_on_and_off_semantics(self):
+        enabled = apply_generation_budget_policy(
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "on"}
+        )
+        disabled = apply_generation_budget_policy(
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"}
+        )
+
+        self.assertEqual(enabled["provider_num_predict"], 2000)
+        self.assertEqual(enabled["generation_budget_policy"], "combined_compatibility_cap")
+        self.assertTrue(enabled["thinking_budget_applied"])
+        self.assertFalse(enabled["native_reasoning_budget_supported"])
+        self.assertEqual(disabled["provider_num_predict"], 700)
+        self.assertEqual(disabled["generation_budget_policy"], "output_only")
+        self.assertFalse(disabled["thinking_budget_applied"])
+
+    def test_runtime_uses_combined_cap_only_when_thinking_is_on(self):
+        service = ChatService()
+        enabled = service._runtime_kwargs(
+            "qwen3:8b",
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "on"},
+        )
+        disabled = service._runtime_kwargs(
+            "qwen3:8b",
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"},
+        )
+
+        self.assertEqual(enabled["max_tokens"], 2000)
+        self.assertTrue(enabled["think"])
+        self.assertEqual(disabled["max_tokens"], 700)
+        self.assertFalse(disabled["think"])
 
     def test_mem_turns_is_profile_setting_not_model_override(self):
         profile = db.update_profile_preferences(self.profile_id, {"settings": {"mem_turns": 10}})

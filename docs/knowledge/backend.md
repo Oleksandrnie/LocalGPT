@@ -63,6 +63,8 @@ Chat attachment HTTP boundary:
 
 `POST /chat/tasks` принимает только attachment ids. Router до запуска worker проверяет profile/session ownership, status, count и общий размер, связывает записи с единственным persisted user message/task и передаёт task-safe descriptors без публикации filesystem paths.
 
+Chat runtime возвращает reasoning и final content раздельно. Worker пишет reasoning chunks в отдельный task artifact, инкрементально сохраняет их в `chat_messages.reasoning` и публикует replay-safe SSE `reasoning` с собственной sequence; SSE `delta` и `chat_messages.content` содержат только final content. После terminal state полный reasoning доступен через `GET /chat/messages/{message_id}/reasoning?profile_id=...` после проверки profile/session ownership. Обычный history endpoint возвращает только `has_reasoning`, поэтому reasoning не участвует в следующем prompt.
+
 ## API boundaries
 
 Routers отвечают за HTTP validation/serialization и вызывают service/repository functions. Бизнес-логика не должна переноситься в `backend/server.py`.
@@ -86,7 +88,7 @@ Routers отвечают за HTTP validation/serialization и вызывают 
 
 Repository functions возвращают обычные dict. Runtime path берётся из `LOCALGPT_DB_PATH` или `app/db/localgpt.db`.
 
-Message lifecycle поля включают `status`, `model`, `error`, `task_id`, timestamps и `is_partial`. Legacy rows мигрируют в завершённое состояние.
+Message lifecycle поля включают `status`, `model`, `error`, `task_id`, timestamps, `is_partial` и отдельное bounded поле `reasoning`. Legacy rows мигрируют в завершённое состояние. Model settings хранят `output_tokens` и `thinking_tokens`; legacy `max_tokens` мигрирует как output budget и остаётся compatibility alias.
 
 `chat_attachments` хранит ownership, MIME/dimensions/size, backend-owned относительные storage/thumbnail paths, связи с message/task и lifecycle status. Binary/base64 не пишутся в таблицу или message content.
 
