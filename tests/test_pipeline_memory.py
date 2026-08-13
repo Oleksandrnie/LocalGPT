@@ -615,6 +615,28 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(updated["content"], "")
         self.assertEqual(updated["reasoning"], "unfinished reasoning")
 
+    def test_cancelled_task_keeps_reasoning_received_before_cancellation(self):
+        session = db.create_session(self.profile_id, "Cancelled reasoning", "qwen3:4b")
+        assistant_message = db.create_assistant_message(session["id"], model="qwen3:4b")
+        db.update_message(assistant_message["id"], reasoning="partial reasoning")
+        task = {
+            "id": "ct_cancelled_reasoning",
+            "state": "cancelling",
+            "session_id": session["id"],
+            "profile_id": self.profile_id,
+            "model_name": "qwen3:4b",
+            "assistant_message_id": assistant_message["id"],
+            "attachment_ids": [],
+            "cancel_requested": True,
+        }
+
+        chat_tasks._finalize_task_locked(task)
+
+        updated = db.get_message(assistant_message["id"])
+        self.assertEqual(task["state"], "cancelled")
+        self.assertEqual(updated["status"], "cancelled")
+        self.assertEqual(updated["reasoning"], "partial reasoning")
+
     def test_chat_task_events_streams_delta_events_from_task_artifact(self):
         session = db.create_session(self.profile_id, "SSE delta", "qwen2.5:7b-instruct")
         delta_path = Path(self.tmpdir.name) / "task.deltas.jsonl"

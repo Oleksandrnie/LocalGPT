@@ -34,6 +34,8 @@ test("reasoning SSE reveals the icon and updates an open modal live", () => {
   assert.match(javascript, /reasoning_delta: chunk/);
   assert.match(javascript, /has_reasoning: Boolean\(current\.has_reasoning \|\| nextReasoning \|\| updates\.has_reasoning\)/);
   assert.match(javascript, /state\.reasoningMessageId[\s\S]*els\.reasoningContent\.textContent = nextReasoning/);
+  assert.match(javascript, /const shouldRenderMessages = !updates\.reasoning_delta \|\| !current\.has_reasoning/);
+  assert.match(javascript, /if \(isAssistantMessageActive\(message\)\) \{[\s\S]*return;[\s\S]*const result = await request/);
   assert.match(javascript, /mergeReasoningSnapshot\(currentMessage\?\.live_reasoning, result\.reasoning\)/);
   assert.match(javascript, /lastReasoningSequence/);
 });

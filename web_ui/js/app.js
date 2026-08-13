@@ -2279,7 +2279,10 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   };
 
   state.messages = state.messages.map((message, itemIndex) => (itemIndex === index ? nextMessage : message));
-  renderMessages();
+  const shouldRenderMessages = !updates.reasoning_delta || !current.has_reasoning;
+  if (shouldRenderMessages) {
+    renderMessages();
+  }
   if (String(state.reasoningMessageId || "") === String(nextMessage.id || "") && !els.reasoningBackdrop?.hidden) {
     if (els.reasoningContent) {
       els.reasoningContent.textContent = nextReasoning;
@@ -4026,6 +4029,10 @@ async function openReasoningDialog(messageId, trigger = null) {
   );
   if (els.reasoningBackdrop) els.reasoningBackdrop.hidden = false;
   syncMobileScrollLock();
+  if (isAssistantMessageActive(message)) {
+    window.setTimeout(() => els.reasoningContent?.focus(), 0);
+    return;
+  }
   try {
     const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}`);
     const currentIndex = findMessageIndexById(id);

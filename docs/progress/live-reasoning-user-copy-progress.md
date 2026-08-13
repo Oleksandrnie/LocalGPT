@@ -144,6 +144,15 @@
 - Issues: none; interactive clipboard and action-density checks remain in Stage 3 browser smoke.
 - Next action: create Stage 2 checkpoint, then run proportional regression and browser QA with a multiline Markdown/special-character user message and a controlled slow reasoning stream.
 
+### 2026-08-13 — Stage 3 regression, browser QA, and documentation
+
+- Stage: Stage 3 completed; cleanup pending.
+- Completed: cancel-retention coverage, chunk-only render optimization, active-modal snapshot race fix, full proportional regression, live Ollama/browser smoke, desktop/mobile dark/light visual inspection, and affected permanent documentation.
+- Changed: active UI, focused reasoning tests, architecture/backend/UI/testing/changelog docs, and this progress file.
+- Validation: full Node matrix passed; full Python suite passed 244/247 with the same two ASR baseline failures and one order-dependent plugin failure; focused reasoning/cancel tests passed; live qwen3:4b reasoning icon appeared while Stop was active and modal grew from 4 to 55 chars in 700 ms; close/reopen retained the accumulated stream; final live/persisted reasoning matched after outer-whitespace normalization; exact multiline Markdown/special-character user clipboard copy passed; user/assistant Copy and RAG actions remained present; 1280px and 390px dark/light views had no horizontal overflow or visual regression.
+- Issues: browser QA initially exposed a duplicate-chunk race when the active modal merged a DB snapshot ahead of the SSE cursor; active generation now remains SSE-owned and persisted fetch is deferred until terminal state. Repeat smoke passed without internal duplication.
+- Next action: run final static/focused validation, create the documentation checkpoint, then delete this completed progress file in the cleanup commit.
+
 ## Changed files
 
 ### Added
@@ -155,6 +164,7 @@
 - `backend/apps/chat/tasks.py`, `backend/apps/chat/routes.py`.
 - `web_ui/js/app.js`.
 - `tests/test_pipeline_memory.py`, `tests/test_chat_vision_lifecycle.py`, `tests/chat_reasoning_ui.test.mjs`.
+- `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/CHANGELOG.md`, `docs/knowledge/backend.md`, `docs/knowledge/ui.md`.
 
 ### Deleted
 
@@ -162,26 +172,26 @@
 
 ## Validation results
 
-- Static checks: Stage 1 diff/compile/JS passed.
-- Unit/contract tests: 69 focused Python; reasoning UI 6/6, attachment UI 6/6, markdown 2/2 passed.
-- Integration/smoke tests: pending.
-- Manual/regression checks: pending.
-- Skipped checks and reasons: full suite and browser matrix deferred until implementation.
-- Remaining uncertainty: exact SSE reconnect timing will be covered by sequence-based replay tests.
+- Static checks: final `git diff --check`, Python compileall, and JS syntax checks passed after documentation.
+- Unit/contract tests: final Node matrix 25/25 passed; 6 dedicated reasoning lifecycle/cancel tests passed; 134-test focused Python matrix reproduced only the same two known ASR failures.
+- Integration/smoke tests: full Node matrix passed; full Python suite 244/247 with only the same known baseline failures.
+- Manual/regression checks: real qwen3:4b live modal growth, close/reopen, persistence, exact user clipboard, unchanged assistant Copy/RAG, desktop/mobile and dark/light passed.
+- Skipped checks and reasons: no heavy full transcript/ASR hardware pipeline or live network flows; outside affected scope.
+- Remaining uncertainty: none within the approved scope.
 
 ## Regressions and deferred work
 
 - New regressions: none.
 - Pre-existing failures: two ASR baseline failures from prior task; plugin registry order-dependent full-suite failure.
-- Resolved issues: none.
+- Resolved issues: active-modal DB snapshot could advance beyond the SSE cursor and duplicate later chunks; live generation now uses only the ordered SSE accumulator.
 - Unresolved blockers: none.
 - Deferred/technical debt: none.
 
 ## Documentation and permanent records
 
-- Architecture/testing/setup docs: inspect after implementation.
-- Module knowledge docs: backend/UI likely affected.
-- Changelog/release notes: update Unreleased if completed.
+- Architecture/testing/setup docs: affected architecture and testing contracts updated; setup unchanged.
+- Module knowledge docs: backend and UI contracts updated.
+- Changelog/release notes: Unreleased updated.
 - Backlog: no entry planned.
 - Canonical project/task index: none beyond changelog.
 
@@ -197,7 +207,7 @@
 
 ### Stage 2
 
-- Commit hash: pending creation.
+- Commit hash: `9142f1f`.
 - Message: `feat(ui): add copy action to user messages`.
 - Files: active message renderer and focused Node contract.
 - Validation: 15 Node tests plus diff/JS checks.
@@ -205,12 +215,12 @@
 
 ## Continuation state
 
-- Current stage: Stage 3 — regression, docs, and cleanup.
-- Last completed action: Stage 2 Node validation and progress update.
-- Current repository state: Stage 1 committed; validated Stage 2 diff pending checkpoint commit.
-- Known risks: live browser timing and message action density on mobile.
-- Next exact action: create Stage 2 checkpoint, then run full proportional tests and interactive localhost QA.
-- Next command or file: checkpoint Stage 2, then launch a temporary-DB backend for browser smoke.
+- Current stage: final validation and cleanup.
+- Last completed action: repeat browser QA after resolving the active snapshot/SSE race, followed by affected documentation updates.
+- Current repository state: Stages 1 and 2 committed; Stage 3 QA/docs diff pending checkpoint.
+- Known risks: none within scope; known full-suite failures remain pre-existing and separated.
+- Next exact action: run final validation, checkpoint Stage 3, delete this completed progress file, and create the cleanup commit.
+- Next command or file: final static/focused validation from `docs/TESTING.md`.
 
 ## Final checklist
 

@@ -63,7 +63,7 @@ Chat attachment HTTP boundary:
 
 `POST /chat/tasks` принимает только attachment ids. Router до запуска worker проверяет profile/session ownership, status, count и общий размер, связывает записи с единственным persisted user message/task и передаёт task-safe descriptors без публикации filesystem paths.
 
-Chat runtime возвращает reasoning и final content раздельно. Worker публикует SSE `delta` и накапливает `chat_messages.content` только из final content; reasoning сохраняется отдельно и доступен через `GET /chat/messages/{message_id}/reasoning?profile_id=...` после проверки profile/session ownership. Обычный history endpoint возвращает только `has_reasoning`, поэтому reasoning не участвует в следующем prompt.
+Chat runtime возвращает reasoning и final content раздельно. Worker пишет reasoning chunks в отдельный task artifact, инкрементально сохраняет их в `chat_messages.reasoning` и публикует replay-safe SSE `reasoning` с собственной sequence; SSE `delta` и `chat_messages.content` содержат только final content. После terminal state полный reasoning доступен через `GET /chat/messages/{message_id}/reasoning?profile_id=...` после проверки profile/session ownership. Обычный history endpoint возвращает только `has_reasoning`, поэтому reasoning не участвует в следующем prompt.
 
 ## API boundaries
 

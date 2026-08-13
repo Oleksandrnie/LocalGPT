@@ -88,9 +88,9 @@ Smoke считается пройденным, если `/health` возвращ
 
 - manual/auto model selection не загружает модель без явного действия;
 - missing/partial/installed/active states не смешиваются;
-- `stream=true` создаёт SSE `delta`, а reconnect не дублирует текст;
+- `stream=true` создаёт раздельные SSE `reasoning`/`delta`, а replay/reconnect не дублирует ни reasoning, ни final text;
 - non-streaming сохраняет тот же assistant lifecycle;
-- native reasoning отделён от final content в normal/streaming paths, не входит в SSE/history, а reasoning-only length exhaustion завершается ошибкой;
+- native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history, а reasoning-only length exhaustion завершается ошибкой;
 - `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
 - RAG context попадает в prompt только активного профиля;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
@@ -179,7 +179,7 @@ Model-transfer tests используют только temporary synthetic files
 - ASR/TTS/OCR tool docks;
 - RAG panel и context section;
 - image picker/paste/drop, attachment preview/remove/history и Vision → RAG dialog;
-- reasoning icon/modal, два token budget поля, быстрый Thinking и общий Chat → RAG dialog;
+- live reasoning icon/modal, close/reopen и cancel/error retention, два token budget поля, быстрый Thinking, user/assistant Copy и общий Chat → RAG dialog;
 - Vision settings/library, runtime capability state и cache cleanup;
 - Plugins и network-address menu;
 - keyboard focus, aria states и reduced-motion-sensitive flows.

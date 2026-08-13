@@ -47,9 +47,11 @@ State частично хранится в profile preferences/backend, част
 
 Assistant card рендерится из persisted `message.status`. Optimistic placeholder не является источником истины. Markdown проходит через `markdown.mjs`; raw model HTML не вставляется напрямую.
 
-Если assistant message имеет `has_reasoning`, рядом с автором показывается keyboard-accessible terminal icon `>_`. Он лениво загружает reasoning в read-only dialog; Escape/backdrop/close возвращают focus на исходную кнопку. Reasoning не вставляется в body ответа.
+После первого reasoning chunk у генерируемого assistant message появляется keyboard-accessible terminal icon `>_`. Read-only dialog сразу показывает накопленный reasoning и обновляется по SSE без повторного открытия; close/reopen сохраняет текущий live snapshot. После terminal state тот же dialog лениво загружает persisted reasoning. Escape/backdrop/close возвращают focus на исходную кнопку, а reasoning никогда не вставляется в body ответа.
 
 Каждое непустое user message и completed assistant message имеет действие `Добавить в RAG`. Оно открывает общий editable title/text dialog; cancel ничего не индексирует, confirm отправляет только отредактированный текст. Vision export использует тот же dialog pattern.
+
+Каждое непустое user и assistant message имеет действие `Скопировать`: общий clipboard path получает raw `message.content` выбранной карточки без Markdown-нормализации и показывает существующее подтверждение результата. User `Добавить в RAG` остаётся независимым действием.
 
 Image composer принимает PNG/JPEG/WebP через picker, paste и multi-file drop. До отправки карточка показывает thumbnail, upload/error state и отдельную keyboard-accessible кнопку удаления. Обычная text paste не перехватывается, а backend settings остаются источником истины для count/byte/pixel/side limits. История загружает attachment metadata отдельно и рендерит ownership-checked thumbnail/media URLs, не binary data URI.
 
