@@ -355,6 +355,10 @@ const els = {
   visionRagTitleInput: document.getElementById("visionRagTitleInput"),
   visionRagTextInput: document.getElementById("visionRagTextInput"),
   visionRagStatus: document.getElementById("visionRagStatus"),
+  reasoningBackdrop: document.getElementById("reasoningBackdrop"),
+  reasoningCloseButton: document.getElementById("reasoningCloseButton"),
+  reasoningContent: document.getElementById("reasoningContent"),
+  reasoningStatus: document.getElementById("reasoningStatus"),
   toastStack: document.getElementById("toastStack"),
   toastNotice: document.getElementById("toastNotice"),
   toastTitle: document.getElementById("toastTitle"),
@@ -409,6 +413,7 @@ const els = {
   quickThinkingMobileMenu: document.getElementById("quickThinkingMobileMenu"),
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
+  thinkingTokensInput: document.getElementById("thinkingTokensInput"),
   numCtxInput: document.getElementById("numCtxInput"),
   streamingEnabledToggle: document.getElementById("streamingEnabledToggle"),
   memTurnsInput: document.getElementById("memTurnsInput"),
@@ -505,6 +510,7 @@ const state = {
   messages: [],
   messageAttachments: {},
   visionRagSourceMessageId: null,
+  reasoningReturnFocus: null,
   installedModels: [],
   recommendedModels: [],
   visionModels: [],
@@ -1201,6 +1207,7 @@ function syncMobileScrollLock() {
     els.ragBackdrop,
     els.confirmBackdrop,
     els.visionRagBackdrop,
+    els.reasoningBackdrop,
   ].some(isOverlayOpen);
   const toolOpen = [
     els.asrToolWindow,
@@ -3910,6 +3917,33 @@ function closeVisionRagDialog() {
   syncMobileScrollLock();
 }
 
+function closeReasoningDialog() {
+  if (els.reasoningBackdrop) els.reasoningBackdrop.hidden = true;
+  if (els.reasoningContent) els.reasoningContent.textContent = "";
+  syncMobileScrollLock();
+  const returnFocus = state.reasoningReturnFocus;
+  state.reasoningReturnFocus = null;
+  window.setTimeout(() => returnFocus?.focus?.(), 0);
+}
+
+async function openReasoningDialog(messageId, trigger = null) {
+  const id = Number(messageId || 0);
+  if (!id || !state.activeProfileId) return;
+  state.reasoningReturnFocus = trigger;
+  if (els.reasoningContent) els.reasoningContent.textContent = "";
+  setInlineStatus(els.reasoningStatus, "Загружаю reasoning…", "warning");
+  if (els.reasoningBackdrop) els.reasoningBackdrop.hidden = false;
+  syncMobileScrollLock();
+  try {
+    const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+    if (els.reasoningContent) els.reasoningContent.textContent = String(result.reasoning || "");
+    setInlineStatus(els.reasoningStatus, "Reasoning показан только для выбранного ответа.", "success");
+    window.setTimeout(() => els.reasoningContent?.focus(), 0);
+  } catch (error) {
+    setInlineStatus(els.reasoningStatus, `Не удалось открыть reasoning: ${error.message || error}`, "error");
+  }
+}
+
 function openVisionRagDialog(messageIndex) {
   const index = Number(messageIndex);
   const assistantMessage = Number.isFinite(index) ? state.messages[index] : null;
@@ -3978,6 +4012,7 @@ function renderMessages() {
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
       const canCopy = role !== "user" && hasContent;
+      const hasReasoning = role === "assistant" && Boolean(message.has_reasoning);
       const canExportVision = role === "assistant"
         && status === "completed"
         && hasContent
@@ -4024,7 +4059,10 @@ function renderMessages() {
         <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}` : ""}">
           <article class="message-card">
             <div class="message-card__top">
-              <span class="message-card__author">${escapeHtml(author)}</span>
+              <span class="message-card__author-group">
+                <span class="message-card__author">${escapeHtml(author)}</span>
+                ${hasReasoning ? `<button class="message-reasoning-button" type="button" data-reasoning-message-id="${escapeHtml(String(message.id))}" aria-label="Открыть reasoning ответа LocalGPT" title="Открыть reasoning">&gt;_</button>` : ""}
+              </span>
               <span class="message-card__top-meta">
                 ${role === "assistant" && statusMeta.label ? `<span class="message-status-badge message-status-badge--${escapeHtml(status)}">${escapeHtml(statusMeta.label)}</span>` : ""}
                 <span class="message-card__time">${escapeHtml(formatDateTime(message.created_at))}</span>
@@ -4514,6 +4552,8 @@ function renderModelSettings() {
   const values = {
     temperature: overrides.temperature ?? effective.temperature ?? "",
     max_tokens: overrides.max_tokens ?? effective.max_tokens ?? "",
+    output_tokens: overrides.output_tokens ?? effective.output_tokens ?? overrides.max_tokens ?? effective.max_tokens ?? "",
+    thinking_tokens: overrides.thinking_tokens ?? effective.thinking_tokens ?? "",
     num_ctx: overrides.num_ctx ?? effective.num_ctx ?? "",
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
     streaming_enabled: activeProfileStreamingEnabled(),
@@ -4538,7 +4578,11 @@ function renderModelSettings() {
   }
   if (els.maxTokensInput) {
     els.maxTokensInput.disabled = disabled;
-    els.maxTokensInput.value = values.max_tokens === "" ? "" : String(values.max_tokens);
+    els.maxTokensInput.value = values.output_tokens === "" ? "" : String(values.output_tokens);
+  }
+  if (els.thinkingTokensInput) {
+    els.thinkingTokensInput.disabled = disabled;
+    els.thinkingTokensInput.value = values.thinking_tokens === "" ? "" : String(values.thinking_tokens);
   }
   if (els.numCtxInput) {
     els.numCtxInput.disabled = disabled;
@@ -4652,14 +4696,14 @@ function renderQuickThinkingControl(rawValue = null) {
   els.quickThinkingControl.dataset.thinkingMode = visibleValue;
   els.quickThinkingButton.disabled = disabled;
   els.quickThinkingButton.textContent = "Thinking";
-  els.quickThinkingControl.hidden = true;
+  els.quickThinkingControl.hidden = !shouldShowThinkingToggleForModel(modelName);
   els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
   els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
   els.quickThinkingControl.title = hint;
 
   if (els.quickThinkingMobileControl) {
     els.quickThinkingMobileControl.dataset.thinkingMode = visibleValue;
-    els.quickThinkingMobileControl.hidden = true;
+    els.quickThinkingMobileControl.hidden = !shouldShowThinkingToggleForModel(modelName);
     els.quickThinkingMobileControl.title = hint;
   }
   if (els.quickThinkingMobileButton) {
@@ -9017,7 +9061,8 @@ async function saveModelSettingsFlow() {
       method: "POST",
       body: buildModelSettingsPayload({
         temperature: parseOptionalNumber(els.temperatureInput?.value, "float"),
-        max_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
+        output_tokens: parseOptionalNumber(els.maxTokensInput?.value, "int"),
+        thinking_tokens: parseOptionalNumber(els.thinkingTokensInput?.value, "int"),
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         ollama_keep_alive: collectKeepAliveValue(),
         ollama_think: modelSupportsThinking(modelName)
@@ -10447,6 +10492,12 @@ function bindEvents() {
       return;
     }
 
+    const reasoningButton = event.target.closest("[data-reasoning-message-id]");
+    if (reasoningButton) {
+      await openReasoningDialog(reasoningButton.dataset.reasoningMessageId, reasoningButton);
+      return;
+    }
+
     const copyButton = event.target.closest("[data-copy-index]");
     if (!copyButton) return;
     try {
@@ -10574,6 +10625,10 @@ function bindEvents() {
   els.visionRagSaveButton?.addEventListener("click", saveVisionContextToRag);
   els.visionRagBackdrop?.addEventListener("click", (event) => {
     if (event.target === els.visionRagBackdrop) closeVisionRagDialog();
+  });
+  els.reasoningCloseButton?.addEventListener("click", closeReasoningDialog);
+  els.reasoningBackdrop?.addEventListener("click", (event) => {
+    if (event.target === els.reasoningBackdrop) closeReasoningDialog();
   });
 
   els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
@@ -11352,6 +11407,10 @@ function bindEvents() {
       }
       if (!els.visionRagBackdrop?.hidden) {
         closeVisionRagDialog();
+        return;
+      }
+      if (!els.reasoningBackdrop?.hidden) {
+        closeReasoningDialog();
         return;
       }
       if (!els.ragQuickMenu?.hidden) {

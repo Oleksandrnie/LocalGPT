@@ -9,7 +9,7 @@
 - Branch: `feature/chat-thinking-reasoning-rag`, created from clean `dev` aligned with `origin/dev` on 2026-08-13.
 - Started: 2026-08-13.
 - Current status: in_progress.
-- Current stage: Stage 3 — reasoning and settings UI.
+- Current stage: Stage 4 — Chat messages to RAG.
 
 ## Instructions and precedence
 
@@ -101,7 +101,7 @@
 ### Stage 3 — Reasoning and settings UI
 
 - Goal: expose the two budgets and a per-assistant reasoning viewer without changing normal answer rendering.
-- Status: in_progress.
+- Status: completed.
 - Actions: add settings controls; render terminal icon only for stored reasoning; add accessible read-only modal, close/Escape/focus behavior, responsive/theme styles, and static UI tests.
 - Validation: Node contract tests, JS syntax, manual desktop/mobile and dark/light inspection with keyboard/focus checks.
 - Completion criterion: settings round-trip from UI and the selected completed message's reasoning opens only when present.
@@ -111,7 +111,7 @@
 ### Stage 4 — Chat messages to RAG
 
 - Goal: explicitly export editable user or completed assistant content through a shared profile-isolated derived-text pipeline.
-- Status: pending.
+- Status: in_progress.
 - Actions: generalize/reuse text indexing; add ownership/status/role validation and metadata; adapt the existing modal/action UI; keep Vision export compatibility; add retrieval/delete/isolation tests.
 - Validation: focused RAG API/service tests and Node UI tests for both roles, cancel/confirm, metadata, absence of reasoning, retrieval, and independent deletion.
 - Completion criterion: both roles support manual edit → ingest → retrieval with correct role metadata and no reasoning leakage.
@@ -174,13 +174,22 @@
 - Issues: no Stage 2 regression; existing ASR/model-manifest findings remain.
 - Next action: add LLM budget controls and accessible lazy-loaded reasoning modal/icon in active UI.
 
+### 2026-08-13 — Stage 3 settings and reasoning UI
+
+- Stage: 3 completed; Stage 4 started.
+- Completed: separate Output/Thinking token controls, thinking-capable quick toggle visibility, terminal-style reasoning indicator, lazy profile-owned reasoning fetch, accessible read-only modal, focus return, Escape/backdrop close, theme/mobile styles, and static UI contracts.
+- Changed: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, `tests/chat_reasoning_ui.test.mjs`.
+- Validation: diff check, JS syntax, reasoning UI (4), attachment/Vision UI (6), and markdown rendering (2) Node tests.
+- Issues: browser viewport/theme/focus matrix remains scheduled for Stage 5 after the shared Chat → RAG modal is complete.
+- Next action: add the profile-isolated Chat → RAG backend contract and reuse the editable derived-text UI for user and completed assistant messages.
+
 ## Validation results
 
 - Static checks: baseline passed.
 - Unit/contract tests: Stage 1 focused set passed 62 tests after changes.
 - Stage 2 unit/contract tests: 67 focused tests passed, including settings validation, legacy migration, profile isolation, storage cap, and both worker modes.
 - Integration/smoke tests: native qwen3:4b audit exposed an incompatible OFF manifest; adapter ON/OFF acceptance passed on installed qwen3:0.6b with `keep_alive=0`.
-- Manual/regression checks: pending implementation.
+- Manual/regression checks: static UI contracts passed; interactive browser matrix deferred until the final shared modal is implemented.
 - Skipped checks: full Python suite and browser/UI matrix deferred to Stage 5; no changes exist yet.
 - Remaining uncertainty: exact combined safety cap/defaults must be reconciled with existing config ranges and context limits during Stage 2.
 
@@ -202,19 +211,26 @@
 
 ### Stage 2
 
-- Commit hash: pending creation.
+- Commit hash: `c77195d`.
 - Message: `feat(chat): persist reasoning and separate token budgets`.
 - Files: settings/schema/routes/runtime policy/task persistence and focused tests.
 - Validation: diff/compile checks and 67 focused tests.
 
+### Stage 3
+
+- Commit hash: pending creation.
+- Message: `feat(ui): expose reasoning and separate chat budgets`.
+- Files: active HTML/JS/CSS and focused Node UI contract tests.
+- Validation: diff/JS checks and 12 focused Node tests.
+
 ## Continuation state
 
-- Current stage: Stage 3 — reasoning and settings UI.
-- Last completed action: Stage 2 focused validation; checkpoint preparation.
-- Current repository state: Stage 1 committed; validated Stage 2 diff plus progress update pending commit.
-- Known risks: modal focus/Escape behavior and mobile action density.
-- Next exact action: create Stage 2 checkpoint, then add static UI contract tests before HTML/JS/CSS changes.
-- Next files: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, focused Node UI test.
+- Current stage: Stage 4 — Chat messages to RAG.
+- Last completed action: Stage 3 static UI validation and progress update.
+- Current repository state: Stages 1–2 committed; validated Stage 3 diff pending checkpoint commit.
+- Known risks: shared Chat/Vision modal state and mobile action density.
+- Next exact action: create the Stage 3 checkpoint, then implement Chat → RAG request/ownership/indexing tests before wiring UI actions.
+- Next files: `backend/apps/rag/routes.py`, `backend/apps/rag/service.py`, request schema, focused Python tests, then active UI files.
 
 ## Final checklist
 

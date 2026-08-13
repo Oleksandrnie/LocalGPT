@@ -2204,6 +2204,53 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     color: rgba(255, 255, 255, 0.72);
 }
 
+.message-card__author-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+
+.message-reasoning-button {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid rgba(174, 153, 255, 0.3);
+    border-radius: 8px;
+    background: rgba(124, 92, 255, 0.12);
+    color: #d9ceff;
+    font: 700 11px/1 "SF Mono", "JetBrains Mono", monospace;
+}
+
+.message-reasoning-button:hover,
+.message-reasoning-button:focus-visible {
+    border-color: var(--accent);
+    background: rgba(124, 92, 255, 0.22);
+    outline: none;
+}
+
+.reasoning-dialog__content {
+    max-height: min(58vh, 620px);
+    margin: 0;
+    padding: 16px;
+    overflow: auto;
+    border: 1px solid rgba(140, 160, 190, 0.2);
+    border-radius: 14px;
+    background: rgba(8, 14, 26, 0.72);
+    color: var(--text-main);
+    font: 13px/1.6 "SF Mono", "JetBrains Mono", "Cascadia Code", monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.reasoning-dialog__content:focus-visible {
+    border-color: var(--accent);
+    outline: 2px solid rgba(124, 92, 255, 0.25);
+    outline-offset: 2px;
+}
+
 .message-card__time {
     color: rgba(255, 255, 255, 0.54);
     font-size: 12px;
@@ -5780,6 +5827,17 @@ body.theme-light .message-card__author {
     color: var(--accent-primary);
 }
 
+body.theme-light .message-reasoning-button {
+    color: #5235ad;
+    background: rgba(98, 68, 190, 0.1);
+    border-color: rgba(98, 68, 190, 0.24);
+}
+
+body.theme-light .reasoning-dialog__content {
+    background: rgba(247, 248, 252, 0.95);
+    color: #202434;
+}
+
 body.theme-light .message-card__time {
     color: rgba(31, 41, 55, 0.48);
 }
@@ -7453,6 +7511,17 @@ body.theme-light .tool-window__resize::before {
     .message-card {
         max-width: 100%;
         padding: 14px 15px 12px;
+    }
+
+    .message-reasoning-button {
+        width: 34px;
+        height: 34px;
+    }
+
+    .reasoning-dialog__content {
+        max-height: 52vh;
+        padding: 13px;
+        font-size: 12px;
     }
 
     .scroll-jump {
