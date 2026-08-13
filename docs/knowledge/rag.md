@@ -59,7 +59,7 @@ Default search strategy `hybrid_v1`:
 5. исключает assistant-authored Chat exports из factual evidence;
 6. возвращает top-k chunks с source/chunk provenance и внутренними score components;
 7. отдельно оценивает facets как `supported`, `partial`, `conflict` или `not_found` и прикладывает короткие evidence spans;
-8. `build_context()` укладывает diagnostics и selected chunks в `max_chars`.
+8. `build_context()` сначала сжимает слишком объёмную diagnostics до facet/status metadata, затем делит оставшийся `max_chars` между всеми selected chunks; длинный первый фрагмент не может вытеснить остальные доказательства.
 
 Для capability follow-up с platform/system vocabulary ranking дополнительно повышает chunks с плотным прямым перечнем поддержки/доработки или несколькими платформами/системами. Это общий lexical сигнал без списка конкретных брендов. Conflict diagnostics связывает год с тем же chunk, где найдено exclusive/alternative утверждение, чтобы случайные годы из соседнего boilerplate не создавали ложный конфликт.
 

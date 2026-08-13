@@ -955,16 +955,39 @@ def build_context(
     ]
     total = len(parts[0]) + 2
     if diagnostics:
+        diagnostic_budget = min(2000, max(256, max_chars // 3))
         diagnostic_block = "RAG_EVIDENCE_DIAGNOSTICS_JSON:\n" + json.dumps(
             diagnostics,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
+        if len(diagnostic_block) > diagnostic_budget:
+            compact_diagnostics = {
+                "strategy": diagnostics.get("strategy"),
+                "overall_status": diagnostics.get("overall_status"),
+                "facet_coverage": [
+                    {
+                        "facet_id": item.get("facet_id"),
+                        "query": str(item.get("query") or "")[:240],
+                        "status": item.get("status"),
+                        "conflict_years": item.get("conflict_years") or [],
+                    }
+                    for item in (diagnostics.get("facet_coverage") or [])[:8]
+                ],
+                "selected_chunks": diagnostics.get("selected_chunks"),
+                "selected_sources": diagnostics.get("selected_sources"),
+            }
+            diagnostic_block = "RAG_EVIDENCE_DIAGNOSTICS_JSON:\n" + json.dumps(
+                compact_diagnostics,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         if total + len(diagnostic_block) + 2 <= max_chars:
             parts.append(diagnostic_block)
             total += len(diagnostic_block) + 2
-    for item in chunks:
+    for index, item in enumerate(chunks):
         source = item.get("source_id") or item.get("title") or "unknown"
         meta = item.get("document_metadata") or {}
         role = meta.get("source_role") or "context"
@@ -973,13 +996,24 @@ def build_context(
             "chunk_id": item.get("chunk_id"),
             "chunk_index": item.get("chunk_index"),
         }
-        block = (
+        header = (
             f"[{source} | {role} | score={item.get('score')} | evidence_status={item.get('evidence_status') or 'unclassified'}]"
             f"\nPROVENANCE_JSON: {json.dumps(provenance, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
-            f"\n{item.get('content') or ''}"
         ).strip()
-        if not block:
+        content = str(item.get("content") or "").strip()
+        if not header or not content:
             continue
+
+        remaining_items = max(1, len(chunks) - index)
+        remaining_budget = max_chars - total
+        block_budget = max(0, (remaining_budget // remaining_items) - 2)
+        if block_budget <= len(header) + 1:
+            break
+        marker = "\n[chunk truncated to shared RAG context budget]"
+        content_budget = block_budget - len(header) - 1
+        if len(content) > content_budget:
+            content = content[: max(0, content_budget - len(marker))].rstrip() + marker
+        block = f"{header}\n{content}".strip()
         if total + len(block) + 2 > max_chars:
             break
         parts.append(block)

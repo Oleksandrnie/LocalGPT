@@ -9,14 +9,14 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 7B — provider/RAG/mobile corrective implementation.
+- Current stage: Stage 8 pending — domain-independent retrieval evaluation baseline.
 
 ## Instructions and precedence
 
-- Direct user requirements: continue the completed security audit using the supplemented specification and `$project-progress-workflow`.
+- Direct user requirements: continue the completed security audit using the supplemented specification and `$project-progress-workflow`; extend the work to domain-independent semantic RAG, execute exactly one stage per continuation, commit it, and stop until the user manually resumes.
 - Task-specific requirements: automated profile/session isolation matrix; exact history-turn semantics; controlled live Ollama validation; LAN via Caddy HTTPS and a second device; affected documentation only.
 - Applicable AGENTS.md rules: preserve unrelated work, verify claims against code, validate each stage, make focused authorized checkpoints, keep one task progress file, and do not claim live checks that did not run.
-- Conflicts and resolutions: the specification contains a malformed/empty remote-access fragment after Stage 3A. Its explicit Future section removes Tailscale and model router from scope, so this continuation maps its three intact workstreams to prior-audit Stage 5, Stage 6, and Stage 7A (LAN only).
+- Conflicts and resolutions: the specification contains a malformed/empty remote-access fragment after Stage 3A. Its explicit Future section removes Tailscale and model router from scope, so this continuation maps its three intact workstreams to prior-audit Stage 5, Stage 6, and Stage 7A (LAN only). The original scope excluded a new embedding stack; the user's later explicit request expands Stage 7C into a staged, domain-independent semantic-RAG continuation, which takes precedence. No corpus/company-specific retrieval rules are allowed.
 - Git authorization: the task specification assigns Implementation/Git to Codex; focused stage commits are authorized. No new branch is needed because the existing feature branch contains the six prior audit checkpoints.
 
 ## Scope lock
@@ -29,10 +29,11 @@
 - Controlled synthetic live-model jailbreak harness/report for an installed Ollama chat model.
 - LAN launcher/runtime-port/Caddy/CORS/admin-token contracts and real host plus second-device smoke.
 - Affected architecture, backend, RAG, UI, networking, testing, changelog, backlog, and audit follow-up records only.
+- Domain-independent retrieval evaluation, local multilingual embedding provider/versioning, hybrid candidate fusion, optional local reranking, bounded context packing, reindex lifecycle, and proportional sequential validation.
 
 ### Out of scope
 
-- User identity/login/RBAC, public SaaS/network exposure, external agents/tools, new embedding stack, Tailscale validation, model router validation, or broad UI refactoring.
+- User identity/login/RBAC, public SaaS/network exposure, external agents/tools, Tailscale validation, model router validation, broad UI refactoring, corpus-specific brands/phrases, and tuning production policy to the temporary work corpus.
 - Automatic promotion of session-derived data to profile-wide RAG. A new promotion UX is not required unless an existing product path depends on it.
 
 ### Affected areas and expected files
@@ -148,6 +149,78 @@
 - Dependencies: Stage 7A/7B checkpoint committed and all models kept sequential to protect Mac thermals.
 - Proposed checkpoint commit: to be determined after diagnosis.
 
+### Stage 7D — Universal RAG context packing
+
+- Goal: ensure selected evidence, rather than the first long chunk or verbose diagnostics, receives the bounded prompt budget.
+- Status: completed.
+- Actions: compact oversized diagnostics to facet/status metadata; divide remaining characters across all selected non-empty chunks; preserve provenance and an explicit truncation marker; add domain-neutral regressions and update the RAG contract.
+- Expected result: when headers fit, every selected chunk contributes evidence within `rag_max_context_chars`, independent of corpus content or downstream LLM.
+- Validation: focused prompt/RAG-security tests, real-corpus metadata-only packing observation, compileall, and diff check. No model run.
+- Completion criterion: bounded context includes every selected synthetic and real-test chunk; oversized diagnostics cannot starve evidence; Stage 7D introduces no corpus-specific code.
+- Affected files: RAG context builder, focused regression tests, RAG knowledge document, active progress record.
+- Dependencies: Stage 7C diagnosis and user rejection of corpus-specific ranking rules.
+- Proposed checkpoint commit: `fix(rag): distribute context budget across evidence`.
+
+### Stage 8 — Domain-independent retrieval evaluation baseline
+
+- Goal: measure retrieval quality before choosing or integrating a semantic model.
+- Status: pending.
+- Actions: add small synthetic corpora from multiple unrelated domains, paraphrase/typo/negative/conflict queries, and metadata-only recall@k/MRR/context-inclusion/resource metrics; record current hashing/lexical baseline.
+- Expected result: future retrieval changes are accepted by cross-domain evidence rather than one company corpus.
+- Validation: deterministic offline eval tests and bounded performance check.
+- Completion criterion: repeatable baseline exposes semantic misses without real/client text in repository artifacts.
+- Proposed checkpoint commit: `test(rag): add cross-domain retrieval baseline`.
+
+### Stage 9 — Local multilingual embedding infrastructure
+
+- Goal: replace hashing as semantic evidence with a versioned local multilingual embedding provider while preserving explicit offline behavior.
+- Status: pending.
+- Actions: select a resource-bounded model using primary model documentation; add provider abstraction and dependency/resource gates; persist provider/model/version/dimension; implement explicit reindex requirement and rollback to the previous indexed generation without silent fallback.
+- Expected result: arbitrary supported-language chunks and queries receive comparable semantic vectors; stale/incompatible vectors are never mixed.
+- Validation: provider contract tests, deterministic stub vectors, schema/reindex/rollback tests, then one bounded local provider smoke if the model is available or download is separately authorized.
+- Completion criterion: versioned embeddings can index/search a temporary corpus and unload/release resources predictably.
+- Proposed checkpoint commit: `feat(rag): add versioned local embeddings`.
+
+### Stage 10 — Hybrid lexical and semantic candidate fusion
+
+- Goal: retrieve relevant evidence through both exact terminology and paraphrased meaning.
+- Status: pending.
+- Actions: retrieve lexical and semantic candidate pools, normalize and fuse ranks with a domain-neutral method, preserve provenance/diagnostics, diversity and ownership filters, expose rollback to lexical-only retrieval, and remove the earlier CMS/capability-specific lexical bonus once the cross-domain quality gate passes.
+- Expected result: cross-domain eval improves without degrading exact identifiers, profile/session isolation, conflicts, or negative queries.
+- Validation: Stage 8 eval comparison, isolation/security regressions, bounded latency/memory measurement.
+- Completion criterion: predefined cross-domain quality gate passes and no category relies on corpus-specific vocabulary.
+- Proposed checkpoint commit: `feat(rag): fuse lexical and semantic retrieval`.
+
+### Stage 11 — Optional universal reranker with resource gates
+
+- Goal: reorder a bounded candidate set by query-evidence relevance when hybrid fusion alone remains insufficient.
+- Status: pending.
+- Actions: decide from Stage 10 metrics whether reranking is justified; if yes, add a small local multilingual reranker over top-N with model/version metadata, time/memory limits, explicit unavailable state, and deterministic adapter tests; if no, mark the stage completed with evidence and no code commit.
+- Expected result: top-5 precision improves across unrelated domains without keeping a heavy model resident or invoking the chat LLM.
+- Validation: before/after Stage 8 metrics, bounded local smoke, unavailable/timeout tests, sequential resource observation.
+- Completion criterion: measurable quality gain exceeds the recorded resource cost; otherwise reranker is rejected rather than added by assumption.
+- Proposed checkpoint commit if implemented: `feat(rag): add bounded local reranking`.
+
+### Stage 12 — Reindex lifecycle and operational integration
+
+- Goal: make semantic indexing understandable and safely operable for arbitrary replacement corpora.
+- Status: pending.
+- Actions: expose index provider/version/status and explicit reindex progress/error state through existing RAG APIs/UI where needed; ensure deletion/replacement invalidates the correct index generation; document offline setup and rollback.
+- Expected result: replacing the temporary work corpus requires only ordinary delete/upload/reindex actions, with no code change.
+- Validation: API/UI contracts, lifecycle integration tests, mobile/desktop status checks if UI changes, static checks.
+- Completion criterion: users can identify stale/ready/failed index state and recover without editing code or database rows.
+- Proposed checkpoint commit: `feat(rag): expose semantic reindex lifecycle`.
+
+### Stage 13 — Sequential model validation and cleanup
+
+- Goal: prove that shared retrieval supplies stable evidence to supported chat models and close temporary execution state.
+- Status: pending.
+- Actions: run cross-domain deterministic suite, then strictly sequential bounded 3B, 7B and 4B smokes with unload verification; separate retrieval metrics from generation quality; update affected permanent records and remove this progress file only after all accepted stages complete.
+- Expected result: retrieval behavior is model-independent; remaining LLM limitations are recorded honestly; repository returns clean.
+- Validation: full proportional Python/Node/static suite, metadata-only eval report, sequential live observations, final diff/status audit.
+- Completion criterion: accepted quality/resource gates pass, no model overlap occurs, permanent docs are current, and cleanup commit closes the task.
+- Proposed checkpoint commit: `docs(rag): close semantic retrieval rollout`.
+
 ## Decisions
 
 ### Treat ambiguous legacy derived sources as non-retrievable across chats
@@ -236,6 +309,17 @@
 - Checkpoint: pending this focused commit.
 - Next action: restart backend to load this commit; the user rechecks the Qwen3 confirmation in its existing session. Keep 7B deferred until this result is recorded.
 
+### 2026-08-14 — Stage 7D universal context-packing checkpoint
+
+- Stage: Stage 7D.
+- Completed: removed the rejected corpus-specific ranking experiment before commit; compacted oversized diagnostics to domain-neutral facet/status metadata; divided the remaining character budget across every selected non-empty chunk; preserved provenance and explicit truncation markers.
+- Validation: `tests.test_prompt_rag_security_audit` plus `tests.test_chat_rag` passed (36 tests); RAG/test compilation and `git diff --check` passed. Metadata-only observation on the external stress corpus included all 5/5 selected chunks in 5,698/6,000 characters. No LLM or new dependency was loaded.
+- Changed: RAG context builder, two domain-neutral regression tests, RAG knowledge contract, and this progress plan.
+- Decision: the external work corpus is temporary test input only. Production retrieval must not contain its brands, company vocabulary, or business-specific capability patterns.
+- Legacy note: the already committed retrieval layer contains an earlier CMS/capability lexical bonus from Stage 7B. Stage 7D does not expand it; Stage 8 must measure it explicitly and Stage 10 must remove it when domain-neutral hybrid fusion satisfies the recorded quality gate.
+- Checkpoint: `fix(rag): distribute context budget across evidence` pending commit creation after this progress snapshot.
+- Next action: stop after the focused commit. On explicit user continuation, begin Stage 8 by adding cross-domain synthetic eval fixtures and recording the current lexical/hashing baseline; do not install an embedding model in Stage 8.
+
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 
 - Stage: Stage 7A completion plus Stage 6 follow-up diagnosis.
@@ -303,12 +387,12 @@
 
 ## Validation results
 
-- Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed.
-- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed.
+- Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed. Stage 7D repeated RAG/test compileall and diff check successfully.
+- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D added two domain-neutral packing regressions and passed 36 focused prompt/RAG/chat tests.
 - Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement; host LAN HTTPS/API/SSE/CORS/admin/certificate matrix passed.
 - Manual/regression checks: user confirmed restored host behavior and functional second-device access; Qwen3 OFF + generic CMS RAG answer passed on the real phone. Safari still displays `Not Secure`, so certificate trust status remains pending separately in Stage 7A.
 - Skipped checks and reasons: no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
-- Remaining uncertainty: model behavioral jailbreak resistance varies; Qwen 2.5 3B/7B cross-model grounding parity is now Stage 7C; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
+- Remaining uncertainty: model behavioral jailbreak resistance varies; current hashing/lexical retrieval quality is not yet measured across domains; semantic provider and reranking choices remain pending Stages 8–11; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
 
 ## Regressions and deferred work
 
@@ -333,12 +417,12 @@
 
 ## Continuation state
 
-- Current stage: Stage 7A/7B checkpoint; Stage 7C queued after the commit.
-- Last completed action: real-phone Qwen3 OFF + direct CMS RAG answer accepted; 3B/7B inconsistency recorded without running new tests.
-- Current repository state: Stages 5 and 6 are committed; validated Stage 7A launcher and Stage 7B chat/RAG/mobile changes are ready for the user-requested checkpoint.
-- Known risks: backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`; instruct-model RAG use may be weaker even when retrieval evidence is shared.
-- Next exact action: stage the complete inspected Stage 7 checkpoint, review the staged diff, commit it, then begin Stage 7C with read-only comparison before sequential live runs.
-- Next files: staged diff, then provider/RAG request diagnostics for Stage 7C.
+- Current stage: Stage 8 pending; stop required after the Stage 7D commit until the user explicitly resumes.
+- Last completed action: domain-neutral RAG context packing validated with all selected chunks represented under the configured character budget.
+- Current repository state: Stage 7D owns only the RAG context builder, focused tests, affected RAG documentation, and this progress update; semantic dependencies/models were not installed or run.
+- Known risks: better packing cannot repair weak candidate ranking by itself; current hashing/lexical baseline must be measured before selecting embeddings; backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`.
+- Next exact action: after manual continuation, create cross-domain synthetic eval cases and metrics for the unchanged lexical/hashing retrieval baseline. Do not modify retrieval ranking or install models in Stage 8.
+- Next files: focused eval fixtures/tool/tests under existing test conventions, then this progress record.
 
 ## Final checklist
 

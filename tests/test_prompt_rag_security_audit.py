@@ -209,6 +209,67 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertIn('"overall_status":"supported"', context)
         self.assertNotIn("assistant history is evidence", context.lower())
 
+    def test_context_shares_budget_across_all_selected_chunks(self) -> None:
+        chunks = [
+            {
+                "source_id": f"source-{index}.md",
+                "title": f"Source {index}",
+                "score": 1.0 - index * 0.1,
+                "evidence_status": "supported",
+                "content": f"evidence-{index} " + ("x" * 1200),
+                "document_metadata": {},
+                "provenance": {"source_id": f"source-{index}.md", "chunk_id": index, "chunk_index": index},
+            }
+            for index in range(5)
+        ]
+
+        context = rag_service.build_context(chunks, max_chars=3000)
+
+        self.assertLessEqual(len(context), 3000)
+        for index in range(5):
+            self.assertIn(f'"chunk_id":{index}', context)
+            self.assertIn(f"evidence-{index}", context)
+        self.assertEqual(context.count("chunk truncated to shared RAG context budget"), 5)
+
+    def test_large_diagnostics_do_not_starve_selected_evidence(self) -> None:
+        chunks = [
+            {
+                "source_id": f"source-{index}.md",
+                "title": f"Source {index}",
+                "score": 1.0,
+                "evidence_status": "supported",
+                "content": f"evidence-{index} " + ("x" * 800),
+                "document_metadata": {},
+                "provenance": {"source_id": f"source-{index}.md", "chunk_id": index, "chunk_index": index},
+            }
+            for index in range(3)
+        ]
+        diagnostics = {
+            "strategy": "hybrid_v1",
+            "overall_status": "partial",
+            "facet_coverage": [
+                {
+                    "facet_id": f"facet_{index}",
+                    "query": f"question-{index}",
+                    "status": "supported",
+                    "conflict_years": [],
+                    "evidence": [{"evidence_span": "y" * 1200}],
+                }
+                for index in range(3)
+            ],
+            "selected_chunks": 3,
+            "selected_sources": 3,
+        }
+
+        context = rag_service.build_context(chunks, max_chars=3000, diagnostics=diagnostics)
+
+        self.assertLessEqual(len(context), 3000)
+        self.assertIn('"overall_status":"partial"', context)
+        self.assertNotIn("evidence_span", context)
+        for index in range(3):
+            self.assertIn(f'"chunk_id":{index}', context)
+            self.assertIn(f"evidence-{index}", context)
+
     def test_corpus_audit_is_metadata_only_preview_and_flags_synthetic_hygiene_cases(self) -> None:
         report = rag_service.audit_corpus(self.profile_id)
         self.assertTrue(report["preview_only"])
