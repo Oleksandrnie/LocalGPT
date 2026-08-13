@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from app.schemas import ChatRequest
 from app.services import models as model_service
 from backend.apps.chat.routes import _apply_auto_router, _prepare_chat_request, start_chat_task
 from backend.apps.chat.service import ChatService
+from backend.apps.chat.service import apply_generation_budget_policy
 from backend.apps.chat.services import local_calculator, model_residency, model_router, ollama_runtime
 
 
@@ -1051,6 +1053,70 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
 
         self.assertEqual(settings["effective"]["ollama_keep_alive"], "45s")
         self.assertEqual(settings["overrides"]["ollama_keep_alive"], "45s")
+
+    def test_model_settings_persist_independent_token_budgets(self):
+        db.upsert_model_settings(
+            self.profile_id,
+            "qwen3:8b",
+            output_tokens=700,
+            thinking_tokens=1300,
+            ollama_think="on",
+        )
+
+        settings = db.effective_settings(self.profile_id, "qwen3:8b", config.DEFAULT_SETTINGS)
+
+        self.assertEqual(settings["effective"]["output_tokens"], 700)
+        self.assertEqual(settings["effective"]["max_tokens"], 700)
+        self.assertEqual(settings["effective"]["thinking_tokens"], 1300)
+        self.assertEqual(settings["overrides"]["output_tokens"], 700)
+        self.assertEqual(settings["overrides"]["thinking_tokens"], 1300)
+
+    def test_legacy_max_tokens_migrates_to_output_tokens(self):
+        db.upsert_model_settings(self.profile_id, "qwen3:8b", max_tokens=777)
+        with sqlite3.connect(db.DB_PATH) as conn:
+            conn.execute(
+                "UPDATE model_settings SET output_tokens = NULL WHERE profile_id = ? AND model_name = ?",
+                (self.profile_id, "qwen3:8b"),
+            )
+            conn.commit()
+
+        db.init_db()
+        settings = db.effective_settings(self.profile_id, "qwen3:8b", config.DEFAULT_SETTINGS)
+
+        self.assertEqual(settings["effective"]["output_tokens"], 777)
+        self.assertEqual(settings["overrides"]["output_tokens"], 777)
+
+    def test_generation_budget_policy_separates_on_and_off_semantics(self):
+        enabled = apply_generation_budget_policy(
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "on"}
+        )
+        disabled = apply_generation_budget_policy(
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"}
+        )
+
+        self.assertEqual(enabled["provider_num_predict"], 2000)
+        self.assertEqual(enabled["generation_budget_policy"], "combined_compatibility_cap")
+        self.assertTrue(enabled["thinking_budget_applied"])
+        self.assertFalse(enabled["native_reasoning_budget_supported"])
+        self.assertEqual(disabled["provider_num_predict"], 700)
+        self.assertEqual(disabled["generation_budget_policy"], "output_only")
+        self.assertFalse(disabled["thinking_budget_applied"])
+
+    def test_runtime_uses_combined_cap_only_when_thinking_is_on(self):
+        service = ChatService()
+        enabled = service._runtime_kwargs(
+            "qwen3:8b",
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "on"},
+        )
+        disabled = service._runtime_kwargs(
+            "qwen3:8b",
+            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"},
+        )
+
+        self.assertEqual(enabled["max_tokens"], 2000)
+        self.assertTrue(enabled["think"])
+        self.assertEqual(disabled["max_tokens"], 700)
+        self.assertFalse(disabled["think"])
 
     def test_mem_turns_is_profile_setting_not_model_override(self):
         profile = db.update_profile_preferences(self.profile_id, {"settings": {"mem_turns": 10}})

@@ -17,6 +17,7 @@ from app.services import models as model_service
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.service import (
     ChatService,
+    apply_generation_budget_policy,
     build_messages,
     estimate_messages_chars,
     maybe_compress_session_history,
@@ -336,6 +337,7 @@ def _apply_auto_router(prepared: dict) -> dict:
             prepared["effective_settings"],
             mode="manual",
         )
+        prepared["effective_settings"] = apply_generation_budget_policy(prepared["effective_settings"])
         return prepared
 
     if not _is_model_installed_or_503(model_router.ROUTER_MODEL_ID):
@@ -383,13 +385,15 @@ def _apply_auto_router(prepared: dict) -> dict:
     )
     if target_overrides.get("ollama_keep_alive"):
         target_settings["ollama_keep_alive"] = target_overrides["ollama_keep_alive"]
-    if target_overrides.get("ollama_think"):
-        target_settings["ollama_think"] = target_overrides["ollama_think"]
+    for key in ("ollama_think", "output_tokens", "thinking_tokens"):
+        if target_overrides.get(key) is not None:
+            target_settings[key] = target_overrides[key]
     prepared["effective_settings"] = model_residency.apply_target_settings(
         decision.target_model,
         target_settings,
         mode="auto",
     )
+    prepared["effective_settings"] = apply_generation_budget_policy(prepared["effective_settings"])
     return prepared
 
 
@@ -435,7 +439,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     profile_preferences = profile.get("preferences") or {}
     profile_system_prompt = str(((profile_preferences.get("chat") or {}).get("system_prompt") or "")).strip()
     settings_bundle = db.effective_settings(profile_id, model_name, config.DEFAULT_SETTINGS)  # type: ignore[arg-type]
-    effective_settings = settings_bundle.get("effective") or {}
+    effective_settings = apply_generation_budget_policy(settings_bundle.get("effective") or {})
     mem_turns = int(effective_settings.get("mem_turns") or config.SETTINGS.mem_turns)
     history = db.get_messages(session_id, limit_pairs=mem_turns) if session_id else []
     summary_limit = int(effective_settings.get("summary_memory_limit") or 0)
@@ -608,11 +612,12 @@ def chat(req: ChatRequest):
             }
 
         _ensure_chat_model_available(target_model)
-        text = chat_service.chat_completion(target_model, messages, settings=effective_settings)
+        completion = chat_service.chat_completion_result(target_model, messages, settings=effective_settings)
+        text = completion.content
 
         if session_id:
             db.add_message(session_id, "user", user_query)
-            db.add_message(session_id, "assistant", text)
+            db.add_message(session_id, "assistant", text, reasoning=completion.reasoning)
             try:
                 maybe_compress_session_history(
                     service=chat_service,
@@ -643,6 +648,7 @@ def chat(req: ChatRequest):
             "used_settings": effective_settings,
             "warnings": prompt_warnings,
             "router_notice": router_notice,
+            "has_reasoning": bool(completion.reasoning.strip()),
         }
     except HTTPException as exc:
         _log("error", error=str(exc.detail))
@@ -851,6 +857,34 @@ def get_chat_task(task_id: str) -> dict[str, object]:
         _mark_missing_chat_task_failed(task_id)
         raise HTTPException(status_code=404, detail=_chat_task_not_found_detail())
     return task
+
+
+@router.get("/chat/messages/{message_id}/reasoning")
+def get_chat_message_reasoning(message_id: int, profile_id: int = Query(...)) -> dict[str, object]:
+    _get_profile_or_404(profile_id)
+    message = db.get_message(message_id)
+    if not message or str(message.get("role") or "") != "assistant":
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "chat_reasoning_not_found", "message": "Reasoning is not available for this message."},
+        )
+    session = db.get_session(str(message.get("session_id") or ""))
+    if not session or int(session.get("profile_id") or 0) != int(profile_id):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "chat_reasoning_profile_mismatch", "message": "Message does not belong to this profile."},
+        )
+    reasoning = str(message.get("reasoning") or "").strip()
+    if not reasoning:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "chat_reasoning_not_found", "message": "Reasoning is not available for this message."},
+        )
+    return {
+        "message_id": int(message["id"]),
+        "session_id": str(message["session_id"]),
+        "reasoning": reasoning,
+    }
 
 
 @router.get("/chat/tasks/{task_id}/events")

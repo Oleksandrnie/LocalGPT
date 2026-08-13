@@ -14,6 +14,7 @@ from app.routes import profiles as profile_routes
 from app.schemas import (
     AsrPreferencesUpdate,
     ChatRequest,
+    ModelSettingsRequest,
     ModelSettingsReset,
     ProfileCreate,
     ProfilePreferencesUpdate,
@@ -184,6 +185,31 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(effective_pipeline["speaker_resolver"], config.DEFAULT_PIPELINE["speaker_resolver"])
         self.assertEqual(effective_pipeline["structurer"], config.DEFAULT_PIPELINE["structurer"])
         self.assertEqual(effective_pipeline["summary"], config.DEFAULT_PIPELINE["summary"])
+
+    def test_model_settings_validate_and_round_trip_token_budgets(self):
+        result = profile_routes.save_model_settings(
+            ModelSettingsRequest(
+                profile_id=self.profile_id,
+                model_name="qwen3:8b",
+                output_tokens=900,
+                thinking_tokens=1800,
+                ollama_think="on",
+            )
+        )
+
+        self.assertEqual(result["effective"]["output_tokens"], 900)
+        self.assertEqual(result["effective"]["thinking_tokens"], 1800)
+        self.assertEqual(result["effective"]["max_tokens"], 900)
+        with self.assertRaises(HTTPException) as ctx:
+            profile_routes.save_model_settings(
+                ModelSettingsRequest(
+                    profile_id=self.profile_id,
+                    model_name="qwen3:8b",
+                    output_tokens=0,
+                )
+            )
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(ctx.exception.detail["code"], "invalid_output_tokens")
 
     def test_asr_analysis_actions_map_to_generic_stages(self):
         pipeline_cfg = deepcopy(config.DEFAULT_PIPELINE)
@@ -409,6 +435,32 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn("event: done\n", body)
         self.assertIn('"status":"completed"', body)
 
+    def test_reasoning_endpoint_restores_only_profile_owned_assistant_reasoning(self):
+        session = db.create_session(self.profile_id, "Reasoning API", "qwen3:4b")
+        assistant = db.add_message(
+            session["id"],
+            "assistant",
+            "Финальный ответ",
+            reasoning="Сохранённое рассуждение",
+        )
+        other_profile = db.create_profile("Other", None, None)
+        app = FastAPI()
+        app.include_router(chat_router)
+        client = TestClient(app)
+
+        response = client.get(
+            f"/chat/messages/{assistant['id']}/reasoning",
+            params={"profile_id": self.profile_id},
+        )
+        forbidden = client.get(
+            f"/chat/messages/{assistant['id']}/reasoning",
+            params={"profile_id": other_profile["id"]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["reasoning"], "Сохранённое рассуждение")
+        self.assertEqual(forbidden.status_code, 403)
+
     def test_non_streaming_worker_uses_full_response_and_updates_assistant_message(self):
         session = db.create_session(self.profile_id, "Non-streaming fallback", "qwen2.5:7b-instruct")
         assistant_message = db.create_assistant_message(
@@ -424,7 +476,11 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         with (
             patch(
                 "backend.apps.chat.tasks.ChatService.chat_completion_result",
-                return_value=ollama_runtime.ChatCompletionResult(content="Полный ответ", done_reason="stop"),
+                return_value=ollama_runtime.ChatCompletionResult(
+                    content="Полный ответ",
+                    reasoning="Нестриминговое рассуждение",
+                    done_reason="stop",
+                ),
             ) as full_response,
             patch("backend.apps.chat.tasks.ChatService.chat_completion_stream_events") as stream_response,
         ):
@@ -452,6 +508,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         updated_message = db.get_message(assistant_message["id"])
         self.assertEqual(updated_message["status"], "completed")
         self.assertEqual(updated_message["content"], "Полный ответ")
+        self.assertEqual(updated_message["reasoning"], "Нестриминговое рассуждение")
         self.assertFalse(updated_message["is_partial"])
         self.assertIsNone(updated_message["error"])
 
@@ -499,7 +556,12 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn("Финальный ", delta_text)
         self.assertIn("ответ", delta_text)
         self.assertNotIn("internal", delta_text)
-        self.assertEqual(db.get_message(assistant_message["id"])["content"], "Финальный ответ")
+        persisted = db.get_message(assistant_message["id"])
+        self.assertEqual(persisted["content"], "Финальный ответ")
+        self.assertEqual(persisted["reasoning"], "internal trace")
+        history_message = db.get_messages(session["id"])[0]
+        self.assertTrue(history_message["has_reasoning"])
+        self.assertNotIn("reasoning", history_message)
         self.assertFalse(error_path.exists())
 
     def test_reasoning_only_length_exhaustion_fails_worker(self):
@@ -765,17 +827,34 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         completed_message = db.update_message(
             assistant_message["id"],
             content="Привет, готово.",
+            reasoning="Внутреннее рассуждение",
             status="completed",
             error=None,
         )
         self.assertEqual(completed_message["status"], "completed")
         self.assertEqual(completed_message["content"], "Привет, готово.")
+        self.assertEqual(completed_message["reasoning"], "Внутреннее рассуждение")
+        self.assertTrue(completed_message["has_reasoning"])
         self.assertFalse(completed_message["is_partial"])
         self.assertIsNotNone(completed_message["generation_finished_at"])
 
         messages = db.get_messages(session["id"])
         self.assertEqual([item["id"] for item in messages], [user_message["id"], assistant_message["id"]])
         self.assertTrue(all("updated_at" in item for item in messages))
+        self.assertTrue(messages[-1]["has_reasoning"])
+        self.assertNotIn("reasoning", messages[-1])
+
+    def test_reasoning_storage_applies_explicit_size_cap(self):
+        session = db.create_session(self.profile_id, "Reasoning cap", "qwen3:4b")
+        assistant = db.add_message(
+            session["id"],
+            "assistant",
+            "Final",
+            reasoning="x" * (db.REASONING_MAX_CHARS + 100),
+        )
+
+        self.assertLessEqual(len(assistant["reasoning"]), db.REASONING_MAX_CHARS)
+        self.assertTrue(assistant["reasoning"].endswith("[Reasoning truncated by LocalGPT storage limit.]"))
 
     def test_legacy_chat_messages_migrate_to_completed(self):
         legacy_path = Path(self.tmpdir.name) / "legacy-messages.db"
@@ -852,6 +931,10 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(messages[0]["status"], "completed")
         self.assertEqual(messages[0]["updated_at"], now)
         self.assertFalse(messages[0]["is_partial"])
+        self.assertFalse(messages[0]["has_reasoning"])
+        with sqlite3.connect(legacy_path) as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(chat_messages)").fetchall()}
+        self.assertIn("reasoning", columns)
 
     def test_prompt_uses_summary_memory_before_short_history(self):
         session = db.create_session(self.profile_id, "Memory test", "qwen2.5:3b")

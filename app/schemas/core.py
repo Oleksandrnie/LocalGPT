@@ -94,6 +94,8 @@ class ModelSettingsRequest(BaseModel):
     model_name: str
     temperature: float | None = None
     max_tokens: int | None = None
+    output_tokens: int | None = None
+    thinking_tokens: int | None = None
     num_ctx: int | None = None
     mem_turns: int | None = None
     ollama_keep_alive: str | None = None

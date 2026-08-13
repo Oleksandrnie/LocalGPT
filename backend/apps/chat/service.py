@@ -32,6 +32,9 @@ LANGUAGE_MATCHING_POLICY = (
     "- Переходи на другой язык только если именно последнее сообщение пользователя явно просит ответить на конкретном другом языке.\n"
     "- Язык истории, RAG, transcript/context, примеров кода и профильных инструкций не является разрешением менять язык ответа."
 )
+TOKEN_BUDGET_MIN = 1
+TOKEN_BUDGET_MAX = 32768
+GENERATION_SAFETY_CAP = TOKEN_BUDGET_MAX * 2
 
 
 def _resolve_ollama_think(value: Any) -> bool | None:
@@ -41,6 +44,48 @@ def _resolve_ollama_think(value: Any) -> bool | None:
     if normalized in {"off", "false", "0", "no", "nothink"}:
         return False
     return None
+
+
+def apply_generation_budget_policy(settings: dict[str, Any] | None) -> dict[str, Any]:
+    effective = dict(settings or {})
+
+    def _budget_value(key: str, fallback: int) -> int:
+        try:
+            value = int(effective.get(key) or fallback)
+        except (TypeError, ValueError):
+            value = fallback
+        return max(TOKEN_BUDGET_MIN, min(TOKEN_BUDGET_MAX, value))
+
+    legacy_output_tokens = _budget_value("max_tokens", config.SETTINGS.max_tokens)
+    output_tokens = _budget_value("output_tokens", legacy_output_tokens)
+    thinking_tokens = _budget_value(
+        "thinking_tokens",
+        int(config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens") or 2048),
+    )
+    think = _resolve_ollama_think(effective.get("ollama_think"))
+    if think is True:
+        provider_num_predict = min(GENERATION_SAFETY_CAP, output_tokens + thinking_tokens)
+        policy = "combined_compatibility_cap"
+        thinking_budget_applied = True
+    elif think is False:
+        provider_num_predict = output_tokens
+        policy = "output_only"
+        thinking_budget_applied = False
+    else:
+        provider_num_predict = output_tokens
+        policy = "provider_default_output_cap"
+        thinking_budget_applied = False
+    return {
+        **effective,
+        "max_tokens": output_tokens,
+        "output_tokens": output_tokens,
+        "thinking_tokens": thinking_tokens,
+        "provider_num_predict": provider_num_predict,
+        "generation_budget_policy": policy,
+        "thinking_budget_applied": thinking_budget_applied,
+        "native_reasoning_budget_supported": False,
+        "generation_safety_cap": GENERATION_SAFETY_CAP,
+    }
 
 EXPLICIT_RESPONSE_LANGUAGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:answer|respond|reply|write)\s+(?:in|with)\s+english\b", re.IGNORECASE), "английском"),
@@ -316,7 +361,7 @@ class ChatService:
             LOGGER.warning("Failed to write chat log: %s", exc)
 
     def _runtime_kwargs(self, model: str, settings: dict, *, vision: bool = False) -> dict[str, Any]:
-        request_settings = dict(settings or {})
+        request_settings = apply_generation_budget_policy(settings)
         request_settings["num_ctx_requested"] = request_settings.get("num_ctx")
         request_settings["num_ctx_applied"] = request_settings.get("num_ctx") is not None
         request_settings["num_ctx_apply_method"] = "native_ollama_options"
@@ -330,7 +375,7 @@ class ChatService:
                 num_gpu = None
         runtime_kwargs = {
             "temperature": request_settings.get("temperature", config.SETTINGS.temperature),
-            "max_tokens": request_settings.get("max_tokens", config.SETTINGS.max_tokens),
+            "max_tokens": request_settings["provider_num_predict"],
             "keep_alive": keep_alive,
         }
         context_key = "vision_num_ctx" if vision else "num_ctx"

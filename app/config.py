@@ -450,6 +450,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "ocr_assist": "auto",
     "ocr_language": "",
     "ollama_think": "auto",
+    "thinking_tokens": 2048,
     "show_router_thinking_toggle": False,
     "pipeline": DEFAULT_PIPELINE,
 }
@@ -598,6 +599,7 @@ DEFAULT_RUNTIME_SETTINGS.update(
 DEFAULT_SETTINGS = {
     "temperature": SETTINGS.temperature,
     "max_tokens": SETTINGS.max_tokens,
+    "output_tokens": SETTINGS.max_tokens,
     "num_ctx": SETTINGS.num_ctx,
     "mem_turns": SETTINGS.mem_turns,
     **DEFAULT_RUNTIME_SETTINGS,

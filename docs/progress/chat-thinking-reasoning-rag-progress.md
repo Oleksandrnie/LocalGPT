@@ -9,7 +9,7 @@
 - Branch: `feature/chat-thinking-reasoning-rag`, created from clean `dev` aligned with `origin/dev` on 2026-08-13.
 - Started: 2026-08-13.
 - Current status: in_progress.
-- Current stage: Stage 2 — independent settings and persistence.
+- Current stage: Stage 3 — reasoning and settings UI.
 
 ## Instructions and precedence
 
@@ -91,7 +91,7 @@
 ### Stage 2 — Independent settings and persistence
 
 - Goal: store validated `thinking_tokens` and `output_tokens` semantics plus per-message reasoning across clean and migrated DBs.
-- Status: in_progress.
+- Status: completed.
 - Actions: add columns/defaults/schema validation; migrate legacy `max_tokens` compatibly; implement bounded one-pass effective generation policy; persist reasoning in both streaming/non-streaming lifecycle.
 - Validation: settings round-trip/range tests, clean/legacy migration tests, persisted task/reload/history tests.
 - Completion criterion: independent backend-owned values survive reload, legacy settings remain valid, reasoning restores separately, and effective policy is explicit in used settings.
@@ -101,7 +101,7 @@
 ### Stage 3 — Reasoning and settings UI
 
 - Goal: expose the two budgets and a per-assistant reasoning viewer without changing normal answer rendering.
-- Status: pending.
+- Status: in_progress.
 - Actions: add settings controls; render terminal icon only for stored reasoning; add accessible read-only modal, close/Escape/focus behavior, responsive/theme styles, and static UI tests.
 - Validation: Node contract tests, JS syntax, manual desktop/mobile and dark/light inspection with keyboard/focus checks.
 - Completion criterion: settings round-trip from UI and the selected completed message's reasoning opens only when present.
@@ -165,10 +165,20 @@
 - Issues: local qwen3:4b manifest ignores native/soft/hard OFF and emits deliberation as content; this model-specific live blocker cannot be safely repaired by text heuristics. Two unrelated ASR pipeline tests fail independently when run alone and were not modified.
 - Next action: add SQLite/settings migration, validated independent budgets, compatibility cap metadata, and persisted reasoning.
 
+### 2026-08-13 — Stage 2 budgets and persistence
+
+- Stage: 2 completed; Stage 3 started.
+- Completed: independent settings schema/API validation, legacy `max_tokens` migration, one-pass combined/output-only policy metadata, reasoning column and 200k explicit cap, streaming/non-streaming persistence, lightweight history flag, profile-owned reasoning endpoint, and task response redaction.
+- Changed: `app/config.py`, `app/db.py`, `app/routes/profiles.py`, `app/schemas/core.py`, chat routes/service/tasks, and focused tests.
+- Validation: diff check, compileall, 67 focused settings/migration/lifecycle/API tests; clean and legacy SQLite paths included.
+- Issues: no Stage 2 regression; existing ASR/model-manifest findings remain.
+- Next action: add LLM budget controls and accessible lazy-loaded reasoning modal/icon in active UI.
+
 ## Validation results
 
 - Static checks: baseline passed.
 - Unit/contract tests: Stage 1 focused set passed 62 tests after changes.
+- Stage 2 unit/contract tests: 67 focused tests passed, including settings validation, legacy migration, profile isolation, storage cap, and both worker modes.
 - Integration/smoke tests: native qwen3:4b audit exposed an incompatible OFF manifest; adapter ON/OFF acceptance passed on installed qwen3:0.6b with `keep_alive=0`.
 - Manual/regression checks: pending implementation.
 - Skipped checks: full Python suite and browser/UI matrix deferred to Stage 5; no changes exist yet.
@@ -185,19 +195,26 @@
 
 ### Stage 1
 
-- Commit hash: pending creation.
+- Commit hash: `a74fb46`.
 - Message: `feat(chat): separate Ollama reasoning from final output`.
 - Files: runtime/service/task separation, focused tests, and this progress state.
 - Validation: diff/compile/JS checks, 62 focused tests, live qwen3:0.6b ON/OFF.
 
+### Stage 2
+
+- Commit hash: pending creation.
+- Message: `feat(chat): persist reasoning and separate token budgets`.
+- Files: settings/schema/routes/runtime policy/task persistence and focused tests.
+- Validation: diff/compile checks and 67 focused tests.
+
 ## Continuation state
 
-- Current stage: Stage 2 — independent settings and persistence.
-- Last completed action: Stage 1 targeted and live validation; checkpoint preparation.
-- Current repository state: validated Stage 1 diff plus ignored progress file, not yet committed.
-- Known risks: backward-compatible `max_tokens` migration and capped one-pass semantics; large reasoning storage.
-- Next exact action: create Stage 1 checkpoint, then add failing settings/message migration tests before schema changes.
-- Next files: `app/db.py`, `app/schemas/core.py`, `app/routes/profiles.py`, `backend/apps/chat/service.py`, `backend/apps/chat/tasks.py`, focused tests.
+- Current stage: Stage 3 — reasoning and settings UI.
+- Last completed action: Stage 2 focused validation; checkpoint preparation.
+- Current repository state: Stage 1 committed; validated Stage 2 diff plus progress update pending commit.
+- Known risks: modal focus/Escape behavior and mobile action density.
+- Next exact action: create Stage 2 checkpoint, then add static UI contract tests before HTML/JS/CSS changes.
+- Next files: `web_ui/gui_html.html`, `web_ui/js/app.js`, `web_ui/css/style.css`, focused Node UI test.
 
 ## Final checklist
 

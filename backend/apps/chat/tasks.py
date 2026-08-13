@@ -78,6 +78,10 @@ def _append_delta_jsonl(path: Path | str | None, sequence: int, text: str) -> No
 
 
 def _public_task(task: dict[str, Any]) -> dict[str, Any]:
+    result = dict(task.get("result") or {}) if isinstance(task.get("result"), dict) else task.get("result")
+    if isinstance(result, dict):
+        reasoning = result.pop("reasoning", None)
+        result["has_reasoning"] = bool(str(reasoning or "").strip())
     return {
         "id": task.get("id"),
         "state": task.get("state"),
@@ -96,7 +100,7 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "pid": task.get("pid"),
         "used_settings": task.get("used_settings"),
         "router_notice": task.get("router_notice"),
-        "result": task.get("result"),
+        "result": result,
         "stream": bool(task.get("stream")),
         "streaming_enabled": bool(task.get("stream")),
         "attachment_ids": list(task.get("attachment_ids") or []),
@@ -355,6 +359,7 @@ def _chat_worker(
                 db.update_message(
                     assistant_message_id,
                     content=reply,
+                    reasoning=reasoning,
                     status="completed",
                     model=completion_model,
                     error=None,
@@ -420,7 +425,13 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
         task["message"] = "Chat generation completed."
         task["error_code"] = None
         task["result"] = result
-        _update_assistant_from_task(task, status="completed", content=str(result.get("reply") or ""), error=None)
+        _update_assistant_from_task(
+            task,
+            status="completed",
+            content=str(result.get("reply") or ""),
+            reasoning=str(result.get("reasoning") or ""),
+            error=None,
+        )
         _set_attachment_status(list(task.get("attachment_ids") or []), "completed", error=None)
     elif error:
         task["state"] = "failed"
@@ -450,6 +461,7 @@ def _update_assistant_from_task(
     *,
     status: str,
     content: str | None = None,
+    reasoning: str | None = None,
     error: str | None = None,
 ) -> None:
     assistant_message_id = task.get("assistant_message_id")
@@ -464,6 +476,8 @@ def _update_assistant_from_task(
         }
         if content is not None:
             updates["content"] = content
+        if reasoning is not None:
+            updates["reasoning"] = reasoning
         db.update_message(assistant_message_id, **updates)
     except Exception:
         pass
