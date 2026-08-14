@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 10 completed — final validation passed and the focused checkpoint is being created; Stage 11 has not started.
+- Current stage: Stage 11 completed — reranker rejected/deferred by the saturated cross-domain quality gate; checkpoint is being created and Stage 12 has not started.
 
 ## Instructions and precedence
 
@@ -184,7 +184,7 @@
 ### Stage 10 — Hybrid lexical and semantic candidate fusion
 
 - Goal: retrieve relevant evidence through both exact terminology and paraphrased meaning.
-- Status: completed; focused checkpoint pending.
+- Status: completed; checkpoint `e60503f` (`feat(rag): fuse lexical and semantic retrieval`).
 - Actions: retrieve lexical and semantic candidate pools, normalize and fuse ranks with a domain-neutral method, preserve provenance/diagnostics, diversity and ownership filters, expose rollback to lexical-only retrieval, and remove the earlier CMS/capability-specific lexical bonus once the cross-domain quality gate passes.
 - Expected result: cross-domain eval improves without degrading exact identifiers, profile/session isolation, conflicts, or negative queries.
 - Validation: Stage 8 eval comparison, isolation/security regressions, bounded latency/memory measurement.
@@ -194,12 +194,13 @@
 ### Stage 11 — Optional universal reranker with resource gates
 
 - Goal: reorder a bounded candidate set by query-evidence relevance when hybrid fusion alone remains insufficient.
-- Status: pending.
+- Status: completed; reranker not implemented because no measurable ranking gain is available on the current independent quality gate.
 - Actions: decide from Stage 10 metrics whether reranking is justified; if yes, add a small local multilingual reranker over top-N with model/version metadata, time/memory limits, explicit unavailable state, and deterministic adapter tests; if no, mark the stage completed with evidence and no code commit.
 - Expected result: top-5 precision improves across unrelated domains without keeping a heavy model resident or invoking the chat LLM.
 - Validation: before/after Stage 8 metrics, bounded local smoke, unavailable/timeout tests, sequential resource observation.
 - Completion criterion: measurable quality gain exceeds the recorded resource cost; otherwise reranker is rejected rather than added by assumption.
 - Proposed checkpoint commit if implemented: `feat(rag): add bounded local reranking`.
+- Actual decision checkpoint: `test(rag): gate optional reranking by ndcg`.
 
 ### Stage 12 — Reindex lifecycle and operational integration
 
@@ -410,6 +411,24 @@
 - Documentation: affected architecture, backend, RAG, testing, changelog and security-audit records now describe `hybrid_v2`, independent pools, `rrf_v1`, conservative semantic/facet thresholds, `local-hash-v1` lexical-only behavior and `lexical_v1` rollback.
 - Decision: Stage 10 quality and safety gates pass. Create exactly one focused commit `feat(rag): fuse lexical and semantic retrieval`, then stop before Stage 11. Record its hash at the next resumed checkpoint without amending this completed stage.
 
+### 2026-08-14 — Stage 11 reranker quality-gate analysis
+
+- Stage 10 checkpoint reconciled: HEAD is `e60503f` (`feat(rag): fuse lexical and semantic retrieval`) on `feature/prompt-rag-security-hardening`; the working tree was clean at Stage 11 start.
+- Scope lock: Stage 11 may add only a reproducible metadata-only ranking metric and an evidence-backed reranker decision. It must not download/load a reranker or chat model, touch the user corpus, tune thresholds against the temporary company RAG, start reindex UI work, or change retrieval behavior without a demonstrated cross-domain gap.
+- Measurable gate: a reranker is eligible only if the unchanged cross-domain fixture shows non-ideal ordering after `hybrid_v2` while recall, grounded facet coverage, exact identifiers, negative rejection, conflict accuracy and profile/session isolation remain non-regressed. Ranking order is measured with binary relevance `nDCG@k`; for each case, all explicitly expected sources should occupy the first `expected_source_count` positions. Any candidate must then show a material nDCG/top-N gain with bounded latency/memory, explicit unavailable/timeout state and no persistent heavy model residency.
+- Initial metadata-only observation using the Stage 10 deterministic semantic provider: every single-source positive case placed its expected source at rank 1; the two-source conflict case placed both expected sources at ranks 1–2; all eight positive cases therefore reached `nDCG@5=1.000`. Both negative cases remained empty and conflict status matched. No raw query/corpus content was persisted.
+- Preliminary decision: the available labeled fixture is saturated, so a reranker cannot demonstrate additional ranking quality and is not eligible for implementation or download in this stage. Add `nDCG@k` to the canonical eval report and regression tests, rerun the Stage 10 comparison, then record the final defer/reject decision. A future reranker reconsideration requires a larger domain-independent judged set or real-provider evidence that exposes a non-ideal top-N ordering.
+- Expected tracked files: `tools/rag_retrieval_eval.py`, `tests/test_rag_retrieval_eval.py`, affected RAG/testing/changelog documentation and this progress file. No production retrieval file is expected to change.
+- Proposed checkpoint: `test(rag): gate optional reranking by ndcg`.
+- Implemented evaluation change: the metadata-only report now records per-case binary-relevance `ndcg_at_k` and `ideal_ranked_hit`, plus aggregate `ndcg_at_k` and `ideal_ranked_hit_rate`. The report schema remains metadata-only and contains no raw query/content.
+- Final comparison on the unchanged fixture:
+  - deterministic semantic `hybrid_v2`: positive recall/context/grounded/MRR/nDCG/ideal-ranked-hit `1.000`; paraphrase and typo grounded/nDCG `1.000`; negative rejection and conflict/status accuracy `1.000`;
+  - the same semantic fixture generation through `lexical_v1`: positive recall/MRR/nDCG/ideal-ranked-hit `0.875`, grounded `0.500`; typo recall/nDCG/grounded `0.500`; paraphrase grounded `0.000`; controls remain `1.000`;
+  - current `local-hash-v1` remains lexical-only and matches the `0.875` positive ranking ceiling. Timing/memory observations are local only and were not used to tune production thresholds.
+- Validation: all 47 focused retrieval-eval, prompt/RAG-security, Chat RAG and embedding tests passed; compileall for `app`, `backend`, `tests` and `tools`, JavaScript syntax, all four Markdown-rendering tests and `git diff --check` passed.
+- Final decision: do not add or download a reranker now. The semantic fusion already puts every judged relevant source in the ideal prefix, so any claimed gain would be unmeasurable and the additional model/dependency/latency/memory would violate the resource gate. Reconsider only after a larger domain-independent judged set or live-provider evidence produces `ndcg_at_k < 1`/non-ideal top-N. This is a deferred eligibility condition, not a hidden fallback and not tuning against the temporary work corpus.
+- Changed files: eval tool, focused eval tests, `docs/TESTING.md`, `docs/knowledge/rag.md`, `docs/CHANGELOG.md` and this progress file. Production retrieval, runtime configuration and user data are unchanged; no model or reindex operation ran.
+
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 
 - Stage: Stage 7A completion plus Stage 6 follow-up diagnosis.
@@ -503,18 +522,51 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8), `329abc6` (Stage 9).
+- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8), `329abc6` (Stage 9), `e60503f` (Stage 10).
 
 ## Continuation state
 
-- Current stage: Stage 10 `completed`; implementation, affected documentation, focused/broad regression gates, metadata-only evaluation and static validation are complete. The single focused checkpoint containing this record is the final remaining action in the current turn; Stage 11 has not started.
-- Last completed action: verified the final 14-file diff is domain-neutral, recorded the Stage 10 quality matrix and confirmed that the 130-test broad gate contains only the two known ASR baseline failures.
-- Current repository state before checkpoint: 14 Stage 10 files are modified and unstaged. No model was installed, downloaded or run; no user RAG was reindexed; no database/source mutation outside temporary synthetic test databases occurred.
+- Current stage: Stage 11 `completed`; the reproducible reranker quality gate, final no-reranker decision, affected documentation and validation are complete. The single focused Stage 11 checkpoint is the final remaining action in this turn; Stage 12 has not started.
+- Last completed action: added metadata-only `ndcg_at_k`/`ideal_ranked_hit_rate`, confirmed deterministic semantic `hybrid_v2` saturates both at `1.000`, and passed all focused/static gates.
+- Current repository state before checkpoint: six Stage 11 files are modified and unstaged. No production retrieval/runtime file or user data changed; no model was installed, downloaded or run and no user RAG was reindexed.
 - Known risks: the deterministic semantic provider proves fusion logic but not live EmbeddingGemma score distribution, threshold calibration, latency or memory. `SEMANTIC_MIN_SCORE=0.35` and `FACET_SEMANTIC_MIN_SCORE=0.45` therefore remain contract defaults that must be validated with the real provider later, not tuned against the temporary work RAG. Backend output enforcement and profile/session ownership remain authoritative and must not regress. Safari still reports `Not Secure` separately.
-- Next exact action in this turn: stage only the 14 inspected Stage 10 files, commit `feat(rag): fuse lexical and semantic retrieval`, verify clean status and stop.
-- Next action after explicit user continuation: record the Stage 10 checkpoint hash, then begin only Stage 11's reranker decision. Do not implement or download a reranker unless cross-domain evidence establishes a remaining quality gap worth its bounded resource cost.
+- Next exact action in this turn: inspect/stage only the six Stage 11 files, commit `test(rag): gate optional reranking by ndcg`, verify clean status and stop.
+- Next action after explicit user continuation: record the Stage 11 checkpoint hash, then begin only Stage 12 reindex lifecycle/operational integration. Preserve the no-reranker decision unless a new independent judged set or real-provider evidence demonstrates a ranking gap.
 
-### Continuation prompt for Stage 11
+### Continuation prompt for Stage 12
+
+```text
+Продолжи LocalGPT строго со Stage 12 по активному progress-файлу
+docs/progress/security-audit-followup-progress.md и skill project-progress-workflow.
+
+Репозиторий:
+/Users/oleksandr/Documents/Custom files/Github Repositories/LocalGPT
+
+Ветка:
+feature/prompt-rag-security-hardening
+
+Сначала проверь clean status и фактический HEAD. Запиши hash завершённого Stage 11 commit
+`test(rag): gate optional reranking by ndcg` в progress-файл.
+
+Stage 11 decision:
+- optional reranker не реализован и не скачан;
+- deterministic semantic hybrid_v2 уже имеет positive nDCG/ideal-ranked-hit 1.0,
+  perfect paraphrase/typo grounding и perfect negative/conflict controls;
+- reranker можно пересмотреть только при новой domain-independent judged выборке или
+  live-provider evidence с неидеальным top-N, не по временному пользовательскому corpus.
+
+Выполни только Stage 12: безопасный operational lifecycle semantic reindex.
+- Сначала исследуй существующие RAG status/reindex APIs, settings UI и atomic generation lifecycle.
+- Должны быть понятны current configured generation, indexed/ready/stale/reindex-required/failed state,
+  progress/error metadata и безопасный explicit запуск; никакого silent reindex/download.
+- Replacement/delete должен инвалидировать правильное generation, rollback не должен смешивать vectors.
+- Сохрани profile/session isolation, local-only provider behavior и отсутствие raw paths/errors.
+- UI-проверки нужны для desktop/mobile и обеих тем только если Stage 12 меняет UI.
+- Не запускай chat LLM; embedding smoke/reindex пользовательского corpus только по отдельному разрешению.
+- Обнови progress и затронутые permanent docs, создай один focused Stage 12 commit и остановись.
+```
+
+### Completed Stage 11 continuation prompt (historical)
 
 ```text
 Продолжи LocalGPT строго со Stage 11 по активному progress-файлу

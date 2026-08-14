@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import sys
 import tempfile
@@ -30,14 +31,25 @@ def _mean(values: list[float]) -> float:
     return round(sum(values) / len(values), 4) if values else 0.0
 
 
+def _ndcg_at_k(ranks: list[int], *, expected_count: int, top_k: int) -> float:
+    if expected_count <= 0 or top_k <= 0:
+        return 0.0
+    dcg = sum(1.0 / math.log2(rank + 1) for rank in ranks if rank <= top_k)
+    ideal_count = min(expected_count, top_k)
+    ideal_dcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_count + 1))
+    return round(dcg / ideal_dcg, 4) if ideal_dcg else 0.0
+
+
 def _positive_metrics(rows: list[dict[str, Any]]) -> dict[str, float | int]:
     return {
         "cases": len(rows),
         "recall_at_k": _mean([float(row["recall_at_k"]) for row in rows]),
         "mrr": _mean([float(row["reciprocal_rank"]) for row in rows]),
+        "ndcg_at_k": _mean([float(row["ndcg_at_k"]) for row in rows]),
         "context_recall": _mean([float(row["context_recall"]) for row in rows]),
         "full_hit_rate": _mean([1.0 if row["full_hit"] else 0.0 for row in rows]),
         "grounded_hit_rate": _mean([1.0 if row["grounded_full_hit"] else 0.0 for row in rows]),
+        "ideal_ranked_hit_rate": _mean([1.0 if row["ideal_ranked_hit"] else 0.0 for row in rows]),
     }
 
 
@@ -111,6 +123,7 @@ def evaluate_fixture(
                 ranks = [selected_sources.index(source) + 1 for source in expected_sources if source in selected_sources]
                 recall = len(ranks) / len(expected_sources) if expected_sources else 0.0
                 reciprocal_rank = 1.0 / min(ranks) if ranks else 0.0
+                ideal_ranks = list(range(1, min(len(expected_sources), top_k) + 1))
                 context = rag_service.build_context(
                     result["results"],
                     max_chars=max_context_chars,
@@ -131,6 +144,13 @@ def evaluate_fixture(
                         "matched_expected_count": len(ranks),
                         "recall_at_k": round(recall, 4),
                         "reciprocal_rank": round(reciprocal_rank, 4),
+                        "ndcg_at_k": _ndcg_at_k(
+                            ranks,
+                            expected_count=len(expected_sources),
+                            top_k=top_k,
+                        ),
+                        "ideal_ranked_hit": bool(expected_sources)
+                        and sorted(ranks) == ideal_ranks,
                         "context_recall": round(context_recall, 4),
                         "full_hit": bool(expected_sources) and len(ranks) == len(expected_sources),
                         "grounded_full_hit": bool(expected_sources)

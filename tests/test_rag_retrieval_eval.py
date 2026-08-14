@@ -59,6 +59,8 @@ class RagRetrievalEvalTestCase(unittest.TestCase):
         self.assertEqual(report["summary"]["total_cases"], 10)
         self.assertGreater(report["summary"]["positive"]["recall_at_k"], 0.0)
         self.assertLess(report["summary"]["positive"]["recall_at_k"], 1.0)
+        self.assertIn("ndcg_at_k", report["summary"]["positive"])
+        self.assertIn("ideal_ranked_hit_rate", report["summary"]["positive"])
         self.assertLess(
             report["summary"]["positive"]["grounded_hit_rate"],
             report["summary"]["positive"]["full_hit_rate"],
@@ -94,9 +96,20 @@ class RagRetrievalEvalTestCase(unittest.TestCase):
             semantic["summary"]["categories"]["paraphrase"]["grounded_hit_rate"],
             lexical_rollback["summary"]["categories"]["paraphrase"]["grounded_hit_rate"],
         )
+        self.assertEqual(semantic["summary"]["positive"]["ndcg_at_k"], 1.0)
+        self.assertEqual(semantic["summary"]["positive"]["ideal_ranked_hit_rate"], 1.0)
+        self.assertGreater(
+            semantic["summary"]["positive"]["ndcg_at_k"],
+            lexical_rollback["summary"]["positive"]["ndcg_at_k"],
+        )
         self.assertEqual(semantic["summary"]["categories"]["exact_identifier"]["recall_at_k"], 1.0)
         self.assertEqual(semantic["summary"]["negative_rejection_rate"], 1.0)
         self.assertEqual(semantic["summary"]["status_accuracy"], 1.0)
+
+    def test_ndcg_requires_all_expected_sources_in_the_ideal_prefix(self) -> None:
+        self.assertEqual(rag_eval._ndcg_at_k([1, 2], expected_count=2, top_k=5), 1.0)
+        self.assertLess(rag_eval._ndcg_at_k([1, 5], expected_count=2, top_k=5), 1.0)
+        self.assertEqual(rag_eval._ndcg_at_k([], expected_count=0, top_k=5), 0.0)
 
     def test_cli_writes_metadata_only_report_and_creates_output_parent(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

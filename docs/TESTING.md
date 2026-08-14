@@ -89,7 +89,7 @@ Offline eval использует только synthetic Markdown из неск�
 venv/bin/python tools/rag_retrieval_eval.py --pretty --output /private/tmp/localgpt-rag-baseline.json
 ```
 
-Основные метрики: `recall_at_k`, `mrr`, `context_recall`, `grounded_hit_rate`, negative rejection и expected evidence-status accuracy. Raw hit без `supported`/`partial`/`conflict` diagnostics не считается grounded success. `resources` — локальное наблюдение конкретного запуска, не стабильный benchmark. Сравнивайте retrieval implementations на неизменном fixture manifest; не добавляйте туда client/company corpus или production-specific vocabulary.
+Основные метрики: `recall_at_k`, `mrr`, binary-relevance `ndcg_at_k`, `ideal_ranked_hit_rate`, `context_recall`, `grounded_hit_rate`, negative rejection и expected evidence-status accuracy. `ndcg_at_k=1` вместе с `ideal_ranked_hit_rate=1` означает, что все размеченные источники занимают первые `expected_source_count` позиций; это gate для решения о необходимости reranker, а не оценка полноты самой разметки. Raw hit без `supported`/`partial`/`conflict` diagnostics не считается grounded success. `resources` — локальное наблюдение конкретного запуска, не стабильный benchmark. Сравнивайте retrieval implementations на неизменном fixture manifest; не добавляйте туда client/company corpus или production-specific vocabulary.
 
 ## Backend smoke
 
