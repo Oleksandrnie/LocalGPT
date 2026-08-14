@@ -4182,6 +4182,54 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     color: #d8e8ff;
 }
 
+.rag-generation-card {
+    display: grid;
+    gap: 8px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--bg-elevated);
+}
+
+.rag-generation-card__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.rag-generation-card__header strong {
+    color: var(--text);
+    font-size: 14px;
+    text-align: right;
+}
+
+.rag-generation-card[data-state="ready"] {
+    border-color: rgba(87, 201, 140, 0.34);
+}
+
+.rag-generation-card[data-state="ingest_required"],
+.rag-generation-card[data-state="reindex_required"],
+.rag-generation-card[data-state="queued"],
+.rag-generation-card[data-state="running"] {
+    border-color: rgba(242, 203, 144, 0.42);
+}
+
+.rag-generation-card[data-state="configuration_error"],
+.rag-generation-card[data-state="failed"] {
+    border-color: rgba(255, 120, 120, 0.48);
+}
+
+.rag-generation-card progress {
+    width: 100%;
+    height: 8px;
+    accent-color: var(--accent);
+}
+
+.rag-generation-card .subtle {
+    margin: 0;
+}
+
 .rag-file-list {
     display: grid;
     gap: 8px;
@@ -5959,6 +6007,7 @@ body.theme-light .model-card,
 body.theme-light .download-card,
 body.theme-light .info-card,
 body.theme-light #settingsBackdrop .info-card,
+body.theme-light .rag-generation-card,
 body.theme-light .pipeline-settings-panel,
 body.theme-light .pipeline-stage-row,
 body.theme-light .pipeline-settings-toggle,

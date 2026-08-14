@@ -149,6 +149,10 @@ class RagIngestRequest(BaseModel):
     force: bool = False
 
 
+class RagReindexRequest(BaseModel):
+    profile_id: int
+
+
 class RagSearchRequest(BaseModel):
     profile_id: int
     session_id: str | None = Field(default=None, max_length=128)

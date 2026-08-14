@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 11 completed — reranker rejected/deferred by the saturated cross-domain quality gate; checkpoint is being created and Stage 12 has not started.
+- Current stage: Stage 12 completed and ready for its focused checkpoint; Stage 13 has not started.
 
 ## Instructions and precedence
 
@@ -194,7 +194,7 @@
 ### Stage 11 — Optional universal reranker with resource gates
 
 - Goal: reorder a bounded candidate set by query-evidence relevance when hybrid fusion alone remains insufficient.
-- Status: completed; reranker not implemented because no measurable ranking gain is available on the current independent quality gate.
+- Status: completed; checkpoint `8b43f69` (`test(rag): gate optional reranking by ndcg`); reranker not implemented because no measurable ranking gain is available on the current independent quality gate.
 - Actions: decide from Stage 10 metrics whether reranking is justified; if yes, add a small local multilingual reranker over top-N with model/version metadata, time/memory limits, explicit unavailable state, and deterministic adapter tests; if no, mark the stage completed with evidence and no code commit.
 - Expected result: top-5 precision improves across unrelated domains without keeping a heavy model resident or invoking the chat LLM.
 - Validation: before/after Stage 8 metrics, bounded local smoke, unavailable/timeout tests, sequential resource observation.
@@ -205,7 +205,7 @@
 ### Stage 12 — Reindex lifecycle and operational integration
 
 - Goal: make semantic indexing understandable and safely operable for arbitrary replacement corpora.
-- Status: pending.
+- Status: completed; focused checkpoint `feat(rag): expose semantic reindex lifecycle` is the final action of this stage.
 - Actions: expose index provider/version/status and explicit reindex progress/error state through existing RAG APIs/UI where needed; ensure deletion/replacement invalidates the correct index generation; document offline setup and rollback.
 - Expected result: replacing the temporary work corpus requires only ordinary delete/upload/reindex actions, with no code change.
 - Validation: API/UI contracts, lifecycle integration tests, mobile/desktop status checks if UI changes, static checks.
@@ -429,6 +429,34 @@
 - Final decision: do not add or download a reranker now. The semantic fusion already puts every judged relevant source in the ideal prefix, so any claimed gain would be unmeasurable and the additional model/dependency/latency/memory would violate the resource gate. Reconsider only after a larger domain-independent judged set or live-provider evidence produces `ndcg_at_k < 1`/non-ideal top-N. This is a deferred eligibility condition, not a hidden fallback and not tuning against the temporary work corpus.
 - Changed files: eval tool, focused eval tests, `docs/TESTING.md`, `docs/knowledge/rag.md`, `docs/CHANGELOG.md` and this progress file. Production retrieval, runtime configuration and user data are unchanged; no model or reindex operation ran.
 
+### 2026-08-14 — Stage 12 operational lifecycle analysis
+
+- Stage 11 checkpoint reconciled: HEAD is `8b43f69` (`test(rag): gate optional reranking by ndcg`) on `feature/prompt-rag-security-hardening`; the working tree was clean at Stage 12 start.
+- Confirmed backend state: `reindex_embeddings()` already computes the complete selected generation before `replace_embedding_generation()` publishes it, and previous generations remain for rollback. There is no HTTP endpoint/task lifecycle for that operation. `GET /rag/status` reports only `ready`/`reindex_required`, uses retrieval-scoped chunk counts, and cannot distinguish changed/unindexed source files, configuration failure, active progress or the last safe failure.
+- Confirmed UI state: the RAG modal has upload, ingest and refresh only. The visible `Индексировать` action calls ordinary ingest; there is no explicit semantic-generation reindex action, configured provider/model summary, progress recovery or actionable error state. Stale JavaScript references to absent force/copy controls are not part of the visible UI and will be removed only where touched by this stage.
+- Acceptance criteria:
+  - status distinguishes `ready`, `ingest_required`, `reindex_required` and safe configuration failure, reports configured descriptor plus profile-wide total/indexed/missing chunks and available generation counts without filesystem/runtime addresses;
+  - upload/replacement is visible as `ingest_required`; deletion removes its chunks/embeddings; provider switching never mixes generations;
+  - explicit `POST /rag/reindex` starts at most one process-local background operation globally, returns immediately, exposes profile-owned progress through status/task lookup and never runs automatically;
+  - provider/config/source-change failures publish stable public error codes without raw provider exceptions or partial generation replacement;
+  - generation publication validates the full current profile chunk set in the same DB transaction, so a concurrent source change fails closed and preserves the prior generation;
+  - UI shows the generation state and progress, confirms the potentially expensive action, restores polling after refresh and remains usable on desktop/mobile in both themes.
+- Scope boundaries: no user-corpus reindex, model download, chat/embedding live smoke, new reranker, Stage 13 model run or corpus-specific rule. Process-local task history may reset on backend restart; canonical generation state is always reconstructed from SQLite/source metadata.
+- Planned files: RAG task/service/routes/schema and DB repository, active RAG HTML/JS/CSS, focused Python/Node tests, affected architecture/backend/RAG/UI/testing/changelog docs and this progress record.
+- Validation plan: existing embedding baseline; new lifecycle success/failure/concurrency/source-change tests; RAG/security/isolation regression selection; Node UI contract; syntax/compile/diff checks; isolated desktop/mobile light/dark read-only UI inspection. Expected checkpoint: `feat(rag): expose semantic reindex lifecycle`.
+
+### 2026-08-14 — Stage 12 implementation and validation
+
+- Backend lifecycle: `GET /rag/status` now reports configured descriptor, profile-wide total/indexed/missing chunks, pending sources, available generations and one of `ready`, `ingest_required`, `reindex_required` or `configuration_error`. Configuration/provider failures are reduced to stable public codes; absolute paths and raw exception text are not returned.
+- Explicit operation: `POST /rag/reindex` starts one process-local background task globally and returns immediately; profile-owned `GET /rag/reindex/{task_id}` exposes queued/running/completed/failed progress. A second profile cannot read the task, and any concurrent reindex is rejected. No model download, automatic reindex or user-corpus mutation was added.
+- Atomicity: generation publication compares the complete current profile chunk set inside the same SQLite transaction. Duplicate, missing or newly added chunks cause `rag_embedding_source_changed`; the prior generation remains unchanged. Old generations remain listed for explicit configuration rollback.
+- Restart contract: task progress is intentionally process-local. While the backend is alive, `/rag/status` exposes the latest operation and UI resumes polling after refresh/reopen. After restart, a missing task is treated as a warning and canonical generation readiness is recomputed from SQLite plus source metadata.
+- UI: the RAG modal shows configured provider/model/version, indexed totals, pending sources, safe failure text and progress. Semantic reindex is enabled only for `reindex_required`, requires confirmation with model/chunk count and local-load warning, and temporarily disables competing source operations.
+- Automated validation: all 11 embedding/provider/lifecycle tests passed; the broader prompt/RAG-security, Chat RAG, Vision RAG, context-isolation and retrieval-eval selection passed all 54 tests. JavaScript syntax, `git diff --check`, four Markdown rendering tests and three new RAG reindex UI contract tests passed.
+- Manual UI validation: an isolated temporary DB/source directory was served without loading any model. Desktop and 390×844 mobile views passed in dark and light themes; generation card, disabled unavailable reindex action, responsive scrolling and keyboard focus were visible and usable, with zero browser console errors. The isolated server and temporary data were removed afterwards.
+- Changed files: DB generation repository; RAG schema/routes/service and new process-local task registry; RAG HTML/JS/CSS; focused Python/Node tests; architecture/backend/RAG/UI/testing/changelog records; this progress file.
+- Scope confirmation: no CMS/company/brand/corpus-specific rule, reranker, model download, chat LLM call, embedding live smoke or user RAG reindex was introduced. Stage 13 remains pending explicit user continuation.
+
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 
 - Stage: Stage 7A completion plus Stage 6 follow-up diagnosis.
@@ -481,6 +509,7 @@
 - `tests/test_live_llm_security_harness.py`.
 - `tests/test_lan_launcher.py`.
 - `tools/live_llm_security.py`.
+- Stage 12: `backend/apps/rag/reindex_tasks.py`, `tests/rag_reindex_ui.test.mjs`.
 
 ### Modified
 
@@ -489,6 +518,7 @@
 - Chat prompt policy/service/tasks output boundary and global system policy.
 - RAG routes/service and active Web UI request/settings flows.
 - Existing focused tests and affected permanent documentation.
+- Stage 12: embedding generation repository, RAG lifecycle schema/routes/service, RAG modal HTML/JS/CSS, focused lifecycle tests and affected architecture/backend/RAG/UI/testing/changelog records.
 
 ### Deleted
 
@@ -496,12 +526,12 @@
 
 ## Validation results
 
-- Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed. Stage 7D repeated RAG/test compileall and diff check successfully.
-- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D passed 36 focused prompt/RAG/chat tests. Stage 8 passed 39 eval/prompt-RAG-security/chat tests. Stage 9 provider/generation tests and focused RAG/security/isolation regression gate passed after the implementation correction recorded above.
+- Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed. Stage 7D repeated RAG/test compileall and diff check successfully. Stage 12 final gate passed compileall for app/backend/tests/tools, JavaScript syntax, `git diff --check`, four Markdown-rendering tests and three RAG lifecycle UI contracts.
+- Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D passed 36 focused prompt/RAG/chat tests. Stage 8 passed 39 eval/prompt-RAG-security/chat tests. Stage 9 provider/generation tests and focused RAG/security/isolation regression gate passed after the implementation correction recorded above. Stage 12 passed 11 embedding/provider/lifecycle tests plus 54 broader RAG/security/isolation/eval tests.
 - Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement; host LAN HTTPS/API/SSE/CORS/admin/certificate matrix passed.
-- Manual/regression checks: user confirmed restored host behavior and functional second-device access; Qwen3 OFF + generic CMS RAG answer passed on the real phone. Safari still displays `Not Secure`, so certificate trust status remains pending separately in Stage 7A.
+- Manual/regression checks: user confirmed restored host behavior and functional second-device access; Qwen3 OFF + generic CMS RAG answer passed on the real phone. Stage 12 RAG generation UI passed isolated desktop/mobile dark/light inspection and keyboard-focus/console checks without touching user data. Safari still displays `Not Secure`, so certificate trust status remains pending separately in Stage 7A.
 - Skipped checks and reasons: no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
-- Remaining uncertainty: model behavioral jailbreak resistance varies; live `embeddinggemma` quality/resources remain unmeasured until a separately authorized install/smoke; hybrid semantic fusion and reranker decision remain Stages 10–11; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
+- Remaining uncertainty: model behavioral jailbreak resistance varies; live `embeddinggemma` quality/resources remain unmeasured until separately authorized Stage 13 work; process-local reindex progress does not survive a backend restart, although canonical generation state does; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
 
 ## Regressions and deferred work
 
@@ -522,18 +552,51 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8), `329abc6` (Stage 9), `e60503f` (Stage 10).
+- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8), `329abc6` (Stage 9), `e60503f` (Stage 10), `8b43f69` (Stage 11). Stage 12 hash is recorded after its focused checkpoint.
 
 ## Continuation state
 
-- Current stage: Stage 11 `completed`; the reproducible reranker quality gate, final no-reranker decision, affected documentation and validation are complete. The single focused Stage 11 checkpoint is the final remaining action in this turn; Stage 12 has not started.
-- Last completed action: added metadata-only `ndcg_at_k`/`ideal_ranked_hit_rate`, confirmed deterministic semantic `hybrid_v2` saturates both at `1.000`, and passed all focused/static gates.
-- Current repository state before checkpoint: six Stage 11 files are modified and unstaged. No production retrieval/runtime file or user data changed; no model was installed, downloaded or run and no user RAG was reindexed.
-- Known risks: the deterministic semantic provider proves fusion logic but not live EmbeddingGemma score distribution, threshold calibration, latency or memory. `SEMANTIC_MIN_SCORE=0.35` and `FACET_SEMANTIC_MIN_SCORE=0.45` therefore remain contract defaults that must be validated with the real provider later, not tuned against the temporary work RAG. Backend output enforcement and profile/session ownership remain authoritative and must not regress. Safari still reports `Not Secure` separately.
-- Next exact action in this turn: inspect/stage only the six Stage 11 files, commit `test(rag): gate optional reranking by ndcg`, verify clean status and stop.
-- Next action after explicit user continuation: record the Stage 11 checkpoint hash, then begin only Stage 12 reindex lifecycle/operational integration. Preserve the no-reranker decision unless a new independent judged set or real-provider evidence demonstrates a ranking gap.
+- Current stage: Stage 12 `completed`; backend lifecycle, safe operational API, responsive UI, automated coverage, isolated manual QA and affected documentation are complete. Stage 13 has not started.
+- Last completed action: passed isolated desktop/mobile light/dark QA with no browser console errors, removed the temporary runtime, and updated permanent/progress documentation.
+- Current repository state before checkpoint: only Stage 12 implementation, tests and affected records are modified/untracked. User data and model state are unchanged; no model was installed, downloaded or run and no user RAG was reindexed.
+- Known risks: background task history is process-local, so an in-flight operation cannot resume across backend restart; canonical SQLite/source state does recover and the UI explains this. Live EmbeddingGemma score distribution, thresholds, latency and memory remain unmeasured until Stage 13 authorization. Backend output enforcement, profile/session ownership and sequential model loading remain authoritative. Safari still reports `Not Secure` separately.
+- Next exact action in this turn: inspect and stage only the Stage 12 files, commit `feat(rag): expose semantic reindex lifecycle`, verify clean status and stop.
+- Next action after explicit user continuation: record the Stage 12 checkpoint hash, then begin only Stage 13 sequential validation. Run 3B, 7B and 4B strictly one at a time with unload verification; do not tune retrieval against the temporary work corpus.
 
-### Continuation prompt for Stage 12
+### Continuation prompt for Stage 13
+
+```text
+Продолжи LocalGPT строго со Stage 13 по активному progress-файлу
+docs/progress/security-audit-followup-progress.md и skill project-progress-workflow.
+
+Репозиторий:
+/Users/oleksandr/Documents/Custom files/Github Repositories/LocalGPT
+
+Ветка:
+feature/prompt-rag-security-hardening
+
+Сначала проверь clean status и фактический HEAD. Запиши hash завершённого Stage 12 commit
+`feat(rag): expose semantic reindex lifecycle` в progress-файл. Не начинай Stage 12 заново.
+
+Stage 12 contract:
+- status различает ready / ingest_required / reindex_required / configuration_error;
+- semantic reindex запускается только явно и допускает одну process-local operation глобально;
+- task lookup profile-owned, raw paths/errors не раскрываются;
+- публикация generation атомарно отклоняется, если source chunks изменились;
+- UI подтверждает нагрузку, показывает progress/error и восстанавливает canonical state после restart.
+
+Выполни только Stage 13: последовательную валидацию общего retrieval/model grounding.
+- Сначала запусти cross-domain metadata-only deterministic suite и зафиксируй retrieval metrics отдельно от generation quality.
+- Любая необходимая переиндексация пользовательского corpus запускается только после явного согласования с пользователем; пользователь ранее предложил выполнять её сам через UI.
+- Прогоняй `qwen2.5:3b-instruct`, затем `qwen2.5:7b-instruct`, затем `qwen3:4b` строго по одному.
+- Перед следующим model run докажи, что предыдущая модель выгружена; финальный вызов каждой модели должен освобождать Ollama resource.
+- Не скачивай модели, не запускай их параллельно и не меняй thresholds/эвристики по временному рабочему RAG.
+- Отдельно запиши: одинаковые retrieved chunk IDs/diagnostics, полноту ответа модели, unsupported claims, Thinking boundary и resource observation.
+- Если configured semantic generation ещё не создан, не обходи Stage 12 contract silent fallback; остановись на точном operational prerequisite и попроси пользователя выполнить подтверждённое действие через UI.
+- Обнови progress и только затронутые permanent records, создай один focused Stage 13 commit и остановись.
+```
+
+### Completed Stage 12 continuation prompt (historical)
 
 ```text
 Продолжи LocalGPT строго со Stage 12 по активному progress-файлу

@@ -52,7 +52,11 @@ Embedding слой имеет versioned provider contract. Compatibility generat
 
 Semantic provider передаёт `truncate=false`, валидирует число, размерность и конечность значений и не откатывается молча к hashing при timeout, отсутствии модели или несовместимом ответе. Последний batch отправляется с `keep_alive=0`, поэтому embedding model предсказуемо выгружается; промежуточные reindex batches используют bounded keep-alive. Размер batch ограничен настройкой.
 
-Переключение `RAG_EMBEDDING_PROVIDER`/model/version/dimensions не конвертирует индекс автоматически: search возвращает `rag_embedding_reindex_required`, пока все доступные chunks не получат выбранное generation. Переиндексация сначала полностью рассчитывает новое поколение и только затем атомарно публикует его; прежние generation остаются в SQLite, поэтому rollback выполняется возвратом прежней конфигурации без повторного чтения corpus. Пользовательский API/UI для запуска и наблюдения semantic reindex относится к отдельному operational stage.
+Переключение `RAG_EMBEDDING_PROVIDER`/model/version/dimensions не конвертирует индекс автоматически: search возвращает `rag_embedding_reindex_required`, пока все доступные chunks не получат выбранное generation. Переиндексация сначала полностью рассчитывает новое поколение и только затем атомарно публикует его; если source chunks изменились во время расчёта, публикация отклоняется с `rag_embedding_source_changed`, а прежнее generation остаётся целым. Сохранённые generations позволяют выполнить rollback возвратом прежней конфигурации без повторного чтения corpus.
+
+`GET /rag/status` сообщает configured descriptor, `total_chunks`, `indexed_chunks`, `missing_chunks`, `pending_sources` и metadata доступных generations. Состояния имеют чёткий порядок: invalid provider configuration → `configuration_error`; новые/изменённые Markdown sources → `ingest_required`; отсутствующее configured generation → `reindex_required`; совпадающий source/index → `ready`. Absolute paths и raw exception text наружу не передаются.
+
+Semantic reindex запускается только явно через `POST /rag/reindex`; UI перед запуском показывает модель, объём chunks и предупреждение о локальной нагрузке. На весь backend допускается одна background operation, прогресс читается через profile-owned `GET /rag/reindex/{task_id}`. Task state process-local, поэтому после рестарта незавершённая operation исчезает, а UI повторно получает канонический generation state из SQLite. Это не silent download/reindex: установка модели и обычный ingest sources остаются отдельными действиями.
 
 Default search strategy `hybrid_v2`:
 
@@ -134,15 +138,14 @@ Session deletion удаляет принадлежащие ей derived document
 
 ## Reindexing
 
-Перезапустите ingest, если:
+Нажмите «Индексировать файлы», если:
 
 - source изменён;
 - generated JSON устарел;
-- chunking/embedding model изменились;
 - status показывает mismatch/stale record;
 - retrieval не находит новый документ.
 
-Force ingest нужен только для намеренной полной перестройки. Перед ним сохраните важные runtime sources.
+После ingest нажмите «Переиндексировать», только если status показывает `reindex_required`: это создаёт configured embedding generation для всех profile chunks. Изменение provider/model/version/dimensions требует semantic reindex, но не force ingest. При `configuration_error` сначала исправьте локальную конфигурацию; при `rag_embedding_source_changed` дождитесь завершения source-изменений и повторите операцию. Force ingest нужен только для намеренной полной перестройки sources. Перед ним сохраните важные runtime sources.
 
 ## Corpus hygiene audit
 

@@ -52,7 +52,8 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
 | Prompt/RAG security, hybrid retrieval и grounding diagnostics | `venv/bin/python -m unittest tests.test_prompt_rag_security_audit tests.test_chat_rag tests.test_vision_rag -v` |
 | Cross-domain RAG retrieval baseline, metadata-only | `venv/bin/python -m unittest tests.test_rag_retrieval_eval -v` |
-| Versioned RAG embedding provider, reindex и rollback | `venv/bin/python -m unittest tests.test_rag_embeddings -v` |
+| Versioned RAG embedding provider, atomic/background reindex, status и rollback | `venv/bin/python -m unittest tests.test_rag_embeddings -v` |
+| RAG reindex UI lifecycle contract | `node --test tests/rag_reindex_ui.test.mjs` |
 | Live-model harness contract без загрузки модели | `venv/bin/python -m unittest tests.test_live_llm_security_harness -v` |
 | Profile/session isolation и history-turn contract | `venv/bin/python -m unittest tests.test_context_isolation tests.test_chat_attachments tests.test_chat_rag tests.test_vision_rag -v` |
 | Runtime authorization, ownership, redaction, limits и cleanup | `venv/bin/python -m unittest tests.test_runtime_security -v` |
@@ -204,6 +205,7 @@ Model-transfer tests используют только temporary synthetic files
 - force reindex очищает stale JSON records, не удаляя legacy files;
 - chunk overlap, embedding metadata, `hybrid_v2` independent pools/RRF, `lexical_v1` rollback, `legacy` compatibility и diversified top-k search;
 - versioned provider/model/dimensions не смешиваются; несовместимый Ollama response fail-closed, explicit reindex атомарно публикует новое generation и сохраняет прежнее для rollback;
+- status различает `ready`/`ingest_required`/`reindex_required`/`configuration_error`, task polling требует owning profile, raw provider errors не возвращаются, а изменение source chunks во время reindex отменяет публикацию;
 - context assembly соблюдает `max_chars` и содержит bounded facet/provenance diagnostics;
 - generic follow-up выбирает evidence через ordinary lexical/semantic relevance без platform/company bonus, а query composer не дублирует turns и сохраняет последнюю тему для коротких/склонённых deictic forms;
 - search соблюдает query/top-k limits; multi-file upload проверяет count/per-file/total bytes до publication и не оставляет artifacts при 413;
@@ -230,7 +232,7 @@ Model-transfer tests используют только temporary synthetic files
 - profiles/sessions и Settings tabs;
 - streaming и refresh/reconnect;
 - ASR/TTS/OCR tool docks;
-- RAG panel и context section;
+- RAG panel и context section: generation state, disabled/confirm reindex action, progress/failed state и refresh-resume на desktop/mobile в обеих темах;
 - image picker/paste/drop, attachment preview/remove/history и Vision → RAG dialog;
 - live reasoning icon/modal, close/reopen и cancel/error retention, два token budget поля, оба mobile Thinking controls и их cross-sync, user/assistant Copy и общий Chat → RAG dialog;
 - mobile session actions и message `Добавить в RAG`/`Скопировать` имеют фактический tap target не меньше 44 px;

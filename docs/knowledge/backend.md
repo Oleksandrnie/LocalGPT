@@ -42,7 +42,7 @@ app/
 | ASR | `backend/apps/asr/routes.py`, `pipeline.py`, `transcripts.py`, `whisper*.py` | transcription, history, model management, analysis pipeline |
 | TTS | `backend/apps/tts/router.py`, `service.py`, `providers/` | provider abstraction, generation, voice library, history |
 | OCR | `backend/apps/ocr/routes.py`, `service.py` | image OCR и cleanup |
-| RAG | `backend/apps/rag/routes.py`, `service.py` | sources, ingest, chunks, retrieval, context |
+| RAG | `backend/apps/rag/routes.py`, `service.py`, `reindex_tasks.py` | sources, ingest, chunks, retrieval, context, explicit reindex lifecycle |
 | Plugins | `backend/apps/plugins/registry.py`, `routes.py`, `tailscale.py` | manifests, trust, state, docs и backend-owned handlers |
 
 Shared routers:
@@ -72,6 +72,8 @@ Prompt composition разделяет backend-owned global policy (L1), editable
 Session-owned API и prompt paths требуют совпадающие `profile_id + session_id`: messages/criteria, transcripts и pipeline runs, reasoning, attachments, tasks и derived RAG. Foreign и unknown IDs возвращают одинаковый not-found contract. `mem_turns` — profile-owned setting диапазона 0–100 с default 6; prompt history выбирает ровно последние N завершённых пар `user + assistant` текущей session. Удаление session немедленно удаляет её derived RAG documents/chunks/embeddings и не затрагивает profile-wide Markdown или соседние sessions.
 
 RAG API дополнительно возвращает structured retrieval diagnostics: `POST /rag/search` содержит strategy, selected chunks, lexical/semantic pool provenance и facet-level evidence state; `GET /rag/audit?profile_id=...` создаёт metadata-only preview corpus hygiene без изменения файлов/index. Default `hybrid_v2` можно локально откатить к `lexical_v1` через app setting `rag_retrieval_strategy`; этот rollback не вызывает semantic query и не меняет storage/corpus. Старое сохранённое значение `hybrid_v1` нормализуется к `hybrid_v2`, а `legacy` остаётся отдельным compatibility ranking.
+
+Operational RAG lifecycle остаётся явным: `GET /rag/status` возвращает configured descriptor, количество total/indexed/missing chunks, доступные generations и безопасный state без absolute paths/raw errors. `POST /rag/reindex` создаёт одну background operation на весь process, а `GET /rag/reindex/{task_id}?profile_id=...` доступен только owning profile. Task registry не является durable storage: после рестарта UI восстанавливает канонический ready/stale state из SQLite и source metadata. Backend не скачивает и не запускает embedding model до явного reindex; одновременные операции отклоняются.
 
 `ADMIN_TOKEN` обязателен для runtime shutdown/restart, database cleanup/reset, storage paths и chat debug. Token сравнивается constant-time; Web UI передаёт его header-ом и сохраняет только в `sessionStorage`. Public health/version и runtime diagnostics не публикуют filesystem/network details; chat event log и debug prompt/pipeline остаются metadata-only.
 

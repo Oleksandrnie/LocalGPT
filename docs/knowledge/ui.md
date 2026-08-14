@@ -55,6 +55,8 @@ Assistant card рендерится из persisted `message.status`. Optimistic 
 
 Каждое непустое user и assistant message имеет действие `Скопировать`: общий clipboard path получает raw `message.content` выбранной карточки без Markdown-нормализации и показывает существующее подтверждение результата. User `Добавить в RAG` остаётся независимым действием.
 
+RAG panel показывает безопасное состояние configured embedding generation: готовность, необходимость обычного ingest, необходимость semantic reindex, ошибку конфигурации или активную/failed operation. Переиндексация доступна только для `reindex_required`, требует отдельного подтверждения с названием модели и количеством chunks и блокирует конкурирующие source actions. Прогресс восстанавливается при повторном открытии/refresh, пока process-local task существует; после backend restart UI пересчитывает состояние через `/rag/status`, не показывает raw backend error и не запускает операцию автоматически.
+
 Image composer принимает PNG/JPEG/WebP через picker, paste и multi-file drop. До отправки карточка показывает thumbnail, upload/error state и отдельную keyboard-accessible кнопку удаления. Обычная text paste не перехватывается, а backend settings остаются источником истины для count/byte/pixel/side limits. История загружает attachment metadata отдельно и рендерит ownership-checked thumbnail/media URLs, не binary data URI.
 
 ### Model state

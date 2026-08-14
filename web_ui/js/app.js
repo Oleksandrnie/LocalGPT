@@ -340,9 +340,12 @@ const els = {
   ragAddFilesButton: document.getElementById("ragAddFilesButton"),
   ragFileInput: document.getElementById("ragFileInput"),
   ragIngestButton: document.getElementById("ragIngestButton"),
-  ragForceIngestButton: document.getElementById("ragForceIngestButton"),
+  ragReindexButton: document.getElementById("ragReindexButton"),
   ragRefreshButton: document.getElementById("ragRefreshButton"),
-  ragCopyPathButton: document.getElementById("ragCopyPathButton"),
+  ragEmbeddingCard: document.getElementById("ragEmbeddingCard"),
+  ragEmbeddingState: document.getElementById("ragEmbeddingState"),
+  ragEmbeddingDetails: document.getElementById("ragEmbeddingDetails"),
+  ragReindexProgress: document.getElementById("ragReindexProgress"),
   ragStatusText: document.getElementById("ragStatusText"),
   ragFileList: document.getElementById("ragFileList"),
   confirmBackdrop: document.getElementById("confirmBackdrop"),
@@ -610,6 +613,7 @@ const state = {
   ttsHistoryCollapsed: readStored(STORAGE_KEYS.ttsHistoryCollapsed, "1") === "1",
   ragStatus: null,
   ragBusy: false,
+  ragReindexPolling: false,
   pluginsState: {
     plugins: [],
     invalid_plugins: [],
@@ -8554,8 +8558,90 @@ function renderRagQuickMenu() {
   }
 }
 
+function ragReindexErrorLabel(code) {
+  return {
+    rag_embedding_configuration_error: "Проверьте настройки embedding provider.",
+    rag_embedding_provider_unavailable: "Локальная embedding-модель недоступна.",
+    rag_embedding_provider_incompatible: "Embedding provider вернул несовместимые векторы.",
+    rag_embedding_source_changed: "Источники изменились во время работы. Запустите переиндексацию ещё раз.",
+    rag_embedding_reindex_failed: "Переиндексация завершилась ошибкой.",
+  }[String(code || "")] || "Переиндексация завершилась ошибкой.";
+}
+
+function renderRagEmbeddingGeneration(status) {
+  const generation = status?.embedding_generation || {};
+  const operation = generation.operation || null;
+  const operationActive = ["queued", "running"].includes(String(operation?.status || ""));
+  const failedOperation = operation?.status === "failed" && generation.status !== "ready";
+  const stateName = operationActive
+    ? String(operation.status)
+    : failedOperation
+      ? "failed"
+      : String(generation.status || "unknown");
+  const labels = {
+    ready: "Готов",
+    ingest_required: "Сначала индексируйте файлы",
+    reindex_required: "Нужна переиндексация",
+    configuration_error: "Ошибка настройки",
+    queued: "В очереди",
+    running: "Переиндексация…",
+    failed: "Ошибка переиндексации",
+    unknown: "Статус неизвестен",
+  };
+  const descriptor = status?.embedding || operation?.embedding || {};
+  const provider = [descriptor.provider, descriptor.model, descriptor.version]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" • ");
+  const indexed = Number(generation.indexed_chunks || 0);
+  const total = Number(generation.total_chunks || 0);
+  const missing = Number(generation.missing_chunks || 0);
+  const pendingSources = Number(generation.pending_sources || 0);
+  let details = provider || "Embedding provider не настроен.";
+  if (operationActive) {
+    const processed = Number(operation.processed_chunks || 0);
+    const operationTotal = Number(operation.total_chunks || total || 0);
+    details = `${details} • обработано ${processed} из ${operationTotal}`;
+  } else if (failedOperation) {
+    details = `${details} • ${ragReindexErrorLabel(operation.error_code)}`;
+  } else if (generation.status === "ingest_required") {
+    details = `${details} • изменённых или новых файлов: ${pendingSources}`;
+  } else if (generation.status === "reindex_required") {
+    details = `${details} • готово ${indexed} из ${total}, отсутствует ${missing}`;
+  } else if (generation.status === "ready") {
+    details = total ? `${details} • готово ${indexed} из ${total}` : `${details} • источников пока нет`;
+  } else if (generation.error_code) {
+    details = `${details} • ${ragReindexErrorLabel(generation.error_code)}`;
+  }
+  if (els.ragEmbeddingCard) {
+    els.ragEmbeddingCard.dataset.state = stateName;
+  }
+  if (els.ragEmbeddingState) {
+    els.ragEmbeddingState.textContent = labels[stateName] || labels.unknown;
+  }
+  if (els.ragEmbeddingDetails) {
+    els.ragEmbeddingDetails.textContent = details;
+  }
+  if (els.ragReindexProgress) {
+    els.ragReindexProgress.hidden = !operationActive;
+    if (operationActive) {
+      const processed = Number(operation.processed_chunks || 0);
+      const operationTotal = Number(operation.total_chunks || total || 0);
+      if (operationTotal > 0) {
+        els.ragReindexProgress.value = Math.min(100, Math.round((processed / operationTotal) * 100));
+      } else {
+        els.ragReindexProgress.removeAttribute("value");
+      }
+    } else {
+      els.ragReindexProgress.value = 0;
+    }
+  }
+  return operationActive;
+}
+
 function renderRagPanel() {
   const status = state.ragStatus || {};
+  const reindexActive = renderRagEmbeddingGeneration(status);
   renderRagButton();
   if (els.ragSourceDirValue) {
     els.ragSourceDirValue.textContent = status.source_dir || "rag_sources";
@@ -8564,13 +8650,21 @@ function renderRagPanel() {
     els.ragEnabledToggle.disabled = !state.activeProfileId || state.ragBusy;
     els.ragEnabledToggle.checked = activeProfileRagEnabled();
   }
-  [els.ragAddFilesButton, els.ragIngestButton, els.ragForceIngestButton, els.ragRefreshButton, els.ragCopyPathButton]
+  [els.ragAddFilesButton, els.ragIngestButton, els.ragRefreshButton]
     .filter(Boolean)
     .forEach((button) => {
-      button.disabled = state.ragBusy || (!state.activeProfileId && button !== els.ragRefreshButton && button !== els.ragCopyPathButton);
+      button.disabled = state.ragBusy || reindexActive || (!state.activeProfileId && button !== els.ragRefreshButton);
     });
   if (els.ragIngestButton) {
-    els.ragIngestButton.textContent = state.ragBusy ? "Индексация…" : "Индексировать";
+    els.ragIngestButton.textContent = state.ragBusy ? "Индексация…" : "Индексировать файлы";
+  }
+  if (els.ragReindexButton) {
+    const canReindex = status?.embedding_generation?.status === "reindex_required";
+    els.ragReindexButton.disabled = state.ragBusy || reindexActive || !state.activeProfileId || !canReindex;
+    els.ragReindexButton.textContent = reindexActive ? "Переиндексация…" : "Переиндексировать";
+    els.ragReindexButton.title = canReindex
+      ? "Создать configured embedding generation для всех chunks"
+      : "Переиндексация доступна, когда статус показывает отсутствующее generation";
   }
   if (els.ragStatusText) {
     const stats = status.stats || {};
@@ -8614,17 +8708,112 @@ function renderRagPanel() {
   }
 }
 
-async function loadRagStatus({ silent = false } = {}) {
+async function loadRagStatus({ silent = false, resumeReindex = true } = {}) {
   try {
     const query = state.activeProfileId
       ? `?profile_id=${encodeURIComponent(state.activeProfileId)}${state.currentSessionId ? `&session_id=${encodeURIComponent(state.currentSessionId)}` : ""}`
       : "";
     state.ragStatus = await request(`/rag/status${query}`);
     renderRagPanel();
+    const operation = state.ragStatus?.embedding_generation?.operation;
+    if (
+      resumeReindex
+      && operation?.task_id
+      && ["queued", "running"].includes(String(operation.status || ""))
+      && !state.ragReindexPolling
+    ) {
+      void pollRagReindexTask(String(operation.task_id), Number(state.activeProfileId));
+    }
   } catch (error) {
     if (!silent) {
       setFooter(`Не удалось загрузить статус RAG: ${error.message || error}`, "error");
     }
+  }
+}
+
+async function pollRagReindexTask(taskId, profileId) {
+  if (!taskId || !profileId || state.ragReindexPolling) return;
+  state.ragReindexPolling = true;
+  try {
+    while (Number(state.activeProfileId) === Number(profileId)) {
+      const query = new URLSearchParams({ profile_id: String(profileId) });
+      const task = await request(`/rag/reindex/${encodeURIComponent(taskId)}?${query.toString()}`);
+      state.ragStatus = state.ragStatus || {};
+      state.ragStatus.embedding_generation = {
+        ...(state.ragStatus.embedding_generation || {}),
+        operation: task,
+      };
+      renderRagPanel();
+      if (["completed", "failed"].includes(String(task.status || ""))) {
+        await loadRagStatus({ silent: true, resumeReindex: false });
+        if (task.status === "completed") {
+          setFooter(`RAG: переиндексация завершена, chunks ${task.processed_chunks || 0}.`, "success");
+        } else {
+          setFooter(`RAG: ${ragReindexErrorLabel(task.error_code)}`, "error");
+        }
+        break;
+      }
+      await sleep(600);
+    }
+  } catch (error) {
+    await loadRagStatus({ silent: true, resumeReindex: false });
+    setFooter(
+      error?.status === 404
+        ? "RAG: backend был перезапущен; состояние индекса пересчитано по локальной базе."
+        : `Не удалось получить прогресс RAG: ${error.message || error}`,
+      error?.status === 404 ? "warning" : "error",
+    );
+  } finally {
+    state.ragReindexPolling = false;
+    renderRagPanel();
+  }
+}
+
+async function startRagReindex(returnFocus = null) {
+  if (!state.activeProfileId) {
+    setFooter("Сначала выберите профиль для RAG.", "warning");
+    return;
+  }
+  const generation = state.ragStatus?.embedding_generation || {};
+  if (generation.status !== "reindex_required") {
+    setFooter("Переиндексация сейчас не требуется.", "warning");
+    return;
+  }
+  const descriptor = state.ragStatus?.embedding || {};
+  const model = String(descriptor.model || state.ragStatus?.embedding_model || "configured provider");
+  const approved = await openConfirmDialog({
+    eyebrow: "RAG",
+    title: "Переиндексировать семантический индекс?",
+    message: `Будут обработаны все ${generation.total_chunks || 0} chunks моделью ${model}. Операция запускается локально и может временно увеличить нагрузку.`,
+    confirmLabel: "Переиндексировать",
+    cancelLabel: "Отмена",
+    returnFocus,
+  });
+  if (!approved) return;
+  state.ragBusy = true;
+  renderRagPanel();
+  try {
+    const task = await request("/rag/reindex", {
+      method: "POST",
+      body: { profile_id: state.activeProfileId },
+    });
+    state.ragStatus = state.ragStatus || {};
+    state.ragStatus.embedding_generation = {
+      ...(state.ragStatus.embedding_generation || {}),
+      operation: task,
+    };
+    setFooter("RAG: переиндексация запущена локально.", "success");
+    void pollRagReindexTask(String(task.task_id || ""), Number(state.activeProfileId));
+  } catch (error) {
+    setFooter(
+      error?.message === "rag_embedding_reindex_in_progress"
+        ? "RAG: другая переиндексация уже выполняется."
+        : `Не удалось запустить переиндексацию RAG: ${error.message || error}`,
+      "error",
+    );
+  } finally {
+    state.ragBusy = false;
+    renderRagPanel();
   }
 }
 
@@ -10826,11 +11015,7 @@ function bindEvents() {
     await uploadRagFiles(els.ragFileInput.files);
   });
   els.ragIngestButton?.addEventListener("click", async () => ingestRagSources(true));
-  els.ragForceIngestButton?.addEventListener("click", async () => ingestRagSources(true));
-  els.ragCopyPathButton?.addEventListener("click", async () => {
-    await copyText(state.ragStatus?.source_dir || "rag_sources");
-    setFooter("Путь RAG скопирован.", "success");
-  });
+  els.ragReindexButton?.addEventListener("click", async () => startRagReindex(els.ragReindexButton));
   els.ragEnabledToggle?.addEventListener("change", async () => {
     await toggleRagForActiveProfile(Boolean(els.ragEnabledToggle.checked));
   });

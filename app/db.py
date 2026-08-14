@@ -2102,6 +2102,20 @@ def replace_embedding_generation(
 ) -> int:
     now = _utcnow()
     with closing(_connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current_chunk_ids = {
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM document_chunks WHERE profile_id = ?",
+                (profile_id,),
+            ).fetchall()
+        }
+        replacement_chunk_ids = [int(row["chunk_id"]) for row in rows]
+        if (
+            len(replacement_chunk_ids) != len(set(replacement_chunk_ids))
+            or set(replacement_chunk_ids) != current_chunk_ids
+        ):
+            raise ValueError("rag_embedding_source_changed")
         conn.execute(
             "DELETE FROM document_embeddings WHERE profile_id = ? AND embedding_model = ?",
             (profile_id, embedding_model),
@@ -2129,6 +2143,53 @@ def replace_embedding_generation(
         )
         conn.commit()
     return len(rows)
+
+
+def rag_embedding_generation_stats(profile_id: int, embedding_model: str) -> dict[str, int]:
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(DISTINCT c.id) AS total_chunks,
+                COUNT(DISTINCT e.chunk_id) AS indexed_chunks
+            FROM document_chunks c
+            LEFT JOIN document_embeddings e
+              ON e.chunk_id = c.id
+             AND e.profile_id = c.profile_id
+             AND e.embedding_model = ?
+            WHERE c.profile_id = ?
+            """,
+            (embedding_model, profile_id),
+        ).fetchone()
+    total = int(row["total_chunks"] or 0) if row else 0
+    indexed = int(row["indexed_chunks"] or 0) if row else 0
+    return {
+        "total_chunks": total,
+        "indexed_chunks": indexed,
+        "missing_chunks": max(0, total - indexed),
+    }
+
+
+def list_embedding_generations(profile_id: int) -> list[dict[str, Any]]:
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT embedding_model, COUNT(DISTINCT chunk_id) AS indexed_chunks, MAX(updated_at) AS updated_at
+            FROM document_embeddings
+            WHERE profile_id = ?
+            GROUP BY embedding_model
+            ORDER BY updated_at DESC, embedding_model ASC
+            """,
+            (profile_id,),
+        ).fetchall()
+    return [
+        {
+            "embedding_model": str(row["embedding_model"] or ""),
+            "indexed_chunks": int(row["indexed_chunks"] or 0),
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
 
 
 def list_rag_chunks(

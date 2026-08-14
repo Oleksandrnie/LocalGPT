@@ -4,7 +4,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException, UploadFile
 
@@ -817,14 +817,18 @@ def reindex_embeddings(
     profile_id: int,
     *,
     provider: embeddings.EmbeddingProvider | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
     selected = provider or _embedding_provider()
     chunks = db.list_document_chunks(profile_id)
+    total_chunks = len(chunks)
     batch_size = max(1, int(config.SETTINGS.rag_embedding_batch_size))
     rows: list[dict[str, Any]] = []
     descriptor = _descriptor_metadata(selected)
+    if progress_callback:
+        progress_callback(0, total_chunks)
     for start in range(0, len(chunks), batch_size):
         batch = chunks[start : start + batch_size]
         is_last = start + batch_size >= len(chunks)
@@ -840,13 +844,43 @@ def reindex_embeddings(
                     },
                 }
             )
-    replaced = db.replace_embedding_generation(profile_id, selected.descriptor.storage_key, rows)
+        if progress_callback:
+            progress_callback(min(start + len(batch), total_chunks), total_chunks)
+    try:
+        replaced = db.replace_embedding_generation(profile_id, selected.descriptor.storage_key, rows)
+    except ValueError as exc:
+        if str(exc) == "rag_embedding_source_changed":
+            raise HTTPException(status_code=409, detail="rag_embedding_source_changed") from exc
+        raise
     return {
         "profile_id": profile_id,
         "embedding_model": selected.descriptor.storage_key,
         "embedding": descriptor,
         "chunks_reindexed": replaced,
         "rollback_preserved": True,
+    }
+
+
+def _source_sync_summary(
+    profile_id: int,
+    files: list[Path],
+) -> dict[str, int | str]:
+    existing = _existing_documents(profile_id)
+    pending = 0
+    for path in files:
+        source_id = _relative_source_id(path, profile_id)
+        document = existing.get(source_id)
+        metadata = document.get("metadata") if isinstance(document, dict) else {}
+        stat = path.stat()
+        if (
+            not document
+            or metadata.get("size") != stat.st_size
+            or metadata.get("mtime") != stat.st_mtime
+        ):
+            pending += 1
+    return {
+        "status": "ingest_required" if pending else "ready",
+        "pending_sources": pending,
     }
 
 
@@ -873,8 +907,6 @@ def _current_generation_chunks(
 
 
 def status(profile_id: int | None = None, *, session_id: str | None = None) -> dict[str, Any]:
-    provider = _embedding_provider()
-    embedding_model = provider.descriptor.storage_key
     files = _iter_source_files(profile_id) if profile_id is not None else []
     if profile_id is not None:
         valid_source_ids = {_relative_source_id(path, profile_id) for path in files}
@@ -882,9 +914,21 @@ def status(profile_id: int | None = None, *, session_id: str | None = None) -> d
             source_id = str(document.get("source_id") or "")
             if source_id and source_id not in valid_source_ids:
                 db.delete_source_document(profile_id, SOURCE_TYPE, source_id)
+    source_sync = (
+        _source_sync_summary(profile_id, files)
+        if profile_id is not None
+        else {"status": "ready", "pending_sources": 0}
+    )
+    provider: embeddings.EmbeddingProvider | None = None
+    configuration_error: str | None = None
+    try:
+        provider = _embedding_provider()
+    except HTTPException:
+        configuration_error = "rag_embedding_configuration_error"
+    embedding_model = provider.descriptor.storage_key if provider else None
     scoped_chunks = (
         db.list_rag_chunks(profile_id, embedding_model=embedding_model, session_id=session_id)
-        if profile_id is not None
+        if profile_id is not None and embedding_model
         else []
     )
     scoped_stats = {
@@ -892,21 +936,34 @@ def status(profile_id: int | None = None, *, session_id: str | None = None) -> d
         "chunks": len(scoped_chunks),
         "embeddings": len(scoped_chunks),
     }
-    available_chunks = (
-        db.list_rag_chunks(profile_id, session_id=session_id) if profile_id is not None else []
+    generation_stats = (
+        db.rag_embedding_generation_stats(profile_id, embedding_model)
+        if profile_id is not None and embedding_model
+        else {
+            "total_chunks": len(db.list_document_chunks(profile_id)) if profile_id is not None else 0,
+            "indexed_chunks": 0,
+            "missing_chunks": 0,
+        }
     )
-    missing_chunks = len(
-        {int(item["chunk_id"]) for item in available_chunks}
-        - {int(item["chunk_id"]) for item in scoped_chunks}
-    )
+    if configuration_error:
+        generation_status = "configuration_error"
+    elif source_sync["pending_sources"]:
+        generation_status = "ingest_required"
+    elif generation_stats["missing_chunks"]:
+        generation_status = "reindex_required"
+    else:
+        generation_status = "ready"
     return {
         "source_dir": f"profile:{profile_id}" if profile_id is not None else "profile-scoped",
         "source_scope": "active_profile" if profile_id is not None else "profile_required",
         "embedding_model": embedding_model,
-        "embedding": _descriptor_metadata(provider),
+        "embedding": _descriptor_metadata(provider) if provider else None,
         "embedding_generation": {
-            "status": "reindex_required" if missing_chunks else "ready",
-            "missing_chunks": missing_chunks,
+            "status": generation_status,
+            "error_code": configuration_error,
+            **generation_stats,
+            "pending_sources": int(source_sync["pending_sources"]),
+            "available_generations": db.list_embedding_generations(profile_id) if profile_id is not None else [],
         },
         "supported_suffixes": sorted(SUPPORTED_SUFFIXES),
         "file_count": len(files),

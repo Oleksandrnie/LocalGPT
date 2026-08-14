@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +11,10 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app import config, db
+from app.schemas import RagReindexRequest
 from backend.apps.rag import embeddings
+from backend.apps.rag import reindex_tasks
+from backend.apps.rag import routes as rag_routes
 from backend.apps.rag import service as rag_service
 
 
@@ -42,6 +47,16 @@ class _StubProvider:
     def embed(self, texts: list[str], *, release: bool = True) -> list[list[float]]:
         self.release_calls.append(release)
         return [[1.0, float(len(text) % 7), 0.5] for text in texts]
+
+
+def _wait_for_task(task_id: str, profile_id: int, timeout: float = 2.0) -> dict[str, object]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        task = reindex_tasks.get_reindex_task(task_id, profile_id)
+        if task and task.get("status") in {"completed", "failed"}:
+            return task
+        time.sleep(0.01)
+    raise AssertionError("reindex task did not reach a terminal state")
 
 
 class RagEmbeddingProviderTestCase(unittest.TestCase):
@@ -98,6 +113,7 @@ class RagEmbeddingProviderTestCase(unittest.TestCase):
 
 class RagEmbeddingGenerationTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        reindex_tasks._reset_for_tests()
         self.tmpdir = tempfile.TemporaryDirectory()
         self.previous_db_path = db.DB_PATH
         self.previous_rag_dir = config.RAG_SOURCE_DIR
@@ -113,6 +129,7 @@ class RagEmbeddingGenerationTestCase(unittest.TestCase):
             rag_service.ingest_sources(self.profile_id, force=True)
 
     def tearDown(self) -> None:
+        reindex_tasks._reset_for_tests()
         db.DB_PATH = self.previous_db_path
         config.RAG_SOURCE_DIR = self.previous_rag_dir
         self.tmpdir.cleanup()
@@ -162,6 +179,140 @@ class RagEmbeddingGenerationTestCase(unittest.TestCase):
         self.assertEqual(failed.exception.status_code, 503)
         self.assertEqual(len(db.list_rag_chunks(self.profile_id, "local-hash-v1")), 2)
         self.assertEqual(db.list_rag_chunks(self.profile_id, provider.descriptor.storage_key), [])
+
+    def test_status_distinguishes_source_ingest_and_generation_reindex(self) -> None:
+        ready = rag_service.status(self.profile_id)
+        self.assertEqual(ready["embedding_generation"]["status"], "ready")
+        self.assertEqual(ready["embedding_generation"]["total_chunks"], 2)
+        self.assertEqual(ready["embedding_generation"]["indexed_chunks"], 2)
+
+        provider = _StubProvider()
+        with patch.object(rag_service, "_embedding_provider", return_value=provider):
+            stale_generation = rag_service.status(self.profile_id)
+        self.assertEqual(stale_generation["embedding_generation"]["status"], "reindex_required")
+        self.assertEqual(stale_generation["embedding_generation"]["missing_chunks"], 2)
+        self.assertEqual(
+            stale_generation["embedding_generation"]["available_generations"][0]["embedding_model"],
+            "local-hash-v1",
+        )
+
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        (source_dir / "one.md").write_text("Изменённый факт без скрытой индексации.", encoding="utf-8")
+        changed_source = rag_service.status(self.profile_id)
+        self.assertEqual(changed_source["embedding_generation"]["status"], "ingest_required")
+        self.assertEqual(changed_source["embedding_generation"]["pending_sources"], 1)
+
+    def test_status_redacts_embedding_configuration_failure(self) -> None:
+        with patch.object(
+            rag_service,
+            "_embedding_provider",
+            side_effect=HTTPException(
+                status_code=503,
+                detail="rag_embedding_configuration_error:private-provider-marker",
+            ),
+        ):
+            status = rag_service.status(self.profile_id)
+
+        generation = status["embedding_generation"]
+        self.assertEqual(generation["status"], "configuration_error")
+        self.assertEqual(generation["error_code"], "rag_embedding_configuration_error")
+        self.assertIsNone(status["embedding"])
+        self.assertNotIn("private-provider-marker", json.dumps(status))
+
+    def test_background_reindex_reports_progress_and_enforces_profile_ownership(self) -> None:
+        provider = _StubProvider()
+        other_profile = db.create_profile("Other")
+        with patch.object(rag_service, "_embedding_provider", return_value=provider):
+            started = reindex_tasks.start_reindex(self.profile_id)
+        task = _wait_for_task(str(started["task_id"]), self.profile_id)
+
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["processed_chunks"], 2)
+        self.assertEqual(task["total_chunks"], 2)
+        self.assertIsNone(reindex_tasks.get_reindex_task(str(started["task_id"]), int(other_profile["id"])))
+        self.assertEqual(len(db.list_rag_chunks(self.profile_id, provider.descriptor.storage_key)), 2)
+
+    def test_reindex_routes_expose_latest_profile_owned_operation(self) -> None:
+        provider = _StubProvider()
+        other_profile = db.create_profile("Route isolation")
+        with patch.object(rag_service, "_embedding_provider", return_value=provider):
+            started = rag_routes.rag_reindex(RagReindexRequest(profile_id=self.profile_id))
+            task = _wait_for_task(str(started["task_id"]), self.profile_id)
+            status = rag_routes.rag_status(profile_id=self.profile_id, session_id=None)
+
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(
+            status["embedding_generation"]["operation"]["task_id"],
+            started["task_id"],
+        )
+        with self.assertRaises(HTTPException) as hidden:
+            rag_routes.rag_reindex_status(
+                str(started["task_id"]),
+                profile_id=int(other_profile["id"]),
+            )
+        self.assertEqual(hidden.exception.status_code, 404)
+
+    def test_background_reindex_redacts_provider_failure_and_rejects_overlap(self) -> None:
+        provider = _StubProvider()
+        other_profile = db.create_profile("Global task guard")
+        entered = threading.Event()
+        release_gate = threading.Event()
+
+        def blocked(_texts: list[str], *, release: bool = True) -> list[list[float]]:
+            del release
+            entered.set()
+            if not release_gate.wait(timeout=2):
+                raise embeddings.EmbeddingProviderError("timeout-sensitive-marker")
+            raise embeddings.EmbeddingProviderError("private-provider-marker")
+
+        provider.embed = blocked  # type: ignore[method-assign]
+        with patch.object(rag_service, "_embedding_provider", return_value=provider):
+            started = reindex_tasks.start_reindex(self.profile_id)
+            self.assertTrue(entered.wait(timeout=1))
+            with self.assertRaises(HTTPException) as overlap:
+                reindex_tasks.start_reindex(int(other_profile["id"]))
+        self.assertEqual(overlap.exception.status_code, 409)
+        release_gate.set()
+        task = _wait_for_task(str(started["task_id"]), self.profile_id)
+
+        self.assertEqual(task["status"], "failed")
+        self.assertEqual(task["error_code"], "rag_embedding_provider_unavailable")
+        self.assertNotIn("private-provider-marker", json.dumps(task))
+        self.assertEqual(len(db.list_rag_chunks(self.profile_id, "local-hash-v1")), 2)
+
+    def test_atomic_generation_publish_rejects_changed_chunk_set(self) -> None:
+        provider = _StubProvider()
+        rag_service.reindex_embeddings(self.profile_id, provider=provider)
+        existing = db.list_rag_chunks(self.profile_id, provider.descriptor.storage_key)
+        document = db.create_source_document(
+            profile_id=self.profile_id,
+            session_id=None,
+            source_type="manual_file",
+            source_id="late.md",
+            title="late.md",
+            content=None,
+            metadata={},
+        )
+        db.create_document_chunk(
+            document_id=int(document["id"]),
+            profile_id=self.profile_id,
+            session_id=None,
+            chunk_index=0,
+            content="Поздно добавленный chunk.",
+            metadata={},
+        )
+        rows = [
+            {
+                "chunk_id": int(item["chunk_id"]),
+                "embedding": item["embedding"],
+                "metadata": item["embedding_metadata"],
+            }
+            for item in existing
+        ]
+
+        with self.assertRaisesRegex(ValueError, "rag_embedding_source_changed"):
+            db.replace_embedding_generation(self.profile_id, provider.descriptor.storage_key, rows)
+        self.assertEqual(len(db.list_rag_chunks(self.profile_id, provider.descriptor.storage_key)), 2)
 
 
 if __name__ == "__main__":

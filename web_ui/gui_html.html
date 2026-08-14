@@ -1329,6 +1329,16 @@
                         <code id="ragSourceDirValue">rag_sources</code>
                     </div>
 
+                    <div class="rag-generation-card" id="ragEmbeddingCard" data-state="unknown" role="status"
+                        aria-live="polite">
+                        <div class="rag-generation-card__header">
+                            <span class="info-card__label">Семантический индекс</span>
+                            <strong id="ragEmbeddingState">Статус загружается…</strong>
+                        </div>
+                        <p class="subtle" id="ragEmbeddingDetails">Параметры generation появятся после выбора профиля.</p>
+                        <progress id="ragReindexProgress" max="100" value="0" hidden></progress>
+                    </div>
+
                     <label class="field field--checkbox">
                         <input id="ragEnabledToggle" type="checkbox" />
                         <span>Подмешивать RAG-контекст в чат для активного профиля</span>
@@ -1337,7 +1347,9 @@
                     <div class="button-row">
                         <button class="button button--primary" id="ragAddFilesButton" type="button">Добавить
                             файлы</button>
-                        <button class="button button--primary" id="ragIngestButton" type="button">Индексировать</button>
+                        <button class="button button--primary" id="ragIngestButton" type="button">Индексировать
+                            файлы</button>
+                        <button class="button button--ghost" id="ragReindexButton" type="button">Переиндексировать</button>
                         <button class="button button--ghost" id="ragRefreshButton" type="button">Обновить
                             список</button>
                     </div>
@@ -1345,6 +1357,7 @@
                         accept=".md,text/markdown" multiple hidden />
 
                     <p class="inline-status" id="ragStatusText">Добавляйте Markdown-файлы и индексируйте их для активного профиля.</p>
+                    <p class="subtle">Переиндексация запускается только вручную и может временно загрузить локальную embedding-модель.</p>
                     <div class="rag-file-list" id="ragFileList"></div>
                 </section>
             </div>
