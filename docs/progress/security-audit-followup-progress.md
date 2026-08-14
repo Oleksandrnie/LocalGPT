@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 12 completed and ready for its focused checkpoint; Stage 13 has not started.
+- Current stage: Stage 13 completed and ready for its focused checkpoint; Stage 14 has not started.
 
 ## Instructions and precedence
 
@@ -116,7 +116,7 @@
 ### Stage 14 — Regression, records, and cleanup
 
 - Goal: recheck every acceptance criterion and close temporary execution state.
-- Status: in_progress.
+- Status: pending.
 - Actions: full proportional regression; update affected permanent docs/audit/changelog/backlog; inspect complete history/status; delete this progress file only after all required live evidence exists.
 - Expected result: exact revision/environment evidence, no new regressions, clean working tree.
 - Validation: static baseline, full Python and Node suites, final diff/status/log inspection.
@@ -215,7 +215,7 @@
 ### Stage 13 — Sequential model validation
 
 - Goal: prove that shared retrieval supplies stable evidence to supported chat models.
-- Status: pending.
+- Status: completed.
 - Actions: run cross-domain deterministic suite, then strictly sequential bounded 3B, 7B and 4B smokes with unload verification; separate retrieval metrics from generation quality.
 - Expected result: retrieval behavior is model-independent; remaining LLM limitations are recorded honestly; repository returns clean.
 - Validation: metadata-only eval report and sequential live observations with loaded-model checks.
@@ -457,6 +457,28 @@
 - Changed files: DB generation repository; RAG schema/routes/service and new process-local task registry; RAG HTML/JS/CSS; focused Python/Node tests; architecture/backend/RAG/UI/testing/changelog records; this progress file.
 - Scope confirmation: no CMS/company/brand/corpus-specific rule, reranker, model download, chat LLM call, embedding live smoke or user RAG reindex was introduced. Stage 13 remains pending explicit user continuation.
 
+### 2026-08-14 — Stage 13 intake and operational prerequisite
+
+- Stage 12 reconciled: clean HEAD `753c117` (`feat(rag): expose semantic reindex lifecycle`) on `feature/prompt-rag-security-hardening`; no user/unrelated working-tree changes existed at Stage 13 start.
+- User authorization: begin Stage 13 and run the requested chat models strictly sequentially to avoid simultaneous Mac load. This does not authorize downloading a missing model or silently reindexing the user corpus.
+- Runtime baseline: backend health responds on localhost port 8000; project Ollama responds on localhost port 11434; no model is loaded. Installed requested chat tags are `qwen2.5:3b-instruct`, `qwen2.5:7b-instruct` and `qwen3:4b`.
+- Real profile boundary: profile 6 reports one source file, 2,925 chunks and a complete `local-hash-v1` generation (`ready`, 2,925/2,925, no pending sources). The optional `embeddinggemma:latest` tag is not installed and no semantic generation exists. Therefore the current live RAG can validate shared retrieval/context/model grounding only in compatibility lexical mode; it cannot honestly validate live EmbeddingGemma score distribution.
+- Required order: run the metadata-only cross-domain deterministic gate first. Before any live chat-model call, resolve the semantic-generation prerequisite according to the Stage 13 continuation contract: do not download or reindex silently; if the user wants the final semantic-provider test, obtain explicit model-install authority and let the user confirm reindex through Stage 12 UI.
+- Live measurement contract once prerequisites are accepted: capture one retrieval result/diagnostics snapshot before model runs; pass the identical authorized context and bounded settings to 3B → unload proof → 7B → unload proof → 4B → unload proof; record only metadata/coverage classifications in project records, never raw work-corpus content or model reasoning.
+- Deterministic gate: all five `tests.test_rag_retrieval_eval` tests passed. On the unchanged cross-domain fixture, compatibility `local-hash-v1` produced positive recall/MRR/nDCG/context recall `0.875`, grounded hit rate `0.500`, ideal-prefix rate `0.875`, with negative rejection/status accuracy `1.000`. The deterministic semantic generation produced `1.000` for every listed quality/control metric; selecting `lexical_v1` over that same generation returned the compatibility `0.875`/`0.500` ceiling. Timing/memory were observed locally but are not stable benchmarks and were not used to tune thresholds.
+- Exact blocker before live chat models: project configuration still defaults to `RAG_EMBEDDING_PROVIDER=local_hash`; `embeddinggemma:latest` is absent from `/api/tags`, and no UI currently installs or switches the provider. Continuing now would test only the old compatibility generation and leave the Stage 13 semantic acceptance criterion unverified. Required authority is explicit permission to install the missing embedding model and switch the local provider configuration; after backend restart, the user can trigger the visible Stage 12 reindex action in the RAG panel as previously requested.
+- Prerequisite resolved in part: the user explicitly installed standard `embeddinggemma:latest` into the project-scoped Ollama store and provided successful manifest/model metadata evidence. Local `.env` now selects provider `ollama`, model `embeddinggemma:latest`, version `embeddinggemma-300m-v1` and 256-dimensional Matryoshka output. Backend and Ollama were restarted in separate controlled local sessions; LAN health is successful, no model is resident, and profile 6 now reports `reindex_required` with 0/2,925 configured semantic chunks while preserving the complete `local-hash-v1` rollback generation.
+- User-controlled reindex completed: profile 6 reports configured provider/model/version/dimensions `ollama` / `embeddinggemma:latest` / `embeddinggemma-300m-v1` / `256`, status `ready`, 2,925/2,925 indexed chunks, zero missing chunks and completed operation without error. `/api/ps` was empty after the operation, proving the embedding model was released.
+
+### 2026-08-14 — Stage 13 sequential live acceptance
+
+- Shared retrieval snapshot: one `hybrid_v2` semantic search produced chunk ids `11187`, `12500`, `12539`, `11594`, `11329`, one selected source, five selected/evaluated-top chunks, `overall_status=supported`, one supported facet and a 5,998-character bounded context. A repeated pre-run snapshot returned the same ids. The embedding model was unloaded before chat generation.
+- Fairness and privacy boundary: all models received the same in-memory messages, profile prompt, query hash and exact RAG context with temperature `0.25`, output allowance `512`, thinking allowance `2,048`, `num_ctx=8,192`, Thinking OFF and immediate keep-alive. Raw corpus text, query, model responses and reasoning were not written to repository files; only hashes, counts and lifecycle metadata were inspected.
+- `qwen2.5:3b-instruct`: normal stop after 74 evaluated tokens in 19.71 seconds; 2/4 evidence entities covered, zero unsupported entities and zero exposed reasoning characters. Explicit unload succeeded and resident-model set returned empty.
+- `qwen2.5:7b-instruct`: normal stop after 97 evaluated tokens in 42.24 seconds; 2/4 evidence entities covered, zero unsupported entities and zero exposed reasoning characters. Explicit unload succeeded and resident-model set returned empty.
+- `qwen3:4b`: normal stop after 1,985 evaluated tokens in 94.66 seconds under the bounded structural-OFF compatibility policy; 4/4 evidence entities covered, zero unsupported entities and zero exposed reasoning characters. Explicit unload succeeded and resident-model set returned empty.
+- Acceptance: retrieval/context was demonstrably model-independent; every response was grounded and respected the backend Thinking OFF boundary; no two chat models overlapped in memory. The 3B/7B completeness gap is an observed generation-quality limitation, not a missing RAG result or a reason for corpus-specific production rules. Stage 13 changed no production source, test fixture, permanent documentation or user RAG content beyond the explicitly authorized semantic generation.
+
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 
 - Stage: Stage 7A completion plus Stage 6 follow-up diagnosis.
@@ -528,10 +550,11 @@
 
 - Static checks: compileall, JS syntax, diff check, and launcher zsh syntax passed. Stage 7D repeated RAG/test compileall and diff check successfully. Stage 12 final gate passed compileall for app/backend/tests/tools, JavaScript syntax, `git diff --check`, four Markdown-rendering tests and three RAG lifecycle UI contracts.
 - Unit/contract tests: Stage 5 matrix passed; Stage 6 ran 201 broad focused Python tests with only the two baseline ASR failures; all 29 prompt/harness security tests and 28 Node tests passed. Stage 7D passed 36 focused prompt/RAG/chat tests. Stage 8 passed 39 eval/prompt-RAG-security/chat tests. Stage 9 provider/generation tests and focused RAG/security/isolation regression gate passed after the implementation correction recorded above. Stage 12 passed 11 embedding/provider/lifecycle tests plus 54 broader RAG/security/isolation/eval tests.
+- Stage 13 final gate: the five retrieval-eval tests passed with the fixture's explicit `local_hash` provider contract; compileall for app/backend/tests, JavaScript syntax, four Markdown-rendering tests and `git diff --check` passed. An initial unqualified eval run produced two expected assertion mismatches because the newly selected live `.env` provider was `embeddinggemma` instead of the fixture's compatibility baseline; rerunning with explicit fixture settings passed 5/5 without changing the live configuration. Final `/api/ps` contained no resident models.
 - Integration/smoke tests: three installed text models completed 48 final current-code live runs with 0 hard failures after backend enforcement; host LAN HTTPS/API/SSE/CORS/admin/certificate matrix passed.
 - Manual/regression checks: user confirmed restored host behavior and functional second-device access; Qwen3 OFF + generic CMS RAG answer passed on the real phone. Stage 12 RAG generation UI passed isolated desktop/mobile dark/light inspection and keyboard-focus/console checks without touching user data. Safari still displays `Not Secure`, so certificate trust status remains pending separately in Stage 7A.
 - Skipped checks and reasons: no vision-capable model image workload was needed because this stage validates OCR/Vision-derived text as an L4 source, not image understanding.
-- Remaining uncertainty: model behavioral jailbreak resistance varies; live `embeddinggemma` quality/resources remain unmeasured until separately authorized Stage 13 work; process-local reindex progress does not survive a backend restart, although canonical generation state does; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
+- Remaining uncertainty: model behavioral jailbreak resistance and answer completeness vary; the live semantic smoke proves this query/context boundary but is not a general quality benchmark. Process-local reindex progress does not survive a backend restart, although canonical generation state does; Safari certificate trust remains unresolved; ambiguous legacy derived rows are quarantined without an automatic promotion/migration.
 
 ## Regressions and deferred work
 
@@ -552,16 +575,16 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8), `329abc6` (Stage 9), `e60503f` (Stage 10), `8b43f69` (Stage 11). Stage 12 hash is recorded after its focused checkpoint.
+- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8), `329abc6` (Stage 9), `e60503f` (Stage 10), `8b43f69` (Stage 11), `753c117` (Stage 12).
 
 ## Continuation state
 
-- Current stage: Stage 12 `completed`; backend lifecycle, safe operational API, responsive UI, automated coverage, isolated manual QA and affected documentation are complete. Stage 13 has not started.
-- Last completed action: passed isolated desktop/mobile light/dark QA with no browser console errors, removed the temporary runtime, and updated permanent/progress documentation.
-- Current repository state before checkpoint: only Stage 12 implementation, tests and affected records are modified/untracked. User data and model state are unchanged; no model was installed, downloaded or run and no user RAG was reindexed.
-- Known risks: background task history is process-local, so an in-flight operation cannot resume across backend restart; canonical SQLite/source state does recover and the UI explains this. Live EmbeddingGemma score distribution, thresholds, latency and memory remain unmeasured until Stage 13 authorization. Backend output enforcement, profile/session ownership and sequential model loading remain authoritative. Safari still reports `Not Secure` separately.
-- Next exact action in this turn: inspect and stage only the Stage 12 files, commit `feat(rag): expose semantic reindex lifecycle`, verify clean status and stop.
-- Next action after explicit user continuation: record the Stage 12 checkpoint hash, then begin only Stage 13 sequential validation. Run 3B, 7B and 4B strictly one at a time with unload verification; do not tune retrieval against the temporary work corpus.
+- Current stage: Stage 13 `completed`; the semantic generation and strictly sequential 3B/7B/4B live acceptance are complete. Stage 14 has not started.
+- Last completed action: proved the final Qwen3 Thinking OFF response, requested explicit unload and observed an empty resident-model set after the third and final model.
+- Current repository state before checkpoint: only this Stage 13 progress update is modified. The ignored local `.env` selects the explicitly installed embedding provider; the user-authorized profile 6 semantic generation is ready. Backend/Ollama remain running for the user's current session.
+- Known risks: 3B and 7B each covered 2/4 available evidence entities while remaining grounded; 4B covered 4/4 but required substantially more generation tokens/time. This is model-generation variance, not retrieval divergence. Safari certificate trust remains unresolved separately.
+- Next exact action in this turn: inspect and commit only this progress file as `test(rag): validate retrieval across local models`, verify repository status and stop.
+- Next action only after explicit user continuation: begin Stage 14 regression, permanent records and progress cleanup. Do not rerun live chat models unless a regression specifically requires it and the user authorizes the hardware load.
 
 ### Continuation prompt for Stage 13
 
