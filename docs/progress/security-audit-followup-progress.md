@@ -9,7 +9,7 @@
 - Branch: `feature/prompt-rag-security-hardening`.
 - Started: 2026-08-13.
 - Current status: in progress.
-- Current stage: Stage 10 pending — hybrid lexical and semantic candidate fusion.
+- Current stage: Stage 10 completed — final validation passed and the focused checkpoint is being created; Stage 11 has not started.
 
 ## Instructions and precedence
 
@@ -116,7 +116,7 @@
 ### Stage 14 — Regression, records, and cleanup
 
 - Goal: recheck every acceptance criterion and close temporary execution state.
-- Status: pending.
+- Status: in_progress.
 - Actions: full proportional regression; update affected permanent docs/audit/changelog/backlog; inspect complete history/status; delete this progress file only after all required live evidence exists.
 - Expected result: exact revision/environment evidence, no new regressions, clean working tree.
 - Validation: static baseline, full Python and Node suites, final diff/status/log inspection.
@@ -184,7 +184,7 @@
 ### Stage 10 — Hybrid lexical and semantic candidate fusion
 
 - Goal: retrieve relevant evidence through both exact terminology and paraphrased meaning.
-- Status: pending.
+- Status: completed; focused checkpoint pending.
 - Actions: retrieve lexical and semantic candidate pools, normalize and fuse ranks with a domain-neutral method, preserve provenance/diagnostics, diversity and ownership filters, expose rollback to lexical-only retrieval, and remove the earlier CMS/capability-specific lexical bonus once the cross-domain quality gate passes.
 - Expected result: cross-domain eval improves without degrading exact identifiers, profile/session isolation, conflicts, or negative queries.
 - Validation: Stage 8 eval comparison, isolation/security regressions, bounded latency/memory measurement.
@@ -340,8 +340,75 @@
 - Reindex/rollback: a new internal explicit reindex calculates all vectors before an atomic generation replacement, preserves earlier generations, and releases the provider on the last batch. Ordinary ingest cannot silently replace an unchanged corpus after provider switch; search/status report that reindex is required. Returning to the prior generation restores retrieval without editing sources.
 - Validation: provider request/shape/no-fallback tests and temporary-corpus generation/reindex/rollback/failure tests added; 56 focused RAG/security/isolation Python tests and 4 Markdown rendering tests passed. Compileall, JavaScript syntax and diff check passed. Warnings are pre-existing datetime/Starlette/resource warnings, not test failures. Live provider smoke skipped because `embeddinggemma` is not installed locally and download was not separately authorized.
 - Changed: RAG embedding adapter, settings/example environment, atomic DB generation operations, RAG service integration, focused tests, RAG/testing/changelog docs and this progress record.
-- Checkpoint: `feat(rag): add versioned local embeddings` pending commit creation after final validation.
+- Checkpoint: `329abc6` (`feat(rag): add versioned local embeddings`).
 - Next action: stop after the focused commit. On explicit user continuation, begin Stage 10 hybrid lexical/semantic candidate fusion and compare it with the unchanged Stage 8 cross-domain gate; do not run chat models.
+
+### 2026-08-14 — Stage 10 interrupted implementation checkpoint
+
+- Stage: Stage 10, `in_progress`; no commit was created because the stage has not completed its regression/documentation gate.
+- Goal preserved: replace the single blended score with domain-neutral independent lexical and semantic candidate pools, reciprocal-rank fusion, conservative facet grounding, source diversity and explicit lexical-only rollback. Do not tune against the temporary company corpus and do not run chat models in this stage.
+- Implemented so far:
+  - removed `CAPABILITY_QUERY_RE`, `PLATFORM_QUERY_RE` and the earlier CMS/platform-support occurrence bonus from production retrieval;
+  - introduced `hybrid_v2`, with bounded lexical and semantic pools and normalized reciprocal-rank fusion (`rrf_v1`); candidate diagnostics now expose pool membership and lexical/semantic ranks;
+  - semantic-only chunks are no longer discarded merely because lexical overlap is zero;
+  - facet diagnostics may use semantic support only above a stricter facet threshold, while semantic candidate admission has its own minimum score;
+  - added `lexical_v1` as a non-destructive rollback strategy; stored `hybrid_v1` values migrate in memory to `hybrid_v2`, and `legacy` remains available separately;
+  - disabled the semantic pool for `local-hash-v1`, because hashing collisions are not semantic evidence; the current user index therefore remains lexical and does not require reindexing during this stage;
+  - expanded generic English stopword handling (`is`) and exclusivity detection (`exclusive*`) so negative rejection and the existing conflict fixture are evaluated correctly without domain vocabulary;
+  - extended the eval runner with an explicit strategy selector and actual active embedding generation reporting;
+  - added a deterministic cross-domain semantic provider used only by tests. It maps concepts across unrelated library, observatory, warehouse, microgrid, greenhouse and museum fixtures and proves the fusion contract without downloading or loading a model;
+  - updated focused tests from `hybrid_v1` to `hybrid_v2` and changed the old CMS regression to assert ordinary lexical-pool evidence rather than a special capability bonus;
+  - after the broad regression run exposed a new short-follow-up failure for the phrase `для этого`, expanded the existing deictic-query recognizer from a narrow `это/эта/...` form to `эт\w*`. This last correction is present in the worktree but has not yet been revalidated.
+- Measured deterministic quality before the interruption:
+  - Stage 8 baseline: positive recall/context `0.875`, grounded hit `0.500`, paraphrase grounded hit `0.000`, typo recall `0.500`, negative rejection `0.500`, conflict status accuracy `0.000`;
+  - current `local-hash-v1` with `hybrid_v2`/lexical behavior: positive recall/context `0.875`, grounded hit `0.500`, paraphrase grounded hit `0.000`, typo recall `0.500`, negative rejection `1.000`, conflict status accuracy `1.000`; one observed 10-query run was `8.996 ms/query` and `361,491` traced peak bytes;
+  - deterministic semantic `hybrid_v2`: positive recall/context/grounded hit `1.000`, paraphrase grounded hit `1.000`, typo recall `1.000`, negative rejection `1.000`, conflict status accuracy `1.000`;
+  - the same semantic fixture generation forced through `lexical_v1`: positive recall/context `0.875`, grounded hit `0.500`, paraphrase grounded hit `0.000`, typo recall `0.500`, negative rejection `1.000`, conflict status accuracy `1.000`;
+  - interpretation: improvement comes from the semantic candidate/facet path, not company-specific keywords or the provider identity. These are deterministic contract metrics, not a claim about live EmbeddingGemma quality.
+- Validation completed before the final deictic fix:
+  - 45 focused tests passed: retrieval eval, prompt/RAG security, Chat RAG and versioned embedding suites;
+  - metadata-only CLI reports for default `hybrid_v2` and `lexical_v1` completed;
+  - `git diff --check` passed before this progress update;
+  - broad 129-test RAG/isolation/pipeline run reported the two known ASR baseline failures plus one new RAG short-follow-up failure. The new failure was diagnosed and corrected in `backend/apps/chat/routes.py`, but the broad suite has not yet been rerun. The two known ASR baselines are `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers` and `test_pipeline_tasks_are_normalized_for_transcript_record`.
+- Validation still required:
+  - rerun the targeted query-composition/RAG test for `для этого`, then the 45-test focused gate;
+  - rerun the broad RAG/isolation/pipeline selection and confirm only the two recorded ASR baseline failures remain;
+  - run compileall, JavaScript syntax, Markdown rendering and `git diff --check`;
+  - inspect default/lexical metadata-only reports and record final resource observations without treating them as stable benchmarks;
+  - inspect the entire diff for accidental changes and confirm no production corpus-specific vocabulary or heuristic remains.
+- Documentation still required: update `docs/ARCHITECTURE.md`, `docs/knowledge/backend.md`, `docs/knowledge/rag.md`, `docs/TESTING.md`, `docs/CHANGELOG.md` and, if its completed-audit statement is now inaccurate, `docs/security/PROMPT_RAG_SECURITY_AUDIT.md`. Replace claims that default retrieval is `hybrid_v1`/local-hash dense blending or that generic CMS capability gets a special boost. Document `hybrid_v2`, independent pools, RRF, semantic thresholds, `local-hash-v1` lexical behavior, `lexical_v1` rollback and preservation of profile/session ownership filters.
+- Changed but uncommitted files: `backend/apps/chat/routes.py`, `backend/apps/rag/retrieval.py`, `backend/apps/rag/service.py`, `tools/rag_retrieval_eval.py`, `tests/test_rag_retrieval_eval.py`, `tests/test_prompt_rag_security_audit.py`, `tests/test_chat_rag.py`, plus this progress file. Do not discard or overwrite these changes.
+- Last safe commit: `329abc6` (`feat(rag): add versioned local embeddings`). Stage 10 has no checkpoint yet.
+- Expected commit after all gates pass: `feat(rag): fuse lexical and semantic retrieval`.
+- Stop rule: after creating that single focused Stage 10 commit, stop and wait for explicit user continuation before Stage 11.
+
+### 2026-08-14 — Stage 10 resumed under read-only test sandbox
+
+- Resumed action: reconciled the worktree with the interrupted checkpoint, re-read mandatory workflow/RAG/backend/provider/testing contracts and reviewed the complete implementation diff. No unrelated file was present.
+- Query-composition correction: the initial `эт\w*` fix was found overly broad because it would treat words such as `этикетка` as a reference to prior history. Production regex now enumerates Russian pronoun forms (`это`, `этого`, `этому`, `этой`, etc.) instead of matching every `эт...` word. A paired regression test asserts that `Для этого есть RAG?` keeps the last relevant question while `Что написано на этикетке товара?` does not import unrelated CMS history.
+- Read-only functional check: direct `compose_rag_query()` execution passed both sides of that pair. The full unittest version could not start because the current execution sandbox exposes no writable temporary directory; Python `tempfile` rejected `/tmp`, `/var/tmp`, the macOS temp directory and the read-only repository before test setup. A separately created `/tmp/localgpt-stage10.*` directory remained unwritable to the sandboxed Python process, so this is an environment permission blocker rather than a product failure.
+- Documentation completed in the worktree: updated `docs/ARCHITECTURE.md`, `docs/knowledge/backend.md`, `docs/knowledge/rag.md`, `docs/TESTING.md`, `docs/CHANGELOG.md` and `docs/security/PROMPT_RAG_SECURITY_AUDIT.md` for `hybrid_v2`, independent pools/RRF, `local-hash-v1` lexical behavior, `lexical_v1` rollback and removal of the CMS/capability bonus.
+- Static validation completed in the restricted environment: all 126 Python source files compiled in memory; `node --check web_ui/js/app.js` passed; all 4 Markdown rendering tests passed; `git diff --check` passed; production RAG contains none of `CAPABILITY_QUERY_RE`, `PLATFORM_QUERY_RE`, `support_mentions` or the removed comma-count capability heuristic.
+- Current changed files: three production files (`backend/apps/chat/routes.py`, `backend/apps/rag/retrieval.py`, `backend/apps/rag/service.py`), three tests/eval files plus the eval tool, six affected permanent docs and this progress file — 14 tracked files total. All remain unstaged and Stage 10 has no commit.
+- Blocking condition: final temporary-DB unittest gates and Git checkpoint require a session with writable temporary storage and workspace/Git metadata. Do not create the Stage 10 commit until those tests run.
+- Next exact action after write/temp permission is restored: rerun the two targeted tests, the 46-test focused gate (one new query-composition regression was added), and the 130-test broad selection; accept only the two recorded ASR baseline failures. Then refresh metadata-only metrics, update this record, stage the 14 Stage 10 files, commit once and stop.
+
+### 2026-08-14 — Stage 10 final validation and checkpoint preparation
+
+- Access resolution: writable workspace and temporary storage were restored. A temporary-directory write probe passed, so the prior failure was confirmed as an execution-sandbox permission issue rather than a LocalGPT defect.
+- Targeted regression gate: both the recent-history RAG integration test and the paired inflected-reference/`этикетка` false-positive test passed (`2/2`). The production recognizer accepts explicit Russian pronoun forms without using the overbroad `эт\w*` prefix.
+- Focused gate: all 46 retrieval-eval, prompt/RAG-security, Chat RAG and versioned-embedding tests passed.
+- Broad gate: 130 RAG, Vision RAG, context-isolation, embedding and pipeline-memory tests ran. No Stage 10 regression remained; only the two recorded ASR baseline issues occurred: `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers` and `test_pipeline_tasks_are_normalized_for_transcript_record`.
+- Final metadata-only quality observation:
+  - `local-hash-v1` with `hybrid_v2` remained lexical-only: positive recall/context `0.875`, grounded hit `0.500`, paraphrase grounded hit `0.000`, typo recall `0.500`, negative rejection `1.000`, conflict/status accuracy `1.000`; one 10-query observation was `9.891 ms/query`, `360,634` traced peak bytes;
+  - `local-hash-v1` forced through `lexical_v1` produced the same quality matrix, confirming that hashing is not admitted as semantic evidence;
+  - deterministic cross-domain semantic `hybrid_v2` reached positive recall/context/grounded hit `1.000`, paraphrase grounded hit `1.000`, typo recall `1.000`, negative rejection `1.000`, conflict/status accuracy `1.000`;
+  - the same semantic fixture generation forced through `lexical_v1` returned to positive recall/context `0.875`, grounded hit `0.500`, paraphrase grounded hit `0.000` and typo recall `0.500`, while negative/conflict controls stayed `1.000`;
+  - timing/memory values are local observations only, not stable benchmarks. Live EmbeddingGemma threshold/latency/resource validation remains future explicit work.
+- Static validation: `compileall` for `app`, `backend` and `tests`, JavaScript syntax, all four Markdown-rendering tests and `git diff --check` passed.
+- Final scope inspection: 14 tracked Stage 10 files changed; no unrelated file or user runtime data changed. Production retrieval contains no CMS/company/brand vocabulary, `CAPABILITY_QUERY_RE`, `PLATFORM_QUERY_RE`, support-density/comma-count bonus or provider-identity quality shortcut. No chat model was run or downloaded and no user RAG was reindexed.
+- Documentation: affected architecture, backend, RAG, testing, changelog and security-audit records now describe `hybrid_v2`, independent pools, `rrf_v1`, conservative semantic/facet thresholds, `local-hash-v1` lexical-only behavior and `lexical_v1` rollback.
+- Decision: Stage 10 quality and safety gates pass. Create exactly one focused commit `feat(rag): fuse lexical and semantic retrieval`, then stop before Stage 11. Record its hash at the next resumed checkpoint without amending this completed stage.
 
 ### 2026-08-13 — second-device confirmation and Thinking OFF defect
 
@@ -436,16 +503,139 @@
 ## Checkpoints
 
 - Prior audit checkpoints: `f01424c`, `fead0e5`, `6788daf`, `1a03d3f`, `bd76dc1`, `4d20614`.
-- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8).
+- Follow-up checkpoints: `5acb521` (Stage 5), `5faa232` (Stage 6), `553602d` (Stage 7A/7B), `29230f7` and `fe20076` (Stage 7C), `844ac95` (Stage 7D), `3b9fbb7` (Stage 8), `329abc6` (Stage 9).
 
 ## Continuation state
 
-- Current stage: Stage 10 pending; stop required after the Stage 9 commit until the user explicitly resumes.
-- Last completed action: versioned local embedding provider, atomic explicit reindex and previous-generation rollback implemented without changing the active compatibility generation.
-- Current repository state: Stage 9 changes only embedding configuration/adapter, generation persistence/service integration, focused tests, affected docs and this progress record. No model was installed or run, and the user's current RAG needs no manual reindex.
-- Known risks: live semantic quality/resources are not yet measured; Stage 8 raw recall still overstates grounded quality, and paraphrase diagnostics, typo tolerance, negative rejection and conflict status need improvement. Backend fail-closed output enforcement remains authoritative; Safari still reports `Not Secure`.
-- Next exact action: after manual continuation, implement domain-neutral lexical/semantic candidate fusion over version-matched vectors, remove the temporary generic capability bonus only after the cross-domain quality gate passes, then commit and stop.
-- Next files: `backend/apps/rag/retrieval.py`, embedding/search integration, Stage 8 eval/tests and affected RAG/testing docs.
+- Current stage: Stage 10 `completed`; implementation, affected documentation, focused/broad regression gates, metadata-only evaluation and static validation are complete. The single focused checkpoint containing this record is the final remaining action in the current turn; Stage 11 has not started.
+- Last completed action: verified the final 14-file diff is domain-neutral, recorded the Stage 10 quality matrix and confirmed that the 130-test broad gate contains only the two known ASR baseline failures.
+- Current repository state before checkpoint: 14 Stage 10 files are modified and unstaged. No model was installed, downloaded or run; no user RAG was reindexed; no database/source mutation outside temporary synthetic test databases occurred.
+- Known risks: the deterministic semantic provider proves fusion logic but not live EmbeddingGemma score distribution, threshold calibration, latency or memory. `SEMANTIC_MIN_SCORE=0.35` and `FACET_SEMANTIC_MIN_SCORE=0.45` therefore remain contract defaults that must be validated with the real provider later, not tuned against the temporary work RAG. Backend output enforcement and profile/session ownership remain authoritative and must not regress. Safari still reports `Not Secure` separately.
+- Next exact action in this turn: stage only the 14 inspected Stage 10 files, commit `feat(rag): fuse lexical and semantic retrieval`, verify clean status and stop.
+- Next action after explicit user continuation: record the Stage 10 checkpoint hash, then begin only Stage 11's reranker decision. Do not implement or download a reranker unless cross-domain evidence establishes a remaining quality gap worth its bounded resource cost.
+
+### Continuation prompt for Stage 11
+
+```text
+Продолжи LocalGPT строго со Stage 11 по активному progress-файлу
+docs/progress/security-audit-followup-progress.md и skill project-progress-workflow.
+
+Репозиторий:
+/Users/oleksandr/Documents/Custom files/Github Repositories/LocalGPT
+
+Ветка:
+feature/prompt-rag-security-hardening
+
+Сначала проверь clean status и фактический HEAD. Запиши hash завершённого Stage 10 commit
+`feat(rag): fuse lexical and semantic retrieval` в progress-файл. Не начинай Stage 10 заново.
+
+Ограничения:
+- выполнить только Stage 11, затем отдельный checkpoint при наличии tracked changes и стоп;
+- не запускать chat LLM, не скачивать модели и не переиндексировать пользовательский RAG;
+- не добавлять CMS/company/brand vocabulary или эвристики под временный corpus;
+- не менять Stage 10 thresholds по рабочему RAG и не возвращать capability bonus;
+- не переходить к Stage 12 reindex UI или Stage 13 live-model validation.
+
+Stage 10 evidence:
+- deterministic semantic hybrid_v2 достиг 1.0 для positive grounded/paraphrase/typo,
+  negative rejection и conflict/status accuracy;
+- та же fixture generation через lexical_v1 вернулась к 0.5 grounded,
+  0.0 paraphrase grounded и 0.5 typo recall;
+- local-hash-v1 остаётся lexical-only;
+- 46 focused tests passed; broad 130-test gate содержит только две известные ASR baseline issues;
+- production code не содержит CMS/company/brand/capability bonus.
+
+Порядок Stage 11:
+1. Сформулируй измеримый reranker quality gate поверх cross-domain fixture: top-N relevance,
+   отсутствие регрессий exact identifiers, negatives, conflicts, profile/session isolation,
+   bounded latency/memory и explicit unavailable state.
+2. Сверь gate с уже достигнутыми Stage 10 метриками. Если разметка уже насыщена и нельзя
+   доказать дополнительную пользу, не добавляй модель/dependency: зафиксируй evidence-backed
+   решение отложить или отклонить reranker.
+3. Если остаётся измеримый gap, сначала исследуй минимальный локальный multilingual reranker,
+   его лицензию, размер и runtime contract. Не скачивай его без отдельного разрешения пользователя.
+4. Обнови progress и только фактически затронутые permanent docs. Создай один focused commit
+   только если Stage 11 меняет tracked files, затем остановись.
+```
+
+### Completed Stage 10 continuation prompt (historical)
+
+```text
+Продолжи LocalGPT строго с незавершённого Stage 10 по активному progress-файлу
+docs/progress/security-audit-followup-progress.md и skill project-progress-workflow.
+
+Репозиторий:
+/Users/oleksandr/Documents/Custom files/Github Repositories/LocalGPT
+
+Ветка:
+feature/prompt-rag-security-hardening
+
+Последний безопасный commit:
+329abc6 feat(rag): add versioned local embeddings
+
+Важно:
+- не начинай Stage 10 заново и не откатывай незакоммиченные изменения;
+- сначала прочитай AGENTS.md, skill полностью, обязательные RAG/backend/provider/testing docs и секцию
+  «2026-08-14 — Stage 10 interrupted implementation checkpoint» в progress-файле;
+- проверь `git status` и полный diff: ожидаются изменения Stage 10 в
+  backend/apps/chat/routes.py,
+  backend/apps/rag/retrieval.py,
+  backend/apps/rag/service.py,
+  tools/rag_retrieval_eval.py,
+  tests/test_rag_retrieval_eval.py,
+  tests/test_prompt_rag_security_audit.py,
+  tests/test_chat_rag.py,
+  docs/progress/security-audit-followup-progress.md;
+- никакие chat LLM не запускать, модели не скачивать и пользовательский RAG не переиндексировать;
+- не добавлять названия CMS, компаний, брендов или эвристики под временный рабочий corpus;
+- Stage 10 должен завершить универсальные независимые lexical/semantic candidate pools,
+  domain-neutral reciprocal-rank fusion, provenance/diagnostics, source diversity,
+  profile/session isolation и lexical_v1 rollback;
+- local-hash-v1 не считать semantic evidence: на нём semantic pool должен оставаться выключенным;
+- старый CMS/capability bonus уже удалён и возвращать его нельзя;
+- не переходить к reranker/Stage 11, UI reindex/Stage 12 или live chat-model tests/Stage 13.
+
+Первая команда проверки:
+venv/bin/python -m unittest \
+  tests.test_pipeline_memory.LocalGPTPipelineMemoryTestCase.test_rag_search_uses_recent_user_history_for_short_followup \
+  tests.test_prompt_rag_security_audit.PromptRagSecurityAuditTestCase.test_rag_query_composition_keeps_latest_history_for_short_deictic_followup -v
+
+Она проверяет последнюю незапущенную коррекцию: RAG_REFERENTIAL_QUERY_RE теперь принимает
+склонённое «этого» через `эт\\w*`. Если тест не проходит, диагностируй причину без corpus-specific правил.
+
+После этого:
+1. Запусти focused gate:
+   venv/bin/python -m unittest \
+     tests.test_rag_retrieval_eval \
+     tests.test_prompt_rag_security_audit \
+     tests.test_chat_rag \
+     tests.test_rag_embeddings -q
+2. Запусти broad gate:
+   venv/bin/python -m unittest \
+     tests.test_rag_retrieval_eval \
+     tests.test_prompt_rag_security_audit \
+     tests.test_chat_rag \
+     tests.test_vision_rag \
+     tests.test_context_isolation \
+     tests.test_rag_embeddings \
+     tests.test_pipeline_memory -q
+   Допустимы только два уже зафиксированных ASR baseline failure:
+   - test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers
+   - test_pipeline_tasks_are_normalized_for_transcript_record
+   Любая другая ошибка — новая regression и должна быть исправлена до commit.
+3. Повтори metadata-only eval для `hybrid_v2` и `lexical_v1`; не сохраняй raw corpus/query
+   в проект и не объявляй timing стабильным benchmark.
+4. Выполни compileall, `node --check web_ui/js/app.js`,
+   `node tests/markdown_rendering.test.mjs` и `git diff --check`.
+5. Обнови только затронутые постоянные документы: ARCHITECTURE, backend, RAG, TESTING,
+   CHANGELOG и при необходимости security audit. Удали устаревшие утверждения про default
+   hybrid_v1, local-hash dense semantic behavior и специальный CMS capability bonus.
+6. Обнови progress-файл финальными метриками, validation и changed files.
+7. Проверь полный staged diff, создай ровно один focused commit:
+   feat(rag): fuse lexical and semantic retrieval
+8. Проверь `git status`, запиши hash checkpoint и остановись. Не начинай Stage 11,
+   пока пользователь явно не напишет продолжение.
+```
 
 ## Final checklist
 

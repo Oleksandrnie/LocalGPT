@@ -120,7 +120,7 @@ Smoke считается пройденным, если `/health` возвращ
 - protected L1/L2/private-session literal блокируется до non-streaming выдачи/сохранения; streaming/vision guard не выпускает полное значение даже при разбиении между chunks; user attack marker не считается protected автоматически;
 - `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
 - RAG context попадает в prompt только активного профиля;
-- RAG data остаётся L4 envelope; hybrid retrieval покрывает multi-part facets разными источниками, generic platform follow-up получает direct capability evidence, repeated recent turns дедуплицируются, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
+- RAG data остаётся L4 envelope; `hybrid_v2` покрывает multi-part facets через independent lexical/semantic pools и RRF без corpus-specific bonus, repeated/deictic recent turns сохраняют релевантную тему, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
 - short history использует default 6 и проверяется для `0/1/6/100`: один turn равен завершённой паре `user + assistant` только активной session; orphan/active/failed/cancelled rows и текущий query не считаются;
 - messages/criteria, transcript/pipeline, reasoning, attachment, task и derived-RAG endpoints отклоняют foreign profile/session тем же not-found contract, что unknown ID;
@@ -202,10 +202,10 @@ Model-transfer tests используют только temporary synthetic files
 - profile isolation;
 - validation только `.md` и отклонение legacy `.txt`/`.json`;
 - force reindex очищает stale JSON records, не удаляя legacy files;
-- chunk overlap, embedding metadata, `hybrid_v1`/`legacy` rollback и diversified top-k search;
+- chunk overlap, embedding metadata, `hybrid_v2` independent pools/RRF, `lexical_v1` rollback, `legacy` compatibility и diversified top-k search;
 - versioned provider/model/dimensions не смешиваются; несовместимый Ollama response fail-closed, explicit reindex атомарно публикует новое generation и сохраняет прежнее для rollback;
 - context assembly соблюдает `max_chars` и содержит bounded facet/provenance diagnostics;
-- generic capability/platform follow-up выбирает direct supported-platform evidence, а query composer не дублирует повторённые recent user turns;
+- generic follow-up выбирает evidence через ordinary lexical/semantic relevance без platform/company bonus, а query composer не дублирует turns и сохраняет последнюю тему для коротких/склонённых deictic forms;
 - search соблюдает query/top-k limits; multi-file upload проверяет count/per-file/total bytes до publication и не оставляет artifacts при 413;
 - file/context deletion очищает DB records.
 - explicit user/completed-assistant export проверяет profile/session ownership, role metadata, отсутствие reasoning и независимое удаление; assistant-authored export не принимается как factual evidence;

@@ -17,7 +17,7 @@ VISION_CONTEXT_SOURCE_TYPE = "vision_context"
 CHAT_CONTEXT_SOURCE_TYPE = "chat_context"
 EMBEDDING_MODEL = "local-hash-v1"
 RETRIEVAL_STRATEGY_SETTING = "rag_retrieval_strategy"
-DEFAULT_RETRIEVAL_STRATEGY = "hybrid_v1"
+DEFAULT_RETRIEVAL_STRATEGY = "hybrid_v2"
 SUPPORTED_SUFFIXES = {".md"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_FILES = 12
@@ -993,7 +993,9 @@ def _legacy_search(
 
 def retrieval_strategy() -> str:
     configured = str(db.get_app_setting(RETRIEVAL_STRATEGY_SETTING, DEFAULT_RETRIEVAL_STRATEGY) or "").strip().lower()
-    return configured if configured in {"hybrid_v1", "legacy"} else DEFAULT_RETRIEVAL_STRATEGY
+    if configured == "hybrid_v1":
+        return DEFAULT_RETRIEVAL_STRATEGY
+    return configured if configured in {"hybrid_v2", "lexical_v1", "legacy"} else DEFAULT_RETRIEVAL_STRATEGY
 
 
 def search_with_diagnostics(
@@ -1005,6 +1007,10 @@ def search_with_diagnostics(
     session_id: str | None = None,
 ) -> dict[str, Any]:
     selected_strategy = str(strategy or retrieval_strategy()).strip().lower()
+    if selected_strategy == "hybrid_v1":
+        selected_strategy = DEFAULT_RETRIEVAL_STRATEGY
+    if selected_strategy not in {"hybrid_v2", "lexical_v1", "legacy"}:
+        selected_strategy = DEFAULT_RETRIEVAL_STRATEGY
     if selected_strategy == "legacy":
         results = _legacy_search(profile_id, query, top_k=top_k, session_id=session_id)
         return {
@@ -1020,26 +1026,46 @@ def search_with_diagnostics(
         }
     cleaned_query = str(query or "").strip()
     if not cleaned_query or top_k <= 0:
-        diagnostics = retrieval.evidence_diagnostics(cleaned_query, [])
-        return {"strategy": DEFAULT_RETRIEVAL_STRATEGY, "results": [], "diagnostics": diagnostics}
+        diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
+        return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
     provider = _embedding_provider()
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
     if not raw_chunks:
-        diagnostics = retrieval.evidence_diagnostics(cleaned_query, [])
-        return {"strategy": DEFAULT_RETRIEVAL_STRATEGY, "results": [], "diagnostics": diagnostics}
-    query_vector = _embed_texts(provider, [cleaned_query])[0]
+        diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
+        return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
+    query_vector: list[float] = []
+    facet_vectors: dict[str, list[float]] = {}
+    semantic_enabled = (
+        selected_strategy != "lexical_v1"
+        and provider.descriptor.provider != "local_hash"
+    )
+    if semantic_enabled:
+        facets = retrieval.split_query_facets(cleaned_query)
+        vectors = _embed_texts(provider, [cleaned_query, *[str(item["query"]) for item in facets]])
+        query_vector = vectors[0]
+        facet_vectors = {
+            facet["facet_id"]: vector
+            for facet, vector in zip(facets, vectors[1:])
+        }
     evaluated = retrieval.rank_hybrid(
         raw_chunks,
         cleaned_query,
         top_k=max(top_k, min(20, len(raw_chunks))),
-        dense_score=lambda vector: _cosine(query_vector, vector),
+        dense_score=(lambda vector: _cosine(query_vector, vector)) if query_vector else (lambda _vector: 0.0),
+        dense_facet_scores=(
+            lambda vector: {
+                facet_id: max(0.0, _cosine(facet_vector, vector))
+                for facet_id, facet_vector in facet_vectors.items()
+            }
+        ) if facet_vectors else None,
+        strategy=selected_strategy,
     )
     results = evaluated[:top_k]
-    diagnostics = retrieval.evidence_diagnostics(cleaned_query, evaluated)
+    diagnostics = retrieval.evidence_diagnostics(cleaned_query, evaluated, strategy=selected_strategy)
     diagnostics["evaluated_chunks"] = len(evaluated)
     diagnostics["selected_chunks"] = len(results)
     diagnostics["selected_sources"] = len({str(item.get("source_id") or "") for item in results})
-    return {"strategy": DEFAULT_RETRIEVAL_STRATEGY, "results": results, "diagnostics": diagnostics}
+    return {"strategy": selected_strategy, "results": results, "diagnostics": diagnostics}
 
 
 def search(

@@ -115,7 +115,7 @@ class ChatRagExportTestCase(unittest.TestCase):
             },
         )
         self.assertEqual(searched.status_code, 200, searched.text)
-        self.assertEqual(searched.json()["strategy"], "hybrid_v1")
+        self.assertEqual(searched.json()["strategy"], "hybrid_v2")
         self.assertEqual(searched.json()["diagnostics"]["overall_status"], "supported")
         self.assertTrue(searched.json()["diagnostics"]["facet_coverage"][0]["evidence"])
 

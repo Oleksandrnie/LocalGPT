@@ -15,13 +15,12 @@ SUSPICIOUS_INSTRUCTION_RE = re.compile(
     r"(?:run|execute|запусти|выполни)\s+(?:a\s+)?(?:shell|command|команд)",
     re.IGNORECASE,
 )
-EXCLUSIVITY_RE = re.compile(r"\b(?:только|исключительно|only|must not|нельзя)\b", re.IGNORECASE)
+EXCLUSIVITY_RE = re.compile(r"\b(?:только|исключительно|exclusive\w*|only|must not|нельзя)\b", re.IGNORECASE)
 ALTERNATIVE_RE = re.compile(r"\b(?:или|либо|or|допуска\w*|depending)\b", re.IGNORECASE)
-CAPABILITY_QUERY_RE = re.compile(
-    r"\b(?:поддерж\w*|работ\w*|дораб\w*|совместим\w*|support\w*|work\w*)\b",
-    re.IGNORECASE,
-)
-PLATFORM_QUERY_RE = re.compile(r"\b(?:cms|платформ\w*|систем\w*|технолог\w*)\b", re.IGNORECASE)
+SEMANTIC_MIN_SCORE = 0.35
+FACET_LEXICAL_MIN_SCORE = 0.34
+FACET_SEMANTIC_MIN_SCORE = 0.45
+RRF_K = 60
 STOPWORDS = {
     "about",
     "and",
@@ -30,6 +29,7 @@ STOPWORDS = {
     "for",
     "from",
     "how",
+    "is",
     "the",
     "what",
     "which",
@@ -147,16 +147,6 @@ def _source_bonus(item: dict[str, Any], query_lower: str) -> float:
         bonus += 0.12
     if metadata.get("source_role") == "source_of_truth":
         bonus += 0.08
-    content_lower = str(item.get("content") or "").lower()
-    if CAPABILITY_QUERY_RE.search(query_lower) and PLATFORM_QUERY_RE.search(query_lower):
-        support_mentions = len(re.findall(r"\b(?:поддерж\w*|дораб\w*|support\w*)\b", content_lower))
-        bonus += min(0.88, support_mentions * 0.08)
-        if (
-            re.search(r"\bплатформ\w*\b", content_lower)
-            and re.search(r"\bсистем\w*\b", content_lower)
-            and content_lower.count(",") >= 2
-        ):
-            bonus += 0.6
     return bonus
 
 
@@ -166,6 +156,8 @@ def rank_hybrid(
     *,
     top_k: int,
     dense_score: Callable[[list[float]], float],
+    dense_facet_scores: Callable[[list[float]], dict[str, float]] | None = None,
+    strategy: str = "hybrid_v2",
 ) -> list[dict[str, Any]]:
     facets = split_query_facets(query)
     query_tokens = sorted({token for facet in facets for token in facet["tokens"]})
@@ -206,25 +198,31 @@ def rank_hybrid(
                 denominator = frequency + 1.2 * (0.25 + 0.75 * (len(content_tokens) / max(1.0, average_length)))
                 bm25 += idf * ((frequency * 2.2) / denominator)
         bm25_normalized = bm25 / max(0.0001, idf_total)
-        facet_scores = {
+        lexical_facet_scores = {
             facet["facet_id"]: token_coverage(facet["tokens"], content_tokens)
             for facet in facets
         }
         overall_coverage = token_coverage(query_tokens, content_tokens)
-        if overall_coverage <= 0:
-            continue
         repeated = repetition_ratio(str(chunk.get("content") or ""))
-        score = (
-            bm25_normalized * 0.48
-            + overall_coverage * 0.32
-            + max(0.0, dense_score(chunk.get("embedding") or [])) * 0.20
-            + _source_bonus(chunk, query_lower)
-            - repeated * 0.45
+        lexical_score = (
+            bm25_normalized * 0.56
+            + overall_coverage * 0.44
+            + (_source_bonus(chunk, query_lower) if overall_coverage > 0 else 0.0)
+            - repeated * 0.35
         )
-        if score <= 0:
-            continue
+        dense = max(0.0, dense_score(chunk.get("embedding") or []))
+        semantic_facet_scores = (
+            dense_facet_scores(chunk.get("embedding") or []) if dense_facet_scores else {}
+        )
+        facet_scores = {
+            facet["facet_id"]: max(
+                float(lexical_facet_scores.get(facet["facet_id"], 0.0)),
+                float(semantic_facet_scores.get(facet["facet_id"], 0.0)),
+            )
+            for facet in facets
+        }
         item = {
-            "score": round(score, 4),
+            "score": 0.0,
             "chunk_id": chunk.get("chunk_id"),
             "document_id": chunk.get("document_id"),
             "source_type": chunk.get("source_type"),
@@ -235,13 +233,20 @@ def rank_hybrid(
             "metadata": chunk.get("chunk_metadata") or {},
             "document_metadata": chunk.get("document_metadata") or {},
             "retrieval": {
-                "strategy": "hybrid_v1",
+                "strategy": strategy,
                 "bm25": round(bm25_normalized, 4),
-                "dense": round(max(0.0, dense_score(chunk.get("embedding") or [])), 4),
+                "dense": round(dense, 4),
                 "query_coverage": round(overall_coverage, 4),
                 "repetition_ratio": repeated,
+                "lexical_score": round(max(0.0, lexical_score), 4),
+                "semantic_score": round(dense, 4),
             },
-            "matched_facets": [facet_id for facet_id, value in facet_scores.items() if value >= 0.34],
+            "matched_facets": [
+                facet["facet_id"]
+                for facet in facets
+                if lexical_facet_scores.get(facet["facet_id"], 0.0) >= FACET_LEXICAL_MIN_SCORE
+                or semantic_facet_scores.get(facet["facet_id"], 0.0) >= FACET_SEMANTIC_MIN_SCORE
+            ],
             "facet_scores": {key: round(value, 4) for key, value in facet_scores.items()},
             "evidence_status": "supported",
             "provenance": {
@@ -252,7 +257,66 @@ def rank_hybrid(
         }
         candidates.append(item)
 
-    candidates.sort(key=lambda item: (-float(item["score"]), str(item.get("source_id") or ""), int(item.get("chunk_index") or 0)))
+    pool_size = min(len(candidates), max(20, top_k * 4))
+    lexical_pool = sorted(
+        (
+            item
+            for item in candidates
+            if float((item.get("retrieval") or {}).get("query_coverage") or 0.0) > 0
+            and float((item.get("retrieval") or {}).get("lexical_score") or 0.0) > 0
+        ),
+        key=lambda item: (
+            -float((item.get("retrieval") or {}).get("lexical_score") or 0.0),
+            str(item.get("source_id") or ""),
+            int(item.get("chunk_index") or 0),
+        ),
+    )[:pool_size]
+    semantic_pool = [] if strategy == "lexical_v1" else sorted(
+        (
+            item
+            for item in candidates
+            if float((item.get("retrieval") or {}).get("semantic_score") or 0.0) >= SEMANTIC_MIN_SCORE
+        ),
+        key=lambda item: (
+            -float((item.get("retrieval") or {}).get("semantic_score") or 0.0),
+            str(item.get("source_id") or ""),
+            int(item.get("chunk_index") or 0),
+        ),
+    )[:pool_size]
+    lexical_ranks = {int(item["chunk_id"]): rank for rank, item in enumerate(lexical_pool, start=1)}
+    semantic_ranks = {int(item["chunk_id"]): rank for rank, item in enumerate(semantic_pool, start=1)}
+    candidate_by_id = {
+        int(item["chunk_id"]): item for item in [*lexical_pool, *semantic_pool]
+    }
+    for chunk_id, item in candidate_by_id.items():
+        lexical_rank = lexical_ranks.get(chunk_id)
+        semantic_rank = semantic_ranks.get(chunk_id)
+        rrf_lexical = (1.0 / (RRF_K + lexical_rank)) if lexical_rank else 0.0
+        rrf_semantic = (1.0 / (RRF_K + semantic_rank)) if semantic_rank else 0.0
+        raw_fusion = rrf_lexical + rrf_semantic
+        maximum = 2.0 / (RRF_K + 1) if strategy != "lexical_v1" else 1.0 / (RRF_K + 1)
+        score = raw_fusion / maximum if maximum else 0.0
+        item["score"] = round(score, 4)
+        item["retrieval"].update(
+            {
+                "fusion": "rrf_v1",
+                "lexical_rank": lexical_rank,
+                "semantic_rank": semantic_rank,
+                "candidate_pools": [
+                    pool
+                    for pool, rank in (("lexical", lexical_rank), ("semantic", semantic_rank))
+                    if rank is not None
+                ],
+            }
+        )
+    candidates = sorted(
+        candidate_by_id.values(),
+        key=lambda item: (
+            -float(item["score"]),
+            str(item.get("source_id") or ""),
+            int(item.get("chunk_index") or 0),
+        ),
+    )
     selected: list[dict[str, Any]] = []
     selected_sources: set[str] = set()
 
@@ -277,7 +341,7 @@ def rank_hybrid(
                 item
                 for item in ranked_for_facet
                 if item not in selected
-                and float((item.get("facet_scores") or {}).get(facet["facet_id"], 0.0)) >= 0.34
+                and facet["facet_id"] in (item.get("matched_facets") or [])
                 and can_select(item, require_new_source=True)
             ),
             None,
@@ -298,14 +362,19 @@ def rank_hybrid(
     return selected[:top_k]
 
 
-def evidence_diagnostics(query: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
+def evidence_diagnostics(
+    query: str,
+    chunks: list[dict[str, Any]],
+    *,
+    strategy: str = "hybrid_v2",
+) -> dict[str, Any]:
     facets = split_query_facets(query)
     facet_results: list[dict[str, Any]] = []
     for facet in facets:
         supporting = [
             item
             for item in chunks
-            if float((item.get("facet_scores") or {}).get(facet["facet_id"], 0.0)) >= 0.34
+            if facet["facet_id"] in (item.get("matched_facets") or [])
         ]
         years = sorted(
             {
@@ -356,7 +425,7 @@ def evidence_diagnostics(query: str, chunks: list[dict[str, Any]]) -> dict[str, 
     else:
         overall = "supported"
     return {
-        "strategy": "hybrid_v1",
+        "strategy": strategy,
         "overall_status": overall,
         "facet_coverage": facet_results,
         "selected_chunks": len(chunks),

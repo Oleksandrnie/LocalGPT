@@ -72,7 +72,11 @@ def _aggregate(case_rows: list[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
-def evaluate_fixture(fixture_root: Path = DEFAULT_FIXTURE_ROOT) -> dict[str, Any]:
+def evaluate_fixture(
+    fixture_root: Path = DEFAULT_FIXTURE_ROOT,
+    *,
+    strategy: str | None = None,
+) -> dict[str, Any]:
     fixture_root = fixture_root.resolve()
     manifest = json.loads((fixture_root / "cases.json").read_text(encoding="utf-8"))
     cases = list(manifest.get("cases") or [])
@@ -90,6 +94,8 @@ def evaluate_fixture(fixture_root: Path = DEFAULT_FIXTURE_ROOT) -> dict[str, Any
             config.RAG_SOURCE_DIR = temp_root / "rag"
             db.init_db()
             profile_id = db.ensure_default_profile()
+            if strategy:
+                db.set_app_setting(rag_service.RETRIEVAL_STRATEGY_SETTING, strategy)
             profile_source_dir = rag_service.ensure_profile_source_dir(profile_id)
             for source in sorted((fixture_root / "corpus").glob("*.md")):
                 shutil.copy2(source, profile_source_dir / source.name)
@@ -147,7 +153,7 @@ def evaluate_fixture(fixture_root: Path = DEFAULT_FIXTURE_ROOT) -> dict[str, Any
                 "fixture_schema": manifest.get("schema"),
                 "preview_only": True,
                 "metadata_only": True,
-                "embedding_model": rag_service.EMBEDDING_MODEL,
+                "embedding_model": ingest.get("embedding_model") or rag_service.EMBEDDING_MODEL,
                 "retrieval_strategy": rag_service.retrieval_strategy(),
                 "top_k": top_k,
                 "max_context_chars": max_context_chars,
@@ -174,12 +180,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fixture-root", type=Path, default=DEFAULT_FIXTURE_ROOT)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--strategy", choices=("hybrid_v2", "lexical_v1", "legacy"))
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    report = evaluate_fixture(args.fixture_root)
+    report = evaluate_fixture(args.fixture_root, strategy=args.strategy)
     serialized = json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

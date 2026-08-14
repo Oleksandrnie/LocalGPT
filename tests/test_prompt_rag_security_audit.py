@@ -106,7 +106,7 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
     def test_hybrid_candidate_beats_legacy_on_multi_part_source_coverage_and_duplicates(self) -> None:
         query = "С какими CMS вы работаете и как продвигаете сайты по регионам России?"
         legacy = rag_service.search(self.profile_id, query, top_k=2, strategy="legacy")
-        hybrid = rag_service.search(self.profile_id, query, top_k=2, strategy="hybrid_v1")
+        hybrid = rag_service.search(self.profile_id, query, top_k=2, strategy="hybrid_v2")
         self.assertEqual([item["source_id"] for item in legacy], ["duplicate-aggregate.md", "duplicate-aggregate.md"])
         self.assertEqual({item["source_id"] for item in hybrid}, {"cms.md", "regions.md"})
         self.assertEqual(len({item["source_id"] for item in hybrid}), 2)
@@ -116,14 +116,15 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertEqual(rolled_back["strategy"], "legacy")
         self.assertEqual([item["source_id"] for item in rolled_back["results"]], ["duplicate-aggregate.md"] * 2)
 
-    def test_generic_platform_followup_prefers_direct_capability_evidence(self) -> None:
+    def test_generic_platform_followup_uses_ordinary_lexical_evidence(self) -> None:
         result = rag_service.search_with_diagnostics(
             self.profile_id,
             "Другие CMS получается не поддерживаете?\nС какими CMS вы работаете?",
             top_k=3,
         )
 
-        self.assertIn("cms.md", {item["source_id"] for item in result["results"]})
+        cms_result = next(item for item in result["results"] if item["source_id"] == "cms.md")
+        self.assertIn("lexical", cms_result["retrieval"]["candidate_pools"])
 
     def test_rag_query_composition_deduplicates_repeated_recent_turns(self) -> None:
         query = chat_routes.compose_rag_query(
@@ -165,6 +166,22 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
             query.splitlines(),
             ["А цены?", "Перечислите тарифы технической поддержки."],
         )
+
+    def test_rag_query_composition_handles_inflected_reference_without_prefix_false_positive(self) -> None:
+        referenced = chat_routes.compose_rag_query(
+            "Для этого есть RAG?",
+            ["На основании моих интересов что можешь предложить?"],
+        )
+        explicit = chat_routes.compose_rag_query(
+            "Что написано на этикетке товара?",
+            ["С какими CMS вы работаете?"],
+        )
+
+        self.assertEqual(
+            referenced.splitlines(),
+            ["Для этого есть RAG?", "На основании моих интересов что можешь предложить?"],
+        )
+        self.assertEqual(explicit, "Что написано на этикетке товара?")
 
     def test_rag_query_composition_keeps_context_for_three_word_confirmation(self) -> None:
         query = chat_routes.compose_rag_query(
@@ -245,7 +262,7 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
             for index in range(3)
         ]
         diagnostics = {
-            "strategy": "hybrid_v1",
+            "strategy": "hybrid_v2",
             "overall_status": "partial",
             "facet_coverage": [
                 {

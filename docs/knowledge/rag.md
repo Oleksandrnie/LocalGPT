@@ -54,26 +54,27 @@ Semantic provider передаёт `truncate=false`, валидирует чис
 
 Переключение `RAG_EMBEDDING_PROVIDER`/model/version/dimensions не конвертирует индекс автоматически: search возвращает `rag_embedding_reindex_required`, пока все доступные chunks не получат выбранное generation. Переиндексация сначала полностью рассчитывает новое поколение и только затем атомарно публикует его; прежние generation остаются в SQLite, поэтому rollback выполняется возвратом прежней конфигурации без повторного чтения corpus. Пользовательский API/UI для запуска и наблюдения semantic reindex относится к отдельному operational stage.
 
-Default search strategy `hybrid_v1`:
+Default search strategy `hybrid_v2`:
 
 1. делит multi-part query максимум на восемь bounded facets;
-2. загружает chunks/embeddings только активного профиля и `local-hash-v1`;
-3. объединяет cosine score с BM25-style lexical score и inflection-tolerant token coverage;
-4. штрафует повторяющийся boilerplate и сначала выбирает разные источники, покрывающие разные facets;
-5. исключает assistant-authored Chat exports из factual evidence;
-6. возвращает top-k chunks с source/chunk provenance и внутренними score components;
-7. отдельно оценивает facets как `supported`, `partial`, `conflict` или `not_found` и прикладывает короткие evidence spans;
-8. `build_context()` сначала сжимает слишком объёмную diagnostics до facet/status metadata, затем делит оставшийся `max_chars` между всеми selected chunks; длинный первый фрагмент не может вытеснить остальные доказательства.
+2. загружает только matching embedding generation и только разрешённые profile/session chunks; assistant-authored Chat exports исключаются из factual evidence;
+3. независимо строит bounded lexical pool по BM25-style score/token coverage и semantic pool по cosine similarity;
+4. не создаёт semantic pool для `local-hash-v1`, потому что hashing collision не является семантическим доказательством;
+5. объединяет ranks через `rrf_v1`, сохраняя lexical/semantic ranks и pool membership в provenance diagnostics;
+6. допускает semantic-only candidate без буквального overlap, но отмечает facet поддержанным только при более строгом semantic threshold;
+7. штрафует повторяющийся boilerplate и сначала выбирает разные источники, покрывающие разные facets;
+8. отдельно оценивает facets как `supported`, `partial`, `conflict` или `not_found` и прикладывает короткие evidence spans;
+9. `build_context()` сначала сжимает слишком объёмную diagnostics до facet/status metadata, затем делит оставшийся `max_chars` между всеми selected chunks; длинный первый фрагмент не может вытеснить остальные доказательства.
 
-Для capability follow-up с platform/system vocabulary ranking дополнительно повышает chunks с плотным прямым перечнем поддержки/доработки или несколькими платформами/системами. Это общий lexical сигнал без списка конкретных брендов. Conflict diagnostics связывает год с тем же chunk, где найдено exclusive/alternative утверждение, чтобы случайные годы из соседнего boilerplate не создавали ложный конфликт.
+Production ranking не содержит CMS/company/brand vocabulary или отдельного capability bonus. Conflict diagnostics связывает год с тем же chunk, где найдено exclusive/alternative утверждение, чтобы случайные годы из соседнего boilerplate не создавали ложный конфликт.
 
 Пока выбран compatibility generation, semantic quality ограничена hashing/lexical approach; точные headings, ключевые слова и structured facts особенно важны. Semantic provider уже доступен как инфраструктура, но не включается автоматически и не загружает модель без явной локальной установки и переиндексации.
 
-На synthetic CMS + regions corpus baseline `legacy` дважды выбирал `duplicate-aggregate.md` в top-2. `hybrid_v1` выбрал `cms.md` и `regions.md`, снизив top-2 duplicate-source ratio с 100% до 0% и дав specific facet coverage 2/2 вместо 0/2. Один bounded прогон по 100 запросов показал около 3.14 ms/query и 1.56 MB peak для legacy против 10.59 ms/query и 2.16 MB peak для hybrid; это regression-test observation, не production benchmark.
+На synthetic CMS + regions corpus baseline `legacy` дважды выбирал `duplicate-aggregate.md` в top-2. `hybrid_v2` без специальной CMS-эвристики выбирает отдельные CMS и regions sources через ordinary lexical/facet relevance и source diversity. Старое наблюдение времени для `hybrid_v1` относится только к предыдущей реализации и не является production benchmark.
 
 Отдельный cross-domain eval находится в `tools/rag_retrieval_eval.py` и `tests/fixtures/rag_retrieval_eval/`. Он использует unrelated synthetic domains, exact/paraphrase/typo/conflict/negative cases и metadata-only report. Это канонический quality gate для будущих embeddings/reranking; временный пользовательский corpus в fixtures и production heuristics не переносится.
 
-Retrieval-strategy rollback не переиндексирует и не меняет источники: app setting `rag_retrieval_strategy=legacy` возвращает прежнее ранжирование; отсутствие/неизвестное значение выбирает `hybrid_v1`. Embedding-generation rollback независимо выбирает сохранённый прежний provider/model/version/dimensions key.
+Retrieval-strategy rollback не переиндексирует и не меняет источники: app setting `rag_retrieval_strategy=lexical_v1` сохраняет текущие ownership/diversity/diagnostics contracts, но не вызывает semantic query. `legacy` возвращает прежнее ранжирование только для compatibility diagnosis; отсутствие/неизвестное значение выбирает `hybrid_v2`, а сохранённое `hybrid_v1` мигрирует к нему в памяти. Embedding-generation rollback независимо выбирает сохранённый прежний provider/model/version/dimensions key.
 
 ## Chat integration
 
