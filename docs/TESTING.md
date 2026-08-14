@@ -44,6 +44,16 @@ venv/bin/python -m unittest tests.test_setup_dependencies -v
 venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
+Если рабочий `.env` выбирает live Ollama embedding provider, deterministic retrieval fixtures нужно отделить от runtime-конфигурации явным test override, чтобы unit suite не загружал локальную embedding-модель и не подменял compatibility baseline:
+
+```bash
+RAG_EMBEDDING_PROVIDER=local_hash \
+RAG_EMBEDDING_MODEL=local-hash-v1 \
+RAG_EMBEDDING_VERSION=local-hash-v1 \
+RAG_EMBEDDING_DIMENSIONS=256 \
+venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
 Точечные наборы:
 
 | Подсистема | Команда |

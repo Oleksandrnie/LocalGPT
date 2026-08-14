@@ -13,7 +13,7 @@ flowchart LR
     Apps --> ASR["ASR / whisper.cpp / faster-whisper"]
     Apps --> TTS["TTS / Piper"]
     Apps --> OCR["OCR / Tesseract"]
-    Apps --> RAG["RAG / local-hash-v1"]
+    Apps --> RAG["RAG / versioned local embeddings"]
     Apps --> Plugins["Plugin Registry / trusted handlers"]
     Apps --> Transfer["Model transfer / ZIP64 export-import"]
     Shared --> SQLite["SQLite"]

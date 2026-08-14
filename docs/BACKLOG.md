@@ -4,7 +4,8 @@
 
 ## Planned
 
-- Перед release выполнить реальную LAN/reverse-proxy проверку новых security contracts без клиентского corpus; tailnet validation остаётся отдельной будущей задачей.
+- Выполнить отдельную реальную Tailscale/tailnet validation; LAN Caddy HTTPS → localhost backend уже проверен с другого устройства в private Wi-Fi.
+- Повысить domain-independent полноту ответов малых chat-моделей: универсальный enumeration/completeness contract, структурированная упаковка evidence, cross-domain тесты и финальный последовательный 3B/7B/4B прогон без правил под конкретную компанию или corpus.
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
 - Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
 
@@ -19,7 +20,7 @@
 
 - Full ASR analysis может заметно нагружать CPU/GPU и требует ручного разрешения.
 - Live functionality зависит от внешних binaries и локальных моделей; unit tests не подтверждают готовность конкретной машины.
-- LAN HTTPS certificate trust и Tailscale availability проверяются только в реальной среде.
+- LAN HTTPS path функционально проверен в реальной сети, но Safari certificate trust остаётся отдельной device-level настройкой; Tailscale availability проверяется только в реальной tailnet-среде.
 - Полный `unittest discover` сейчас имеет три pre-existing test-suite проблемы, не связанные с документацией:
   - два ASR pipeline tests ожидают прежнее число/форму mocked LLM stages и падают при текущем pipeline;
   - plugin-doc test проходит изолированно, но после полного suite может обращаться к неинициализированному restored SQLite state.

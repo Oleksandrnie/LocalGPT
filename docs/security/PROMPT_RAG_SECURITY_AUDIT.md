@@ -182,7 +182,7 @@ Stage 3 implements the retrieval and evidence portion of the matrix:
 - PRS-05 is mitigated by `hybrid_v2`: independently ranked lexical and version-matched semantic candidate pools are combined with reciprocal-rank fusion before facet-first selection, repetition penalties, near-duplicate suppression and source diversity. `local-hash-v1` remains lexical-only rather than being treated as semantic evidence; `lexical_v1` is the data-preserving semantic-off rollback and `legacy` remains available for compatibility diagnosis.
 - Corpus hygiene is preview-only and metadata-only. It identifies duplicate/boilerplate, oversized/missing-heading/stale/potential-conflict and suspicious-instruction sources without deleting or rewriting them.
 
-On the synthetic CMS + regions case, legacy top-2 was the same aggregate source twice; the current domain-neutral lexical/facet path selects the two specific sources without a CMS/capability bonus. Cross-domain contract evaluation separates lexical-only and deterministic semantic vectors so paraphrase gains are attributable to the semantic pool rather than corpus vocabulary. Live EmbeddingGemma score distribution and resource cost remain unverified until the model is explicitly installed/reindexed; residual risks are threshold calibration, heuristic stemming/conflict detection, context-budget sensitivity, and model-level use of diagnostics.
+On the synthetic CMS + regions case, legacy top-2 was the same aggregate source twice; the current domain-neutral lexical/facet path selects the two specific sources without a CMS/capability bonus. Cross-domain contract evaluation separates lexical-only and deterministic semantic vectors so paraphrase gains are attributable to the semantic pool rather than corpus vocabulary. Stage 13 later installed and explicitly reindexed a live EmbeddingGemma generation, verified 2,925/2,925 chunks and exercised one shared semantic snapshot across three sequential chat models. Residual risks are threshold calibration, heuristic stemming/conflict detection, context-budget sensitivity, and model-level use of diagnostics.
 
 Stage 4 implements the runtime-control portion of the matrix:
 
@@ -193,7 +193,7 @@ Stage 4 implements the runtime-control portion of the matrix:
 - Chat generation is bounded to two active tasks per profile and four total, with a five-minute timeout, terminal failure state, process termination and partial delta/reasoning artifact cleanup. SSE event streams are bounded to three concurrent connections per task.
 - Markdown rendering remains escaped/inert, the calculator remains constrained to its AST allowlist, plugin behavior remains backend-owned, and no model-output-to-action edge was added.
 
-All confirmed High findings are closed by code-enforced controls. Remaining Medium risk is the local profile-ID authority model itself: LocalGPT does not yet implement user identities, and a caller who is already authorized to operate a profile retains that profile's capabilities. Character-to-token estimation is deliberately conservative but remains approximate across model tokenizers. Live network/reverse-proxy and model behavior remain Stage 5 checks.
+All confirmed High findings are closed by code-enforced controls. Remaining Medium risk is the local profile-ID authority model itself: LocalGPT does not yet implement user identities, and a caller who is already authorized to operate a profile retains that profile's capabilities. Character-to-token estimation is deliberately conservative but remains approximate across model tokenizers. Live model and private LAN/reverse-proxy evidence is recorded in the follow-up sections below.
 
 ## Rollout and rollback
 
@@ -216,13 +216,22 @@ The opt-in `tools/live_llm_security.py` harness ran eight synthetic categories t
 
 The reproduced raw disclosures showed that prompt-only privacy is not a reliable boundary, especially for `qwen3:4b`. The mitigation therefore remains backend-owned: secret-like literals from L1/L2 and explicitly marked private session context are blocked before normal, reasoning, streaming or vision output is delivered or persisted. Streaming holds a bounded tail so a complete literal split across chunks is detected before release. Foreign profile/session canaries never entered assembled prompts, and the harness exposed no model-output-to-privileged-action edge.
 
-Behavioral failures remain model limitations: a model can repeat an attacker-provided behavioral canary or make a false authorization claim, but those strings are not promoted to protected input and have no backend action capability. `qwen3:4b` is materially less resistant than the two instruct models and should not be treated as a security policy engine. LAN validation remains Stage 7A.
+Behavioral failures remain model limitations: a model can repeat an attacker-provided behavioral canary or make a false authorization claim, but those strings are not promoted to protected input and have no backend action capability. `qwen3:4b` is materially less resistant than the two instruct models and should not be treated as a security policy engine. LAN validation was completed separately through the private Caddy path.
+
+## Follow-up closure (Stages 5–13, 2026-08-14)
+
+- Profile and session ownership is enforced for history, summaries, criteria, transcripts, reasoning, attachments, tasks and derived Chat/Vision/ASR RAG. Manually managed Markdown remains profile-wide; derived sources remain session-owned, and ambiguous legacy rows are preserved but excluded from retrieval.
+- The history setting is end-to-end consistent: default `6` means six completed `user + assistant` pairs from the active session, while `0` disables history.
+- Prompt-only secrecy was rejected as an authority boundary after live Qwen failures. Backend fail-closed output guards now protect normal, streaming and vision delivery/persistence; Thinking OFF keeps hybrid Qwen structural reasoning out of chat and rejects incomplete reasoning-only/token-limited completions.
+- The private LAN path was verified from a second device through Caddy HTTPS to a localhost-only backend. Profiles/models, health and streaming chat worked; privileged storage access without the admin token returned `403`. Safari certificate trust remains a client-device configuration issue, not a reverse-proxy availability failure.
+- RAG now uses domain-neutral `hybrid_v2`, versioned local embeddings, atomic explicit reindex, rollback generations, lifecycle status/UI and cross-domain ranking gates. No CMS, company, brand or temporary-corpus rule exists in production ranking.
+- Live `embeddinggemma:latest` reindex completed 2,925/2,925 chunks. The same five-chunk, 5,998-character supported semantic context was passed sequentially to Qwen 2.5 3B Instruct, Qwen 2.5 7B Instruct and Qwen 3 4B, with an empty resident-model set between calls. All three remained grounded, exposed zero Thinking OFF reasoning and added zero unsupported entities. 3B/7B covered 2/4 available evidence entities; 4B covered 4/4. The small-model completeness gap is deferred as a general answer-quality improvement rather than hidden inside corpus-specific retrieval tuning.
 
 ## Residual risks and untested environments
 
 - Live-model resistance varies by model and quantization; the tested Qwen builds retain the behavioral limitations recorded above. Literal blocking is defense-in-depth for secret-like protected values, not a general semantic DLP system.
-- Real corpus duplication, stale content and multilingual paraphrase distribution were not inspected because client data must not enter the audit artifacts.
-- LAN/tailnet reachability, reverse-proxy headers, OS file permissions and log access were not exercised in this environment.
+- Real corpus text, live model answers and protected values were not copied into repository audit artifacts; only metadata/counts were retained. Corpus hygiene remains preview-only.
+- Private LAN reachability and Caddy reverse proxy were exercised; Tailscale/tailnet, OS file permissions and log-access policy remain separate environments.
 - Browser smoke covered desktop System controls, 390×844 overflow, light theme and focus. Native prompt-dialog automation timed out; session-only token transport is instead covered by static UI and API authorization tests.
 - No external-agent channel exists to test. Future connectors must add authenticated principals, capability scopes, schema validation, replay/idempotency protection, confirmation and loop budgets before accepting messages.
 - Prompt/data envelopes reduce ambiguity but cannot guarantee model obedience. Authorization, limits, ownership and safe sinks must remain code-enforced.
@@ -230,7 +239,8 @@ Behavioral failures remain model limitations: a model can repeat an attacker-pro
 ## Final validation evidence
 
 - 103 focused prompt/RAG/runtime/vision/router tests passed; all seven synthetic red-team categories and max-valid/over-limit/ownership/timeout/cancel/reconnect paths are represented.
-- Full discovery ran 286 tests with exactly the three failures reproduced on the base commit: two ASR pipeline expectation mismatches and one plugin-registry restored-database issue. No new regression remained.
-- 27 static UI tests passed, including escaped Markdown/model output, task reasoning/reconnect behavior, responsive/focus/theme contracts and privileged-request transport.
+- The Stage 14 focused security/RAG/isolation/LAN closure gate passed all 91 selected tests.
+- Stage 14 full discovery ran 336 tests with exactly the three documented suite issues: two isolated ASR pipeline expectation mismatches and one order-dependent plugin-registry restored-database error; the plugin case passes in isolation. No new regression remained.
+- All 32 Node/UI contract tests passed across attachments, reasoning/mobile controls, context isolation, LAN certificate transport, escaped Markdown, model transfer, RAG reindex and dictation.
 - Local bounded smoke returned 200 for minimal health/version/UI and authorized storage read, and 403 for restart without a token. Browser smoke covered desktop/System settings plus 390×844 layout, light theme and focus without model generation.
-- Live Ollama is covered by the Stage 6 follow-up above. Real LAN/reverse-proxy headers and an external-agent channel remain untested; Tailscale is outside the follow-up scope.
+- Live Ollama is covered by Stage 6 and the sequential semantic-grounding closure above. Real private LAN/Caddy behavior is accepted; an external-agent channel and Tailscale remain untested/out of scope.
