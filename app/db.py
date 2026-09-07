@@ -1110,10 +1110,8 @@ def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[s
     return messages
 
 
-def get_prompt_history(session_id: str, *, limit_turns: int) -> list[dict[str, Any]]:
-    """Return the latest completed user/assistant conversation turns for one session."""
-    if int(limit_turns or 0) <= 0:
-        return []
+def _completed_conversation_turns(session_id: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Return chronological completed user/assistant turns for one session."""
     messages = get_messages(session_id)
     turns: list[tuple[dict[str, Any], dict[str, Any]]] = []
     pending_user: dict[str, Any] | None = None
@@ -1128,7 +1126,16 @@ def get_prompt_history(session_id: str, *, limit_turns: int) -> list[dict[str, A
         if pending_user is not None and status == "completed" and not bool(message.get("is_partial")):
             turns.append((pending_user, message))
         pending_user = None
-    selected = turns[-int(limit_turns) :]
+    return turns
+
+
+def get_prompt_history(session_id: str, *, limit_turns: int) -> list[dict[str, Any]]:
+    """Return the latest completed user/assistant conversation turns for one session."""
+    turn_limit = int(limit_turns or 0)
+    if turn_limit <= 0:
+        return []
+    turns = _completed_conversation_turns(session_id)
+    selected = turns[-turn_limit:]
     return [message for turn in selected for message in turn]
 
 
@@ -1735,20 +1742,10 @@ def count_messages(session_id: str) -> int:
 
 
 def get_messages_before_latest(session_id: str, keep_pairs: int) -> list[dict[str, Any]]:
-    keep_count = max(0, int(keep_pairs or 0) * 2)
-    query = """
-        SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
-               generation_started_at, generation_finished_at, is_partial, task_id
-        FROM chat_messages
-        WHERE session_id = ?
-        ORDER BY created_at ASC, id ASC
-    """
-    with closing(_connect()) as conn:
-        rows = conn.execute(query, (session_id,)).fetchall()
-    messages = [item for row in rows if (item := _message_row_dict(row))]
-    if keep_count <= 0:
-        return messages
-    return messages[:-keep_count]
+    keep_turns = max(0, int(keep_pairs or 0))
+    turns = _completed_conversation_turns(session_id)
+    selected = turns if keep_turns == 0 else turns[:-keep_turns]
+    return [message for turn in selected for message in turn]
 
 
 def create_session_summary(

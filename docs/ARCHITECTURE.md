@@ -73,7 +73,7 @@ flowchart LR
 7. Перед выдачей и сохранением backend проверяет final content/reasoning на буквальное повторение secret-like значений из L1/L2 и явно помеченного private session context. Non-streaming fail closed до ответа; streaming удерживает bounded tail, поэтому полный protected literal не успевает попасть клиенту. Та же граница применяется к vision runtime.
 8. `stream=true` отдаёт lifecycle, отдельные `reasoning` chunks и final-answer `delta` через SSE; non-streaming использует тот же persisted lifecycle без chunk events.
 
-Short history принадлежит только активной session. Profile setting `mem_turns` по умолчанию равен 6 и означает число последних завершённых пар `user + assistant`; `0` отключает history. Текущий query, orphan user rows и active/failed/cancelled assistant rows не считаются turn и не попадают в этот блок.
+Short history принадлежит только активной session. Profile setting `mem_turns` по умолчанию равен 6 и означает число последних завершённых пар `user + assistant`; `0` отключает history. Автоматическая summary memory получает только более старые завершённые пары, поэтому её input и retained short history не пересекаются. Текущий query, orphan user rows и active/failed/cancelled/partial assistant rows не считаются turn, не сдвигают границу и не попадают ни в один из этих блоков.
 
 До запуска generation backend проверяет per-block/aggregate input и assembled-prompt budget. Одновременно допускаются не более двух активных chat tasks на профиль и четырёх на runtime; worker имеет пятиминутный timeout с termination и удалением partial delta/reasoning artifacts. Status/events/cancel требуют совпадающие `profile_id` и `session_id`, а SSE ограничен тремя соединениями на task.
 

@@ -65,7 +65,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Versioned RAG embedding provider, atomic/background reindex, status и rollback | `venv/bin/python -m unittest tests.test_rag_embeddings -v` |
 | RAG reindex UI lifecycle contract | `node --test tests/rag_reindex_ui.test.mjs` |
 | Live-model harness contract без загрузки модели | `venv/bin/python -m unittest tests.test_live_llm_security_harness -v` |
-| Profile/session isolation и history-turn contract | `venv/bin/python -m unittest tests.test_context_isolation tests.test_chat_attachments tests.test_chat_rag tests.test_vision_rag -v` |
+| Profile/session isolation, completed-turn history и summary-memory boundary | `venv/bin/python -m unittest tests.test_chat_memory_boundary tests.test_context_isolation tests.test_chat_attachments tests.test_chat_rag tests.test_vision_rag -v` |
 | Runtime authorization, ownership, redaction, limits и cleanup | `venv/bin/python -m unittest tests.test_runtime_security -v` |
 | Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
@@ -133,7 +133,7 @@ Smoke считается пройденным, если `/health` возвращ
 - RAG context попадает в prompt только активного профиля;
 - RAG data остаётся L4 envelope; `hybrid_v2` покрывает multi-part facets через independent lexical/semantic pools и RRF без corpus-specific bonus, repeated/deictic recent turns сохраняют релевантную тему, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
 - profile prompt, memory, criteria и language policy сохраняют порядок.
-- short history использует default 6 и проверяется для `0/1/6/100`: один turn равен завершённой паре `user + assistant` только активной session; orphan/active/failed/cancelled rows и текущий query не считаются;
+- short history использует default 6 и проверяется для `0/1/6/100`: один turn равен завершённой паре `user + assistant` только активной session; summary compression получает непересекающийся prefix тех же completed turns, а orphan/active/failed/cancelled/partial rows и текущий query не считаются и не сдвигают split;
 - messages/criteria, transcript/pipeline, reasoning, attachment, task и derived-RAG endpoints отклоняют foreign profile/session тем же not-found contract, что unknown ID;
 - max-valid request проходит, а oversized block/aggregate/assembled prompt возвращает bounded 4xx до generation;
 - task status/events/cancel отклоняет foreign profile/session тем же contract, что unknown task; concurrency, timeout, cancel/error cleanup и SSE connection limit завершаются terminal state без partial artifacts;

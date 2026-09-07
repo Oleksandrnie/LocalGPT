@@ -10,6 +10,7 @@
 | Запустить или расширить проверки | [TESTING.md](TESTING.md) |
 | Посмотреть значимые изменения | [CHANGELOG.md](CHANGELOG.md) |
 | Спланировать незавершённую работу | [BACKLOG.md](BACKLOG.md) |
+| Посмотреть постоянный план multimodal-аудита | [MULTIMODAL_AUDIT_PLAN.md](MULTIMODAL_AUDIT_PLAN.md) |
 | Реализовать аудит prompt/RAG grounding и LLM-безопасности | [PROMPT_RAG_SECURITY_AUDIT_SPEC.md](PROMPT_RAG_SECURITY_AUDIT_SPEC.md) |
 | Понять контракт и ограничения переноса моделей | [MODEL_TRANSFER_SPEC.md](MODEL_TRANSFER_SPEC.md) |
 | Работать coding-агентом | [AGENTS.md](../AGENTS.md) |
@@ -31,6 +32,6 @@
 - `TESTING.md` — единственный общий источник тестовых команд и критериев.
 - `CHANGELOG.md` хранит завершённые значимые изменения; `BACKLOG.md` — только незавершённую работу.
 - Component-local README остаются рядом с конфигурацией, если их путь является частью runtime-контракта: `plugins/`, `plugins/tailscale/`, `rag_sources/`.
-- Временные task records живут только в `docs/progress/` и удаляются после завершения своей задачи. `.gitkeep` сохраняет каталог.
+- Постоянный план и принятые результаты живут в `MULTIMODAL_AUDIT_PLAN.md`; временные task records живут только в `docs/progress/` и удаляются после завершения своей задачи. `.gitkeep` сохраняет каталог.
 
 При изменении кода обновляются только затронутые документы, а не вся документация проекта.

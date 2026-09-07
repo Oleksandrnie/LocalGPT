@@ -24,6 +24,7 @@
 
 ### Changed
 
+- Short history и автоматическая summary memory теперь делят единый ordered набор завершённых `user + assistant` turns: failed/cancelled/active/partial и orphan rows не попадают в summary и не сдвигают retained-history boundary.
 - Chat context теперь изолирован по `profile_id + session_id`: short history считает завершённые пары (default 6, `0` отключает), derived Chat/Vision/ASR RAG не переносится между чатами, а messages/criteria/transcripts/reasoning/attachments/tasks требуют matching session scope.
 - Model output privacy больше не зависит только от prompt obedience: backend блокирует literal disclosure защищённых L1/L2/private-session значений до normal/streaming/vision delivery; отдельный metadata-only live harness проверен на трёх локальных Qwen-моделях.
 - Public health/version, model inventory, TTS health и RAG status больше не раскрывают absolute storage paths/runtime hosts, а routed provider 5xx используют stable public errors; operational actions и chat task URLs получили явные authorization/ownership contracts.
