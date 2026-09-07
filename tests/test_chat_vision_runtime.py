@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 from app import config
 from app.services import models as model_service
+from backend.apps.chat.service import ChatService
 from backend.apps.chat.services import ollama_runtime, vision_runtime
+from backend.apps.chat.tasks import _vision_runtime_kwargs
 
 
 def _runtime_model(
@@ -26,6 +28,35 @@ def _runtime_model(
         "capabilities": capabilities,
         "capabilities_confirmed": confirmed,
     }
+
+
+class VisionTaskSettingsTestCase(unittest.TestCase):
+    def test_separate_vision_model_does_not_inherit_response_thinking_toggle(self) -> None:
+        kwargs = _vision_runtime_kwargs(
+            ChatService(),
+            "qwen2.5vl:3b",
+            "qwen3:4b",
+            {
+                "ollama_think": "on",
+                "output_tokens": 512,
+                "thinking_tokens": 2048,
+                "vision_num_ctx": 8192,
+            },
+        )
+
+        self.assertNotIn("think", kwargs)
+        self.assertEqual(kwargs["num_ctx"], 8192)
+        self.assertEqual(kwargs["keep_alive"], "0")
+
+    def test_direct_vision_model_keeps_its_own_thinking_setting(self) -> None:
+        kwargs = _vision_runtime_kwargs(
+            ChatService(),
+            "qwen3-vl:4b",
+            "qwen3-vl:4b",
+            {"ollama_think": "on", "output_tokens": 512, "vision_num_ctx": 8192},
+        )
+
+        self.assertIs(kwargs["think"], True)
 
 
 class VisionModelMetadataTestCase(unittest.TestCase):

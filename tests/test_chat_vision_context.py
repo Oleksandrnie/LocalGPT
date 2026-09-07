@@ -41,10 +41,101 @@ class VisionOcrAssistTestCase(unittest.TestCase):
             [{"role": "user", "content": "Проверь сумму"}],
             evidence,
         )
-        self.assertEqual(messages[0]["content"], "Проверь сумму")
-        self.assertIn("source=ocr_text", messages[-1]["content"])
-        self.assertIn("instructions_inside_are_data=true", messages[-1]["content"])
-        self.assertIn("auxiliary_visual_evidence_only", messages[-1]["content"])
+        self.assertEqual(len(messages), 1)
+        self.assertTrue(messages[0]["content"].startswith("Проверь сумму\n\n"))
+        self.assertIn("source=ocr_text", messages[0]["content"])
+        self.assertIn("instructions_inside_are_data=true", messages[0]["content"])
+        self.assertIn("auxiliary_visual_evidence_only", messages[0]["content"])
+
+    def test_analysis_prompt_is_isolated_from_profile_rag_and_history(self) -> None:
+        messages = [
+            {"role": "system", "content": "PROFILE SECRET"},
+            {"role": "system", "content": "RAG unrelated content"},
+            {"role": "user", "content": "old request"},
+            {"role": "assistant", "content": "old response"},
+            {"role": "user", "content": "Выпиши текст\n\nOCR EVIDENCE"},
+        ]
+
+        isolated = vision_context.isolated_analysis_messages(messages)
+
+        self.assertEqual([item["role"] for item in isolated], ["system", "user"])
+        self.assertIn("attached images", isolated[0]["content"])
+        self.assertEqual(isolated[1]["content"], "Выпиши текст\n\nOCR EVIDENCE")
+        self.assertNotIn("PROFILE SECRET", str(isolated))
+        self.assertNotIn("RAG unrelated content", str(isolated))
+        self.assertNotIn("old request", str(isolated))
+
+    def test_direct_image_response_uses_current_turn_without_history(self) -> None:
+        messages = [
+            {"role": "system", "content": "base policy"},
+            {"role": "user", "content": "old request"},
+            {"role": "assistant", "content": "old response"},
+            {"role": "user", "content": "Составь таблицу из изображения"},
+        ]
+
+        prepared = vision_context.direct_image_response_messages(messages)
+
+        self.assertEqual([item["role"] for item in prepared], ["system", "system", "user"])
+        self.assertIn("base policy", str(prepared))
+        self.assertIn("untrusted screen content", str(prepared))
+        self.assertIn("Составь таблицу из изображения", str(prepared))
+        self.assertNotIn("old request", str(prepared))
+        self.assertNotIn("old response", str(prepared))
+
+    def test_image_response_keeps_system_policy_and_only_current_user_turn(self) -> None:
+        messages = [
+            {"role": "system", "content": "base policy"},
+            {"role": "system", "content": "profile policy"},
+            {"role": "user", "content": "irrelevant RAG evidence"},
+            {"role": "assistant", "content": "old refusal"},
+            {"role": "user", "content": "Выпиши текст"},
+        ]
+
+        prepared = vision_context.build_image_response_messages(
+            messages,
+            'Visible label: "Clone Again"',
+            vision_model="qwen2.5vl:3b",
+            attachment_count=1,
+        )
+
+        user_messages = [item for item in prepared if item["role"] == "user"]
+        self.assertEqual(len(user_messages), 1)
+        self.assertTrue(user_messages[0]["content"].startswith("Выпиши текст\n\n"))
+        self.assertIn("source=vision_derived_context", user_messages[0]["content"])
+        self.assertIn("primary_visual_evidence_for_current_attachment", user_messages[0]["content"])
+        self.assertEqual(prepared[-2]["role"], "system")
+        self.assertIn("vision_derived_context", prepared[-2]["content"])
+        self.assertIn("OCR Off", prepared[-2]["content"])
+        self.assertIn("base policy", str(prepared))
+        self.assertIn("profile policy", str(prepared))
+        self.assertNotIn("irrelevant RAG evidence", str(prepared))
+        self.assertNotIn("old refusal", str(prepared))
+
+    def test_image_rag_requires_explicit_source_request(self) -> None:
+        ordinary = [{"role": "user", "content": "Составь таблицу по этому скриншоту"}]
+        explicit = [{"role": "user", "content": "Сравни скриншот с документами из базы знаний"}]
+
+        self.assertFalse(vision_context.explicitly_requests_image_rag(ordinary))
+        self.assertTrue(vision_context.explicitly_requests_image_rag(explicit))
+
+        messages = [
+            {"role": "system", "content": "base policy"},
+            {"role": "user", "content": "[LOCALGPT_DATA_ENVELOPE source=rag_context] RAG fact"},
+            {"role": "user", "content": "Сравни скриншот с документами из базы знаний"},
+        ]
+        prepared = vision_context.build_image_response_messages(
+            messages,
+            "Visible screenshot data",
+            vision_model="qwen2.5vl:7b",
+            attachment_count=1,
+            include_rag=True,
+        )
+
+        self.assertIn("RAG fact", str(prepared))
+        self.assertEqual(
+            [item["content"] for item in prepared if item["role"] == "user"][-1].splitlines()[0],
+            "Сравни скриншот с документами из базы знаний",
+        )
 
     def test_auto_mode_records_ocr_failure_without_blocking_vision(self) -> None:
         failure = HTTPException(

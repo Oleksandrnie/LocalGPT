@@ -12,7 +12,6 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from app import config, db
-from backend.apps.chat.prompt_policy import data_envelope
 from backend.apps.chat.service import (
     ChatService,
     enforce_protected_output,
@@ -41,6 +40,23 @@ class ChatTaskCapacityError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def _vision_runtime_kwargs(
+    service: ChatService,
+    vision_model: str,
+    response_model: str,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_kwargs = service._runtime_kwargs(vision_model, settings, vision=True)
+    if vision_model != response_model:
+        # The profile toggle belongs to the selected response model. Passing it
+        # to a separate vision model can make Ollama reject a valid request.
+        runtime_kwargs.pop("think", None)
+        # A two-model image route is sequential on local hardware: release the
+        # analyzer before Ollama loads the response model.
+        runtime_kwargs["keep_alive"] = "0"
+    return runtime_kwargs
 
 
 def _reserve_starting_slot(profile_id: int | None) -> int:
@@ -206,6 +222,7 @@ def _chat_worker(
     attachment_ids = [str(item.get("id") or "") for item in attachment_descriptors if item.get("id")]
     image_paths = [str(item.get("path") or "") for item in attachment_descriptors if item.get("path")]
     derived_vision_context: str | None = None
+    image_rag_included = False
     ocr_evidence: vision_context.OcrEvidence | None = None
     reasoning = ""
     done_reason: str | None = None
@@ -258,49 +275,40 @@ def _chat_worker(
                     completion_model = "__ocr_only__"
                     completion_messages = []
             elif runtime_mode == "vision_context":
-                _set_worker_status(
-                    status_path,
-                    attachment_ids,
-                    "analyzing",
-                    "Analyzing images locally.",
-                )
-                analysis_messages = [
-                    *completion_messages,
-                    {
-                        "role": "system",
-                        "content": (
-                            "Сначала извлеки из изображений точный визуальный контекст для другого ассистента: "
-                            "объекты, читаемый текст, числа, расположение и неопределённости. "
-                            "Не отвечай на исходный вопрос и не выдумывай невидимые детали."
-                        ),
-                    },
-                ]
-                derived_vision_context = sanitize_reply(
-                    vision_runtime.chat_completion(
-                        vision_model,
-                        analysis_messages,
-                        image_paths,
-                        max_total_bytes=max_total_bytes,
-                        **service._runtime_kwargs(vision_model, settings, vision=True),
+                image_rag_included = vision_context.explicitly_requests_image_rag(messages)
+                if not image_rag_included:
+                    # A multimodal instruction model can execute the current image
+                    # request itself. Avoid a lossy second pass through a text-only
+                    # model unless the user explicitly asks to combine image and RAG.
+                    runtime_mode = "direct_vision"
+                    completion_model = vision_model
+                    completion_messages = vision_context.direct_image_response_messages(completion_messages)
+                else:
+                    _set_worker_status(
+                        status_path,
+                        attachment_ids,
+                        "analyzing",
+                        "Analyzing images locally.",
                     )
-                )
-                completion_model = response_model
-                completion_messages = [
-                    *messages,
-                    {
-                        "role": "user",
-                        "content": data_envelope(
-                            "vision_derived_context",
-                            derived_vision_context,
-                            provenance={
-                                "derived": True,
-                                "vision_model": vision_model,
-                                "attachment_count": len(attachment_descriptors),
-                            },
-                            allowed_influence="auxiliary_visual_evidence_only",
-                        ),
-                    },
-                ]
+                    analysis_messages = vision_context.isolated_analysis_messages(completion_messages)
+                    vision_runtime_kwargs = _vision_runtime_kwargs(service, vision_model, response_model, settings)
+                    derived_vision_context = sanitize_reply(
+                        vision_runtime.chat_completion(
+                            vision_model,
+                            analysis_messages,
+                            image_paths,
+                            max_total_bytes=max_total_bytes,
+                            **vision_runtime_kwargs,
+                        )
+                    )
+                    completion_model = response_model
+                    completion_messages = vision_context.build_image_response_messages(
+                        completion_messages,
+                        derived_vision_context,
+                        vision_model=vision_model,
+                        attachment_count=len(attachment_descriptors),
+                        include_rag=True,
+                    )
             else:
                 completion_model = vision_model
             _set_worker_status(
@@ -317,6 +325,11 @@ def _chat_worker(
             reasoning_sequence = 0
             streaming_started = False
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
+                direct_vision_kwargs = (
+                    _vision_runtime_kwargs(service, completion_model, response_model, settings)
+                    if runtime_mode == "direct_vision"
+                    else service._runtime_kwargs(completion_model, settings, vision=True)
+                )
                 delta_source = (
                     event.content
                     for event in guard_stream_events(
@@ -331,7 +344,7 @@ def _chat_worker(
                                     settings.get("chat_image_max_total_bytes")
                                     or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
                                 ),
-                                **service._runtime_kwargs(completion_model, settings, vision=True),
+                                **direct_vision_kwargs,
                             )
                         ),
                     )
@@ -385,6 +398,11 @@ def _chat_worker(
             reply = sanitize_reply("".join(chunks))
         else:
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
+                direct_vision_kwargs = (
+                    _vision_runtime_kwargs(service, completion_model, response_model, settings)
+                    if runtime_mode == "direct_vision"
+                    else service._runtime_kwargs(completion_model, settings, vision=True)
+                )
                 reply = sanitize_reply(
                     vision_runtime.chat_completion(
                         completion_model,
@@ -394,7 +412,7 @@ def _chat_worker(
                             settings.get("chat_image_max_total_bytes")
                             or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
                         ),
-                        **service._runtime_kwargs(completion_model, settings, vision=True),
+                        **direct_vision_kwargs,
                     )
                 )
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
@@ -419,7 +437,7 @@ def _chat_worker(
                 eval_count=eval_count,
             )
         )
-        result_payload: dict[str, Any] = {"reply": reply}
+        result_payload: dict[str, Any] = {"reply": reply, "model": completion_model}
         if reasoning:
             result_payload["reasoning"] = reasoning
         if done_reason:
@@ -430,6 +448,8 @@ def _chat_worker(
             result_payload["vision_context"] = derived_vision_context
         if ocr_evidence:
             result_payload["ocr_evidence"] = ocr_evidence.to_dict()
+        if attachment_descriptors:
+            result_payload["image_rag_included"] = image_rag_included
         _atomic_write_json(result_path, result_payload)
         _set_attachment_status(attachment_ids, "completed")
         if session_id:
@@ -517,6 +537,7 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
         task["message"] = "Chat generation completed."
         task["error_code"] = None
         task["result"] = result
+        task["completed_model"] = str(result.get("model") or task.get("model_name") or "")
         _update_assistant_from_task(
             task,
             status="completed",
@@ -564,7 +585,7 @@ def _update_assistant_from_task(
     try:
         updates: dict[str, Any] = {
             "status": status,
-            "model": task.get("model_name"),
+            "model": task.get("completed_model") or task.get("model_name"),
             "error": error,
             "is_partial": status in db.MESSAGE_ACTIVE_STATUSES,
         }

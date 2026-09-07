@@ -49,8 +49,10 @@ Catalog capability — декларация UI, но direct image route разр
 - в `auto` предпочитает catalog order, начиная с `qwen2.5vl:3b`;
 - добавляет base64 images только к копии последнего user message и только на время запроса;
 - ограничивает суммарный размер и одновременно выполняет не больше одного vision inference;
-- для выбранной text-only модели строит `vision_context`, затем передаёт его выбранной response model;
+- для выбранной text-only chat-модели обычный image request выполняет сама настроенная Vision-модель; второй text-only проход не запускается;
 - возвращает явную ошибку, если fallback запрещён или подходящей vision-модели нет.
+
+При text-only выбранной chat-модели обычный image request маршрутизируется прямо в настроенную multimodal Vision-модель: она получает system policies, текущую команду, image binary и необязательное помеченное OCR evidence, сама выполняет команду и сохраняется как фактическая модель ответа. Старые сообщения и автоматический RAG в этот turn не попадают. Двухмодельный `vision_context` остаётся только для явного запроса объединить изображение с RAG/базой знаний/загруженными документами: Vision сначала извлекает визуальные факты, затем выбранная chat-модель объединяет их с актуальным RAG envelope. `ollama_think` text-модели не передаётся отдельной Vision-модели, а `keep_alive=0` гарантирует последовательную выгрузку на локальном Mac.
 
 OCR assist (`auto`, `on`, `off`) добавляет помеченные per-image evidence; `ocr_only` — отдельный явно degraded route, а не скрытая замена vision.
 
@@ -64,7 +66,7 @@ OCR assist (`auto`, `on`, `off`) добавляет помеченные per-ima
 - `faster_whisper` — Python/CTranslate2;
 - `auto` — whisper.cpp при готовом binary/model, иначе faster-whisper.
 
-`backend/apps/asr/whisper.py` выбирает backend и нормализует общий результат. `whisper_cpp.py` владеет binary/model/VAD discovery, command execution и подготовкой путей: штатный запуск включает Silero VAD, подавление non-speech tokens и отключение temperature fallback, чтобы тишина не становилась вымышленной транскрипцией. `downloads.py` управляет model preparation/update state.
+`backend/apps/asr/whisper.py` выбирает backend и нормализует общий результат. `whisper_cpp.py` владеет binary/model/VAD discovery, command execution и подготовкой путей: штатный запуск включает Silero VAD, подавление non-speech tokens и отключение temperature fallback. После приведения к PCM backend также отклоняет заведомо пустой/тихий сигнал до inference и консервативно отбрасывает короткий результат, целиком совпадающий с типовым credit-артефактом субтитров. No-speech возвращается как `empty_transcription` с сообщением `Речь в аудиофайле не обнаружена` и не сохраняется в transcript storage. `downloads.py` управляет model preparation/update state.
 
 Основные параметры находятся в `.env.example`: model, device, compute type, beam size, binary, threads, model path, FFmpeg и CoreML download policy. На macOS setup также устанавливает небольшой `ggml-silero-v6.2.0.bin`; параметры VAD зафиксированы runtime-ом и покрыты backend tests.
 

@@ -593,7 +593,14 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     rag_chunks = []
     rag_context = ""
     rag_diagnostics: dict[str, Any] = {}
-    rag_enabled = bool(effective_settings.get("rag_enabled", False))
+    rag_enabled_configured = bool(effective_settings.get("rag_enabled", False))
+    has_image_attachments = bool(getattr(req, "attachment_ids", None))
+    image_rag_requested = (
+        vision_context.explicitly_requests_image_rag([{"role": "user", "content": user_query}])
+        if has_image_attachments
+        else False
+    )
+    rag_enabled = rag_enabled_configured and (not has_image_attachments or image_rag_requested)
     history_user_queries = [
         str(item.get("content") or "")
         for item in history
@@ -618,7 +625,9 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         )
     effective_settings = {
         **effective_settings,
+        "rag_enabled_configured": rag_enabled_configured,
         "rag_enabled_effective": rag_enabled,
+        "image_rag_requested": image_rag_requested,
         "rag_chunks_used": len(rag_chunks),
         "rag_context_chars": len(rag_context or ""),
         "rag_retrieval_strategy": rag_service.retrieval_strategy(),

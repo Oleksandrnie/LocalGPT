@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from app import config, db
 from backend.apps.chat import tasks as chat_tasks
+from backend.apps.chat.service import ChatService
 from backend.apps.chat.services import attachment_storage, vision_runtime
 
 
@@ -157,6 +158,85 @@ class ChatVisionLifecycleTestCase(unittest.TestCase):
         self.assertEqual(db.get_message(assistant_message["id"])["status"], "completed")
         self.assertEqual(db.get_chat_attachment(attachment["id"])["status"], "completed")
         completion.assert_called_once()
+
+    def test_context_route_without_explicit_rag_answers_directly_with_vision_model(self) -> None:
+        attachment = self._attachment()
+        user_message = db.add_message(self.session["id"], "user", "выпиши текст")
+        assistant_message = db.create_assistant_message(self.session["id"], model="qwen2.5:3b-instruct")
+        descriptor = attachment_storage.prepare_chat_attachments(
+            [attachment["id"]],
+            profile_id=self.profile_id,
+            session_id=self.session["id"],
+            settings={"chat_images_enabled": True},
+        )[0]
+        result_path = Path(self.tmpdir.name) / "extract-result.json"
+        error_path = Path(self.tmpdir.name) / "extract-error.json"
+        status_path = Path(self.tmpdir.name) / "extract-status.json"
+
+        with (
+            patch.object(vision_runtime, "chat_completion", return_value="OCR assist\nOff\nAuto\nOn") as completion,
+            patch.object(ChatService, "chat_completion_result") as text_completion,
+        ):
+            chat_tasks._chat_worker(
+                "qwen2.5:3b-instruct",
+                [
+                    {"role": "system", "content": "base policy"},
+                    {"role": "user", "content": "irrelevant RAG"},
+                    {"role": "assistant", "content": "old refusal"},
+                    {"role": "user", "content": "выпиши текст"},
+                ],
+                {"ocr_assist": "off", "output_tokens": 256, "vision_num_ctx": 8192},
+                self.session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                False,
+                str(Path(self.tmpdir.name) / "extract-deltas.jsonl"),
+                str(Path(self.tmpdir.name) / "extract-reasoning.jsonl"),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+                [descriptor],
+                {
+                    "mode": "vision_context",
+                    "vision_model": "qwen2.5vl:7b",
+                    "response_model": "qwen2.5:3b-instruct",
+                },
+            )
+
+        self.assertFalse(error_path.exists())
+        self.assertEqual(chat_tasks._read_json(result_path)["reply"], "OCR assist\nOff\nAuto\nOn")
+        self.assertEqual(chat_tasks._read_json(result_path)["model"], "qwen2.5vl:7b")
+        self.assertEqual(db.get_message(assistant_message["id"])["model"], "qwen2.5vl:7b")
+        text_completion.assert_not_called()
+        completion.assert_called_once()
+        completion_messages = completion.call_args.args[1]
+        self.assertNotIn("irrelevant RAG", str(completion_messages))
+        self.assertNotIn("old refusal", str(completion_messages))
+        self.assertIn("выпиши текст", str(completion_messages))
+
+    def test_finalizer_preserves_actual_vision_model_from_worker_result(self) -> None:
+        assistant_message = db.create_assistant_message(
+            self.session["id"],
+            model="qwen2.5:3b-instruct",
+        )
+        result_path = Path(self.tmpdir.name) / "vision-model-result.json"
+        chat_tasks._atomic_write_json(
+            result_path,
+            {"reply": "visible text", "model": "qwen2.5vl:7b"},
+        )
+        task = {
+            "id": "ct-vision-model",
+            "state": "generating",
+            "model_name": "qwen2.5:3b-instruct",
+            "assistant_message_id": assistant_message["id"],
+            "result_path": str(result_path),
+            "attachment_ids": [],
+        }
+
+        chat_tasks._finalize_task_locked(task)
+
+        self.assertEqual(task["completed_model"], "qwen2.5vl:7b")
+        self.assertEqual(db.get_message(assistant_message["id"])["model"], "qwen2.5vl:7b")
 
     def test_refresh_exposes_vision_status_and_cancel_finalizes_attachment(self) -> None:
         attachment = self._attachment()

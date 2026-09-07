@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -155,6 +156,64 @@ class WhisperCppBackendTestCase(unittest.TestCase):
 
         self.assertEqual(result["text"], "Subtitle editor credit\nSubtitle editor credit\nActual speech")
         self.assertEqual(len(result["segments"]), 3)
+
+    def test_whisper_cpp_runner_short_circuits_silent_pcm(self):
+        self._write_model("small")
+        audio_path = self.tmp / "silent.wav"
+        with wave.open(str(audio_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x00\x00" * 16000)
+
+        with patch("backend.apps.asr.whisper_cpp.subprocess.run") as run:
+            result = transcribe_with_whisper_cpp(
+                audio_path=audio_path,
+                model_name="small",
+                prompt=None,
+                language="ru",
+                beam_size=3,
+            )
+
+        run.assert_not_called()
+        self.assertEqual(result["text"], "")
+        self.assertEqual(result["segments"], [])
+        self.assertTrue(result["runtime"]["no_speech"])
+        self.assertEqual(result["runtime"]["no_speech_reason"], "silent_pcm")
+
+    def test_whisper_cpp_runner_filters_subtitle_credit_artifact(self):
+        self._write_model("small")
+        audio_path = self.tmp / "audio.wav"
+        audio_path.write_bytes(b"wav")
+
+        def fake_run(command, capture_output, text, check):
+            output_prefix = Path(command[command.index("--output-file") + 1])
+            output_prefix.with_suffix(".json").write_text(
+                json.dumps(
+                    {
+                        "result": {"language": "ru"},
+                        "transcription": [
+                            {"offsets": {"from": 0, "to": 1000}, "text": "Субтитры создавал DimaTorzok"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with patch("backend.apps.asr.whisper_cpp.subprocess.run", side_effect=fake_run):
+            result = transcribe_with_whisper_cpp(
+                audio_path=audio_path,
+                model_name="small",
+                prompt=None,
+                language="ru",
+                beam_size=3,
+            )
+
+        self.assertEqual(result["text"], "")
+        self.assertEqual(result["segments"], [])
+        self.assertTrue(result["runtime"]["no_speech"])
+        self.assertEqual(result["runtime"]["no_speech_reason"], "subtitle_credit_artifact")
 
     def test_transcribe_with_fallback_uses_whisper_cpp_backend(self):
         self._write_model("small")

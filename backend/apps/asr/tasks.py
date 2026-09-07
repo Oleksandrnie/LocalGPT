@@ -109,7 +109,7 @@ def _error_payload_from_exception(exc: Exception, selected_model: str) -> dict[s
                 "message": "whisper.cpp не вернул корректную транскрипцию.",
             }
         if code == "empty_transcription":
-            return {"code": "empty_transcription", "message": "Whisper вернул пустую транскрипцию."}
+            return {"code": "empty_transcription", "message": "Речь в аудиофайле не обнаружена."}
     return {"code": "transcription_failed", "message": str(exc) or "transcription_failed"}
 
 

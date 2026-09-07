@@ -37,6 +37,10 @@
 - Setup `.command` корректно завершает успешную установку, а platform start launchers предпочитают подготовленный `venv` и не запускают LocalGPT через несовместимый системный Python.
 - macOS setup теперь собирает и проверяет штатный `whisper.cpp` CLI без загрузки GGML-модели или CoreML encoder, поэтому default ASR backend готов после bootstrap.
 - Chat-диктовка берёт язык активного ASR-профиля, предупреждает о записи короче 700 мс, а whisper.cpp runtime использует Silero VAD и decoder safeguards против hallucinations на тишине.
+- Отдельная Vision-модель больше не наследует Thinking toggle text response model; `qwen3` с Thinking ON может использовать `qwen2.5vl` для image context без Ollama 400/последующего 502.
+- Двухмодельный Vision route изолирует image analysis от profile/RAG/history, сохраняет OCR/visual evidence в исходном user turn и выгружает анализатор перед запуском chat response model; нерелевантный RAG больше не должен подменять текст скриншота.
+- Финальный image-turn больше не зависит от списка команд: без явного RAG текущую команду сразу выполняет Vision-модель, поэтому корректно прочитанный скриншот не может быть испорчен вторым text-only проходом. Двухмодельное объединение используется только по явному запросу к RAG/базе знаний/документам; сохранённое сообщение указывает фактическую модель ответа.
+- Пустой или тихий ASR input отклоняется по PCM-сигналу до Whisper, а короткие subtitle-credit hallucinations не сохраняются как транскрипт; UI получает сообщение `Речь в аудиофайле не обнаружена`.
 - Прямой `python3 run_localgpt.py` снова работает с системным Python ниже 3.10: bootstrap автоматически продолжает через совместимый проектный `venv`, не изменяя системную установку.
 - Выбор моделей для экспорта перенесён из развёрнутого списка Settings → System в отдельную responsive-модалку с select-all, счётчиком и явным подтверждением.
 - Загрузка Ollama-моделей использует потоковый native `/api/pull`; CLI fallback больше не передаёт неподдерживаемый `ollama pull --json` и логирует фактический CLI/runtime transport при ошибках.

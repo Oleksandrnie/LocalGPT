@@ -141,6 +141,10 @@ Smoke считается пройденным, если `/health` возвращ
 - PNG/JPEG/WebP upload проверяет profile ownership, count/byte/pixel/side limits и не сохраняет binary в message/RAG;
 - direct image route доступен только при runtime-confirmed `vision`, а text-only model использует явный context route;
 - Vision context size сохраняется в profile settings и уходит в native Ollama как `options.num_ctx` для direct/streaming inference;
+- отдельная vision-модель в `vision_context` route не наследует Thinking toggle выбранной text response model;
+- отдельный Vision analysis prompt не содержит profile/RAG/history, OCR и derived visual evidence остаются внутри текущего user turn, а image evidence имеет приоритет над нерелевантным RAG этого же профиля;
+- любые image-команды без явного RAG выполняет сама Vision-модель в одном чистом current turn, без command-specific классификатора и второго text-only прохода; RAG retrieval не запускается и envelope не добавляется без явного запроса к RAG/базе знаний/документам;
+- завершённый assistant message хранит фактическую модель генерации (`qwen2.5vl:*` для прямого image response), а не выбранную, но не вызванную text-only chat-модель;
 - attachment lifecycle связан с persisted user message/task, refresh/cancel и cleanup не оставляют active record в неверном terminal state.
 
 Static UI contract для attachment composer, Vision tab и explicit RAG export:
@@ -187,7 +191,7 @@ Model-transfer tests используют только temporary synthetic files
 
 - быстрый voice-to-input и ASR Studio остаются разными UX flows;
 - chat-диктовка использует language/prompt preset активного профиля; запись короче 700 мс не отправляется в ASR;
-- `whisper.cpp` использует Silero VAD, чтобы тишина не превращалась в вымышленную транскрипцию;
+- `whisper.cpp` использует Silero VAD, PCM signal gate и short credit-artifact filter, чтобы тишина не превращалась в вымышленную транскрипцию; no-speech не создаёт transcript record и возвращает понятное `empty_transcription`;
 - backend selection соответствует `WHISPER_BACKEND`;
 - disabled stage не запускается ни одним analysis mode;
 - `full` требует `asr_full_analysis_enabled`;

@@ -1208,6 +1208,39 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(prepared["effective_settings"]["rag_enabled_effective"], True)
         self.assertGreater(prepared["effective_settings"]["rag_chunks_used"], 0)
 
+    def test_image_request_retrieves_rag_only_after_explicit_source_reference(self):
+        source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
+        (source_dir / "project.md").write_text(
+            "Alpha project deadline is Friday.",
+            encoding="utf-8",
+        )
+        db.update_profile_preferences(self.profile_id, {"settings": {"rag_enabled": True}})
+        rag_service.ingest_sources(self.profile_id)
+
+        ordinary = _prepare_chat_request(
+            ChatRequest(
+                query="Опиши и структурируй этот скриншот",
+                profile_id=self.profile_id,
+                model_name="qwen2.5:3b",
+                attachment_ids=["image-placeholder"],
+            )
+        )
+        explicit = _prepare_chat_request(
+            ChatRequest(
+                query="Сравни этот скриншот с документами из базы знаний про Alpha project",
+                profile_id=self.profile_id,
+                model_name="qwen2.5:3b",
+                attachment_ids=["image-placeholder"],
+            )
+        )
+
+        self.assertFalse(ordinary["effective_settings"]["rag_enabled_effective"])
+        self.assertEqual(ordinary["effective_settings"]["rag_chunks_used"], 0)
+        self.assertFalse(ordinary["effective_settings"]["image_rag_requested"])
+        self.assertTrue(explicit["effective_settings"]["rag_enabled_effective"])
+        self.assertGreater(explicit["effective_settings"]["rag_chunks_used"], 0)
+        self.assertTrue(explicit["effective_settings"]["image_rag_requested"])
+
     def test_rag_search_uses_recent_user_history_for_short_followup(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
         (source_dir / "interests.md").write_text(
