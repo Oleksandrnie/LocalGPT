@@ -61,6 +61,67 @@ class SetupDependencyTests(unittest.TestCase):
                 setup.build_whisper_cpp_cli("macos")
             run_mock.assert_not_called()
 
+    def test_macos_whisper_setup_creates_relocatable_cli_link(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            whisper_dir = temp / "relocated" / "models" / "whisper_cpp"
+            source_dir = whisper_dir / "source"
+            build_dir = source_dir / "build"
+            built_cli = build_dir / "bin" / "whisper-cli"
+            built_cli.parent.mkdir(parents=True)
+            built_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            built_cli.chmod(0o755)
+            (source_dir / ".git").mkdir()
+            (build_dir / "CMakeFiles").mkdir()
+            stale_cache = build_dir / "CMakeCache.txt"
+            stale_cache.write_text(
+                "CMAKE_HOME_DIRECTORY:INTERNAL=/old/checkout/models/whisper_cpp/source\n",
+                encoding="utf-8",
+            )
+
+            fake_bin = temp / "fake-bin"
+            fake_bin.mkdir()
+            for command in ("git", "cmake", "curl"):
+                stub = fake_bin / command
+                stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                stub.chmod(0o755)
+
+            stale_link = whisper_dir / "bin" / "whisper-cli"
+            stale_link.parent.mkdir(parents=True)
+            stale_link.symlink_to("/old/checkout/models/whisper_cpp/source/build/bin/whisper-cli")
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+                    "WHISPER_CPP_DIR": str(whisper_dir),
+                    "WHISPER_CPP_SOURCE_DIR": str(source_dir),
+                    "WHISPER_CPP_BUILD_DIR": str(build_dir),
+                    "WHISPER_CPP_ENABLE_COREML": "0",
+                    "WHISPER_CPP_DOWNLOAD_MODEL": "0",
+                    "WHISPER_CPP_DOWNLOAD_VAD": "0",
+                }
+            )
+            completed = subprocess.run(
+                ["/bin/bash", str(ROOT / "tools" / "setup_whisper_cpp_macos.sh")],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+            self.assertTrue(stale_link.is_symlink())
+            self.assertEqual(os.readlink(stale_link), "../source/build/bin/whisper-cli")
+            self.assertTrue(os.access(stale_link, os.X_OK))
+            self.assertFalse(stale_cache.exists())
+            self.assertFalse((build_dir / "CMakeFiles").exists())
+
+            setup_source = (ROOT / "tools" / "setup_whisper_cpp_macos.sh").read_text(encoding="utf-8")
+            self.assertIn("-DCMAKE_BUILD_RPATH_USE_ORIGIN=ON", setup_source)
+            self.assertIn("-DCMAKE_BUILD_RPATH=@loader_path", setup_source)
+
     def test_setup_uses_canonical_requirements_and_runtime_venv(self) -> None:
         self.assertEqual(setup.REQUIREMENTS, ROOT / "app" / "requirements.txt")
         self.assertEqual(setup.VENV_DIR, ROOT / "venv")

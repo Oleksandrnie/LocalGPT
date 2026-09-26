@@ -68,6 +68,8 @@ OCR assist (`auto`, `on`, `off`) добавляет помеченные per-ima
 
 `backend/apps/asr/whisper.py` выбирает backend и нормализует общий результат. `whisper_cpp.py` владеет binary/model/VAD discovery, command execution и подготовкой путей: штатный запуск включает Silero VAD, подавление non-speech tokens и отключение temperature fallback. После приведения к PCM backend также отклоняет заведомо пустой/тихий сигнал до inference и консервативно отбрасывает короткий результат, целиком совпадающий с типовым credit-артефактом субтитров. No-speech возвращается как `empty_transcription` с сообщением `Речь в аудиофайле не обнаружена` и не сохраняется в transcript storage. `downloads.py` управляет model preparation/update state.
 
+macOS setup создаёт `models/whisper_cpp/bin/whisper-cli` как относительную ссылку на собранный binary внутри `models/whisper_cpp/source/build`, сбрасывает stale generated CMake cache после перемещения checkout и добавляет relocatable `@loader_path` для локальных dylib. Повторная подготовка заменяет устаревшую или сломанную ссылку.
+
 Основные параметры находятся в `.env.example`: model, device, compute type, beam size, binary, threads, model path, FFmpeg и CoreML download policy. На macOS setup также устанавливает небольшой `ggml-silero-v6.2.0.bin`; параметры VAD зафиксированы runtime-ом и покрыты backend tests.
 
 ## TTS contract

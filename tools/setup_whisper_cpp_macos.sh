@@ -49,7 +49,21 @@ else
 fi
 
 echo "[*] Building whisper-cli..."
-cmake_flags=(-DCMAKE_BUILD_TYPE=Release)
+cache_source=""
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    cache_source="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$BUILD_DIR/CMakeCache.txt" | tail -n 1)"
+fi
+if [ -n "$cache_source" ] && [ "$cache_source" != "$SOURCE_DIR" ]; then
+    echo "[*] Resetting stale CMake cache after checkout relocation..."
+    rm -f "$BUILD_DIR/CMakeCache.txt"
+    rm -rf "$BUILD_DIR/CMakeFiles"
+fi
+
+cmake_flags=(
+    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON
+    '-DCMAKE_BUILD_RPATH=@loader_path'
+)
 if [ "$ENABLE_METAL" = "1" ]; then
     cmake_flags+=(-DGGML_METAL=ON)
 fi
@@ -68,7 +82,15 @@ if [ ! -x "$CLI_PATH" ]; then
     exit 1
 fi
 
-ln -sf "$CLI_PATH" "$BIN_DIR/whisper-cli"
+case "$CLI_PATH" in
+    "$WHISPER_CPP_DIR"/*)
+        CLI_LINK_TARGET="../${CLI_PATH#"$WHISPER_CPP_DIR"/}"
+        ;;
+    *)
+        CLI_LINK_TARGET="$CLI_PATH"
+        ;;
+esac
+ln -sfn "$CLI_LINK_TARGET" "$BIN_DIR/whisper-cli"
 
 if [ -f "$MODEL_FILE" ]; then
     echo "[i] GGML model already exists: $MODEL_FILE"
