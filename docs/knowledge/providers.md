@@ -96,7 +96,9 @@ Provider instance создаётся service layer; HTTP router не долже�
 
 ## Перенос локальных моделей
 
-Transfer inventory использует configured paths и существующие provider boundaries. Переносятся только complete Ollama manifests со всеми blobs, готовая faster-whisper directory, whisper.cpp GGML с найденными CoreML assets и Piper `.onnx` + `.onnx.json`. Import не переносит runtime binaries/settings, не перезаписывает отличающиеся существующие файлы и публикует Ollama manifest после blobs. После успеха UI перечитывает обычные provider inventories.
+Transfer inventory использует configured paths и существующие provider boundaries. Переносятся только complete Ollama manifests со всеми blobs, готовая faster-whisper directory, whisper.cpp GGML с найденными CoreML assets и Piper `.onnx` + `.onnx.json`. Chat, Vision и embedding tags Ollama проходят через один manifest/blob adapter. Bundle содержит только provider-relative paths и импортируется в configured roots получателя, поэтому исходный checkout, имя пользователя и drive letter не сохраняются.
+
+Import не переносит runtime binaries/settings, не перезаписывает отличающиеся существующие файлы и публикует Ollama manifest после blobs. Inspect/import report перечисляет runtime, которые должны быть локально подготовлены на получателе: Ollama, faster-whisper, Piper, а для whisper.cpp также CLI и Silero VAD. После успеха UI перечитывает обычные provider inventories.
 
 ## Lifecycle и ошибки
 

@@ -41,6 +41,9 @@ test("UI performs preview, export, inspect, confirmation, and apply", () => {
   }
   assert.match(css, /\.model-transfer__item/);
   assert.match(css, /\.model-transfer \[hidden\]/);
+  assert.match(js, /formatModelTransferRuntimeRequirements/);
+  assert.match(js, /Проверьте локальные runtime/);
+  assert.match(html, /Bundle переносит веса и provider-данные/);
 });
 
 test("System settings load the model inventory automatically", () => {

@@ -92,6 +92,12 @@ class ModelTransferImportTests(unittest.TestCase):
                 with self.assertRaises(BundleValidationError):
                     import_service.apply_import(upload_id)
 
+    def test_inspect_reports_destination_runtime_requirements(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive = self._bundle(Path(temp))
+            inspected = import_service.inspect_archive(archive)
+            self.assertEqual(inspected["runtime_requirements"], ["piper_runtime"])
+
 
 if __name__ == "__main__":
     unittest.main()

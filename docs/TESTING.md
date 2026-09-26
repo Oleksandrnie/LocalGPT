@@ -181,7 +181,7 @@ venv/bin/python -m unittest tests.test_lan_launcher tests.test_network_certifica
 
 Stage 7 LAN validation считается завершённой только после проверки со второго устройства в той же частной сети: UI/API открываются, SSE-ответ приходит, `/health` доступен, privileged endpoint без токена получает отказ, а клиент доверяет установленному публичному Caddy root CA. Не включайте Funnel, port forwarding или публичную привязку backend.
 
-Model-transfer tests используют только temporary synthetic files. Реальный export/import локальных моделей запускается отдельно явным действием пользователя.
+Model-transfer tests используют только temporary synthetic files. Relocation regression создаёт chat/Vision/embedding Ollama, faster-whisper, whisper.cpp и Piper fixtures в source roots, проверяет отсутствие absolute source paths в manifest и импортирует их в другой набор configured destination roots. Отдельно проверяются destination runtime requirements; платформенные executable не считаются частью bundle. Реальный export/import локальных моделей запускается отдельно явным действием пользователя.
 
 Контролируемый live vision smoke запускается отдельно после явной установки модели. Используйте маленькое детерминированное изображение, `temperature=0`, ограниченный `max_tokens`, последовательный запуск и `keep_alive=0`; проверьте точный текст/формы, отсутствие CPU fallback, terminal task/attachment state, отсутствие binary/path в messages и пустой `ollama ps` после теста. Не загружайте 3B и 7B одновременно на 16 GB машине.
 

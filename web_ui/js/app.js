@@ -8241,6 +8241,17 @@ function archiveCountLabel(count) {
   return "архивов";
 }
 
+function formatModelTransferRuntimeRequirements(requirements = []) {
+  const labels = {
+    ollama_runtime: "Ollama",
+    faster_whisper_runtime: "faster-whisper",
+    whisper_cpp_cli: "whisper.cpp CLI",
+    whisper_cpp_vad: "Silero VAD для whisper.cpp",
+    piper_runtime: "Piper",
+  };
+  return requirements.map((item) => labels[item] || item).join(", ");
+}
+
 async function cleanupModelTransferUploads() {
   const uploads = state.modelTransferUploads;
   if (!uploads?.file_count) return;
@@ -8343,11 +8354,13 @@ async function inspectModelImport(file) {
   setInlineStatus(els.modelTransferStatus, `Проверяю ${file.name}…`, "warning");
   try {
     const result = await request("/model-transfer/import-inspect", { method: "POST", body: form });
-    setInlineStatus(els.modelTransferStatus, `Bundle исправен: ${result.models?.length || 0} моделей, ${formatBytes(result.total_size || 0)}. Ожидается подтверждение.`, "success");
+    const runtimeRequirements = formatModelTransferRuntimeRequirements(result.runtime_requirements || []);
+    const runtimeNotice = runtimeRequirements ? ` На целевом устройстве потребуются локальные runtime: ${runtimeRequirements}.` : "";
+    setInlineStatus(els.modelTransferStatus, `Bundle исправен: ${result.models?.length || 0} моделей, ${formatBytes(result.total_size || 0)}.${runtimeNotice} Ожидается подтверждение.`, "success");
     const approved = await openConfirmDialog({
       eyebrow: "Импорт моделей",
       title: `Импортировать ${result.models?.length || 0} моделей?`,
-      message: `LocalGPT повторно проверит bundle и добавит файлы в текущие пути моделей. Существующие отличающиеся файлы не будут заменены.`,
+      message: `LocalGPT повторно проверит bundle и добавит веса в текущие пути моделей. Существующие отличающиеся файлы не будут заменены.${runtimeNotice}`,
       confirmLabel: "Импортировать",
       cancelLabel: "Отмена",
       returnFocus: els.importModelsButton,
@@ -8359,7 +8372,9 @@ async function inspectModelImport(file) {
     }
     setInlineStatus(els.modelTransferStatus, "Повторно проверяю и импортирую модели…", "warning");
     const applied = await request("/model-transfer/imports", { method: "POST", body: { upload_id: result.upload_id } });
-    setInlineStatus(els.modelTransferStatus, `Импорт завершён: добавлено файлов ${applied.published_files || 0}, идентичных пропущено ${applied.skipped_files || 0}.`, "success");
+    const appliedRequirements = formatModelTransferRuntimeRequirements(applied.runtime_requirements || []);
+    const appliedNotice = appliedRequirements ? ` Проверьте локальные runtime: ${appliedRequirements}.` : "";
+    setInlineStatus(els.modelTransferStatus, `Импорт завершён: добавлено файлов ${applied.published_files || 0}, идентичных пропущено ${applied.skipped_files || 0}.${appliedNotice}`, "success");
     await Promise.all([
       loadModels({ silent: true }),
       loadWhisperModels({ silent: true }),
