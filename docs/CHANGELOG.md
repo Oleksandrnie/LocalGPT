@@ -25,6 +25,7 @@
 ### Changed
 
 - Model export/import теперь валидирует соответствие каждого payload file своей provider family, покрыт переносом между разными configured roots и сообщает, какие runtime нужно локально подготовить на новом устройстве; Ollama chat/Vision/embedding tags используют общий manifest/blob path.
+- macOS whisper.cpp setup теперь сбрасывает stale CMake cache после перемещения checkout, собирает binary с relocatable `@loader_path`, создаёт относительную ссылку на `whisper-cli` и автоматически чинит старую ссылку.
 - Short history и автоматическая summary memory теперь делят единый ordered набор завершённых `user + assistant` turns: failed/cancelled/active/partial и orphan rows не попадают в summary и не сдвигают retained-history boundary.
 - Chat context теперь изолирован по `profile_id + session_id`: short history считает завершённые пары (default 6, `0` отключает), derived Chat/Vision/ASR RAG не переносится между чатами, а messages/criteria/transcripts/reasoning/attachments/tasks требуют matching session scope.
 - Model output privacy больше не зависит только от prompt obedience: backend блокирует literal disclosure защищённых L1/L2/private-session значений до normal/streaming/vision delivery; отдельный metadata-only live harness проверен на трёх локальных Qwen-моделях.
