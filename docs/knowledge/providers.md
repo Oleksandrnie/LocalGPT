@@ -58,6 +58,8 @@ OCR assist (`auto`, `on`, `off`) добавляет помеченные per-ima
 
 Для image chat profile setting `vision_num_ctx` применяется к direct vision analysis/generation. Значение по умолчанию — 8192, допустимый диапазон — 4096–131072; text-only response в `vision_context` fallback использует обычный model `num_ctx`. Больший context помогает вместить визуальные токены и историю, но увеличивает расход памяти.
 
+Отдельный `vision_output_tokens` ограничивает только ответ Vision: `0` наследует профильный `output_tokens` (по умолчанию поведение не меняется), допустимое явное значение — 128–8192. Настройка применяется к direct image completion и промежуточному Vision-анализу перед явным Chat/RAG fallback; обычные text-only ответы используют исходный `output_tokens`. Provider result/event сохраняет `done_reason` и `eval_count`, поэтому ответ, оборванный с `done_reason=length`, не публикуется как завершённый и не попадает в историю как полный.
+
 ## ASR backends
 
 Асинхронные `/transcribe/tasks` выполняются последовательно в process-local FIFO: `queued` не является terminal state и не запускает provider до освобождения единственного child-process slot. Синхронный `/transcribe` не входит в этот scheduler.

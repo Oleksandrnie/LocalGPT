@@ -894,6 +894,12 @@
                             <small>Рекомендуется 8192. Больший context уменьшает риск ошибки, но требует больше памяти.</small>
                         </label>
                         <label class="field">
+                            <span class="field__label">Vision output tokens</span>
+                            <input id="visionOutputTokensInput" class="field__control" type="number"
+                                min="0" max="8192" step="128" />
+                            <small>0 — наследовать обычный лимит ответа. Для больших таблиц можно задать 1024; обычные текстовые ответы это не меняет.</small>
+                        </label>
+                        <label class="field">
                             <span class="field__label">OCR assist</span>
                             <select id="visionOcrAssistSelect" class="field__control">
                                 <option value="auto">Auto — optional evidence</option>

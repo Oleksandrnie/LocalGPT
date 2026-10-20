@@ -68,7 +68,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Live-model harness contract без загрузки модели | `venv/bin/python -m unittest tests.test_live_llm_security_harness -v` |
 | Profile/session isolation, completed-turn history и summary-memory boundary | `venv/bin/python -m unittest tests.test_chat_memory_boundary tests.test_context_isolation tests.test_chat_attachments tests.test_chat_rag tests.test_vision_rag -v` |
 | Runtime authorization, ownership, redaction, limits и cleanup | `venv/bin/python -m unittest tests.test_runtime_security -v` |
-| Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
+| Chat image storage, lifecycle, vision runtime/output budgets/truncation, settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
 | ASR task FIFO, startup failures и cancellation lifecycle | `venv/bin/python -m unittest tests.test_asr_tasks -v` |

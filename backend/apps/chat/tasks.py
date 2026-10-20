@@ -49,7 +49,14 @@ def _vision_runtime_kwargs(
     response_model: str,
     settings: dict[str, Any],
 ) -> dict[str, Any]:
-    runtime_kwargs = service._runtime_kwargs(vision_model, settings, vision=True)
+    vision_settings = dict(settings)
+    try:
+        vision_output_tokens = int(vision_settings.get("vision_output_tokens") or 0)
+    except (TypeError, ValueError):
+        vision_output_tokens = 0
+    if vision_output_tokens > 0:
+        vision_settings["output_tokens"] = vision_output_tokens
+    runtime_kwargs = service._runtime_kwargs(vision_model, vision_settings, vision=True)
     if vision_model != response_model:
         # The profile toggle belongs to the selected response model. Passing it
         # to a separate vision model can make Ollama reject a valid request.
@@ -295,15 +302,15 @@ def _chat_worker(
                     )
                     analysis_messages = vision_context.isolated_analysis_messages(completion_messages)
                     vision_runtime_kwargs = _vision_runtime_kwargs(service, vision_model, response_model, settings)
-                    derived_vision_context = sanitize_reply(
-                        vision_runtime.chat_completion(
-                            vision_model,
-                            analysis_messages,
-                            image_paths,
-                            max_total_bytes=max_total_bytes,
-                            **vision_runtime_kwargs,
-                        )
+                    vision_analysis_result = vision_runtime.chat_completion_result(
+                        vision_model,
+                        analysis_messages,
+                        image_paths,
+                        max_total_bytes=max_total_bytes,
+                        **vision_runtime_kwargs,
                     )
+                    service.require_final_answer(vision_analysis_result)
+                    derived_vision_context = sanitize_reply(vision_analysis_result.content)
                     completion_model = response_model
                     completion_messages = vision_context.build_image_response_messages(
                         completion_messages,
@@ -330,84 +337,12 @@ def _chat_worker(
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
                 direct_vision_kwargs = (
                     _vision_runtime_kwargs(service, completion_model, response_model, settings)
-                    if runtime_mode == "direct_vision"
+                    if runtime_mode in {"direct", "direct_vision"}
                     else service._runtime_kwargs(completion_model, settings, vision=True)
                 )
-                delta_source = (
-                    event.content
-                    for event in guard_stream_events(
-                        completion_messages,
-                        (
-                            ollama_runtime.ChatStreamEvent(content=delta)
-                            for delta in vision_runtime.chat_completion_stream(
-                                completion_model,
-                                completion_messages,
-                                image_paths,
-                                max_total_bytes=int(
-                                    settings.get("chat_image_max_total_bytes")
-                                    or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
-                                ),
-                                **direct_vision_kwargs,
-                            )
-                        ),
-                    )
-                )
-            elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
-                delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
-            else:
-                event_source = service.chat_completion_stream_events(
-                    completion_model,
+                event_source = guard_stream_events(
                     completion_messages,
-                    settings=settings,
-                )
-                for event in event_source:
-                    if event.reasoning:
-                        reasoning_chunks.append(event.reasoning)
-                        reasoning = "".join(reasoning_chunks)
-                        if assistant_message_id:
-                            db.update_message(assistant_message_id, reasoning=reasoning)
-                        reasoning_sequence += 1
-                        _append_reasoning_jsonl(reasoning_path, reasoning_sequence, event.reasoning)
-                    if event.done:
-                        done_reason = event.done_reason
-                        eval_count = event.eval_count
-                    delta = event.content
-                    if not delta:
-                        continue
-                    if not streaming_started:
-                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
-                        _set_attachment_status(attachment_ids, "generating")
-                        streaming_started = True
-                    sequence += 1
-                    chunks.append(delta)
-                    _append_delta_jsonl(delta_path, sequence, delta)
-                    if assistant_message_id:
-                        db.append_message_content(assistant_message_id, delta, status="streaming")
-                delta_source = None
-            if delta_source is not None:
-                for delta in delta_source:
-                    if not delta:
-                        continue
-                    if not streaming_started:
-                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
-                        _set_attachment_status(attachment_ids, "generating")
-                        streaming_started = True
-                    sequence += 1
-                    chunks.append(delta)
-                    _append_delta_jsonl(delta_path, sequence, delta)
-                    if assistant_message_id:
-                        db.append_message_content(assistant_message_id, delta, status="streaming")
-            reasoning = "".join(reasoning_chunks)
-            reply = sanitize_reply("".join(chunks))
-        else:
-            if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
-                direct_vision_kwargs = (
-                    _vision_runtime_kwargs(service, completion_model, response_model, settings)
-                    if runtime_mode == "direct_vision"
-                    else service._runtime_kwargs(completion_model, settings, vision=True)
-                )
-                reply = sanitize_reply(
-                    vision_runtime.chat_completion(
+                    vision_runtime.chat_completion_stream_events(
                         completion_model,
                         completion_messages,
                         image_paths,
@@ -416,8 +351,64 @@ def _chat_worker(
                             or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
                         ),
                         **direct_vision_kwargs,
-                    )
+                    ),
                 )
+            elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
+                event_source = iter(
+                    [ollama_runtime.ChatStreamEvent(content=ocr_evidence.text if ocr_evidence else "")]
+                )
+            else:
+                event_source = service.chat_completion_stream_events(
+                    completion_model,
+                    completion_messages,
+                    settings=settings,
+                )
+            for event in event_source:
+                if event.reasoning:
+                    reasoning_chunks.append(event.reasoning)
+                    reasoning = "".join(reasoning_chunks)
+                    if assistant_message_id:
+                        db.update_message(assistant_message_id, reasoning=reasoning)
+                    reasoning_sequence += 1
+                    _append_reasoning_jsonl(reasoning_path, reasoning_sequence, event.reasoning)
+                if event.done:
+                    done_reason = event.done_reason
+                    eval_count = event.eval_count
+                delta = event.content
+                if not delta:
+                    continue
+                if not streaming_started:
+                    _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                    _set_attachment_status(attachment_ids, "generating")
+                    streaming_started = True
+                sequence += 1
+                chunks.append(delta)
+                _append_delta_jsonl(delta_path, sequence, delta)
+                if assistant_message_id:
+                    db.append_message_content(assistant_message_id, delta, status="streaming")
+            reasoning = "".join(reasoning_chunks)
+            reply = sanitize_reply("".join(chunks))
+        else:
+            if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
+                direct_vision_kwargs = (
+                    _vision_runtime_kwargs(service, completion_model, response_model, settings)
+                    if runtime_mode in {"direct", "direct_vision"}
+                    else service._runtime_kwargs(completion_model, settings, vision=True)
+                )
+                completion_result = vision_runtime.chat_completion_result(
+                    completion_model,
+                    completion_messages,
+                    image_paths,
+                    max_total_bytes=int(
+                        settings.get("chat_image_max_total_bytes")
+                        or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                    ),
+                    **direct_vision_kwargs,
+                )
+                reply = sanitize_reply(completion_result.content)
+                reasoning = completion_result.reasoning
+                done_reason = completion_result.done_reason
+                eval_count = completion_result.eval_count
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 reply = ocr_evidence.text if ocr_evidence else ""
             else:

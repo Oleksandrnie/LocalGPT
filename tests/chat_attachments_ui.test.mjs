@@ -47,11 +47,13 @@ test("settings expose a dedicated Vision tab with catalog, controls, and cache a
   assert.match(html, /data-settings-tab="vision">Vision</);
   assert.match(html, /data-settings-tab-panel="vision"/);
   assert.match(html, /id="visionNumCtxInput"[^>]+min="4096"[^>]+max="131072"/);
+  assert.match(html, /id="visionOutputTokensInput"[^>]+min="0"[^>]+max="8192"/);
   [
     "visionModelLibrary",
     "chatImagesEnabledToggle",
     "visionModelSelect",
     "visionNumCtxInput",
+    "visionOutputTokensInput",
     "visionFallbackSelect",
     "visionOcrAssistSelect",
     "visionOcrLanguageInput",
@@ -68,6 +70,7 @@ test("settings expose a dedicated Vision tab with catalog, controls, and cache a
   assert.match(javascript, /state\.visionModels = Array\.isArray\(data\?\.vision_catalog\)/);
   assert.match(javascript, /Runtime confirmed:/);
   assert.match(javascript, /vision_num_ctx/);
+  assert.match(javascript, /vision_output_tokens/);
   assert.match(javascript, /data-vision-model-action="download"/);
   assert.match(javascript, /saveActiveProfilePreferences\(\{ settings \}\)/);
   assert.match(javascript, /\/chat\/attachments\/cache\?profile_id=/);

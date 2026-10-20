@@ -235,6 +235,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "chat_image_max_side",
         "vision_model",
         "vision_num_ctx",
+        "vision_output_tokens",
         "vision_fallback",
         "ocr_assist",
         "ocr_language",
@@ -350,6 +351,26 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 },
             )
         cleaned["vision_num_ctx"] = vision_num_ctx
+    if "vision_output_tokens" in cleaned:
+        try:
+            vision_output_tokens = int(cleaned["vision_output_tokens"])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_vision_output_tokens",
+                    "message": "Vision output tokens должен быть 0 (наследовать) или целым числом от 128 до 8192.",
+                },
+            ) from exc
+        if vision_output_tokens != 0 and not 128 <= vision_output_tokens <= 8192:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_vision_output_tokens",
+                    "message": "Vision output tokens должен быть 0 (наследовать) или целым числом от 128 до 8192.",
+                },
+            )
+        cleaned["vision_output_tokens"] = vision_output_tokens
     if "vision_fallback" in cleaned:
         fallback = str(cleaned["vision_fallback"] or "").strip().lower()
         if fallback not in {"vision_context", "error"}:

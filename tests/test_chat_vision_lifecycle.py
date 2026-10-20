@@ -8,7 +8,7 @@ from unittest.mock import patch
 from app import config, db
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.service import ChatService
-from backend.apps.chat.services import attachment_storage, vision_runtime
+from backend.apps.chat.services import attachment_storage, ollama_runtime, vision_runtime
 
 
 class _AliveProcess:
@@ -131,7 +131,11 @@ class ChatVisionLifecycleTestCase(unittest.TestCase):
         delta_path = Path(self.tmpdir.name) / "deltas.jsonl"
         reasoning_path = Path(self.tmpdir.name) / "reasoning.jsonl"
 
-        with patch.object(vision_runtime, "chat_completion", return_value="A local image answer") as completion:
+        with patch.object(
+            vision_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(content="A local image answer", done_reason="stop"),
+        ) as completion:
             chat_tasks._chat_worker(
                 "qwen2.5vl:3b",
                 [{"role": "user", "content": "what is shown"}],
@@ -174,7 +178,14 @@ class ChatVisionLifecycleTestCase(unittest.TestCase):
         status_path = Path(self.tmpdir.name) / "extract-status.json"
 
         with (
-            patch.object(vision_runtime, "chat_completion", return_value="OCR assist\nOff\nAuto\nOn") as completion,
+            patch.object(
+                vision_runtime,
+                "chat_completion_result",
+                return_value=ollama_runtime.ChatCompletionResult(
+                    content="OCR assist\nOff\nAuto\nOn",
+                    done_reason="stop",
+                ),
+            ) as completion,
             patch.object(ChatService, "chat_completion_result") as text_completion,
         ):
             chat_tasks._chat_worker(
@@ -213,6 +224,92 @@ class ChatVisionLifecycleTestCase(unittest.TestCase):
         self.assertNotIn("irrelevant RAG", str(completion_messages))
         self.assertNotIn("old refusal", str(completion_messages))
         self.assertIn("выпиши текст", str(completion_messages))
+
+    def test_direct_vision_length_stop_is_a_failed_task_not_a_completed_answer(self) -> None:
+        attachment = self._attachment()
+        assistant_message = db.create_assistant_message(self.session["id"], model="qwen2.5vl:3b")
+        descriptor = attachment_storage.prepare_chat_attachments(
+            [attachment["id"]],
+            profile_id=self.profile_id,
+            session_id=self.session["id"],
+            settings={"chat_images_enabled": True},
+        )[0]
+        result_path = Path(self.tmpdir.name) / "truncated-result.json"
+        error_path = Path(self.tmpdir.name) / "truncated-error.json"
+
+        with patch.object(
+            vision_runtime,
+            "chat_completion_result",
+            return_value=ollama_runtime.ChatCompletionResult(
+                content='{"rows":[["partial"]',
+                done_reason="length",
+                eval_count=512,
+            ),
+        ):
+            chat_tasks._chat_worker(
+                "qwen2.5vl:3b",
+                [{"role": "user", "content": "extract the whole table"}],
+                {"ocr_assist": "off"},
+                self.session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                False,
+                str(Path(self.tmpdir.name) / "truncated-deltas.jsonl"),
+                str(Path(self.tmpdir.name) / "truncated-reasoning.jsonl"),
+                str(Path(self.tmpdir.name) / "truncated-status.json"),
+                str(result_path),
+                str(error_path),
+                [descriptor],
+                {"mode": "direct", "vision_model": "qwen2.5vl:3b", "response_model": "qwen2.5vl:3b"},
+            )
+
+        self.assertFalse(result_path.exists())
+        self.assertEqual(chat_tasks._read_json(error_path)["code"], "chat_final_answer_incomplete")
+        self.assertEqual(db.get_message(assistant_message["id"])["status"], "failed")
+        self.assertEqual(db.get_chat_attachment(attachment["id"])["status"], "failed")
+
+    def test_streaming_vision_length_stop_is_a_failed_task(self) -> None:
+        attachment = self._attachment()
+        assistant_message = db.create_assistant_message(self.session["id"], model="qwen2.5vl:3b")
+        descriptor = attachment_storage.prepare_chat_attachments(
+            [attachment["id"]],
+            profile_id=self.profile_id,
+            session_id=self.session["id"],
+            settings={"chat_images_enabled": True},
+        )[0]
+        result_path = Path(self.tmpdir.name) / "truncated-stream-result.json"
+        error_path = Path(self.tmpdir.name) / "truncated-stream-error.json"
+
+        with patch.object(
+            vision_runtime,
+            "chat_completion_stream_events",
+            return_value=iter(
+                [
+                    ollama_runtime.ChatStreamEvent(content='{"rows":[["partial"]'),
+                    ollama_runtime.ChatStreamEvent(done=True, done_reason="length", eval_count=512),
+                ]
+            ),
+        ):
+            chat_tasks._chat_worker(
+                "qwen2.5vl:3b",
+                [{"role": "user", "content": "extract the whole table"}],
+                {"ocr_assist": "off"},
+                self.session["id"],
+                self.profile_id,
+                assistant_message["id"],
+                True,
+                str(Path(self.tmpdir.name) / "truncated-stream-deltas.jsonl"),
+                str(Path(self.tmpdir.name) / "truncated-stream-reasoning.jsonl"),
+                str(Path(self.tmpdir.name) / "truncated-stream-status.json"),
+                str(result_path),
+                str(error_path),
+                [descriptor],
+                {"mode": "direct", "vision_model": "qwen2.5vl:3b", "response_model": "qwen2.5vl:3b"},
+            )
+
+        self.assertFalse(result_path.exists())
+        self.assertEqual(chat_tasks._read_json(error_path)["code"], "chat_final_answer_incomplete")
+        self.assertEqual(db.get_message(assistant_message["id"])["status"], "failed")
 
     def test_finalizer_preserves_actual_vision_model_from_worker_result(self) -> None:
         assistant_message = db.create_assistant_message(

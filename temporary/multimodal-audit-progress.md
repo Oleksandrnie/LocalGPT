@@ -2,7 +2,7 @@
 
 ## Scope
 
-ASR input quality, then Chat/RAG model comparison, Vision/OCR, Mac resource control and optional real model-bundle transfer acceptance. GigaAM, agent orchestration and image generation remain deferred. Local models run sequentially on the 16 GiB Mac; no downloads without approval. This active execution record is tracked in stage checkpoints as required by the repository `AGENTS.md`.
+ASR input quality, then Chat/RAG model comparison, Vision/OCR, Mac resource control and optional real model-bundle transfer acceptance. GigaAM, agent orchestration and image generation remain deferred. Local models run sequentially on the 16 GiB Mac; the user approved downloading only the Russian Tesseract traineddata needed for the current OCR evaluation (no LLM downloads). This active execution record is tracked in stage checkpoints as required by the repository `AGENTS.md`.
 
 ## Completed
 
@@ -126,11 +126,29 @@ Implementation: runtime link now points to `../source/build/bin/whisper-cli`; ma
 
 Validation: `tests.test_setup_dependencies tests.test_whisper_cpp_backend` — 24/24 passed after the final fix; `git diff --check`, compileall, JS syntax and Markdown rendering — passed; actual `whisper-cli --help` exits 0; Mach-O has `@loader_path`; `/health` on port 8001 is OK; `/whisper/models` reports `large-v3` and `large-v3-turbo` ready with runtime/CoreML/VAD installed and no warnings. UI source maps this `ready` state to badge `Готова`; visual refresh remains optional user acceptance. No live audio transcription was run.
 
+## Completed follow-up — Vision output/table/OCR and ASR reference
+
+On 2026-10-20, finished the user-approved bounded evaluation and implementation, running local inference sequentially:
+
+- Dense-table cap diagnosis: direct `qwen2.5vl:7b` on the 72-cell clean table ended at `done_reason=length`, exactly 512 tokens, with the old cap. At 1024 it stopped normally after 551 tokens and returned all cells; 2048 returned the same output. Exact strings: 66/72. On a downscaled, slightly rotated/blurred/JPEG-compressed variant, 1024 tokens returned all 72 cells after 397 tokens, also 66/72 exact. Main residuals: four `Оплачен` → `Оплачено` and two Latin/Cyrillic `A/А` confusions.
+- Implemented profile-only `vision_output_tokens` (0 inherits ordinary `output_tokens`, explicit 128–8192). Provider stop reason/token count are retained in stream and non-stream paths; a length-truncated direct answer or derived Vision context is rejected instead of marked complete. The ordinary chat limit/default is unchanged. Backend coverage: 52 focused tests passed; attachment/settings UI: 6/6; Python compileall and `git diff --check` passed.
+- Installed official Tesseract Russian traineddata locally only (`rus.traineddata`, about 3.7 MB; not in repository). Dense table OCR against a 482-character normalized reference: clean `rus+eng` PSM 6 CER 91.7%, PSM 11 5.8%; photo-like PSM 6 56.6%, PSM 11 42.3%. PSM 11 omitted quantity cells and lost row/column structure; `/ocr/extract` default PSM 6 returned only fragments. No app defaults changed.
+- ASR ground truth: used 9 known-transcript WAVs from the held-out Langswap Dialogs `test` split (about 91 seconds total; stems `part1_{53,71,87,101,103,122,165,166,347}`), sequentially through existing `/transcribe`, `large-v3-turbo` / `whisper_cpp`, `language=ru`, `store_result=false`. Aggregate normalized WER 2.3% (4/172 words), CER 0.7% (6/909 characters); normalization lowercases, maps ё→е and strips punctuation/space. One absent test audio file was replaced with another from the same split. This is a small clean scripted-dialog smoke, not a proxy for the user's long/noisy audio; possible model-training overlap cannot be excluded. No transcript rows were saved and the whole dataset was not downloaded.
+- No model profile/default was changed; no LLM model downloaded. Ollama runtime is empty after the Vision sequence. Russian traineddata is an OS-level local dependency from this evaluation, not a repository/model asset.
+
+Checkpoint: focused Vision output-completeness feature, associated Vision/OCR findings, and ASR reference metrics are included in this stage's checkpoint.
+
 ## Next action
 
-1. Synthetic dense-table stress coverage is complete. Real-world/skewed/low-resolution table coverage remains optional until a representative image is supplied. Russian OCR-assist remains unvalidated until Russian Tesseract traineddata is available; do not download language data without approval. If continuing the Vision improvement work, first investigate a safe per-request output-budget strategy and explicit handling of ambiguous Latin/Cyrillic glyphs; do not silently change profile defaults.
-2. The optional user-controlled real model-bundle transfer smoke remains separate. Keep GigaAM, agent modes and image generation deferred unless the user reopens those decisions.
+Only user-dependent acceptance remains:
+
+1. Optional UI acceptance: refresh LocalGPT, open Settings → Vision, set `Vision output tokens` to `1024` for the current profile, then submit a dense table. Personal remains at `0` (inherit) until the user changes it. The generated photo-like test fixture is `/tmp/localgpt-vision-ocr/dense-photo-like.jpg`.
+2. If useful, test a genuinely photographed table/receipt after redacting personal data. Current “photo-like” fixture is generated and does not prove camera-photo accuracy.
+3. For a domain-specific ASR score on the user's 5:59.8 MP3, create a human reference for a 30–60 second excerpt. A Whisper draft can speed correction, but must be checked against the audio by a person; no second model is ground truth.
+4. Optional actual model-bundle transfer to another device, if one is available.
+
+GigaAM, agent modes and image generation remain deferred unless reopened by the user.
 
 ## Known limitations
 
-Lexical evidence trace is a review signal, not semantic proof or a completeness metric. ASR accuracy remains unscored without reference text. Real-world table/photo and Russian OCR coverage, numeric temperature and peak per-process memory remain pending. The synthetic table tests exposed exact glyph ambiguity and a 512-token output-cap limitation; results are one controlled sample, not a general OCR accuracy score. Image generation is deferred.
+The public ASR sample is only 9 short studio-recorded scripted utterances; it does not assess noisy/overlapping speech, diarization, long-form drift or the user's specific vocabulary. Synthetic Vision/OCR fixtures do not establish real camera-photo accuracy. Tesseract flatten-text CER does not measure cell/row association; the tested sparse-text mode still omitted quantity values. Vision still confuses visually similar Latin/Cyrillic glyphs and status wording; do not normalize these automatically. Numeric temperature and peak per-process memory remain unavailable. Lexical RAG trace remains a review signal, not semantic proof. Image generation is deferred.

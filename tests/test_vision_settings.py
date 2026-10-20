@@ -19,6 +19,7 @@ class VisionSettingsContractTestCase(unittest.TestCase):
                 "chat_image_max_side": 3072,
                 "vision_model": "qwen2.5vl:3b",
                 "vision_num_ctx": 16384,
+                "vision_output_tokens": 1024,
                 "vision_fallback": "vision_context",
                 "ocr_assist": "on",
                 "ocr_language": "eng+rus",
@@ -29,6 +30,7 @@ class VisionSettingsContractTestCase(unittest.TestCase):
         self.assertEqual(normalized["max_images_per_message"], 4)
         self.assertEqual(normalized["vision_model"], "qwen2.5vl:3b")
         self.assertEqual(normalized["vision_num_ctx"], 16384)
+        self.assertEqual(normalized["vision_output_tokens"], 1024)
         self.assertEqual(normalized["vision_fallback"], "vision_context")
         self.assertEqual(normalized["ocr_assist"], "on")
         self.assertEqual(normalized["ocr_language"], "eng+rus")
@@ -40,6 +42,8 @@ class VisionSettingsContractTestCase(unittest.TestCase):
             {"ocr_assist": "sometimes"},
             {"vision_num_ctx": 2048},
             {"vision_num_ctx": 131073},
+            {"vision_output_tokens": 127},
+            {"vision_output_tokens": 8193},
             {"max_images_per_message": 11},
             {
                 "chat_image_max_file_bytes": 20,

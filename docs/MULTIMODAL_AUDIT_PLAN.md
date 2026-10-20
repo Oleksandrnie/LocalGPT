@@ -21,8 +21,9 @@ These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effor
 
 ## Remaining work — approved order
 
-1. **Remaining Vision/OCR coverage:** screenshot/small-text checks and clean plus dense synthetic-table tests are complete. Real-world/skewed/low-resolution table handling and Russian OCR assistance remain open. Russian Tesseract traineddata is not installed; do not download language data without approval. The dense-table check exposed ambiguous Latin/Cyrillic glyphs and a 512-token response-budget limitation; assess safe per-request output budgeting before changing profile defaults.
-2. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
+1. **Real-world table acceptance:** synthetic photo-like stress tests are complete, but no genuinely photographed user/business table has been scored. If useful, run the same per-cell checklist on a representative redacted photo/scan; do not infer general OCR accuracy from generated fixtures.
+2. **User-recording ASR reference (optional, domain-specific):** the public benchmark below establishes a reproducible baseline. To score the user's own long MP3, a human must verify a 30–60 second slice against the audio; a model transcript alone is not ground truth. A preliminary transcript can be supplied for correction.
+3. **Optional transfer acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
 
@@ -110,9 +111,40 @@ On 2026-10-20, extended that baseline with a generated, visually checked 2040×1
 
 Resource/lifecycle observations: the 3B run reported about 4.6 GB resident; the 7B run about 7.2 GB, with system-wide free memory at 12–13%. After explicit unload, `ollama ps` was empty and free memory recovered to 70%; macOS reported no thermal/performance warning. Temporary sessions and the generated fixture were deleted. Numeric temperature and peak per-process RSS remain unavailable. This was a controlled synthetic stress test, not a real photo/table benchmark; blur, skew, perspective, low resolution, noise and Russian OCR assistance remain unvalidated.
 
-Tesseract 5.5.3 is installed, but its available traineddata is only `eng`, `osd`, and `snum` (no Russian). A local `eng`-only pass on the mixed-language small-text screenshot returned no text. Therefore Russian Tesseract OCR and OCR-assisted modes were not validated; do not install language data without approval. No Vision model remained loaded after each test. The 7B run reached about 7.2 GB resident and free memory recovered to about 81% afterward; the 3B run reached about 4.6 GB and recovered to about 77%. macOS reported no thermal/performance warning; numeric temperature and peak-process RSS remain unmeasured.
+At the initial screenshot smoke, Tesseract had only `eng`, `osd`, and `snum`; English-only OCR returned no text on the mixed-language screenshot. The follow-up below installed Russian traineddata for a controlled evaluation. No profile setting changed. The screenshot-smoke resource observations remain: 7B reached about 7.2 GB resident and free memory recovered to about 81%; 3B reached about 4.6 GB and recovered to about 77%. macOS reported no thermal/performance warning; numeric temperature and peak-process RSS remain unmeasured.
 
-The controlled Vision/OCR spot-check stage is complete for the supplied screenshots, small text, clean synthetic table and dense grouped-header synthetic table. Open items are real-world/skewed/low-resolution table coverage and Russian OCR assistance. The dense-table result also motivates a separate improvement task for safe output-budget handling and exact mixed-script glyph extraction; do not change profile defaults based on this single fixture. Keep settings unchanged and do not download models or language data without approval.
+The initial synthetic table tests exposed mixed-script glyph ambiguity and a dense-table response-cap problem; both were measured in the follow-up stages below. A genuine photographed business table remains optional user acceptance. Do not automatically substitute Latin/Cyrillic look-alikes or change profile defaults based on these synthetic fixtures.
+
+**Status correction:** The two preceding paragraphs describe the earlier baseline only. The follow-up has since installed and evaluated Russian Tesseract data, tested a photo-like synthetic table, and implemented explicit Vision output-budget/truncation handling; the current measurements and scope are below.
+
+## Vision V4 — per-request output limit and truncation handling
+
+The direct provider baseline confirmed the cause of dense-table truncation: on the 72-cell clean table, `qwen2.5vl:7b` with `num_predict=512` ended with `done_reason=length` at exactly 512 generated tokens. At 1024 it returned valid JSON, all 72 cells, `done_reason=stop`, and 551 generated tokens. A 2048 cap produced the same answer and token count, so 1024 was sufficient for this fixture; a larger cap did not improve its exact-cell score (66/72). The test was repeated on an 800×280 downscaled, slightly rotated/blurred/JPEG-compressed version: 7B returned all 72 cells at 1024 tokens, stopped normally after 397 tokens, and matched 66/72 cell strings exactly. Remaining errors were four `Оплачен`/`Оплачено` status substitutions and two Latin `A`/Cyrillic `А` substitutions in `Склад A`.
+
+Implemented profile setting `vision_output_tokens` (`0` inherits the existing ordinary output budget; explicit range 128–8192), wired through Vision inference only. Provider result and streaming-event metadata now retain `done_reason` and `eval_count`; length-truncated direct Vision answers and derived Vision context fail instead of persisting as complete. Ordinary text responses and defaults are unchanged. The UI exposes the per-profile setting with 1024 as an example, not a new default. Automated coverage: 52 focused backend tests plus 6 attachment/settings UI tests passed; Python compileall passed. The live backend health/profile/static-UI smoke confirms the new setting is served and Personal remains at `0` (inherit); no persistent profile setting was changed. A complete image-chat submission through the browser remains optional user acceptance.
+
+## Vision V5 / OCR V6 — synthetic table robustness and Russian Tesseract
+
+The known-answer photo-like fixture is a generated synthetic table, not a camera photograph. It shows that a larger response budget prevents truncation but does not fix visual or character ambiguity. A separate 42-cell comparison found 3B returned 42/42 cells on a clean image (with mixed-script glyph errors), while 7B returned 42/42 on a photo-like version; both outputs fit below 512 tokens. Thus completeness and exact transcription are separate measures.
+
+Installed only the official Tesseract [`rus.traineddata`](https://github.com/tesseract-ocr/tessdata_fast/blob/main/rus.traineddata) locally for this evaluation (about 3.7 MB; not a repository asset). The installed language list now includes `rus`. No app profile/default or installed model was changed. On the 72-cell dense fixture, CER is computed over normalized whole-table text (lowercase, `ё→е`, punctuation/spacing removed; expected text 482 characters):
+
+| Fixture | Tesseract language / PSM | CER | Observation |
+| --- | --- | ---: | --- |
+| Clean | `rus`, 6 | 91.7% (442/482) | Default line-block mode recognized little of the grid. |
+| Clean | `rus+eng`, 6 | 91.7% (442/482) | Same poor result. |
+| Clean | `rus`, 11 | 8.7% (42/482) | Much more text; row/column association is not retained and quantity cells were omitted. |
+| Clean | `rus+eng`, 11 | 5.8% (28/482) | Best clean flattened-text score; still omitted quantity values and confused look-alike scripts. |
+| Photo-like | `rus`, 6 / 11 | 55.2% / 41.3% | Significant cell/text loss even with sparse-text mode. |
+| Photo-like | `rus+eng`, 6 / 11 | 56.6% / 42.3% | Similar degradation; column and row structure breaks down. |
+
+The current `/ocr/extract` route uses PSM 6 plus auto-crop; on these dense fixtures it returned only title/header fragments for the clean table and partial, misordered fragments for the photo-like table. OCR can be optional evidence to Vision, not a source of guaranteed table structure. Do not change the default PSM or make OCR mandatory based on this synthetic sample.
+
+## ASR V4 — reference-scored Russian short-speech sample
+
+Used nine existing WAVs from the held-out `test` split of [Langswap Dialogs](https://huggingface.co/datasets/langswap/dialogs-ru-emotional-conversations), a scripted, studio-quality expressive Russian dialogue corpus, not spontaneous phone calls. The selected utterances were `part1_{53,71,87,101,103,122,165,166,347}`; one initially selected file was absent from the repository and was replaced with another test-split utterance. Only these selected audio files were downloaded to a temporary directory; the whole corpus was not fetched. Sent sequential requests through the already-running LocalGPT `/transcribe` endpoint using installed `large-v3-turbo` / `whisper_cpp`, forced `language=ru`, automatic prompt, and `store_result=false`; no transcript history rows or model downloads were created.
+
+Across 9 clips (about 91 seconds; 172 reference words; 909 normalized characters), aggregate normalized WER was **2.3% (4/172 word edits)** and CER **0.7% (6/909 character edits)**. Normalization lowercases, treats `ё` as `е`, and removes punctuation/spacing. This is a small public-corpus smoke, not a statistically robust or universally representative score; some errors can reflect reference orthography or expressive delivery, and model-training overlap cannot be excluded. It establishes that the current Whisper path handles these selected short, clean studio clips well, but says nothing about long noisy recordings, overlapping speakers or domain names. For the user's own 5:59.8 MP3, a human-reviewed 30–60 second excerpt is still needed for a domain-specific score; a Whisper/model draft can accelerate proofreading but cannot be its own reference.
 
 ## Mac resource control — bounded live lifecycle smoke completed
 

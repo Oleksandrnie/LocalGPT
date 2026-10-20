@@ -31,6 +31,36 @@ def _runtime_model(
 
 
 class VisionTaskSettingsTestCase(unittest.TestCase):
+    def test_vision_output_override_is_isolated_from_text_output_budget(self) -> None:
+        settings = {
+            "ollama_think": "off",
+            "output_tokens": 512,
+            "vision_output_tokens": 1024,
+            "vision_num_ctx": 8192,
+        }
+
+        vision_kwargs = _vision_runtime_kwargs(
+            ChatService(),
+            "qwen2.5vl:3b",
+            "qwen2.5vl:3b",
+            settings,
+        )
+        text_kwargs = ChatService()._runtime_kwargs("qwen2.5:3b-instruct", settings)
+
+        self.assertEqual(vision_kwargs["max_tokens"], 1024)
+        self.assertEqual(text_kwargs["max_tokens"], 512)
+        self.assertEqual(settings["output_tokens"], 512)
+
+    def test_zero_vision_output_override_inherits_existing_output_budget(self) -> None:
+        kwargs = _vision_runtime_kwargs(
+            ChatService(),
+            "qwen2.5vl:3b",
+            "qwen2.5vl:3b",
+            {"ollama_think": "off", "output_tokens": 512, "vision_output_tokens": 0},
+        )
+
+        self.assertEqual(kwargs["max_tokens"], 512)
+
     def test_separate_vision_model_does_not_inherit_response_thinking_toggle(self) -> None:
         kwargs = _vision_runtime_kwargs(
             ChatService(),
@@ -274,6 +304,48 @@ class VisionOllamaPayloadTestCase(unittest.TestCase):
         sent_messages = native_chat.call_args.kwargs["messages"]
         self.assertEqual(base64.b64decode(sent_messages[0]["images"][0]), self.first_path.read_bytes())
         native_chat.assert_called_once()
+
+    def test_runtime_result_preserves_ollama_completion_metadata(self) -> None:
+        original = [{"role": "user", "content": "read every table row"}]
+        expected = ollama_runtime.ChatCompletionResult(
+            content='{"rows": []',
+            done_reason="length",
+            eval_count=512,
+        )
+
+        with patch.object(ollama_runtime, "chat_completion_result", return_value=expected) as native_chat:
+            result = vision_runtime.chat_completion_result(
+                "qwen2.5vl:3b",
+                original,
+                [self.first_path],
+                max_tokens=512,
+            )
+
+        self.assertEqual(result, expected)
+        self.assertEqual(result.done_reason, "length")
+        sent_messages = native_chat.call_args.kwargs["messages"]
+        self.assertEqual(base64.b64decode(sent_messages[-1]["images"][0]), self.first_path.read_bytes())
+        self.assertNotIn("images", original[0])
+
+    def test_stream_event_wrapper_preserves_terminal_metadata(self) -> None:
+        events = [
+            ollama_runtime.ChatStreamEvent(content="partial JSON"),
+            ollama_runtime.ChatStreamEvent(done=True, done_reason="length", eval_count=512),
+        ]
+
+        with patch.object(ollama_runtime, "chat_completion_stream_events", return_value=iter(events)) as native_chat:
+            result = list(
+                vision_runtime.chat_completion_stream_events(
+                    "qwen2.5vl:3b",
+                    [{"role": "user", "content": "extract table"}],
+                    [self.first_path],
+                    max_tokens=512,
+                )
+            )
+
+        self.assertEqual(result[-1].done_reason, "length")
+        self.assertEqual(result[-1].eval_count, 512)
+        self.assertEqual(len(native_chat.call_args.kwargs["messages"][-1]["images"]), 1)
 
     def test_native_ollama_payload_contains_images_on_user_message(self) -> None:
         original = [{"role": "user", "content": "what is shown?"}]
