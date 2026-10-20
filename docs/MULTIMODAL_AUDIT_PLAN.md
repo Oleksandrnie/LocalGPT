@@ -21,8 +21,8 @@ These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effor
 
 ## Remaining work — approved order
 
-1. **Vision/OCR quality (next):** test screenshots, tables and small text; record actual model provenance and OCR mode.
-2. **Mac resource control:** measure memory/residency and temperature where observable; verify unload and sequential execution.
+1. **Mac resource control (next):** measure memory/residency and temperature where observable; verify unload and sequential execution.
+2. **Remaining Vision/OCR coverage:** spot checks on supplied screenshots and small text are complete. Table handling and Russian OCR assistance remain open pending a suitable table fixture and Russian Tesseract traineddata; do not download either without approval.
 3. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
@@ -96,9 +96,15 @@ Interpretation: for this deliberately noisy RAG corpus, the recurring short answ
 
 Resource observation for the dedicated Mac stage: during sequential testing, `qwen3:4b` reached a reported resident size of about 7.5 GB and system-wide free-memory percentage fell to 18%; `mistral-nemo:12b` reported about 12 GB and free memory fell to 6%. Each model was unloaded after its test; free-memory percentage recovered to about 64–80%. macOS reported no thermal warning, but numeric temperature and peak per-process memory remain unmeasured. The 12B test was allowed to return its answer, then explicitly unloaded; no concurrent inference ran.
 
-## Current stage — Vision/OCR quality
+## Vision/OCR quality — live smoke completed; table/OCR-language coverage remains open
 
-Next inspect installed Vision runtimes and current OCR mode, then run sequential screenshot/small-text/table checks using existing local images and models only. Keep Vision provenance separate from the chat fallback model, preserve profile isolation, and record when OCR is Off versus assisting the Vision model. Do not change settings or download models as part of the audit.
+On 2026-10-20, used two existing image attachments from the Personal profile's prior “выпиши текст” chat in fresh temporary sessions; did not change profile settings or download models. With OCR assist Off and image-RAG not requested, the 7B Vision run (`qwen2.5vl:7b`) returned the screenshot's visible Russian response text nearly verbatim. The initial route plan named `vision_context` with text fallback `qwen2.5:3b-instruct`, but the task result's actual completion model was `qwen2.5vl:7b`; code inspection confirms non-RAG image prompts switch to direct Vision completion. Use the task result's `model` as actual provenance, not the initial route-plan label.
+
+A separate direct `qwen2.5vl:3b` run transcribed the small mixed Russian/English Vision-settings screenshot exactly, including the selected `Off` and the second `Off` option. Both runs had `image_rag_included=false`; the 7B run's RAG diagnostics were `disabled`. These are positive spot checks, not a broad accuracy benchmark: only two screenshots were available, no table fixture was available, and there was no independent OCR ground-truth file for automated character-level scoring.
+
+Tesseract 5.5.3 is installed, but its available traineddata is only `eng`, `osd`, and `snum` (no Russian). A local `eng`-only pass on the mixed-language small-text screenshot returned no text. Therefore Russian Tesseract OCR and OCR-assisted modes were not validated; do not install language data without approval. No Vision model remained loaded after each test. The 7B run reached about 7.2 GB resident and free memory recovered to about 81% afterward; the 3B run reached about 4.6 GB and recovered to about 77%. macOS reported no thermal/performance warning; numeric temperature and peak-process RSS remain unmeasured.
+
+The Vision/OCR spot-check stage is complete for the supplied screenshots, with table handling and Russian OCR assistance explicitly unresolved. Next: dedicated Mac resource/load-unload audit. Keep settings unchanged and models sequential; use available measurements only, and do not download models.
 
 ## Source records
 

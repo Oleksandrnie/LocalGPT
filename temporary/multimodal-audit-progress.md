@@ -63,9 +63,15 @@ The 0.6B Qwen model remains the optional router, not a target answer model; its 
 
 Resource signal: qwen3 4B reached about 7.5 GB resident / 18% system-wide memory free; Mistral Nemo 12B reached about 12 GB / 6% free. Models were unloaded between tests and free-memory percentage recovered to 64–80%. macOS reported no thermal warning, but exact temperature and peak per-process memory remain pending in the resource stage. Inference was sequential only.
 
-## Current stage — Vision/OCR quality
+## Completed live stage — Vision/OCR screenshot spot checks
 
-Inspect installed Vision runtimes and OCR mode, then test existing screenshots, small text and tables sequentially. Keep Vision and fallback chat provenance distinct, do not change profile settings, and do not download models.
+On 2026-10-20, used two existing image attachments from the Personal profile's prior “выпиши текст” chat in fresh temporary sessions; profile settings were unchanged and no models were downloaded. With OCR assist Off and no image-RAG request, `qwen2.5vl:7b` returned the visible Russian screenshot text nearly verbatim. The initial task route plan said `vision_context` and listed `qwen2.5:3b-instruct` as the response model, but the completed task's actual `result.model` was `qwen2.5vl:7b`; source inspection confirms the worker switches non-RAG image prompts to direct Vision completion. Treat `result.model` as actual responder provenance. `image_rag_included=false`, and RAG diagnostics were disabled.
+
+A separate direct `qwen2.5vl:3b` test transcribed all visible small mixed Russian/English UI labels exactly, including both occurrences of `Off`. Positive spot checks only: two screenshots, no table fixture, and no independent expected-transcript file for automated character-level scoring.
+
+Tesseract 5.5.3 exposes only `eng`, `osd`, and `snum` traineddata; Russian is unavailable. A local `eng`-only pass on the mixed-language small-text screenshot returned no text. Russian OCR and OCR-assisted modes therefore remain unvalidated; no language model was installed. The 7B run reached about 7.2 GB resident, then free memory recovered to about 81%; the 3B run reached about 4.6 GB, then recovered to about 77%. macOS reported no thermal/performance warning, while numeric temperature and peak per-process RSS remain unmeasured. Test sessions were deleted and `ollama ps` was empty after each run.
+
+Vision/OCR spot checks on available screenshots are complete; table handling and Russian Tesseract assistance remain open due to missing fixture/language data. No profile settings, repository code, or model assets changed.
 
 ### Previous stage — ASR2 FIFO task lifecycle completed
 
@@ -105,10 +111,10 @@ Validation: `tests.test_setup_dependencies tests.test_whisper_cpp_backend` — 2
 
 ## Next action
 
-1. Continue Vision/OCR quality checks and record exact model/runtime/OCR modes.
-2. Measure memory/residency and thermals where observable; verify sequential load/unload.
+1. **Next: measure memory/residency and thermals** where observable; verify sequential model load/unload using existing models and no parallel inference.
+2. Keep table and Russian OCR-assist validation open until a suitable table image and Russian Tesseract traineddata are available; do not download either without approval.
 3. Keep the optional user-controlled real model-bundle transfer smoke separate. Keep GigaAM, agent modes and image generation deferred unless the user reopens those decisions.
 
 ## Known limitations
 
-Lexical evidence trace is a review signal, not semantic proof or a completeness metric. ASR accuracy remains unscored without reference text. Vision/OCR quality, image generation and detailed thermal/peak-memory measurements remain pending.
+Lexical evidence trace is a review signal, not semantic proof or a completeness metric. ASR accuracy remains unscored without reference text. Table/Russian OCR coverage and detailed thermal/peak-memory measurements remain pending; image generation is deferred.
