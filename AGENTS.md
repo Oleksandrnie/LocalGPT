@@ -21,22 +21,17 @@ Model routing применяется только к execution-задачам, �
 
 `Bounded task` — задача с заранее понятными scope, ожидаемым результатом, architectural boundaries, acceptance criteria и validation. `Fine-grained edit` — локализованное изменение с понятным результатом. Luna исполняет определённую работу; Sol самостоятельно определяет правильное инженерное решение.
 
-Для текущего мультимодального аудита действует отдельное распределение, заданное пользователем:
-
-- GPT-6 Luna с effort `xHigh` — рассуждения, синтез свидетельств и результатов проверок, анализ вариантов и формирование последовательности работ.
-- GPT-6.1 Sol с effort `Medium` — архитектурные решения и технический дизайн.
-
-Это распределение касается анализа и проектных решений, но само по себе не выбирает модель реализации, не запускает subagents и не разрешает независимый review. Для этих действий действуют явные инструкции пользователя и правила ниже.
+Для текущей мультимодальной работы пользователь задал отдельный routing: GPT-6 Luna с effort `xHigh` используется для рассуждений и синтеза результатов проверок; GPT-6.1 Sol с effort `Medium` — для архитектуры, технического дизайна и реализации, включая backend, lifecycle и persistence. Это заменяет прежние назначения для этих категорий. Routing зафиксирован здесь, в `AGENTS.md`; progress-файлы и subsystem-документы его не дублируют.
 
 | Task | Default model | Effort |
 | --- | --- | --- |
-| Рассуждения, синтез evidence и анализ проверок в текущем мультимодальном аудите | GPT-6 Luna | xHigh |
-| Архитектурные решения и технический дизайн в текущем мультимодальном аудите | GPT-6.1 Sol | Medium |
-| Fine-grained edit, простой HTML/CSS/UI | GPT-5.6 Luna | Low |
-| Coordinated UI/responsive, bounded work по существующим patterns | GPT-5.6 Luna | Medium |
-| Bounded implementation с полностью ясным контрактом | GPT-5.6 Luna | High |
-| Backend/API/database/business logic, integrations, complex debugging/refactor | GPT-5.6 Sol | High |
-| Architecture-sensitive implementation, persistence/lifecycle, substantial engineering | GPT-5.6 Sol | High |
+| Рассуждения, синтез evidence и анализ проверок в текущей мультимодальной работе | GPT-6 Luna | xHigh |
+| Архитектура, технический дизайн и execution текущей мультимодальной работы | GPT-6.1 Sol | Medium |
+| Fine-grained edit, простой HTML/CSS/UI | GPT-6 Luna | Low |
+| Coordinated UI/responsive, bounded work по существующим patterns | GPT-6 Luna | Medium |
+| Bounded implementation с полностью ясным контрактом | GPT-6.1 Sol | Medium |
+| Backend/API/database/business logic, integrations, complex debugging/refactor | GPT-6.1 Sol | Medium |
+| Architecture-sensitive implementation, persistence/lifecycle, substantial engineering | GPT-6.1 Sol | Medium |
 | Routine independent review | GPT-6 Sol | Medium |
 | Substantial multi-file или regression-sensitive review | GPT-6 Sol | High |
 | Unusually deep/high-risk audit | GPT-6 Sol | xHigh when justified |
@@ -44,9 +39,9 @@ Model routing применяется только к execution-задачам, �
 
 Правила routing:
 
-- Оптимизировать стоимость корректно завершённой задачи, а не первого вызова. GPT-6 Luna не является automatic target для других задач, но в текущем мультимодальном аудите применяется для рассуждений по указанному выше override.
+- Оптимизировать стоимость корректно завершённой задачи, а не первого вызова. GPT-6 Luna не является automatic target для других задач, но в текущей мультимодальной работе применяется для рассуждений по указанному выше override.
 - Если среда поддерживает model-specific subagents, orchestrator делегирует по этому routing и передаёт только необходимый context, requirements, constraints, relevant docs и validation criteria.
-- Эскалировать Luna → GPT-5.6 Sol High, если scope перестал быть bounded, неизвестен root cause, нужна migration/architecture, появились cross-system dependencies, сложный persistence/lifecycle или повторные разнородные failures.
+- Эскалировать с GPT-6 Luna на GPT-6.1 Sol Medium, если scope перестал быть bounded, неизвестен root cause, нужна migration/architecture, появились cross-system dependencies, сложный persistence/lifecycle или повторные разнородные failures.
 - Mixed task делить по естественным technical boundaries, если это полезнее передачи всей задачи самой сильной модели; маленькую тесно связанную работу искусственно не дробить.
 - Количество subagents определять структурой и риском. Несколько агентов оправданы для независимых параллельных частей, subsystem boundaries, сравнения подходов, ускорения сложной multi-part задачи или явно одобренного second opinion; agent swarm без понятной пользы запрещён.
 - GPT-6 Sol — независимый reviewer, а не обязательное продолжение implementation. Review запускается только по прямому запросу пользователя либо после предложения агента и явного approval; prompt должен быть нейтральным.
@@ -100,7 +95,7 @@ temporary/<task-name>-progress.md
 
 - Предпочитать feature logic в `backend/apps/<feature>/`, composition в `backend/server.py`; новые routes держать тонкими, а логику — в service/provider/repository.
 - `app/` — shared/transitional layer; `app/server.py` — compatibility import, не самостоятельный runtime. Не переносить legacy code механически.
-- Сохранять profile isolation, explicit model loading, persisted task lifecycle и project-scoped storage. Сложные persistence/lifecycle changes требуют GPT-5.6 Sol High и проверки отложенных последствий для данных.
+- Сохранять profile isolation, explicit model loading, persisted task lifecycle и project-scoped storage. Сложные persistence/lifecycle changes требуют GPT-6.1 Sol Medium и проверки отложенных последствий для данных.
 - Plugin manifests — данные; arbitrary code из `plugins/` не исполнять, trusted behavior держать в backend-owned handlers.
 - `compare-branch/` — read-only reference: runtime не импортирует его файлы, удаление возможно только после отдельного parity checklist.
 - Не хардкодить user-specific paths, transcript content, network addresses, domains или модели под один пример; не добавлять silent fallback для missing dependency/model или invalid state.

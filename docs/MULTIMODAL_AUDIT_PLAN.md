@@ -4,20 +4,13 @@ Permanent plan for the staged improvement of LocalGPT chat, RAG, memory, ASR, Vi
 
 ## Execution protocol
 
-Stages are executed sequentially on the Mac. For this program, GPT-6 Luna with xHigh effort handles reasoning, evidence synthesis and test-result analysis; GPT-6.1 Sol with Medium effort makes architecture and technical-design decisions. The implementation model is selected for each stage according to the user's task-specific instructions. Astra review is never automatic: use Astra only after the user's explicit approval; GPT-6.1 Sol High may substitute for Astra only with that approval. Each stage has its own scope, validation and checkpoint; do not start parallel local model inference or download models without approval.
+Stages are executed sequentially on the Mac. Codex model routing and review approval rules are defined canonically in the repository-root [`AGENTS.md`](../AGENTS.md); this plan does not duplicate them. Each stage has its own scope, validation and checkpoint; do not start parallel local model inference or download models without approval.
 
 Work is sequential on the Mac: no parallel local model inference, unnecessary model downloads or unbounded resident runtimes. The active repository is `/Users/oleksandr/Documents/Custom files/1. Github Repositories/LocalGPT`.
 
-## Model allocation
+## Codex agent instructions
 
-| Responsibility | Model and effort |
-| --- | --- |
-| Reasoning, synthesis of evidence, interpretation of test results and work sequencing | GPT-6 Luna, xHigh |
-| Architecture decisions and technical design | GPT-6.1 Sol, Medium |
-| Implementation | Set per stage from the user's explicit task instruction; do not infer it from the analysis model |
-| Independent Astra review | Only with explicit user approval; GPT-6.1 Sol High may substitute only with approval |
-
-These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effort does not justify running multiple local inference jobs at once.
+See the repository-root [`AGENTS.md`](../AGENTS.md) for the canonical model-routing and review policy. These Codex work roles are separate from LocalGPT runtime-model settings; reasoning effort does not justify running multiple local inference jobs at once.
 
 ## Remaining work — approved order
 

@@ -60,6 +60,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | --- | --- |
 | Chat routing, Ollama lifecycle, SSE и RAG integration | `venv/bin/python -m unittest tests.test_model_router -v` |
 | Chat reasoning runtime/budgets и explicit Chat → RAG | `venv/bin/python -m unittest tests.test_model_router tests.test_chat_rag -v` |
+| Bounded text/direct Vision/RAG-vision continuation, overlap, cap и cross-pass privacy | `venv/bin/python -m unittest tests.test_chat_continuation -v` |
 | Prompt/RAG security, hybrid retrieval и grounding diagnostics | `venv/bin/python -m unittest tests.test_prompt_rag_security_audit tests.test_chat_rag tests.test_vision_rag -v` |
 | Cross-domain RAG retrieval baseline, metadata-only | `venv/bin/python -m unittest tests.test_rag_retrieval_eval -v` |
 | Retrieval-to-answer contour, follow-up/profile policy и summary snapshot quality | `venv/bin/python -m unittest tests.test_chat_rag_answer_quality tests.test_chat_memory_boundary -v` |
@@ -129,7 +130,8 @@ Smoke считается пройденным, если `/health` возвращ
 - missing/partial/installed/active states не смешиваются;
 - `stream=true` создаёт раздельные SSE `reasoning`/`delta`, а replay/reconnect не дублирует ни reasoning, ни final text;
 - non-streaming сохраняет тот же assistant lifecycle;
-- native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history; hybrid Qwen OFF сохраняет structural parser, использует output + thinking compatibility cap, скрывает reasoning, а любое `done_reason=length` завершается ошибкой и очищает partial assistant row;
+- native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history; hybrid Qwen OFF сохраняет structural parser, использует output + thinking compatibility cap и скрывает reasoning; только явный length с final content запускает до четырёх продолжений с тем же per-call budget; cap/empty/reasoning-only exhaustion завершается ошибкой и очищает partial assistant row;
+- deterministic continuation fixtures проверяют task stream/non-stream, direct Vision с теми же images, explicit RAG-vision без нового retrieval, exact overlap, единственный terminal SSE и privacy literal через границы passes;
 - protected L1/L2/private-session literal блокируется до non-streaming выдачи/сохранения; streaming/vision guard не выпускает полное значение даже при разбиении между chunks; user attack marker не считается protected автоматически;
 - `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
 - RAG context попадает в prompt только активного профиля;

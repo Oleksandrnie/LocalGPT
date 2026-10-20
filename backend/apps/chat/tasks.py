@@ -20,7 +20,7 @@ from backend.apps.chat.service import (
     maybe_compress_session_history,
     sanitize_reply,
 )
-from backend.apps.chat.services import ollama_runtime, vision_context, vision_runtime
+from backend.apps.chat.services import continuation, ollama_runtime, vision_context, vision_runtime
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -302,13 +302,15 @@ def _chat_worker(
                     )
                     analysis_messages = vision_context.isolated_analysis_messages(completion_messages)
                     vision_runtime_kwargs = _vision_runtime_kwargs(service, vision_model, response_model, settings)
-                    vision_analysis_result = vision_runtime.chat_completion_result(
-                        vision_model,
+                    vision_analysis_result = continuation.complete(
                         analysis_messages,
-                        image_paths,
-                        max_total_bytes=max_total_bytes,
-                        **vision_runtime_kwargs,
+                        lambda pass_messages: vision_runtime.chat_completion_result(
+                            vision_model, pass_messages, image_paths,
+                            max_total_bytes=max_total_bytes, **vision_runtime_kwargs,
+                        ),
                     )
+                    enforce_protected_output(analysis_messages, vision_analysis_result.content)
+                    enforce_protected_output(analysis_messages, vision_analysis_result.reasoning)
                     service.require_final_answer(vision_analysis_result)
                     derived_vision_context = sanitize_reply(vision_analysis_result.content)
                     completion_model = response_model
@@ -342,15 +344,16 @@ def _chat_worker(
                 )
                 event_source = guard_stream_events(
                     completion_messages,
-                    vision_runtime.chat_completion_stream_events(
-                        completion_model,
+                    continuation.stream(
                         completion_messages,
-                        image_paths,
-                        max_total_bytes=int(
-                            settings.get("chat_image_max_total_bytes")
-                            or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                        lambda pass_messages: vision_runtime.chat_completion_stream_events(
+                            completion_model, pass_messages, image_paths,
+                            max_total_bytes=int(
+                                settings.get("chat_image_max_total_bytes")
+                                or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                            ),
+                            **direct_vision_kwargs,
                         ),
-                        **direct_vision_kwargs,
                     ),
                 )
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
@@ -395,15 +398,16 @@ def _chat_worker(
                     if runtime_mode in {"direct", "direct_vision"}
                     else service._runtime_kwargs(completion_model, settings, vision=True)
                 )
-                completion_result = vision_runtime.chat_completion_result(
-                    completion_model,
+                completion_result = continuation.complete(
                     completion_messages,
-                    image_paths,
-                    max_total_bytes=int(
-                        settings.get("chat_image_max_total_bytes")
-                        or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                    lambda pass_messages: vision_runtime.chat_completion_result(
+                        completion_model, pass_messages, image_paths,
+                        max_total_bytes=int(
+                            settings.get("chat_image_max_total_bytes")
+                            or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                        ),
+                        **direct_vision_kwargs,
                     ),
-                    **direct_vision_kwargs,
                 )
                 reply = sanitize_reply(completion_result.content)
                 reasoning = completion_result.reasoning

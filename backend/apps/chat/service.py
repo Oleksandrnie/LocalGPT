@@ -14,7 +14,7 @@ from app import config, db
 from app.roles import system_prompt_for
 from app.security import redact_log_event
 from backend.apps.chat.prompt_policy import GLOBAL_GUARD_POLICY, data_envelope, profile_persona_envelope
-from backend.apps.chat.services import ollama_runtime
+from backend.apps.chat.services import continuation, ollama_runtime
 
 LOGGER = logging.getLogger(__name__)
 
@@ -838,10 +838,11 @@ class ChatService:
         settings: dict,
     ) -> ollama_runtime.ChatCompletionResult:
         try:
-            result = ollama_runtime.chat_completion_result(
-                model,
-                messages=messages,
-                **self._runtime_kwargs(model, settings),
+            result = continuation.complete(
+                messages,
+                lambda pass_messages: ollama_runtime.chat_completion_result(
+                    model, messages=pass_messages, **self._runtime_kwargs(model, settings)
+                ),
             )
         except HTTPException:
             raise
@@ -869,10 +870,11 @@ class ChatService:
             yield from self.apply_stream_completion_policy(
                 guard_stream_events(
                     messages,
-                    ollama_runtime.chat_completion_stream_events(
-                        model,
-                        messages=messages,
-                        **self._runtime_kwargs(model, settings),
+                    continuation.stream(
+                        messages,
+                        lambda pass_messages: ollama_runtime.chat_completion_stream_events(
+                            model, messages=pass_messages, **self._runtime_kwargs(model, settings)
+                        ),
                     ),
                 ),
                 think=think,
