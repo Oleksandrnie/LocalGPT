@@ -32,7 +32,7 @@ The mini-router is optional for manual model selection; retain it for Auto/Smart
 
 Updated `AGENTS.md` and this permanent plan with the user-selected analysis/architecture roles, Astra approval boundary and the approved order of remaining work. Marked GigaAM, agent modes and image generation deferred. C1/C2 checkpoint status now matches Git history.
 
-Validation: `git diff --check` passed; `node tests/markdown_rendering.test.mjs` passed 4/4. No code or live-model tests were applicable or run. Checkpoint: pending.
+Validation: `git diff --check` passed; `node tests/markdown_rendering.test.mjs` passed 4/4. No code or live-model tests were applicable or run. Checkpoint: `3516bfb docs(plan): update multimodal audit routing`.
 
 ## Current stage
 
