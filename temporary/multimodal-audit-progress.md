@@ -18,7 +18,7 @@ RAG diagnostics use a bounded structured evidence manifest. Summary identity inc
 
 - `qwen2.5:3b-instruct`: live C2 smoke passed; memory and diagnostics confirmed.
 - `qwen3:0.6b`: memory passed (`23` recalled); language miss `Рома` vs `Рим`; keep as optional router, not agent planner.
-- `qwen2.5:7b-instruct`: baseline passed; full memory capture incomplete.
+- `qwen2.5:7b-instruct`: completed-turn memory probe passed; controlled clean RAG run recorded below.
 - `qwen2.5-coder:7b`: memory passed (`52` recalled).
 - `qwen3:4b`: seed completed; durable logs show follow-up completion, so earlier interactive timeout was capture-related, not proven backend failure.
 - `mistral-nemo:12b`: memory passed (`74` recalled).
@@ -34,7 +34,7 @@ Updated `AGENTS.md` and this permanent plan with the user-selected analysis/arch
 
 Validation: `git diff --check` passed; `node tests/markdown_rendering.test.mjs` passed 4/4. No code or live-model tests were applicable or run. Checkpoint: `3516bfb docs(plan): update multimodal audit routing`.
 
-## Current stage
+## Completed live stage — ASR3
 
 ### ASR3 — live ASR input-quality smoke (completed; accuracy score pending reference)
 
@@ -51,7 +51,21 @@ Additional sequential live checks, all on the same `large-v3-turbo` / `whisper_c
 
 Each task returned `stored=false` and `transcript_id=null`, and the task slot returned to idle between cases. No model download occurred. Temporary derived test files were removed. There is no reference transcript for the long MP3, so no WER/CER or objective accuracy claim is available. Memory free percentage was 51% before and 53% after; macOS reported no thermal/performance warning. Numeric temperature and peak per-process memory are still unmeasured and remain in the resource stage.
 
-ASR3 functional smoke is complete for the available samples. Next: begin Chat/RAG model comparison, inspect installed models and already-approved live test coverage, then run sequential comparisons without downloads or cross-profile data changes.
+ASR3 functional smoke is complete for the available samples. The next Chat/RAG audit is documented below.
+
+### Chat/RAG live model comparison — completed for installed target models
+
+Using profile `Clients RAG test` (id 6), I ran one identical CMS/RAG question in fresh, temporary sessions, one model at a time: `qwen2.5:3b-instruct`, clean-session `qwen2.5:7b-instruct`, `qwen3:4b`, `qwen2.5-coder:7b`, and `mistral-nemo:12b`. Each session used RAG and received the same five `rag_third_party.md` chunk IDs (`11506`, `12540`, `10813`, `11684`, `12155`). All five answered with WordPress and Битрикс only; the lexical trace returned `evidence_traceable` (3–5 term overlaps), not a completeness or entailment score. The 7B model separately recalled the exact synthetic memory label `RZ-7314-Q` from its completed prior turn.
+
+Direct `/rag/search` on the exact CMS query marked retrieval `supported`, even though evidence spans included generic/unrelated text; a closely related phrasing marked `conflict` and surfaced other CMS mentions. This shows diagnostic status depends on query phrasing and that lexical traceability does not measure complete coverage. Do not hard-code CMS names: this is evidence for generic retrieval/facet/relevance and corpus-conflict investigation. One earlier 7B answer from the memory-test session differed and is excluded from the controlled comparison because prior turns confounded the test.
+
+The 0.6B Qwen model remains the optional router, not a target answer model; its prior memory/router check is recorded above. Vision and embedding models were excluded from target Chat/RAG. Qwen3 8B was not installed. No downloads or profile-setting changes occurred; all temporary test sessions were deleted.
+
+Resource signal: qwen3 4B reached about 7.5 GB resident / 18% system-wide memory free; Mistral Nemo 12B reached about 12 GB / 6% free. Models were unloaded between tests and free-memory percentage recovered to 64–80%. macOS reported no thermal warning, but exact temperature and peak per-process memory remain pending in the resource stage. Inference was sequential only.
+
+## Current stage — Vision/OCR quality
+
+Inspect installed Vision runtimes and OCR mode, then test existing screenshots, small text and tables sequentially. Keep Vision and fallback chat provenance distinct, do not change profile settings, and do not download models.
 
 ### Previous stage — ASR2 FIFO task lifecycle completed
 
@@ -91,11 +105,10 @@ Validation: `tests.test_setup_dependencies tests.test_whisper_cpp_backend` — 2
 
 ## Next action
 
-1. Begin Chat/RAG model comparison with installed models; distinguish retrieval/context delivery from model answer behavior and follow the approved model-routing policy.
-2. Continue Vision/OCR quality checks and record exact model/runtime/OCR modes.
-3. Measure memory/residency and thermals where observable; verify sequential load/unload.
-4. Keep the optional user-controlled real model-bundle transfer smoke separate. Keep GigaAM, agent modes and image generation deferred unless the user reopens those decisions.
+1. Continue Vision/OCR quality checks and record exact model/runtime/OCR modes.
+2. Measure memory/residency and thermals where observable; verify sequential load/unload.
+3. Keep the optional user-controlled real model-bundle transfer smoke separate. Keep GigaAM, agent modes and image generation deferred unless the user reopens those decisions.
 
 ## Known limitations
 
-Lexical evidence trace is a review signal, not semantic proof. ASR accuracy remains unscored without reference text. Chat/RAG live comparison, Vision/OCR quality, image generation and detailed thermal/peak-memory measurements remain pending.
+Lexical evidence trace is a review signal, not semantic proof or a completeness metric. ASR accuracy remains unscored without reference text. Vision/OCR quality, image generation and detailed thermal/peak-memory measurements remain pending.

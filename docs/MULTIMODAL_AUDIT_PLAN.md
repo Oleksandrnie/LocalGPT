@@ -21,10 +21,9 @@ These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effor
 
 ## Remaining work — approved order
 
-1. **Chat/RAG model comparison (next):** finish coverage of installed models, especially incomplete memory capture, and distinguish retrieval/context delivery from a model ignoring supplied evidence. Do not download models.
-2. **Vision/OCR quality:** test screenshots, tables and small text; record actual model provenance and OCR mode.
-3. **Mac resource control:** measure memory/residency and temperature where observable; verify unload and sequential execution.
-4. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
+1. **Vision/OCR quality (next):** test screenshots, tables and small text; record actual model provenance and OCR mode.
+2. **Mac resource control:** measure memory/residency and temperature where observable; verify unload and sequential execution.
+3. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
 
@@ -86,6 +85,20 @@ Ran sequentially through the user's already-running LocalGPT backend at `127.0.0
 - Every task result reported `stored=false` and `transcript_id=null`; the ASR task slot returned to idle after each run. No `whisper-cli` process remained after the sequence.
 
 The long recording has no supplied reference transcript, so no WER/CER or claim of transcription accuracy is available. System-wide memory free percentage was 51% before and 53% after; macOS reported no thermal/performance warning, but no numeric temperature or per-process peak-memory measurement was captured. Those measurements remain in the dedicated resource stage.
+
+## Chat/RAG live model comparison — completed for installed target models
+
+Ran the same Russian CMS question sequentially in fresh, disposable sessions in profile `Clients RAG test` (profile 6), with profile RAG enabled and each target model selected explicitly. The installed target chat models tested were `qwen2.5:3b-instruct`, `qwen2.5:7b-instruct`, `qwen3:4b`, `qwen2.5-coder:7b` and `mistral-nemo:12b`. Qwen 2.5 7B also passed a separate completed-turn memory probe by recalling the exact synthetic label `RZ-7314-Q`. The 0.6B model remains the optional Smart Router and was not treated as a target answer model; its prior memory/router result remains listed above. `qwen3:8b` and vision/embedding models were not installed target chat models, and no downloads were made.
+
+All five clean RAG runs received the same five chunks from `rag_third_party.md` and returned a short list containing WordPress and Битрикс. This was consistent across model families, but not complete relative to all CMS mentions in the corpus. A separate direct search with the exact chat query returned `supported` while some selected evidence spans were generic or unrelated to CMS; a semantically similar phrasing produced a `conflict` status and exposed additional CMS mentions. The chat lexical trace marked the two-item answers `evidence_traceable`, which confirms word overlap only—not completeness, entailment or resolution of conflicting source passages. An earlier Qwen 2.5 7B answer from a session that also contained the memory probe differed; it was excluded from the controlled comparison because prior turns were a confounder.
+
+Interpretation: for this deliberately noisy RAG corpus, the recurring short answer is not a model-specific failure. Retrieval/ranking, facet coverage and source ambiguity remain plausible upstream contributors; the current lexical trace cannot prove which factor caused each omission. Do not add CMS-specific rules. Test-fixture sessions were deleted after use. No repository code or profile settings were changed.
+
+Resource observation for the dedicated Mac stage: during sequential testing, `qwen3:4b` reached a reported resident size of about 7.5 GB and system-wide free-memory percentage fell to 18%; `mistral-nemo:12b` reported about 12 GB and free memory fell to 6%. Each model was unloaded after its test; free-memory percentage recovered to about 64–80%. macOS reported no thermal warning, but numeric temperature and peak per-process memory remain unmeasured. The 12B test was allowed to return its answer, then explicitly unloaded; no concurrent inference ran.
+
+## Current stage — Vision/OCR quality
+
+Next inspect installed Vision runtimes and current OCR mode, then run sequential screenshot/small-text/table checks using existing local images and models only. Keep Vision provenance separate from the chat fallback model, preserve profile isolation, and record when OCR is Off versus assisting the Vision model. Do not change settings or download models as part of the audit.
 
 ## Source records
 
