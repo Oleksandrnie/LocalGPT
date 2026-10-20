@@ -21,7 +21,7 @@ These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effor
 
 ## Remaining work — approved order
 
-1. **Remaining Vision/OCR coverage:** spot checks on supplied screenshots and small text are complete. Table handling and Russian OCR assistance remain open pending a suitable table fixture and Russian Tesseract traineddata; do not download either without approval.
+1. **Remaining Vision/OCR coverage:** supplied screenshots/small text and a synthetic clean-table baseline are complete. Real-world/complex table handling and Russian OCR assistance remain open pending a representative user table image and Russian Tesseract traineddata; do not download language data without approval.
 2. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
@@ -99,11 +99,13 @@ Resource observation for the dedicated Mac stage: during sequential testing, `qw
 
 On 2026-10-20, used two existing image attachments from the Personal profile's prior “выпиши текст” chat in fresh temporary sessions; did not change profile settings or download models. With OCR assist Off and image-RAG not requested, the 7B Vision run (`qwen2.5vl:7b`) returned the screenshot's visible Russian response text nearly verbatim. The initial route plan named `vision_context` with text fallback `qwen2.5:3b-instruct`, but the task result's actual completion model was `qwen2.5vl:7b`; code inspection confirms non-RAG image prompts switch to direct Vision completion. Use the task result's `model` as actual provenance, not the initial route-plan label.
 
-A separate direct `qwen2.5vl:3b` run transcribed the small mixed Russian/English Vision-settings screenshot exactly, including the selected `Off` and the second `Off` option. Both runs had `image_rag_included=false`; the 7B run's RAG diagnostics were `disabled`. These are positive spot checks, not a broad accuracy benchmark: only two screenshots were available, no table fixture was available, and there was no independent OCR ground-truth file for automated character-level scoring.
+A separate direct `qwen2.5vl:3b` run transcribed the small mixed Russian/English Vision-settings screenshot exactly, including the selected `Off` and the second `Off` option. Both screenshot runs had `image_rag_included=false`; the 7B run's RAG diagnostics were `disabled`.
+
+To add a controlled table baseline without using private/user data, generated a temporary synthetic 4-column × 3-row image with unique mixed Cyrillic/Latin values. Both direct `qwen2.5vl:3b` and `qwen2.5vl:7b` returned all 12 data cells exactly in the requested JSON shape; `image_rag_included=false` and OCR evidence remained empty. The generated image and temporary test sessions were removed. This validates a clean, high-contrast table only—not dense, skewed, low-resolution, merged-cell or real-world documents. There was no independent expected-transcript file for automated character-level scoring on the screenshots.
 
 Tesseract 5.5.3 is installed, but its available traineddata is only `eng`, `osd`, and `snum` (no Russian). A local `eng`-only pass on the mixed-language small-text screenshot returned no text. Therefore Russian Tesseract OCR and OCR-assisted modes were not validated; do not install language data without approval. No Vision model remained loaded after each test. The 7B run reached about 7.2 GB resident and free memory recovered to about 81% afterward; the 3B run reached about 4.6 GB and recovered to about 77%. macOS reported no thermal/performance warning; numeric temperature and peak-process RSS remain unmeasured.
 
-The Vision/OCR spot-check stage is complete for the supplied screenshots, with table handling and Russian OCR assistance explicitly unresolved. Keep settings unchanged; do not download models or language data without approval.
+The Vision/OCR spot-check stage is complete for the supplied screenshots, small text and synthetic clean-table baseline. Real-world/complex table handling and Russian OCR assistance remain open. Keep settings unchanged; do not download models or language data without approval.
 
 ## Mac resource control — bounded live lifecycle smoke completed
 
@@ -111,7 +113,7 @@ On 2026-10-20, with no Ollama model resident and system-wide free memory at abou
 
 `pmset -g therm` reported no thermal or performance warning before, during or after the checks. macOS did not expose a numeric temperature, and `ollama ps`/`top` snapshots are not peak per-process RSS measurements. Swap use was about 4.02 GB at baseline and 3.98 GB after the tests; this is a system snapshot, not proof of model-caused swap behavior. Earlier 4B/12B comparison remains relevant: Mistral Nemo 12B reached about 12 GB resident and free memory fell to 6%, then recovered after unload. These observations support sequential loading and explicit unload for the tested cases, but do not establish a universal memory ceiling or thermally safe sustained workload.
 
-Resource lifecycle smoke is complete for observable measurements. Detailed temperature and peak-process-RSS instrumentation remain unavailable in this environment; no repository/model settings changed and no model was downloaded.
+The Vision 7B table run reached about 7.3 GB resident while system-wide free memory fell to 17%; after completion and explicit unload, free memory recovered to 72% and `ollama ps` was empty. Resource lifecycle smoke is complete for observable measurements. Detailed temperature and peak-process-RSS instrumentation remain unavailable in this environment; no repository/model settings changed and no model was downloaded.
 
 ## Source records
 
