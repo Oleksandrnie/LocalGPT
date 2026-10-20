@@ -896,8 +896,8 @@
                         <label class="field">
                             <span class="field__label">Vision output tokens</span>
                             <input id="visionOutputTokensInput" class="field__control" type="number"
-                                min="0" max="8192" step="128" />
-                            <small>0 — наследовать обычный лимит ответа. Для больших таблиц можно задать 1024; обычные текстовые ответы это не меняет.</small>
+                                min="128" max="8192" step="128" />
+                            <small>По умолчанию и рекомендуется — 1024. Ниже ставить не рекомендуется: текст или таблица могут обрезаться. Для больших таблиц может понадобиться больше; обычные текстовые ответы это не меняет.</small>
                         </label>
                         <label class="field">
                             <span class="field__label">OCR assist</span>

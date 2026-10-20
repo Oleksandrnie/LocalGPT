@@ -47,7 +47,7 @@ test("settings expose a dedicated Vision tab with catalog, controls, and cache a
   assert.match(html, /data-settings-tab="vision">Vision</);
   assert.match(html, /data-settings-tab-panel="vision"/);
   assert.match(html, /id="visionNumCtxInput"[^>]+min="4096"[^>]+max="131072"/);
-  assert.match(html, /id="visionOutputTokensInput"[^>]+min="0"[^>]+max="8192"/);
+  assert.match(html, /id="visionOutputTokensInput"[^>]+min="128"[^>]+max="8192"/);
   [
     "visionModelLibrary",
     "chatImagesEnabledToggle",
@@ -75,4 +75,13 @@ test("settings expose a dedicated Vision tab with catalog, controls, and cache a
   assert.match(javascript, /saveActiveProfilePreferences\(\{ settings \}\)/);
   assert.match(javascript, /\/chat\/attachments\/cache\?profile_id=/);
   assert.match(javascript, /request\("\/chat\/attachments\/cleanup"/);
+});
+
+test("Vision budget defaults, legacy zero, save and reset use 1024 with a lower-budget warning", () => {
+  assert.match(html, /По умолчанию и рекомендуется — 1024/);
+  assert.match(html, /Ниже ставить не рекомендуется/);
+  assert.match(javascript, /vision_output_tokens: Math\.min\(8192, Math\.max\(128, Number\(settings\.vision_output_tokens\) \|\| 1024\)\)/);
+  assert.match(javascript, /vision_output_tokens: Number\(els\.visionOutputTokensInput\?\.value \|\| 1024\) \|\| 1024/);
+  assert.match(javascript, /vision_output_tokens: 1024,/);
+  assert.doesNotMatch(javascript, /vision_output_tokens: 0,/);
 });

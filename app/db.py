@@ -196,6 +196,11 @@ def _normalize_profile_preferences(value: Any) -> dict[str, Any]:
     normalized = deepcopy(_default_profile_preferences())
     if isinstance(value, dict):
         _merge_dict(normalized, value)
+    # Legacy zero meant inheriting the text budget; resolve it without rewriting
+    # stored preferences so existing profiles get the dedicated Vision default.
+    settings = normalized.get("settings")
+    if isinstance(settings, dict) and settings.get("vision_output_tokens") in (0, "0"):
+        settings["vision_output_tokens"] = config.DEFAULT_RUNTIME_SETTINGS["vision_output_tokens"]
     return normalized
 
 

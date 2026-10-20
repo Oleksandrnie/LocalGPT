@@ -51,15 +51,24 @@ class VisionTaskSettingsTestCase(unittest.TestCase):
         self.assertEqual(text_kwargs["max_tokens"], 512)
         self.assertEqual(settings["output_tokens"], 512)
 
-    def test_zero_vision_output_override_inherits_existing_output_budget(self) -> None:
-        kwargs = _vision_runtime_kwargs(
-            ChatService(),
-            "qwen2.5vl:3b",
-            "qwen2.5vl:3b",
-            {"ollama_think": "off", "output_tokens": 512, "vision_output_tokens": 0},
-        )
+    def test_legacy_zero_and_missing_vision_budget_use_default_not_text_budget(self) -> None:
+        for override in ({}, {"vision_output_tokens": 0}, {"vision_output_tokens": "0"}):
+            for response_model in ("qwen2.5vl:3b", "qwen2.5:3b-instruct"):
+                with self.subTest(override=override, response_model=response_model):
+                    settings = {"ollama_think": "off", "output_tokens": 512, **override}
+                    kwargs = _vision_runtime_kwargs(ChatService(), "qwen2.5vl:3b", response_model, settings)
+                    self.assertEqual(kwargs["max_tokens"], 1024)
+                    self.assertEqual(settings["output_tokens"], 512)
+                    self.assertEqual(ChatService()._runtime_kwargs("qwen2.5:3b-instruct", settings)["max_tokens"], 512)
 
-        self.assertEqual(kwargs["max_tokens"], 512)
+    def test_explicit_lower_or_higher_vision_budget_is_preserved(self) -> None:
+        for value in (128, 512, 8192):
+            with self.subTest(value=value):
+                kwargs = _vision_runtime_kwargs(
+                    ChatService(), "qwen2.5vl:3b", "qwen2.5vl:3b",
+                    {"ollama_think": "off", "output_tokens": 256, "vision_output_tokens": value},
+                )
+                self.assertEqual(kwargs["max_tokens"], value)
 
     def test_separate_vision_model_does_not_inherit_response_thinking_toggle(self) -> None:
         kwargs = _vision_runtime_kwargs(

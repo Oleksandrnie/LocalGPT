@@ -24,7 +24,7 @@
 
 ### Changed
 
-- Vision получил отдельный профильный output-token limit (`0` наследует обычный лимит); provider `done_reason`/`eval_count` сохраняются, а ответ, оборванный лимитом, завершается явной ошибкой вместо ложного `completed`.
+- Vision получил отдельный профильный output-token limit с default/reset 1024 и рекомендацией не снижать его; legacy `0` разрешается в 1024, а явные 128–8192 сохраняются без изменения обычного text budget. Provider `done_reason`/`eval_count` сохраняются, а ответ, оборванный лимитом, завершается явной ошибкой вместо ложного `completed`.
 - Асинхронные ASR tasks используют один активный child-process и process-local FIFO с nonterminal `queued`; отмена queued-задачи очищает input без запуска worker, а active cancellation удерживает слот до подтверждённой смерти child.
 - Model export/import теперь валидирует соответствие каждого payload file своей provider family, покрыт переносом между разными configured roots и сообщает, какие runtime нужно локально подготовить на новом устройстве; Ollama chat/Vision/embedding tags используют общий manifest/blob path.
 - macOS whisper.cpp setup теперь сбрасывает stale CMake cache после перемещения checkout, собирает binary с relocatable `@loader_path`, создаёт относительную ссылку на `whisper-cli` и автоматически чинит старую ссылку.

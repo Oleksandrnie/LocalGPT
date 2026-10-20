@@ -138,11 +138,26 @@ On 2026-10-20, finished the user-approved bounded evaluation and implementation,
 
 Checkpoint: focused Vision output-completeness feature, associated Vision/OCR findings, and ASR reference metrics are included in this stage's checkpoint.
 
+## Active follow-up — Vision output budget default
+
+### Stage — default 1024 and legacy-profile compatibility
+
+- Goal: make 1024 the default Vision output budget, including profiles that still store legacy `0`, and tell users not to lower it for image extraction. Preserve explicit per-profile values and keep text-only chat limits unchanged.
+- Status: completed; awaiting the user's browser acceptance.
+- Scope: `app/config.py`, profile settings normalization, Vision runtime budget resolution, Settings → Vision UI, focused tests, `docs/knowledge/providers.md`, `docs/knowledge/ui.md`, `docs/MULTIMODAL_AUDIT_PLAN.md`, and `docs/CHANGELOG.md`.
+- Baseline: `vision_output_tokens=0` currently inherits ordinary `output_tokens`; the Personal profile was last recorded at `0`, so it may still use 512. On the tested dense 72-cell fixture, Vision 7B ended at 512 with `done_reason=length`; 1024 completed all 72 cells (66 exact). This prevents a known truncation case but does not guarantee exact recognition or compensate for an image missing from the current request.
+- Decision: default and legacy `0` resolve to 1024; explicit allowed values remain available, but the UI recommends not going below 1024. Do not mutate the user's SQLite profile data or initiate a live inference during implementation.
+- Validation: `venv/bin/python -m unittest tests.test_vision_settings tests.test_chat_vision_runtime tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_vision_rag -v` — 56 passed; `node --test tests/chat_attachments_ui.test.mjs` — 7 passed; `node tests/markdown_rendering.test.mjs` — 4 passed; Python compileall, `node --check web_ui/js/app.js`, and `git diff --check` passed. Only pre-existing FastAPI/httpx and `datetime.utcnow` deprecation warnings appeared. No live Ollama inference or SQLite profile edit.
+- Completion criterion: implementation, tests, permanent docs and this progress record agree; focused checks pass; a single scoped checkpoint is created; then stop for the user's browser acceptance.
+- Next exact action: create the focused checkpoint, then ask the user to refresh and run a new test with the image attached in the same message.
+- Changed files: `app/config.py`, `app/db.py`, `app/routes/profiles.py`, `backend/apps/chat/tasks.py`, `web_ui/gui_html.html`, `web_ui/js/app.js`, `tests/test_vision_settings.py`, `tests/test_chat_vision_runtime.py`, `tests/chat_attachments_ui.test.mjs`, `docs/knowledge/providers.md`, `docs/knowledge/ui.md`, `docs/MULTIMODAL_AUDIT_PLAN.md`, `docs/CHANGELOG.md`, and this progress record.
+- Checkpoint: pending; proposed message `fix(vision): default output budget to 1024`.
+
 ## Next action
 
 Only user-dependent acceptance remains:
 
-1. Optional UI acceptance: refresh LocalGPT, open Settings → Vision, set `Vision output tokens` to `1024` for the current profile, then submit a dense table. Personal remains at `0` (inherit) until the user changes it. The generated photo-like test fixture is `/tmp/localgpt-vision-ocr/dense-photo-like.jpg`.
+1. After checkpoint, refresh LocalGPT and confirm Settings → Vision displays 1024. Start a fresh test message, attach the screenshot again, and put the extraction instruction in that same message. The previous image-only turn is not reused automatically by direct Vision.
 2. If useful, test a genuinely photographed table/receipt after redacting personal data. Current “photo-like” fixture is generated and does not prove camera-photo accuracy.
 3. For a domain-specific ASR score on the user's 5:59.8 MP3, create a human reference for a 30–60 second excerpt. A Whisper draft can speed correction, but must be checked against the audio by a person; no second model is ground truth.
 4. Optional actual model-bundle transfer to another device, if one is available.

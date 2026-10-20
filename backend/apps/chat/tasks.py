@@ -50,12 +50,12 @@ def _vision_runtime_kwargs(
     settings: dict[str, Any],
 ) -> dict[str, Any]:
     vision_settings = dict(settings)
+    default_output_tokens = config.DEFAULT_RUNTIME_SETTINGS["vision_output_tokens"]
     try:
-        vision_output_tokens = int(vision_settings.get("vision_output_tokens") or 0)
+        vision_output_tokens = int(vision_settings.get("vision_output_tokens") or default_output_tokens)
     except (TypeError, ValueError):
-        vision_output_tokens = 0
-    if vision_output_tokens > 0:
-        vision_settings["output_tokens"] = vision_output_tokens
+        vision_output_tokens = default_output_tokens
+    vision_settings["output_tokens"] = vision_output_tokens or default_output_tokens
     runtime_kwargs = service._runtime_kwargs(vision_model, vision_settings, vision=True)
     if vision_model != response_model:
         # The profile toggle belongs to the selected response model. Passing it

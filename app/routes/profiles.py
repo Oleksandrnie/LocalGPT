@@ -359,7 +359,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 status_code=422,
                 detail={
                     "code": "invalid_vision_output_tokens",
-                    "message": "Vision output tokens должен быть 0 (наследовать) или целым числом от 128 до 8192.",
+                    "message": "Vision output tokens должен быть целым числом от 128 до 8192; legacy 0 означает 1024.",
                 },
             ) from exc
         if vision_output_tokens != 0 and not 128 <= vision_output_tokens <= 8192:
@@ -367,10 +367,10 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 status_code=422,
                 detail={
                     "code": "invalid_vision_output_tokens",
-                    "message": "Vision output tokens должен быть 0 (наследовать) или целым числом от 128 до 8192.",
+                    "message": "Vision output tokens должен быть целым числом от 128 до 8192; legacy 0 означает 1024.",
                 },
             )
-        cleaned["vision_output_tokens"] = vision_output_tokens
+        cleaned["vision_output_tokens"] = vision_output_tokens or config.DEFAULT_RUNTIME_SETTINGS["vision_output_tokens"]
     if "vision_fallback" in cleaned:
         fallback = str(cleaned["vision_fallback"] or "").strip().lower()
         if fallback not in {"vision_context", "error"}:

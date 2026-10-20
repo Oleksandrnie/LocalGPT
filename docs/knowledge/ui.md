@@ -68,6 +68,7 @@ Settings tab `Vision` не смешан с обычной chat library. Он п�
 - enable image chat и primary model/auto;
 - text-model fallback (`vision_context` или error);
 - Vision context size в токенах (4096–131072, default 8192);
+- Vision output tokens (128–8192, default/reset 1024); UI рекомендует не снижать лимит ниже 1024 из-за риска обрыва текста/таблицы, но сохраняет явно выбранные меньшие значения. Старое `0` отображается и сохраняется как 1024, без наследования обычного text budget; для больших таблиц может понадобиться больше;
 - OCR assist/language;
 - max images, file/total bytes, pixels и side;
 - attachment cache statistics и cleanup.
