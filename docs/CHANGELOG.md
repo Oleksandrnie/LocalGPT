@@ -24,6 +24,7 @@
 
 ### Changed
 
+- Асинхронные ASR tasks используют один активный child-process и process-local FIFO с nonterminal `queued`; отмена queued-задачи очищает input без запуска worker, а active cancellation удерживает слот до подтверждённой смерти child.
 - Model export/import теперь валидирует соответствие каждого payload file своей provider family, покрыт переносом между разными configured roots и сообщает, какие runtime нужно локально подготовить на новом устройстве; Ollama chat/Vision/embedding tags используют общий manifest/blob path.
 - macOS whisper.cpp setup теперь сбрасывает stale CMake cache после перемещения checkout, собирает binary с relocatable `@loader_path`, создаёт относительную ссылку на `whisper-cli` и автоматически чинит старую ссылку.
 - RAG completion теперь сообщает source/chunk answer trace по structured manifest фактически переданных evidence spans отдельно от retrieval `not_found`; служебные rules/filename/query и omitted chunks исключены из совпадений и IDs. Cross-domain regressions доказывают передачу evidence в фактический completion prompt, follow-up continuity и profile instruction presence без corpus-specific правил.

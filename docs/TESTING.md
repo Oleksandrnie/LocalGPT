@@ -71,6 +71,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Chat image storage, lifecycle, vision runtime/settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
+| ASR task FIFO, startup failures и cancellation lifecycle | `venv/bin/python -m unittest tests.test_asr_tasks -v` |
 | TTS routes | `venv/bin/python -m unittest tests.test_tts_routes -v` |
 | Piper provider | `venv/bin/python -m unittest tests.test_piper_provider -v` |
 | WAV post-processing | `venv/bin/python -m unittest tests.test_audio_postprocess_service -v` |
@@ -191,6 +192,7 @@ Model-transfer tests используют только temporary synthetic files
 
 ### ASR
 
+- deterministic `test_asr_tasks` подменяет process/monitor без реального inference: один активный child, FIFO `queued`, queued cancel/input cleanup, удержание cancelling slot до смерти, идемпотентные monitor/poll, error/resultless exit, constructor/start/monitor failures и bulk-cancel dispatch barrier;
 - быстрый voice-to-input и ASR Studio остаются разными UX flows;
 - chat-диктовка использует language/prompt preset активного профиля; запись короче 700 мс не отправляется в ASR;
 - `whisper.cpp` использует Silero VAD, PCM signal gate и short credit-artifact filter, чтобы тишина не превращалась в вымышленную транскрипцию; no-speech не создаёт transcript record и возвращает понятное `empty_transcription`;

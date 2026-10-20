@@ -30,6 +30,18 @@ The mini-router is optional for manual model selection; retain it for Auto/Smart
 
 ## Current stage
 
+### ASR2 — FIFO task lifecycle completed
+
+Scope: `backend/apps/asr/tasks.py`, deterministic `tests/test_asr_tasks.py` and directly affected backend/provider/testing docs. One active ASR task child, nonterminal FIFO `queued`, queued cancellation/input cleanup, active cancellation retaining its slot until confirmed death, idempotent terminal dispatch, startup/monitor failure cleanup and bulk-cancel barrier. Routes and provider quality/VAD/timeouts/progress/durable recovery/live audio are unchanged.
+
+Status: implemented and documented in the actual checkout after write approval. Async task requests use one child-process slot and FIFO `queued` admission; queued cancellation cleans up without starting a worker; active cancellation retains the slot until the child is confirmed dead; terminal reconciliation is idempotent; start/monitor failures and bulk shutdown do not strand or accidentally start queued work. Repository `AGENTS.md` takes precedence over the generic progress skill: this progress file accompanies the focused checkpoint; do not create or commit a second progress file. This is a process-local queue, not durable recovery or a global scheduler.
+
+Validation: focused ASR lifecycle + whisper.cpp tests passed, 18/18; `git diff --check` passed. The expanded `test_pipeline_memory` run was attempted as a neighbor check (91 tests total including the focused modules) but did not pass: 2 failures and 8 errors. Several are environment restrictions (sandbox denied Ollama localhost calls and log writes); one unrelated `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers` assertion also failed. No changed code in that pipeline was part of this stage. The nine deterministic FIFO tests use fake child processes; no model or live transcription was loaded. Residual risks: direct `/transcribe` and other providers bypass this queue; an unkillable child intentionally retains the slot; failed monitor startup with an unkillable child requires status/cancel polling for reconciliation. No durable recovery or descendant process-group guarantees are added.
+
+Checkpoint: this completed ASR2 stage is covered by the focused local commit accompanying this progress record. After that checkpoint, stop until the user starts the next stage.
+
+### Previous stage — MT1
+
 `MT1 cross-device model transfer audit` — completed and committed. Verified import/export portability for Ollama chat/vision/embedding models, faster-whisper, whisper.cpp model assets and Piper voices. Bundles contain only provider-relative model data, import into the destination device's configured roots, reject unsafe/incomplete content and never carry source-machine absolute paths, accounts, drive letters or platform-specific executables.
 
 Goal: prove that models can be moved between LocalGPT installations without binding the bundle to the original checkout or device. In scope: model-transfer inventory/export/import services, manifest/report semantics, focused backend/UI tests and affected permanent documentation. Out of scope: downloading models, transferring application/runtime binaries or promising that a model runtime is compatible across operating systems/architectures.
@@ -56,8 +68,9 @@ Validation: `tests.test_setup_dependencies tests.test_whisper_cpp_backend` — 2
 
 ## Next action
 
-1. Optionally perform a user-controlled real bundle smoke between two installations/devices; automated relocation coverage is already complete.
-2. Resume the planned ASR input-quality stage; keep GigaAM deferred.
+1. After the user resumes, start ASR3 input-quality checks using the supplied local MP3, verify installed ASR model readiness, then test sequentially without downloads. Add representative silence/no-speech, short, and abrupt-ending samples only if already available.
+2. Compare transcription text, empty-input handling, false phrases, and final segments; keep GigaAM deferred unless the user reopens that decision.
+3. The optional user-controlled real model-bundle transfer smoke remains separate.
 
 ## Known limitations
 

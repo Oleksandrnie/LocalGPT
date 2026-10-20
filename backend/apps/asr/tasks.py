@@ -22,6 +22,8 @@ _PROCESS_CTX = mp.get_context("spawn")
 _LOCK = threading.Lock()
 _TASKS: dict[str, dict[str, Any]] = {}
 _FINAL_STATES = {"completed", "error", "cancelled"}
+_QUEUE_PAUSE_COUNT = 0
+_DISPATCHING = False
 
 
 def _utc_now() -> str:
@@ -196,15 +198,25 @@ def _cleanup_task_files(task: dict[str, Any]) -> None:
 def _finalize_task_locked(task: dict[str, Any]) -> None:
     if task.get("state") in _FINAL_STATES:
         return
+    process = task.get("_process")
+    if process is not None and process.is_alive():
+        return
 
     result = _read_json(task.get("result_path"))
     error = _read_json(task.get("error_path"))
-    cancel_requested = bool(task.get("cancel_requested")) or task.get("state") == "cancelling"
+    cancel_requested = bool(task.get("cancel_requested")) or (
+        task.get("state") == "cancelling" and not task.get("_startup_error")
+    )
 
     if cancel_requested:
         task["state"] = "cancelled"
         task["message"] = "Transcription cancelled."
         task["error_code"] = "task_cancelled"
+        task["result"] = None
+    elif task.get("_startup_error"):
+        task["state"] = "error"
+        task["message"] = "Unable to start transcription worker."
+        task["error_code"] = "transcription_failed"
         task["result"] = None
     elif result:
         task["state"] = "completed"
@@ -227,11 +239,14 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
     task.pop("cancel_requested", None)
     task.pop("_process", None)
     task.pop("_monitor", None)
+    task.pop("_worker_args", None)
+    task.pop("_startup_error", None)
     _cleanup_task_files(task)
+    _start_next_locked()
 
 
 def _refresh_task_locked(task: dict[str, Any]) -> None:
-    if task.get("state") in _FINAL_STATES:
+    if task.get("state") in _FINAL_STATES or task.get("state") == "queued":
         return
     process = task.get("_process")
     if process is not None and process.is_alive():
@@ -256,6 +271,82 @@ def _monitor_task(task_id: str) -> None:
         _refresh_task_locked(task)
 
 
+def _stop_process(process: Any, pid: int | None) -> None:
+    if not process.is_alive():
+        return
+    for method, sig, timeout in (("terminate", signal.SIGTERM, 1.5), ("kill", signal.SIGKILL, 1.0)):
+        try:
+            getattr(process, method)()
+        except Exception:
+            if pid:
+                try:
+                    os.kill(int(pid), sig)
+                except OSError:
+                    pass
+        try:
+            process.join(timeout=timeout)
+        except Exception:
+            # A failed join is not evidence that the child has exited.
+            pass
+        if not process.is_alive():
+            return
+
+
+def _refresh_finished_tasks_locked() -> None:
+    for task in list(_TASKS.values()):
+        _refresh_task_locked(task)
+
+
+def _start_next_locked() -> None:
+    global _DISPATCHING
+    if _QUEUE_PAUSE_COUNT or _DISPATCHING:
+        return
+    _DISPATCHING = True
+    try:
+        while True:
+            if any(task.get("state") in {"running", "cancelling"} for task in _TASKS.values()):
+                return
+            # Registry insertion order is the FIFO admission order, under _LOCK.
+            task = next((task for task in _TASKS.values() if task.get("state") == "queued"), None)
+            if task is None:
+                return
+            task["state"] = "running"
+            task["message"] = "Transcription started."
+            task["updated_at"] = _utc_now()
+            try:
+                process = _PROCESS_CTX.Process(
+                    target=_transcription_worker,
+                    args=task["_worker_args"],
+                    daemon=True,
+                    name=f"localgpt_transcribe_{task['id']}",
+                )
+                task["_process"] = process
+                process.start()
+                task["pid"] = process.pid
+                monitor = threading.Thread(
+                    target=_monitor_task, args=(task["id"],), daemon=True,
+                    name=f"localgpt_transcribe_monitor_{task['id']}",
+                )
+                task["_monitor"] = monitor
+                monitor.start()
+                return
+            except Exception:
+                task["_startup_error"] = True
+                process = task.get("_process")
+                if process is not None and process.is_alive():
+                    task["pid"] = process.pid
+                    _stop_process(process, process.pid)
+                if process is not None and process.is_alive():
+                    # Retain the slot. Poll/cancel can reconcile after confirmed death.
+                    task["state"] = "cancelling"
+                    task["message"] = "Stopping transcription after worker startup failure..."
+                    return
+                _finalize_task_locked(task)
+                # A failed queued launch must not strand the remaining FIFO.
+    finally:
+        _DISPATCHING = False
+
+
 def start_transcription_task(
     *,
     input_path: str,
@@ -275,68 +366,53 @@ def start_transcription_task(
     result_path = _artifact_path(task_id, "result")
     error_path = _artifact_path(task_id, "error")
 
-    process = _PROCESS_CTX.Process(
-        target=_transcription_worker,
-        args=(
-            input_path,
-            model,
-            prompt_preset,
-            preferred_language,
-            source_name,
-            profile_id,
-            session_id,
-            store_result,
-            origin,
-            beam_size,
-            threads,
-            str(result_path),
-            str(error_path),
-        ),
-        daemon=True,
-        name=f"localgpt_transcribe_{task_id}",
+    worker_args = (
+        input_path,
+        model,
+        prompt_preset,
+        preferred_language,
+        source_name,
+        profile_id,
+        session_id,
+        store_result,
+        origin,
+        beam_size,
+        threads,
+        str(result_path),
+        str(error_path),
     )
-
-    try:
-        process.start()
-    except Exception:
-        _safe_unlink(input_path)
-        _safe_unlink(result_path)
-        _safe_unlink(error_path)
-        raise
 
     task = {
         "id": task_id,
-        "state": "running",
+        "state": "queued",
         "created_at": now,
         "updated_at": now,
         "model": model,
         "source_name": source_name,
         "origin": origin or None,
-        "message": "Transcription started.",
+        "message": "Transcription queued.",
         "error_code": None,
-        "pid": process.pid,
+        "pid": None,
         "result": None,
         "input_path": str(input_path),
         "result_path": str(result_path),
         "error_path": str(error_path),
         "cancel_requested": False,
-        "_process": process,
+        "_worker_args": worker_args,
     }
 
-    monitor = threading.Thread(target=_monitor_task, args=(task_id,), daemon=True, name=f"localgpt_transcribe_monitor_{task_id}")
-    task["_monitor"] = monitor
-
     with _LOCK:
+        _refresh_finished_tasks_locked()
         _TASKS[task_id] = task
-
-    monitor.start()
-    return _public_task(task)
+        _start_next_locked()
+        return _public_task(task)
 
 
 def get_transcription_task(task_id: str) -> dict[str, Any] | None:
     if not task_id:
         return None
     with _LOCK:
+        _refresh_finished_tasks_locked()
         task = _TASKS.get(task_id)
         if not task:
             return None
@@ -359,43 +435,42 @@ def cancel_transcription_task(task_id: str) -> dict[str, Any] | None:
             return _public_task(task)
 
         task["cancel_requested"] = True
+        if task.get("state") == "queued":
+            _finalize_task_locked(task)
+            return _public_task(task)
         task["state"] = "cancelling"
         task["message"] = "Stopping transcription..."
         task["updated_at"] = _utc_now()
         process = task.get("_process")
         pid = task.get("pid")
 
-    if process is not None and process.is_alive():
-        try:
-            process.terminate()
-        except Exception:
-            if pid:
-                try:
-                    os.kill(int(pid), signal.SIGTERM)
-                except OSError:
-                    pass
-        process.join(timeout=1.5)
-        if process.is_alive():
-            try:
-                process.kill()
-            except Exception:
-                if pid:
-                    try:
-                        os.kill(int(pid), signal.SIGKILL)
-                    except OSError:
-                        pass
-            process.join(timeout=1.0)
+    if process is not None:
+        _stop_process(process, pid)
 
     return get_transcription_task(task_id)
 
 
 def cancel_all_tasks() -> int:
+    global _QUEUE_PAUSE_COUNT
     with _LOCK:
+        _QUEUE_PAUSE_COUNT += 1
         task_ids = [task_id for task_id, task in _TASKS.items() if task.get("state") not in _FINAL_STATES]
-
-    cancelled = 0
-    for task_id in task_ids:
-        task = cancel_transcription_task(task_id)
-        if task is not None:
-            cancelled += 1
-    return cancelled
+        # Mark every captured task before releasing the lock. Finishing the active
+        # child during shutdown must never launch one of the captured queued jobs.
+        for task_id in task_ids:
+            task = _TASKS[task_id]
+            task["cancel_requested"] = True
+            if task.get("state") == "queued":
+                _finalize_task_locked(task)
+            else:
+                task["state"] = "cancelling"
+                task["message"] = "Stopping transcription..."
+                task["updated_at"] = _utc_now()
+    try:
+        for task_id in task_ids:
+            cancel_transcription_task(task_id)
+        return len(task_ids)
+    finally:
+        with _LOCK:
+            _QUEUE_PAUSE_COUNT -= 1
+            _start_next_locked()

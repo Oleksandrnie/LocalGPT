@@ -106,6 +106,8 @@ Message lifecycle поля включают `status`, `model`, `error`, `task_id
 
 ## Tasks и cancellation
 
+ASR `/transcribe/tasks` допускает один активный child-process на backend process; остальные задачи получают nonterminal `queued` и запускаются FIFO. Отмена queued-задачи удаляет её временный input без запуска worker; активная отмена сохраняет слот до подтверждённой смерти child. Finalization идемпотентна и запускает следующую задачу; массовая отмена сначала очищает очередь и подавляет dispatch до завершения остановки. Ошибки создания/старта worker или monitor завершают задачу ошибкой после остановки child; если child ещё жив, слот остаётся занят, а status/cancel выполняет reconciliation. Это не durable queue и не общий scheduler с Chat/TTS или синхронным `/transcribe`.
+
 Chat, transcription и TTS имеют in-process task registries. Runtime shutdown/reset сначала отменяет активные tasks. Эти registries не являются durable queue: после process loss backend восстанавливает пользовательское состояние через persisted records и reconciliation rules, а не продолжает Python thread. Для image chat reconciliation также переводит незавершённые attachment records в terminal failed/cancelled state; cleanup не удаляет attachment активной задачи.
 
 Model export также использует process-local task registry: start, status/cancel и ready-only download. Import upload получает opaque `upload_id`; confirm endpoint повторно валидирует bundle перед записью. Browser не передаёт destination/source paths. Terminal import/discard удаляет upload archive; `GET`/`DELETE /model-transfer/uploads` соответственно показывают usage и очищают только direct regular `.localgpt-models` files из backend-owned upload directory, одновременно инвалидируя их opaque IDs.

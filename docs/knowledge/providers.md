@@ -60,6 +60,8 @@ OCR assist (`auto`, `on`, `off`) добавляет помеченные per-ima
 
 ## ASR backends
 
+Асинхронные `/transcribe/tasks` выполняются последовательно в process-local FIFO: `queued` не является terminal state и не запускает provider до освобождения единственного child-process slot. Синхронный `/transcribe` не входит в этот scheduler.
+
 Конфигурация `WHISPER_BACKEND` принимает:
 
 - `whisper_cpp` — явный whisper.cpp;
