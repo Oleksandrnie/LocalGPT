@@ -73,6 +73,14 @@ Tesseract 5.5.3 exposes only `eng`, `osd`, and `snum` traineddata; Russian is un
 
 Vision/OCR spot checks on available screenshots are complete; table handling and Russian Tesseract assistance remain open due to missing fixture/language data. No profile settings, repository code, or model assets changed.
 
+## Completed live stage — Mac resource/lifecycle smoke
+
+On 2026-10-20, with no Ollama model resident and system-wide free memory around 79%, ran short sequential generation checks on installed models only. `qwen2.5:3b-instruct` returned `ГОТОВО`; `ollama ps` showed about 2.2 GB resident and free memory fell to 66%. Explicit `keep_alive=0` cleared the resident model and memory recovered to 78%. Next `qwen3:4b` reached about 3.2 GB resident and free memory fell to 59%; 12-token and 64-token probes consumed their budgets in thinking and returned no final answer, so this counts only as a resource/lifecycle check. Explicit unload cleared `ollama ps`; free memory recovered to 75%. No models ran concurrently.
+
+`pmset -g therm` reported no thermal or performance warning. Numeric temperature and peak per-process RSS were not available from the inspected macOS/Ollama interfaces. Swap use was about 4.02 GB at baseline and 3.98 GB afterward; do not attribute this system-level change to model inference. Previous comparison remains recorded: Mistral Nemo 12B reached about 12 GB resident / 6% free memory before unload and recovery. No download or settings change occurred.
+
+The bounded resource/lifecycle smoke is complete; sustained-load temperature and peak-process-memory measurements remain a limitation, not a claim of safe long-running thermals.
+
 ### Previous stage — ASR2 FIFO task lifecycle completed
 
 Scope: `backend/apps/asr/tasks.py`, deterministic `tests/test_asr_tasks.py` and directly affected backend/provider/testing docs. One active ASR task child, nonterminal FIFO `queued`, queued cancellation/input cleanup, active cancellation retaining its slot until confirmed death, idempotent terminal dispatch, startup/monitor failure cleanup and bulk-cancel barrier. Routes and provider quality/VAD/timeouts/progress/durable recovery/live audio are unchanged.
@@ -111,10 +119,9 @@ Validation: `tests.test_setup_dependencies tests.test_whisper_cpp_backend` — 2
 
 ## Next action
 
-1. **Next: measure memory/residency and thermals** where observable; verify sequential model load/unload using existing models and no parallel inference.
-2. Keep table and Russian OCR-assist validation open until a suitable table image and Russian Tesseract traineddata are available; do not download either without approval.
-3. Keep the optional user-controlled real model-bundle transfer smoke separate. Keep GigaAM, agent modes and image generation deferred unless the user reopens those decisions.
+1. Keep table and Russian OCR-assist validation open until a suitable table image and Russian Tesseract traineddata are available; do not download either without approval.
+2. The optional user-controlled real model-bundle transfer smoke remains separate. Keep GigaAM, agent modes and image generation deferred unless the user reopens those decisions.
 
 ## Known limitations
 
-Lexical evidence trace is a review signal, not semantic proof or a completeness metric. ASR accuracy remains unscored without reference text. Table/Russian OCR coverage and detailed thermal/peak-memory measurements remain pending; image generation is deferred.
+Lexical evidence trace is a review signal, not semantic proof or a completeness metric. ASR accuracy remains unscored without reference text. Table/Russian OCR coverage, numeric temperature and peak per-process memory remain pending; image generation is deferred.

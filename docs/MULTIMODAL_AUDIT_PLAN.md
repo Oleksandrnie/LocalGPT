@@ -21,9 +21,8 @@ These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effor
 
 ## Remaining work — approved order
 
-1. **Mac resource control (next):** measure memory/residency and temperature where observable; verify unload and sequential execution.
-2. **Remaining Vision/OCR coverage:** spot checks on supplied screenshots and small text are complete. Table handling and Russian OCR assistance remain open pending a suitable table fixture and Russian Tesseract traineddata; do not download either without approval.
-3. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
+1. **Remaining Vision/OCR coverage:** spot checks on supplied screenshots and small text are complete. Table handling and Russian OCR assistance remain open pending a suitable table fixture and Russian Tesseract traineddata; do not download either without approval.
+2. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
 
@@ -104,7 +103,15 @@ A separate direct `qwen2.5vl:3b` run transcribed the small mixed Russian/English
 
 Tesseract 5.5.3 is installed, but its available traineddata is only `eng`, `osd`, and `snum` (no Russian). A local `eng`-only pass on the mixed-language small-text screenshot returned no text. Therefore Russian Tesseract OCR and OCR-assisted modes were not validated; do not install language data without approval. No Vision model remained loaded after each test. The 7B run reached about 7.2 GB resident and free memory recovered to about 81% afterward; the 3B run reached about 4.6 GB and recovered to about 77%. macOS reported no thermal/performance warning; numeric temperature and peak-process RSS remain unmeasured.
 
-The Vision/OCR spot-check stage is complete for the supplied screenshots, with table handling and Russian OCR assistance explicitly unresolved. Next: dedicated Mac resource/load-unload audit. Keep settings unchanged and models sequential; use available measurements only, and do not download models.
+The Vision/OCR spot-check stage is complete for the supplied screenshots, with table handling and Russian OCR assistance explicitly unresolved. Keep settings unchanged; do not download models or language data without approval.
+
+## Mac resource control — bounded live lifecycle smoke completed
+
+On 2026-10-20, with no Ollama model resident and system-wide free memory at about 79%, ran sequential, short local generation checks on already-installed models. `qwen2.5:3b-instruct` returned `ГОТОВО`; Ollama reported about 2.2 GB resident and free memory fell to 66%. An explicit `keep_alive=0` unload cleared `ollama ps` and memory recovered to 78%. Then `qwen3:4b` reached about 3.2 GB resident and free memory fell to 59%. Its 12-token and 64-token probes used the budget in the thinking field and returned no final response; count this only as a load/residency check, not an answer-quality result. Explicit unload again cleared `ollama ps`; free memory recovered to 75%. No models overlapped.
+
+`pmset -g therm` reported no thermal or performance warning before, during or after the checks. macOS did not expose a numeric temperature, and `ollama ps`/`top` snapshots are not peak per-process RSS measurements. Swap use was about 4.02 GB at baseline and 3.98 GB after the tests; this is a system snapshot, not proof of model-caused swap behavior. Earlier 4B/12B comparison remains relevant: Mistral Nemo 12B reached about 12 GB resident and free memory fell to 6%, then recovered after unload. These observations support sequential loading and explicit unload for the tested cases, but do not establish a universal memory ceiling or thermally safe sustained workload.
+
+Resource lifecycle smoke is complete for observable measurements. Detailed temperature and peak-process-RSS instrumentation remain unavailable in this environment; no repository/model settings changed and no model was downloaded.
 
 ## Source records
 
