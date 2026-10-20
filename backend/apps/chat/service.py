@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -484,6 +485,155 @@ def estimate_messages_chars(messages: list[dict[str, str]]) -> int:
     return sum(len(item.get("role", "")) + len(item.get("content", "")) for item in messages)
 
 
+ANSWER_TRACE_TOKEN_RE = re.compile(r"(?iu)[^\W_](?:[\w:-]*[^\W_])?")
+ANSWER_TRACE_STOP_WORDS = {
+    "about", "answer", "every", "from", "have", "information", "that", "there", "these", "this", "with",
+    "будет", "данные", "информация", "котор", "ответ", "этого", "этот",
+}
+
+
+def assess_rag_answer(
+    answer: str,
+    evidence_manifest: Iterable[dict[str, Any]] | None,
+    rag_diagnostics: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Trace an answer only to evidence content spans actually sent to the model."""
+    included_evidence = [
+        item
+        for item in (evidence_manifest or [])
+        if item and str(item.get("content") or "").strip()
+    ]
+    retrieval_status = str(
+        (rag_diagnostics or {}).get("overall_status")
+        or ("supported" if included_evidence else "disabled")
+    )
+    evidence_text = "\n".join(str(item.get("content") or "") for item in included_evidence)
+    source_ids = list(
+        dict.fromkeys(str(item.get("source_id") or "unknown") for item in included_evidence)
+    )
+    chunk_ids = list(
+        dict.fromkeys(
+            item.get("chunk_id")
+            for item in included_evidence
+            if item.get("chunk_id") is not None
+        )
+    )
+    if retrieval_status == "not_found" or (retrieval_status != "disabled" and not included_evidence):
+        answer_status = "evidence_not_found"
+        matched_terms: list[str] = []
+    elif retrieval_status == "disabled":
+        answer_status = "retrieval_disabled"
+        matched_terms = []
+    else:
+        def trace_terms(text: str) -> set[str]:
+            return {
+                normalized
+                for token in ANSWER_TRACE_TOKEN_RE.findall(text)
+                if (normalized := token.casefold()) not in ANSWER_TRACE_STOP_WORDS
+                and (len(normalized) >= 4 or any(char.isdigit() for char in normalized))
+            }
+
+        answer_terms = trace_terms(str(answer or ""))
+        evidence_terms = trace_terms(evidence_text)
+        matched_terms = sorted(answer_terms.intersection(evidence_terms))[:20]
+        answer_status = "evidence_traceable" if matched_terms else "evidence_found_answer_not_traceable"
+    return {
+        "retrieval_status": retrieval_status,
+        "answer_status": answer_status,
+        "source_ids": source_ids,
+        "chunk_ids": chunk_ids,
+        "matched_term_count": len(matched_terms),
+        "method": "lexical_evidence_span_trace_v2",
+    }
+
+
+def _chat_summary_snapshot(
+    session_id: str,
+    *,
+    mem_turns: int,
+    max_context_chars: int,
+) -> tuple[str, list[dict[str, Any]]]:
+    old_messages = db.get_messages_before_latest(session_id, keep_pairs=mem_turns)
+    identity = [
+        {"id": item.get("id"), "role": item.get("role"), "content": str(item.get("content") or "")}
+        for item in old_messages
+    ]
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "version": 2,
+                "mem_turns": mem_turns,
+                "max_context_chars": max_context_chars,
+                "messages": identity,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    return f"chat:{session_id}:snapshot-v2:{digest}", old_messages
+
+
+def current_session_summary_memory(
+    session_id: str,
+    *,
+    mem_turns: int,
+    max_context_chars: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Keep non-chat memories and only the chat summary for the current completed-turn snapshot."""
+    bounded_limit = max(1, int(limit or 1))
+    current_chat_source, _ = _chat_summary_snapshot(
+        session_id,
+        mem_turns=max(0, int(mem_turns or 0)),
+        max_context_chars=max(1, int(max_context_chars or 1)),
+    )
+    current_chat_summary = db.get_session_summary_by_source(session_id, "chat", current_chat_source)
+    candidates = db.list_session_summaries(session_id, limit=100)
+    selected: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, str]] = set()
+    legacy_prefix = f"chat:{session_id}:messages:"
+    snapshot_prefix = f"chat:{session_id}:snapshot-v2:"
+    for item in reversed(candidates):
+        source_type = str(item.get("source_type") or "")
+        source_id = str(item.get("source_id") or "")
+        automatic_chat_summary = source_type == "chat" and source_id.startswith((legacy_prefix, snapshot_prefix))
+        if automatic_chat_summary and source_id != current_chat_source:
+            continue
+        source_key = (source_type, source_id)
+        if source_key in seen_sources:
+            continue
+        seen_sources.add(source_key)
+        selected.append(item)
+    selected.reverse()
+    if not current_chat_summary:
+        return selected[-bounded_limit:]
+    without_current = [item for item in selected if item.get("id") != current_chat_summary.get("id")]
+    if bounded_limit == 1:
+        return [current_chat_summary]
+    result = [*without_current[-(bounded_limit - 1) :], current_chat_summary]
+    return sorted(result, key=lambda item: (str(item.get("updated_at") or ""), int(item.get("id") or 0)))
+
+
+def _bounded_summary_history(
+    messages: list[dict[str, Any]],
+    *,
+    max_chars: int,
+) -> tuple[str, int]:
+    """Serialize complete user/assistant turns without slicing either message."""
+    included: list[str] = []
+    used = 0
+    for index in range(0, len(messages) - 1, 2):
+        turn = messages[index : index + 2]
+        block = "\n".join(f"{item['role']}: {item['content']}" for item in turn)
+        added = len(block) + (1 if included else 0)
+        if used + added > max_chars:
+            break
+        included.append(block)
+        used += added
+    return "\n".join(included), len(included) * 2
+
+
 def processed_transcript_context(transcript: dict[str, Any] | None, max_chars: int) -> tuple[str, list[str]]:
     warnings: list[str] = []
     if not transcript:
@@ -519,14 +669,23 @@ def maybe_compress_session_history(
         return None
     configured_mem_turns = settings.get("mem_turns")
     mem_turns = max(0, int(config.SETTINGS.mem_turns if configured_mem_turns is None else configured_mem_turns))
-    old_messages = db.get_messages_before_latest(session_id, keep_pairs=mem_turns)
+    max_context_chars = max(1, int(settings.get("max_context_chars") or 16000))
+    source_id, old_messages = _chat_summary_snapshot(
+        session_id,
+        mem_turns=mem_turns,
+        max_context_chars=max_context_chars,
+    )
     if len(old_messages) < max(8, mem_turns * 2):
         return None
-    source_id = f"chat:{session_id}:messages:{len(old_messages)}"
     existing = db.get_session_summary_by_source(session_id, "chat", source_id)
     if existing:
         return existing
-    history_text = "\n".join(f"{item['role']}: {item['content']}" for item in old_messages)
+    history_text, summarized_message_count = _bounded_summary_history(
+        old_messages,
+        max_chars=max_context_chars,
+    )
+    if not history_text:
+        return None
     prompt = [
         {
             "role": "system",
@@ -540,7 +699,7 @@ def maybe_compress_session_history(
                 "Не пересказывай малозначимые реплики.\n\n"
                 + data_envelope(
                     "chat_history_for_summary",
-                    history_text[: int(settings.get("max_context_chars") or 16000)],
+                    history_text,
                     provenance={"owner": "active_profile_session", "session_id": session_id},
                     allowed_influence="conversation_memory_only",
                 )
@@ -560,7 +719,15 @@ def maybe_compress_session_history(
         source_type="chat",
         source_id=source_id,
         summary=summary.strip(),
-        structured_json={"message_count": len(old_messages)},
+        structured_json={
+            "message_count": len(old_messages),
+            "source_message_count": len(old_messages),
+            "summarized_message_count": summarized_message_count,
+            "truncated": summarized_message_count < len(old_messages),
+            "mem_turns": mem_turns,
+            "max_context_chars": max_context_chars,
+            "snapshot_version": 2,
+        },
     )
 
 

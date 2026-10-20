@@ -14,6 +14,7 @@ from typing import Any
 from app import config, db
 from backend.apps.chat.service import (
     ChatService,
+    assess_rag_answer,
     enforce_protected_output,
     guard_stream_events,
     maybe_compress_session_history,
@@ -217,6 +218,8 @@ def _chat_worker(
     error_path: str,
     attachment_descriptors: list[dict[str, Any]] | None = None,
     vision_route: dict[str, Any] | None = None,
+    rag_evidence_manifest: list[dict[str, Any]] | None = None,
+    rag_diagnostics: dict[str, Any] | None = None,
 ) -> None:
     attachment_descriptors = list(attachment_descriptors or [])
     attachment_ids = [str(item.get("id") or "") for item in attachment_descriptors if item.get("id")]
@@ -438,6 +441,11 @@ def _chat_worker(
             )
         )
         result_payload: dict[str, Any] = {"reply": reply, "model": completion_model}
+        result_payload["rag_answer_diagnostics"] = assess_rag_answer(
+            reply,
+            rag_evidence_manifest,
+            rag_diagnostics,
+        )
         if reasoning:
             result_payload["reasoning"] = reasoning
         if done_reason:
@@ -793,6 +801,8 @@ def start_chat_task(
     stream: bool = False,
     attachment_descriptors: list[dict[str, Any]] | None = None,
     vision_route: dict[str, Any] | None = None,
+    rag_evidence_manifest: list[dict[str, Any]] | None = None,
+    rag_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -841,6 +851,8 @@ def start_chat_task(
                 str(error_path),
                 descriptors,
                 vision_route,
+                list(rag_evidence_manifest or []),
+                dict(rag_diagnostics or {}),
             ),
             daemon=True,
             name=f"localgpt_chat_{task_id}",

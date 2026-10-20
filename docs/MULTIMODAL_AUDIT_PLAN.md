@@ -63,18 +63,17 @@ Validation:
 
 Known limits deliberately deferred to C2: existing summary cleanup, summary regeneration after `mem_turns` changes, truncation and repeated-summary behavior, and count-based summary source IDs.
 
-## Next: C2 — Chat/RAG/settings and summary quality
+## C2 — Chat/RAG/settings and summary quality (implementation complete; awaiting review)
 
-Implementation is not started until explicitly requested. The stage will test and improve:
+Implemented for review:
 
-- retrieval evidence versus the final answer;
-- the distinction between “evidence was not found” and “the model ignored evidence”;
-- follow-up questions and memory continuity;
-- summary truncation, duplication, regeneration and source identity;
-- profile settings and instruction adherence;
+- deterministic cross-domain tests prove retrieved evidence and profile instructions reach the actual completion messages;
+- bounded post-answer diagnostics trace only a structured manifest of evidence content spans actually sent to the model, excluding service rules, filenames, diagnostic queries and omitted chunks, and distinguish retrieval `not_found` from found evidence that is not lexically traceable in the answer, without treating the heuristic as semantic proof;
+- follow-up query composition, completed-turn history and active-profile settings remain continuous;
+- automatic chat summaries use content-addressed completed-turn/settings snapshots, whole-turn truncation metadata and source-aware selection of the current matching snapshot in prompts;
 - cross-domain regression fixtures without corpus-specific rules.
 
-Acceptance requires deterministic tests, updated documentation and Astra review. Live answer-quality checks are separate from unit-test success and must remain sequential.
+Deterministic tests and documentation are complete. Astra review is still required. Live answer-quality checks remain separate from unit-test success and were not run in this stage.
 
 ## Later stages
 

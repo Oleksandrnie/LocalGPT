@@ -19,8 +19,10 @@ from app.services import models as model_service
 from backend.apps.chat import tasks as chat_tasks
 from backend.apps.chat.service import (
     ChatService,
+    assess_rag_answer,
     apply_generation_budget_policy,
     build_messages,
+    current_session_summary_memory,
     estimate_messages_chars,
     maybe_compress_session_history,
     normalize_model_name,
@@ -586,12 +588,18 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     history = db.get_prompt_history(session_id, limit_turns=mem_turns) if session_id else []
     summary_limit = int(effective_settings.get("summary_memory_limit") or 0)
     summary_memory = (
-        db.list_session_summaries(session_id, limit=summary_limit)
+        current_session_summary_memory(
+            session_id,
+            mem_turns=mem_turns,
+            max_context_chars=int(effective_settings.get("max_context_chars") or 16000),
+            limit=summary_limit,
+        )
         if session_id and effective_settings.get("summary_memory_enabled", True) and summary_limit > 0
         else []
     )
     rag_chunks = []
     rag_context = ""
+    rag_evidence_manifest: list[dict[str, Any]] = []
     rag_diagnostics: dict[str, Any] = {}
     rag_enabled_configured = bool(effective_settings.get("rag_enabled", False))
     has_image_attachments = bool(getattr(req, "attachment_ids", None))
@@ -618,11 +626,13 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         )
         rag_chunks = rag_result["results"]
         rag_diagnostics = rag_result["diagnostics"]
-        rag_context = rag_service.build_context(
+        rag_context_snapshot = rag_service.build_context_snapshot(
             rag_chunks,
             max_chars=rag_max_chars,
             diagnostics=rag_diagnostics,
         )
+        rag_context = str(rag_context_snapshot["context"])
+        rag_evidence_manifest = list(rag_context_snapshot["evidence_manifest"])
     effective_settings = {
         **effective_settings,
         "rag_enabled_configured": rag_enabled_configured,
@@ -716,6 +726,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "profile_system_prompt": profile_system_prompt,
         "rag_chunks": rag_chunks,
         "rag_context": rag_context,
+        "rag_evidence_manifest": rag_evidence_manifest,
         "rag_diagnostics": rag_diagnostics,
         "recent_user_queries": history_user_queries,
         "prompt_warnings": transcript_warnings,
@@ -818,6 +829,11 @@ def chat(req: ChatRequest):
                 )
 
         _log("ok", reply=text)
+        rag_answer_diagnostics = assess_rag_answer(
+            text,
+            prepared.get("rag_evidence_manifest"),
+            prepared.get("rag_diagnostics"),
+        )
         return {
             "reply": text,
             "session_id": session_id,
@@ -828,6 +844,7 @@ def chat(req: ChatRequest):
             "warnings": prompt_warnings,
             "router_notice": router_notice,
             "has_reasoning": bool(completion.reasoning.strip()),
+            "rag_answer_diagnostics": rag_answer_diagnostics,
         }
     except HTTPException as exc:
         _log("error", error=str(exc.detail))
@@ -1010,6 +1027,8 @@ def start_chat_task(req: ChatRequest):
             stream=stream_requested,
             attachment_descriptors=attachment_descriptors,
             vision_route=vision_route,
+            rag_evidence_manifest=prepared.get("rag_evidence_manifest"),
+            rag_diagnostics=prepared.get("rag_diagnostics"),
         )
         task["warnings"] = prompt_warnings
         return task
