@@ -153,7 +153,7 @@ Checkpoint: focused Vision output-completeness feature, associated Vision/OCR fi
 - Changed files: `app/config.py`, `app/db.py`, `app/routes/profiles.py`, `backend/apps/chat/tasks.py`, `web_ui/gui_html.html`, `web_ui/js/app.js`, `tests/test_vision_settings.py`, `tests/test_chat_vision_runtime.py`, `tests/chat_attachments_ui.test.mjs`, `docs/knowledge/providers.md`, `docs/knowledge/ui.md`, `docs/MULTIMODAL_AUDIT_PLAN.md`, `docs/CHANGELOG.md`, and this progress record.
 - Checkpoint: `263ce5f fix(vision): default output budget to 1024`; 14 files, 95 insertions and 27 deletions. Focused validation passed; no live model ran. The local progress file is updated with the verified hash after commit and will be included in the next checkpoint after user acceptance.
 
-## Active follow-up — bounded automatic continuation on output-limit
+## Completed follow-up — bounded automatic continuation on output-limit
 
 - Goal: when Ollama explicitly ends a final-answer generation with `done_reason=length` and provides non-empty answer text, automatically resume from the accumulated text in the same chat task, using the same model, user settings and (when relevant) image evidence. Keep each per-call token budget unchanged; do not silently raise Vision or ordinary chat limits.
 - User request: preserve the original task and formatting, continue at the cutoff instead of requiring a manual retry or a larger token setting, and repeat until the provider ends normally.
@@ -167,14 +167,18 @@ Checkpoint: focused Vision output-completeness feature, associated Vision/OCR fi
 - Validation: the implementation agent reports the targeted chat/Vision/RAG suite passed 157 tests across `tests.test_chat_continuation`, `tests.test_model_router`, `tests.test_chat_vision_lifecycle`, `tests.test_chat_vision_runtime`, `tests.test_chat_vision_context`, `tests.test_prompt_rag_security_audit`, `tests.test_chat_memory_boundary`, `tests.test_chat_rag`, and `tests.test_vision_rag` (with explicit `local_hash` embedding overrides). Parent reran `venv/bin/python -m unittest tests.test_chat_continuation -v` — 10/10; `venv/bin/python -m compileall -q app backend tests`, `node --check web_ui/js/app.js`, `node tests/markdown_rendering.test.mjs` — 4/4, and `git diff --check` passed. No live inference, model download, profile mutation or restart.
 - Existing unrelated wider-suite failures: `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers` and `test_pipeline_tasks_are_normalized_for_transcript_record` in ASR pipeline tests. They were reproduced against original HEAD by the implementation agent; both bypass changed chat completion by patching `ChatService.chat_completion`.
 - Changed files: `AGENTS.md`, `backend/apps/chat/service.py`, `backend/apps/chat/tasks.py`, new `backend/apps/chat/services/continuation.py`, new `tests/test_chat_continuation.py`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/TESTING.md`, `docs/knowledge/providers.md`, `docs/MULTIMODAL_AUDIT_PLAN.md`, and this progress record.
-- Checkpoint: ready to create one focused commit in LocalGPT. After it, stop for the user's UI acceptance with the same dense image attached in a fresh request and Vision output tokens left at 1024. Record the resulting LocalGPT commit hash in the next progress update.
+- Checkpoint: LocalGPT commit `e4fb4f3 feat(chat): continue responses truncated by token limit`. User acceptance is complete: a fresh image-attached prompt completed correctly; a separate follow-up without reattaching the image could not perform image-dependent work, as expected because image bytes are attached to the specific request, not retained as visual context for later messages. No further implementation is required for this stage.
 
 ## Remaining audit follow-ups
 
-1. After continuation implementation checkpoint, user acceptance in the open LocalGPT UI with the same dense image attached in the same message; verify one complete response and no repeated text, keeping Vision output tokens at 1024.
-2. If useful, test a genuinely photographed table/receipt after redacting personal data. Current “photo-like” fixture is generated and does not prove camera-photo accuracy.
-3. For a domain-specific ASR score on the user's 5:59.8 MP3, create a human reference for a 30–60 second excerpt. A Whisper draft can speed correction, but must be checked against the audio by a person; no second model is ground truth.
+1. Extend the completed five-model, single-CMS-question Chat/RAG comparison to a cross-domain suite; distinguish retrieval/evidence coverage from generation completeness. Do not repeat the old baseline or download models.
+2. Run the remaining Mac resource-measurement stage for installed representative Chat models, after checking which peak-memory and thermal signals macOS exposes without installing utilities.
+3. For a domain-specific ASR score on the user's 5:59.8 MP3, create a human reference for a 30–60 second excerpt. A Whisper draft can speed correction, but must be checked against the audio by a person; no second model is ground truth. Keep this existing optional follow-up unchanged until the user is ready.
 4. Optional actual model-bundle transfer to another device, if one is available.
+
+The user considers current Vision/OCR capabilities sufficient for this stage; real photographed-table and degraded-image acceptance is deferred, not an active task.
+
+The user also requested a future self-service installer in Settings → Chat/LLM, initially for Ollama chat LLMs only. It is recorded in `docs/BACKLOG.md`; it is not part of the active audit stage. Design constraint: accept a model identifier/tag or a strictly validated single `ollama pull` command and invoke the configured Ollama API; never execute arbitrary pasted shell commands.
 
 GigaAM, agent modes and image generation remain deferred unless reopened by the user.
 

@@ -14,13 +14,15 @@ See the repository-root [`AGENTS.md`](../AGENTS.md) for the canonical model-rout
 
 ## Remaining work — approved order
 
-1. **Real-world table acceptance:** synthetic photo-like stress tests are complete, but no genuinely photographed user/business table has been scored. If useful, run the same per-cell checklist on a representative redacted photo/scan; do not infer general OCR accuracy from generated fixtures.
-2. **User-recording ASR reference (optional, domain-specific):** the public benchmark below establishes a reproducible baseline. To score the user's own long MP3, a human must verify a 30–60 second slice against the audio; a model transcript alone is not ground truth. A preliminary transcript can be supplied for correction.
-3. **Optional transfer acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
+1. **Broader Chat/RAG evaluation:** the controlled single-question comparison across five installed target Chat models is already complete. Extend—not repeat—that baseline with a cross-domain test set and separate checks for retrieval coverage, evidence passed to the model, answer completeness and appropriate abstention. Run one model at a time, use fresh sessions, and do not download models or add corpus-specific rules.
+2. **Mac resource measurements:** the sequential load/unload smoke is complete. Measure available per-model/process and system memory signals during representative sequential inference; inspect built-in thermal-pressure reporting. First establish which peak RSS/thermal metrics are available without installing extra utilities; report unavailable numeric temperature as unavailable.
+3. **User-recording ASR reference (optional, domain-specific):** the public benchmark below establishes a reproducible baseline. To score the user's own long MP3, a human must verify a 30–60 second slice against the audio; a model transcript alone is not ground truth. A preliminary transcript can be supplied for correction.
+4. **Optional transfer acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
 
 - GigaAM feasibility/provider integration; retain the current Whisper path for now.
+- A real camera-photographed table/receipt, perspective/skew and low-quality OCR acceptance; the user considers current Vision/OCR capabilities sufficient for this stage.
 - Agent modes/orchestration and image generation until the core chat/RAG, ASR, Vision and resource checks are accepted.
 
 ## Completed: C1 — completed-turn memory boundary
