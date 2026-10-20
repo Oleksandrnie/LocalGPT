@@ -36,13 +36,22 @@ Validation: `git diff --check` passed; `node tests/markdown_rendering.test.mjs` 
 
 ## Current stage
 
-### ASR3 — live ASR input-quality checks (in progress)
+### ASR3 — live ASR input-quality smoke (completed; accuracy score pending reference)
 
 Completed first live baseline on a user-provided Russian MP3 through the user's LocalGPT backend at `127.0.0.1:8000`; assistant-created duplicate backend on `8001` was stopped before inference. Audio metadata: about 5:59.8, 8.2 MB, 44.1 kHz stereo, 192 kbps. Used installed `large-v3-turbo`, Russian language, automatic prompt preset, and `store_result=false`; no downloads and no transcript-history record.
 
 Result: task completed in about 41 seconds; 39 segments, 3,792 characters / 663 whitespace-delimited words. First segment starts at 0.00s; last ends at 359.81s, close to the 359.84s source duration. No known subtitle-credit phrase was detected. This is a lifecycle/coverage baseline, not a measured accuracy score: no reference transcript or word-error comparison was available. Informal inspection suggests likely proper-name and disfluency errors; speaker-role labeling also needs independent validation. Temperature and memory were not measured.
 
-Next: continue ASR3 with controlled short, silence/no-speech, noisy, and abrupt-ending samples if available; compare output against reference text when available. Keep runs sequential and do not download models. User-provided source audio is not copied into the repository or progress file.
+Additional sequential live checks, all on the same `large-v3-turbo` / `whisper_cpp` / Russian / automatic-prompt setup, with `store_result=false`:
+
+- 8-second excerpt from the supplied MP3: completed, 3 segments, timestamps 0.07–8.00s.
+- 10.5-second crop ending during speech: completed, 2 segments, timestamps 0.07–10.53s; no task failure at the clipped end.
+- Same 10.5-second crop mixed with synthetic low-level pink noise: completed, 2 segments; recognized wording broadly matched the clean crop, with punctuation/segmentation differences. This is not a real-world noise benchmark.
+- 10-second digital silence: returned `empty_transcription`, with no transcript record.
+
+Each task returned `stored=false` and `transcript_id=null`, and the task slot returned to idle between cases. No model download occurred. Temporary derived test files were removed. There is no reference transcript for the long MP3, so no WER/CER or objective accuracy claim is available. Memory free percentage was 51% before and 53% after; macOS reported no thermal/performance warning. Numeric temperature and peak per-process memory are still unmeasured and remain in the resource stage.
+
+ASR3 functional smoke is complete for the available samples. Next: begin Chat/RAG model comparison, inspect installed models and already-approved live test coverage, then run sequential comparisons without downloads or cross-profile data changes.
 
 ### Previous stage — ASR2 FIFO task lifecycle completed
 
@@ -82,10 +91,11 @@ Validation: `tests.test_setup_dependencies tests.test_whisper_cpp_backend` — 2
 
 ## Next action
 
-1. Continue ASR3 with representative silence/no-speech, short, noisy, and abrupt-ending samples; compare text against references where available.
-2. Keep runs sequential and report transcript coverage, false phrases, ending behavior, and model/runtime. Keep GigaAM deferred unless the user reopens that decision.
-3. The optional user-controlled real model-bundle transfer smoke remains separate.
+1. Begin Chat/RAG model comparison with installed models; distinguish retrieval/context delivery from model answer behavior and follow the approved model-routing policy.
+2. Continue Vision/OCR quality checks and record exact model/runtime/OCR modes.
+3. Measure memory/residency and thermals where observable; verify sequential load/unload.
+4. Keep the optional user-controlled real model-bundle transfer smoke separate. Keep GigaAM, agent modes and image generation deferred unless the user reopens those decisions.
 
 ## Known limitations
 
-Lexical evidence trace is a review signal, not semantic proof. ASR long-recording/no-speech, GigaAM, Vision/OCR quality, image generation and thermal measurements remain pending.
+Lexical evidence trace is a review signal, not semantic proof. ASR accuracy remains unscored without reference text. Chat/RAG live comparison, Vision/OCR quality, image generation and detailed thermal/peak-memory measurements remain pending.

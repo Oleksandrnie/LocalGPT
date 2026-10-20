@@ -21,11 +21,10 @@ These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effor
 
 ## Remaining work — approved order
 
-1. **ASR live input-quality checks (in progress):** short, silent/no-speech, noisy and abruptly ending recordings; compare against reference text when available. Keep processing sequential and report coverage, false phrases, end-of-file behavior and model/runtime.
-2. **Chat/RAG model comparison:** finish coverage of installed models, especially incomplete memory capture, and distinguish retrieval/context delivery from a model ignoring supplied evidence. Do not download models.
-3. **Vision/OCR quality:** test screenshots, tables and small text; record actual model provenance and OCR mode.
-4. **Mac resource control:** measure memory/residency and temperature where observable; verify unload and sequential execution.
-5. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
+1. **Chat/RAG model comparison (next):** finish coverage of installed models, especially incomplete memory capture, and distinguish retrieval/context delivery from a model ignoring supplied evidence. Do not download models.
+2. **Vision/OCR quality:** test screenshots, tables and small text; record actual model provenance and OCR mode.
+3. **Mac resource control:** measure memory/residency and temperature where observable; verify unload and sequential execution.
+4. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
 
@@ -74,6 +73,19 @@ Implemented for review:
 - cross-domain regression fixtures without corpus-specific rules.
 
 Deterministic tests and documentation are complete; Astra review approved the implementation and the focused checkpoint is `c83767e` (`feat(chat): trace RAG evidence and snapshot memory`). Live answer-quality checks remain separate from unit-test success and are part of the remaining model-comparison work.
+
+## ASR3 — live ASR input-quality smoke (completed; accuracy score pending reference)
+
+Ran sequentially through the user's already-running LocalGPT backend at `127.0.0.1:8000`, using `large-v3-turbo` with the `whisper_cpp` backend, Russian language, automatic prompt, four runtime threads, and `store_result=false`. No models were downloaded and the original MP3 was not modified. Temporary derived fixtures were removed after the run.
+
+- Existing 5:59.8 Russian MP3 baseline: completed in about 41 seconds with 39 segments spanning 0.00–359.81s. This verifies long-input completion and timestamp coverage, not word-level accuracy.
+- 8-second real-audio excerpt: completed with 3 segments spanning 0.07–8.00s.
+- 10.5-second abrupt crop: completed with 2 segments spanning 0.07–10.53s; transcript reached the clipped endpoint without a task failure.
+- The same crop with synthetic low-level pink noise completed with 2 segments. Its recognized words broadly matched the clean crop; punctuation/segmentation differed. This is a synthetic noise smoke, not a field-noise benchmark.
+- 10-second digital silence returned `empty_transcription`; no transcript record was produced.
+- Every task result reported `stored=false` and `transcript_id=null`; the ASR task slot returned to idle after each run. No `whisper-cli` process remained after the sequence.
+
+The long recording has no supplied reference transcript, so no WER/CER or claim of transcription accuracy is available. System-wide memory free percentage was 51% before and 53% after; macOS reported no thermal/performance warning, but no numeric temperature or per-process peak-memory measurement was captured. Those measurements remain in the dedicated resource stage.
 
 ## Source records
 
