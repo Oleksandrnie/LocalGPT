@@ -1,40 +1,40 @@
 # Multimodal audit and quality plan
 
-Permanent plan for the staged improvement of LocalGPT chat, RAG, memory, ASR, Vision/OCR and resource usage. The working execution log remains in `docs/progress/multimodal-audit-progress.md`; this document records the approved program, completed outcomes and next stages in the repository documentation.
+Permanent plan for the staged improvement of LocalGPT chat, RAG, memory, ASR, Vision/OCR and resource usage. This document records the approved program, completed outcomes and next stages; execution state is maintained separately under the repository workflow.
 
 ## Execution protocol
 
-Each stage is handled independently and stops at its review boundary:
-
-1. Astra defines the scope, risks and acceptance criteria.
-2. The implementation is delegated to a bounded subagent.
-3. The implementer adds code, regression tests and affected documentation only for that stage.
-4. Astra reviews the diff and validation results.
-5. A stage is accepted only after review approval. A commit is created only after explicit user authorization.
+Stages are executed sequentially on the Mac. For this program, GPT-6 Luna with xHigh effort handles reasoning, evidence synthesis and test-result analysis; GPT-6.1 Sol with Medium effort makes architecture and technical-design decisions. The implementation model is selected for each stage according to the user's task-specific instructions. Astra review is never automatic: use Astra only after the user's explicit approval; GPT-6.1 Sol High may substitute for Astra only with that approval. Each stage has its own scope, validation and checkpoint; do not start parallel local model inference or download models without approval.
 
 Work is sequential on the Mac: no parallel local model inference, unnecessary model downloads or unbounded resident runtimes. The active repository is `/Users/oleksandr/Documents/Custom files/1. Github Repositories/LocalGPT`.
 
 ## Model allocation
 
-- GPT Astra: diagnosis, architecture, acceptance criteria and final review.
-- GPT-5.6 Sol with medium reasoning: primary implementation for bounded backend, memory, RAG, ASR and persistence stages.
-- GPT-5.6 Sol with high reasoning: escalation only for difficult concurrency, lifecycle, data-integrity or architecture problems that medium reasoning cannot resolve.
-- GPT Luna with low/medium reasoning: user-facing questions, task kickoff, simple UI and documentation tasks.
+| Responsibility | Model and effort |
+| --- | --- |
+| Reasoning, synthesis of evidence, interpretation of test results and work sequencing | GPT-6 Luna, xHigh |
+| Architecture decisions and technical design | GPT-6.1 Sol, Medium |
+| Implementation | Set per stage from the user's explicit task instruction; do not infer it from the analysis model |
+| Independent Astra review | Only with explicit user approval; GPT-6.1 Sol High may substitute only with approval |
 
-Reasoning effort is selected per stage. It is not a reason to run multiple heavy local inference jobs at once.
+These are Codex work roles, not LocalGPT runtime-model settings. Reasoning effort does not justify running multiple local inference jobs at once.
 
-## Priorities
+## Remaining work — approved order
 
-1. Chat, RAG, settings, memory and instruction adherence.
-2. ASR Studio correctness and sequential processing.
-3. Optional GigaAM provider evaluation while retaining Whisper.
-4. Vision/OCR routing, provenance and image/table quality.
-5. Measured Mac resource limits, model unloading and sequential execution.
-6. Agent modes and graphics generation only after the core flows are stable.
+1. **ASR live input-quality checks (in progress):** short, silent/no-speech, noisy and abruptly ending recordings; compare against reference text when available. Keep processing sequential and report coverage, false phrases, end-of-file behavior and model/runtime.
+2. **Chat/RAG model comparison:** finish coverage of installed models, especially incomplete memory capture, and distinguish retrieval/context delivery from a model ignoring supplied evidence. Do not download models.
+3. **Vision/OCR quality:** test screenshots, tables and small text; record actual model provenance and OCR mode.
+4. **Mac resource control:** measure memory/residency and temperature where observable; verify unload and sequential execution.
+5. **Optional user acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
+
+## Deferred
+
+- GigaAM feasibility/provider integration; retain the current Whisper path for now.
+- Agent modes/orchestration and image generation until the core chat/RAG, ASR, Vision and resource checks are accepted.
 
 ## Completed: C1 — completed-turn memory boundary
 
-Status: accepted after independent GPT Astra review. No commit was created until the user later authorized checkpointing.
+Status: accepted after independent GPT Astra review and checkpointed in `d6b9d28` (`fix(memory): bound history to completed turns`).
 
 Implemented:
 
@@ -63,7 +63,7 @@ Validation:
 
 Known limits deliberately deferred to C2: existing summary cleanup, summary regeneration after `mem_turns` changes, truncation and repeated-summary behavior, and count-based summary source IDs.
 
-## C2 — Chat/RAG/settings and summary quality (implementation complete; awaiting review)
+## C2 — Chat/RAG/settings and summary quality (completed and checkpointed)
 
 Implemented for review:
 
@@ -73,19 +73,10 @@ Implemented for review:
 - automatic chat summaries use content-addressed completed-turn/settings snapshots, whole-turn truncation metadata and source-aware selection of the current matching snapshot in prompts;
 - cross-domain regression fixtures without corpus-specific rules.
 
-Deterministic tests and documentation are complete. Astra review is still required. Live answer-quality checks remain separate from unit-test success and were not run in this stage.
-
-## Later stages
-
-- **S1 — ASR validity and lifecycle:** empty, silent, short, noisy and long Russian recordings; queue, cancellation, progress and persistence.
-- **S2 — GigaAM feasibility:** primary-source compatibility research and a switchable provider design, with Whisper retained.
-- **V1 — Vision/OCR:** routing parity, actual-model provenance, OCR modes, tables and small text.
-- **R1 — Resource control:** measured residency, unload behavior, bounded concurrency and thermal-friendly sequential operation.
-- **A1 — Agent modes:** only after core acceptance; roles and subagents must have explicit permissions, handoff and rollback boundaries.
+Deterministic tests and documentation are complete; Astra review approved the implementation and the focused checkpoint is `c83767e` (`feat(chat): trace RAG evidence and snapshot memory`). Live answer-quality checks remain separate from unit-test success and are part of the remaining model-comparison work.
 
 ## Source records
 
-- [Working progress record](progress/multimodal-audit-progress.md)
 - [Architecture](ARCHITECTURE.md)
 - [Testing](TESTING.md)
 - [Changelog](CHANGELOG.md)

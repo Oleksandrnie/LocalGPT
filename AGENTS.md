@@ -21,8 +21,17 @@ Model routing применяется только к execution-задачам, �
 
 `Bounded task` — задача с заранее понятными scope, ожидаемым результатом, architectural boundaries, acceptance criteria и validation. `Fine-grained edit` — локализованное изменение с понятным результатом. Luna исполняет определённую работу; Sol самостоятельно определяет правильное инженерное решение.
 
+Для текущего мультимодального аудита действует отдельное распределение, заданное пользователем:
+
+- GPT-6 Luna с effort `xHigh` — рассуждения, синтез свидетельств и результатов проверок, анализ вариантов и формирование последовательности работ.
+- GPT-6.1 Sol с effort `Medium` — архитектурные решения и технический дизайн.
+
+Это распределение касается анализа и проектных решений, но само по себе не выбирает модель реализации, не запускает subagents и не разрешает независимый review. Для этих действий действуют явные инструкции пользователя и правила ниже.
+
 | Task | Default model | Effort |
 | --- | --- | --- |
+| Рассуждения, синтез evidence и анализ проверок в текущем мультимодальном аудите | GPT-6 Luna | xHigh |
+| Архитектурные решения и технический дизайн в текущем мультимодальном аудите | GPT-6.1 Sol | Medium |
 | Fine-grained edit, простой HTML/CSS/UI | GPT-5.6 Luna | Low |
 | Coordinated UI/responsive, bounded work по существующим patterns | GPT-5.6 Luna | Medium |
 | Bounded implementation с полностью ясным контрактом | GPT-5.6 Luna | High |
@@ -35,13 +44,13 @@ Model routing применяется только к execution-задачам, �
 
 Правила routing:
 
-- Оптимизировать стоимость корректно завершённой задачи, а не первого вызова. GPT-6 Luna не является automatic target, но всегда доступна по ручному выбору пользователя.
+- Оптимизировать стоимость корректно завершённой задачи, а не первого вызова. GPT-6 Luna не является automatic target для других задач, но в текущем мультимодальном аудите применяется для рассуждений по указанному выше override.
 - Если среда поддерживает model-specific subagents, orchestrator делегирует по этому routing и передаёт только необходимый context, requirements, constraints, relevant docs и validation criteria.
 - Эскалировать Luna → GPT-5.6 Sol High, если scope перестал быть bounded, неизвестен root cause, нужна migration/architecture, появились cross-system dependencies, сложный persistence/lifecycle или повторные разнородные failures.
 - Mixed task делить по естественным technical boundaries, если это полезнее передачи всей задачи самой сильной модели; маленькую тесно связанную работу искусственно не дробить.
 - Количество subagents определять структурой и риском. Несколько агентов оправданы для независимых параллельных частей, subsystem boundaries, сравнения подходов, ускорения сложной multi-part задачи или явно одобренного second opinion; agent swarm без понятной пользы запрещён.
 - GPT-6 Sol — независимый reviewer, а не обязательное продолжение implementation. Review запускается только по прямому запросу пользователя либо после предложения агента и явного approval; prompt должен быть нейтральным.
-- GPT-6 Astra — только architectural/high-risk escalation, включая нерешённый значимый архитектурный вопрос после Sol review, и не обязательный final reviewer. Нужны прямой запрос пользователя либо обоснованное предложение и явный approval.
+- GPT-6 Astra — только architectural/high-risk escalation, включая нерешённый значимый архитектурный вопрос после Sol review, и не обязательный final reviewer. Нужны прямой запрос пользователя либо обоснованное предложение и явный approval. GPT-6.1 Sol High может заменить Astra только после явного согласования с пользователем.
 - Automated/static/integration/manual validation важнее AI review; reviewer — дополнительный слой.
 - Для сложной execution-задачи orchestrator кратко сообщает выбранный routing и причину, не превращая это в отдельный отчёт.
 

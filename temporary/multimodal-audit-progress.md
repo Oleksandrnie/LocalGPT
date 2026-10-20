@@ -2,7 +2,7 @@
 
 ## Scope
 
-Chat/RAG/memory first, then ASR, Vision/OCR and resource usage; agent orchestration only after core flows are stable. Local models run sequentially on the 16 GiB Mac; no downloads without approval. This is local-only execution state.
+ASR input quality, then Chat/RAG model comparison, Vision/OCR, Mac resource control and optional real model-bundle transfer acceptance. GigaAM, agent orchestration and image generation remain deferred. Local models run sequentially on the 16 GiB Mac; no downloads without approval. This active execution record is tracked in stage checkpoints as required by the repository `AGENTS.md`.
 
 ## Completed
 
@@ -26,7 +26,13 @@ RAG diagnostics use a bounded structured evidence manifest. Summary identity inc
 
 ## Decisions
 
-The mini-router is optional for manual model selection; retain it for Auto/Smart Router compatibility and possible future agent routing. Astra is used only after user approval; Sol High handles complex audits/implementations, Sol Medium only bounded changes, Luna simple/UI work.
+The mini-router is optional for manual model selection; retain it for Auto/Smart Router compatibility and possible future agent routing. For this audit, GPT-6 Luna with xHigh effort handles reasoning, evidence synthesis and test-result analysis; GPT-6.1 Sol with Medium effort makes architecture and technical-design decisions. Implementation model is selected per stage from the user's explicit instruction. Astra review requires explicit user approval; GPT-6.1 Sol High may substitute only with approval. Workflow conflict resolved by repository authority: `AGENTS.md` requires progress checkpoints to be tracked, overriding the generic skill's local-only progress rule; this existing active file is retained, with no duplicate created.
+
+### DOC1 — model-routing policy and plan alignment (completed)
+
+Updated `AGENTS.md` and this permanent plan with the user-selected analysis/architecture roles, Astra approval boundary and the approved order of remaining work. Marked GigaAM, agent modes and image generation deferred. C1/C2 checkpoint status now matches Git history.
+
+Validation: `git diff --check` passed; `node tests/markdown_rendering.test.mjs` passed 4/4. No code or live-model tests were applicable or run. Checkpoint: pending.
 
 ## Current stage
 
