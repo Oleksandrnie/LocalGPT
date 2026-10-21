@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from app import config, db
 from app.services import models as model_service
+from app.services.thinking import resolve_thinking
 from backend.apps.chat.prompt_policy import GLOBAL_GUARD_POLICY, data_envelope, profile_configuration_envelope
 from backend.apps.chat.service import ChatService
 from backend.apps.chat.services import model_residency, ollama_runtime
@@ -271,13 +272,8 @@ def _pipeline_num_gpu(settings: dict[str, Any] | None) -> int | None:
     return parsed if parsed >= 0 else None
 
 
-def _pipeline_ollama_think(settings: dict[str, Any] | None) -> bool | None:
-    value = str((settings or {}).get("ollama_think") or "auto").strip().lower()
-    if value in {"on", "true", "1", "yes", "think"}:
-        return True
-    if value in {"off", "false", "0", "no", "nothink"}:
-        return False
-    return None
+def _pipeline_ollama_think(settings: dict[str, Any] | None) -> bool | str | None:
+    return resolve_thinking((settings or {}).get("ollama_think"))
 
 
 def _clean_text_fallback(text: str) -> str:

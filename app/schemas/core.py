@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, StrictStr, field_validator, model_validator
 
 
 CHAT_QUERY_MAX_CHARS = 32_000
@@ -131,7 +131,7 @@ class ModelSettingsRequest(BaseModel):
     num_ctx: int | None = Field(default=None, ge=1_024, le=262_144)
     mem_turns: int | None = Field(default=None, ge=0, le=100)
     ollama_keep_alive: str | None = None
-    ollama_think: str | None = None
+    ollama_think: StrictBool | StrictStr | None = None
     pipeline_enabled: bool | None = None
     summary_memory_enabled: bool | None = None
     rag_enabled: bool | None = None

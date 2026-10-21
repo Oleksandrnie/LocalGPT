@@ -20,6 +20,7 @@ from ..schemas import (
     SessionUpdate,
 )
 from ..services import criteria as criteria_service
+from ..services.thinking import normalize_thinking_setting
 from ..services.chat import normalize_model_name, session_title_hint
 from backend.apps.rag import service as rag_service
 from backend.apps.chat.services import attachment_storage
@@ -144,20 +145,8 @@ def _normalize_bool_setting(value: object) -> bool:
     return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
-def _normalize_ollama_think(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = str(value or "").strip().lower()
-    if normalized in {"auto", "default", ""}:
-        return "auto"
-    if normalized in {"on", "true", "1", "yes", "think"}:
-        return "on"
-    if normalized in {"off", "false", "0", "no", "nothink"}:
-        return "off"
-    raise HTTPException(
-        status_code=422,
-        detail={"code": "invalid_ollama_think", "message": "ollama_think must be auto, on, or off."},
-    )
+def _normalize_ollama_think(value: bool | str | None, model_name: str = "") -> str | None:
+    return normalize_thinking_setting(value, model_name)
 
 
 def _normalize_token_budget(value: int | None, key: str) -> int | None:
@@ -646,7 +635,7 @@ def save_model_settings(req: ModelSettingsRequest):
         num_ctx=req.num_ctx,
         mem_turns=None,
         ollama_keep_alive=(req.ollama_keep_alive.strip() if isinstance(req.ollama_keep_alive, str) and req.ollama_keep_alive.strip() else None),
-        ollama_think=_normalize_ollama_think(req.ollama_think),
+        ollama_think=_normalize_ollama_think(req.ollama_think, model),
         pipeline_enabled=req.pipeline_enabled,
         summary_memory_enabled=req.summary_memory_enabled,
         rag_enabled=req.rag_enabled,

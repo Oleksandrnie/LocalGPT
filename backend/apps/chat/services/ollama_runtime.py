@@ -13,6 +13,7 @@ from urllib import error, request
 from urllib.parse import urlsplit, urlunsplit
 
 from app import config
+from app.services.thinking import validate_thinking
 
 LOGGER = logging.getLogger(__name__)
 
@@ -126,9 +127,9 @@ def _cpu_fallback_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def _messages_with_thinking_instruction(
     model_name: str,
     messages: list[dict[str, Any]],
-    think: bool | None,
+    think: bool | str | None,
 ) -> list[dict[str, Any]]:
-    if think is None or not QWEN3_HYBRID_MODEL_RE.search(str(model_name or "")):
+    if not isinstance(think, bool) or not QWEN3_HYBRID_MODEL_RE.search(str(model_name or "")):
         return messages
     prepared = [dict(message) for message in messages]
     marker = "/think" if think else "/no_think"
@@ -141,7 +142,7 @@ def _messages_with_thinking_instruction(
     return prepared
 
 
-def _native_think_value(model_name: str, think: bool | None) -> bool | None:
+def _native_think_value(model_name: str, think: bool | str | None) -> bool | str | None:
     """Keep Qwen3 hybrid reasoning parseable while /no_think requests a direct answer.
 
     Some Qwen3 templates open a ``<think>`` block unconditionally. Ollama's
@@ -152,6 +153,8 @@ def _native_think_value(model_name: str, think: bool | None) -> bool | None:
     """
     if think is False and QWEN3_HYBRID_MODEL_RE.search(str(model_name or "")):
         return None
+    if isinstance(think, str):
+        validate_thinking(model_name, think)
     return think
 
 
@@ -165,7 +168,7 @@ def _chat_payload(
     num_ctx: int | None,
     keep_alive: str | None,
     num_gpu: int | None,
-    think: bool | None,
+    think: bool | str | None,
 ) -> dict[str, Any]:
     options: dict[str, Any] = {}
     if temperature is not None:
@@ -184,7 +187,7 @@ def _chat_payload(
     }
     native_think = _native_think_value(model_name, think)
     if native_think is not None:
-        payload["think"] = bool(native_think)
+        payload["think"] = native_think
     if options:
         payload["options"] = options
     if keep_alive is not None:
@@ -317,7 +320,7 @@ def chat_completion_result(
     keep_alive: str | None = None,
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
-    think: bool | None = None,
+    think: bool | str | None = None,
 ) -> ChatCompletionResult:
     payload = _chat_payload(
         model_name,
@@ -367,7 +370,7 @@ def chat_completion_stream_events(
     keep_alive: str | None = None,
     num_gpu: int | None = None,
     allow_cpu_fallback: bool = True,
-    think: bool | None = None,
+    think: bool | str | None = None,
 ) -> Iterator[ChatStreamEvent]:
     payload = _chat_payload(
         model_name,

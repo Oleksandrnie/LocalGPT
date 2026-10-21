@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from app import config, db
 from app.roles import system_prompt_for
 from app.security import redact_log_event
+from app.services.thinking import resolve_thinking
 from backend.apps.chat.prompt_policy import GLOBAL_GUARD_POLICY, data_envelope, profile_persona_envelope
 from backend.apps.chat.services import continuation, ollama_runtime
 
@@ -112,13 +113,8 @@ def guard_stream_events(
         yield ollama_runtime.ChatStreamEvent(content=pending_content, reasoning=pending_reasoning)
 
 
-def _resolve_ollama_think(value: Any) -> bool | None:
-    normalized = str(value or "").strip().lower()
-    if normalized in {"on", "true", "1", "yes", "think"}:
-        return True
-    if normalized in {"off", "false", "0", "no", "nothink"}:
-        return False
-    return None
+def _resolve_ollama_think(value: Any) -> bool | str | None:
+    return resolve_thinking(value)
 
 
 def apply_generation_budget_policy(
@@ -147,7 +143,7 @@ def apply_generation_budget_policy(
         think is False
         and ollama_runtime.QWEN3_HYBRID_MODEL_RE.search(str(model_name or ""))
     )
-    if think is True:
+    if think is True or isinstance(think, str):
         provider_num_predict = min(GENERATION_SAFETY_CAP, output_tokens + thinking_tokens)
         policy = "combined_compatibility_cap"
         thinking_budget_applied = True
@@ -811,7 +807,7 @@ class ChatService:
         cls,
         events: Iterable[ollama_runtime.ChatStreamEvent],
         *,
-        think: bool | None,
+        think: bool | str | None,
     ) -> Iterator[ollama_runtime.ChatStreamEvent]:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
