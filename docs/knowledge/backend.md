@@ -85,9 +85,8 @@ Routers отвечают за HTTP validation/serialization и вызывают 
 
 1. объявляются в router своего feature;
 2. используют schema вместо неструктурированного dict, если contract нетривиален;
-3. не обращаются к `compare-branch/`;
-4. не исполняют код из plugin directories;
-5. сохраняют profile isolation для sessions, RAG и settings.
+3. не исполняют код из plugin directories;
+4. сохраняют profile isolation для sessions, RAG и settings.
 
 ## Database
 
