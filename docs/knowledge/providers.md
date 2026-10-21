@@ -33,6 +33,8 @@ Ollama предоставляет один `num_predict`, поэтому `output
 
 Model discovery и install state принадлежат `app/services/models.py`. Состояния различают configured, installed, active, downloading, partial и missing; наличие orphan partial blob не равно установленной runtime-модели. Загрузка модели предпочитает native `POST /api/pull` со stream-NDJSON прогрессом. Если endpoint отсутствует, используется совместимый CLI fallback `ollama pull <model>` без `--json`: этот флаг не является аргументом `ollama pull`, поэтому отсутствие флага не означает старую версию Ollama. Для диагностики задача загрузки логирует путь CLI из `PATH`, его версию, безопасно отредактированный endpoint, transport и stderr/error.
 
+Settings → Chat/LLM exposes a self-service Ollama model installer backed by the same pull task/API and cancel lifecycle. It accepts a bounded model reference or a narrowly parsed snippet containing one `ollama pull <model>` and, optionally, an exact matching `ollama run <model>` line. The parser only extracts the pull target; it never executes pasted text, shell syntax or `ollama run`. Backend validation independently rejects commands/options before starting a pull. Download still requires confirmation and never changes the selected model automatically. The installer is Ollama-only; downloaded models must be compatible with chat to be useful in the chat selector.
+
 ### Vision-модели
 
 Vision library отделена от обычного chat catalog:

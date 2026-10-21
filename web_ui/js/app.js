@@ -1,4 +1,5 @@
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
+import { parseOllamaInstallInput } from "./ollama_install.mjs";
 
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
@@ -375,6 +376,8 @@ const els = {
   deleteModelButton: document.getElementById("deleteModelButton"),
   downloadModelInput: document.getElementById("downloadModelInput"),
   downloadModelButton: document.getElementById("downloadModelButton"),
+  ollamaInstallerStatus: document.getElementById("ollamaInstallerStatus"),
+  ollamaInstallerDownloads: document.getElementById("ollamaInstallerDownloads"),
   recommendedModels: document.getElementById("recommendedModels"),
   chatLibraryToggle: document.getElementById("chatLibraryToggle"),
   chatLibraryMeta: document.getElementById("chatLibraryMeta"),
@@ -7783,6 +7786,7 @@ async function downloadSelectedTtsToolRecord() {
 }
 
 function renderDownloads() {
+  renderOllamaInstallerDownloads();
   if (!els.downloadList) return;
   const items = collectModelOperations();
   if (!items.length) {
@@ -7816,6 +7820,34 @@ function renderDownloads() {
       `;
     })
     .join("");
+}
+
+function renderOllamaInstallerDownloads() {
+  if (!els.ollamaInstallerDownloads) return;
+  const items = (state.downloads || []).slice(0, 3);
+  if (!items.length) {
+    els.ollamaInstallerDownloads.innerHTML = '<p class="subtle">Загрузок Ollama пока нет.</p>';
+    return;
+  }
+  els.ollamaInstallerDownloads.innerHTML = items.map((item) => {
+    const percent = typeof item.percent === "number" ? Math.max(0, Math.min(100, item.percent)) : 0;
+    const downloaded = Number(item.downloaded_bytes || item.completed || 0);
+    const total = Number(item.total_bytes || item.total || 0);
+    const transfer = downloaded && total ? `${formatBytes(downloaded)} / ${formatBytes(total)}` : downloaded ? formatBytes(downloaded) : "";
+    const eta = Number(item.eta_seconds) > 0 ? ` • Осталось около ${Math.ceil(Number(item.eta_seconds))} с` : "";
+    const canCancel = isActiveDownloadState(item.state);
+    return `
+      <article class="download-card ollama-installer__download">
+        <div class="download-card__top">
+          <strong>${escapeHtml(item.model || "Модель Ollama")}</strong>
+          <span class="subtle">${escapeHtml(item.state || "")}${percent ? ` • ${percent}%` : ""}</span>
+        </div>
+        <div class="download-progress" role="progressbar" aria-label="Прогресс загрузки ${escapeHtml(item.model || "модели")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><div class="download-progress__bar" style="width:${percent}%;"></div></div>
+        <div class="subtle">${escapeHtml(item.message || "Ожидание")}${transfer ? ` • ${escapeHtml(transfer)}` : ""}${escapeHtml(eta)}</div>
+        ${canCancel ? `<div class="button-row"><button class="button button--ghost" type="button" data-cancel-download="${escapeHtml(item.task_id || "")}">Остановить</button></div>` : ""}
+      </article>
+    `;
+  }).join("");
 }
 
 function normalizeNetworkAddressItems(items) {
@@ -10095,14 +10127,16 @@ async function startModelDownload(modelName, { mode = "download" } = {}) {
     message: `Будет запущен ollama pull для модели: ${target}`,
     confirmLabel: isUpdate ? "Обновить" : "Загрузить",
   });
-  if (!confirmed) return;
+  if (!confirmed) return false;
 
   try {
     await request("/models/pull", { method: "POST", body: { model: target } });
     await loadModels({ silent: true });
     renderSettings();
+    return true;
   } catch (error) {
     setFooter(`Не удалось запустить ${isUpdate ? "обновление" : "загрузку"} модели: ${error.message || error}`, "error");
+    return null;
   }
 }
 
@@ -11618,10 +11652,21 @@ function bindEvents() {
   });
 
   els.downloadModelButton?.addEventListener("click", async () => {
-    const target = (els.downloadModelInput?.value || "").trim();
-    await startModelDownload(target);
-    if (els.downloadModelInput) {
-      els.downloadModelInput.value = "";
+    try {
+      const parsed = parseOllamaInstallInput(els.downloadModelInput?.value || "");
+      const started = await startModelDownload(parsed.model);
+      if (started) {
+        setInlineStatus(els.ollamaInstallerStatus, `Загрузка ${parsed.model} запущена. Прогресс — ниже; модель не запускается автоматически.`, "success");
+      } else if (started === false) {
+        setInlineStatus(els.ollamaInstallerStatus, "Загрузка не запущена: подтверждение отменено.", "warning");
+      } else {
+        setInlineStatus(els.ollamaInstallerStatus, "Не удалось запустить загрузку. Подробности — в строке состояния приложения.", "error");
+      }
+      if (parsed.ignoredRun && started) {
+        setInlineStatus(els.ollamaInstallerStatus, `Команда run проигнорирована. Загружается ${parsed.model}; после загрузки выбери модель вручную.`, "success");
+      }
+    } catch (error) {
+      setInlineStatus(els.ollamaInstallerStatus, error.message, "error");
     }
   });
 
@@ -11771,6 +11816,10 @@ function bindEvents() {
     const button = event.target.closest("[data-cancel-download]");
     if (!button) return;
     await cancelDownload(button.dataset.cancelDownload || "");
+  });
+  els.ollamaInstallerDownloads?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-cancel-download]");
+    if (button) await cancelDownload(button.dataset.cancelDownload || "");
   });
 
   els.applyModelsDirButton?.addEventListener("click", async () => {

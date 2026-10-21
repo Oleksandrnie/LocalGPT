@@ -169,16 +169,41 @@ Checkpoint: focused Vision output-completeness feature, associated Vision/OCR fi
 - Changed files: `AGENTS.md`, `backend/apps/chat/service.py`, `backend/apps/chat/tasks.py`, new `backend/apps/chat/services/continuation.py`, new `tests/test_chat_continuation.py`, `docs/ARCHITECTURE.md`, `docs/CHANGELOG.md`, `docs/TESTING.md`, `docs/knowledge/providers.md`, `docs/MULTIMODAL_AUDIT_PLAN.md`, and this progress record.
 - Checkpoint: LocalGPT commit `e4fb4f3 feat(chat): continue responses truncated by token limit`. User acceptance is complete: a fresh image-attached prompt completed correctly; a separate follow-up without reattaching the image could not perform image-dependent work, as expected because image bytes are attached to the specific request, not retained as visual context for later messages. No further implementation is required for this stage.
 
-## Remaining audit follow-ups
+## Active follow-up — broader Chat/RAG, resource measurements, and Ollama LLM installer
 
-1. Extend the completed five-model, single-CMS-question Chat/RAG comparison to a cross-domain suite; distinguish retrieval/evidence coverage from generation completeness. Do not repeat the old baseline or download models.
-2. Run the remaining Mac resource-measurement stage for installed representative Chat models, after checking which peak-memory and thermal signals macOS exposes without installing utilities.
-3. For a domain-specific ASR score on the user's 5:59.8 MP3, create a human reference for a 30–60 second excerpt. A Whisper draft can speed correction, but must be checked against the audio by a person; no second model is ground truth. Keep this existing optional follow-up unchanged until the user is ready.
-4. Optional actual model-bundle transfer to another device, if one is available.
+The user authorized completing these items without intermediate approvals; provide one final summary for their own acceptance testing. Keep the existing single progress file and checkpoint each non-empty implementation stage. Do not push, restart LocalGPT, mutate profile defaults/history, or download models during implementation. Run all local inference sequentially and unload after each run.
 
-The user considers current Vision/OCR capabilities sufficient for this stage; real photographed-table and degraded-image acceptance is deferred, not an active task.
+### CHAT-EVAL — cross-domain evidence and answer-completeness evaluation
 
-The user also requested a future self-service installer in Settings → Chat/LLM, initially for Ollama chat LLMs only. It is recorded in `docs/BACKLOG.md`; it is not part of the active audit stage. Design constraint: accept a model identifier/tag or a strictly validated single `ollama pull` command and invoke the configured Ollama API; never execute arbitrary pasted shell commands.
+- Extend the already-completed five-model single-CMS baseline using a compact, domain-independent test matrix; do not repeat the old CMS question.
+- Separate (a) whether retrieval selects the expected evidence/facts from (b) whether each model uses all supplied evidence and abstains when facts are absent.
+- Use installed text chat models only; `qwen3:0.6b` remains an optional router and Vision/embedding/ASR models are not answer targets. No model downloads.
+- Only implement a shared pipeline change if the results expose a repeatable product-level defect, with a generic regression test; do not hard-code corpus vocabulary or optimize to one client RAG.
+- Record per-model factual coverage and abstention behavior, identify retrieval vs generation failures, and update permanent plan/changelog as appropriate.
+
+### RESOURCE-MEASURE — sequential local model footprint
+
+- Inspect already available, non-privileged macOS/Ollama signals for peak process memory, system memory pressure, swap deltas and thermal warnings. Do not install measurement utilities or claim numeric temperature when unavailable.
+- Measure representative installed Chat models one at a time; explicitly unload between runs. Keep earlier smoke measurements as historical context, not a substitute for the new measurements.
+- Record exact signals and limitations; never run local model inference concurrently.
+
+### LLM-INSTALL — self-service Ollama chat model download
+
+- Add a Settings → Chat/LLM installer near the bottom of the LLM panel. It must accept a raw model reference or a narrowly parsed Ollama install snippet, show progress/status inline and reuse the existing pull/cancel lifecycle.
+- First scope is Ollama chat LLMs only. Parse and validate references; call the existing configured API/task lifecycle, never execute arbitrary shell or `ollama run`. Reject extra/mismatched commands. The common two-line `ollama pull X` + `ollama run X` snippet may be accepted only by ignoring the run line and communicating that explicitly.
+- Preserve explicit download confirmation and manual model selection after download. Validate with mocked/task tests; do not perform an actual model pull or alter runtime/model directories during implementation.
+- Add focused UI/backend tests and update provider/UI/testing/backlog/changelog documentation.
+
+Implementation complete: the Settings → Chat/LLM panel now accepts a bounded raw Ollama model reference, one `ollama pull` line, or that pull plus an exact matching `ollama run` line (which is explicitly ignored). It reuses existing confirmation, pull, status polling and cancellation; the inline panel shows recent pull status/progress, transfer size/ETA and cancellation. Backend validates again before accepting an API request; no shell command is executed and the selected model is not changed. Installer backlog item moved to the completed changelog. No model was downloaded and no app/profile state was changed.
+
+Validation passed: `node --check web_ui/js/app.js`; `node --test tests/ollama_install.test.mjs tests/ollama_install_ui.test.mjs` (6/6); `venv/bin/python -m unittest tests.test_ollama_model_ref_validation tests.test_ollama_pull -v` (7/7); `node tests/markdown_rendering.test.mjs` (4/4); `git diff --check`. UI/runtime acceptance is intentionally left for the user; LocalGPT was not restarted. Checkpoint: `aeb02bb feat(models): add guarded Ollama LLM installer`.
+
+### Explicitly unchanged / deferred
+
+- ASR accuracy on the user's 5:59.8 MP3 remains an optional manual reference-transcript exercise; short public-set smoke is not a substitute.
+- User considers current Vision/OCR capabilities sufficient; real photographed-table and degraded-image acceptance remains deferred.
+- Optional actual model-bundle transfer to another device remains deferred until a second device is available.
+- GigaAM, agent modes and image generation remain deferred.
 
 GigaAM, agent modes and image generation remain deferred unless reopened by the user.
 

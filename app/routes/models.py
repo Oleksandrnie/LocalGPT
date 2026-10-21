@@ -17,9 +17,7 @@ def list_models():
 
 @router.post("/models/pull")
 def pull_model(req: ModelPullRequest):
-    model = (req.model or "").strip()
-    if not model:
-        raise HTTPException(status_code=422, detail={"code": "model_required", "message": "Укажите модель"})
+    model = model_service.validate_pull_model_ref(req.model)
     return model_service.start_model_pull(model)
 
 

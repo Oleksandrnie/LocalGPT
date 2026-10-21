@@ -29,6 +29,20 @@ MODEL_PULL_LOCK = threading.Lock()
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 PULL_LOG_TAIL_LIMIT = 80
 OLLAMA_API_PULL_TIMEOUT_SECONDS = 15
+OLLAMA_MODEL_REF_RE = re.compile(
+    r"(?:[A-Za-z0-9][A-Za-z0-9._-]*(?::[0-9]+)?/)*"
+    r"[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?"
+)
+
+
+def validate_pull_model_ref(model: str) -> str:
+    """Accept registry references only, never commands or CLI options."""
+    if not isinstance(model, str) or len(model) > 200 or not OLLAMA_MODEL_REF_RE.fullmatch(model):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_ollama_model_ref", "message": "Укажите корректное имя модели Ollama (до 200 символов), без команд, пробелов и shell-синтаксиса."},
+        )
+    return model
 
 
 def _size_gb(size: Any) -> float | None:
@@ -875,6 +889,7 @@ def _run_model_pull(task_id: str, model: str) -> None:
 
 
 def start_model_pull(model: str) -> dict[str, Any]:
+    validate_pull_model_ref(model)
     task_id = uuid.uuid4().hex
     entry = {
         "task_id": task_id,

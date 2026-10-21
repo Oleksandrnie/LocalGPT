@@ -6,6 +6,7 @@
 
 ### Added
 
+- Settings → Chat/LLM now provides a guarded Ollama model installer: raw model refs or a restricted `ollama pull` snippet, inline progress and cancellation, with independent backend validation and no automatic model selection or command execution.
 - Code-enforced prompt/RAG/runtime security controls: metadata-only diagnostics/logging, task ownership, request/prompt/upload budgets, generation concurrency/timeout cleanup и bounded SSE reconnects.
 - `ADMIN_TOKEN` authorization для runtime/database/storage/debug operations; Web UI передаёт token header-ом и хранит только в browser session.
 - Domain-neutral `hybrid_v2` RAG retrieval с независимыми lexical/semantic pools, reciprocal-rank fusion, conservative semantic facet grounding, source diversity и provenance/status diagnostics; `lexical_v1` отключает semantic query для rollback, а `local-hash-v1` не выдаётся за semantic evidence.

@@ -81,9 +81,13 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Caddy LAN certificate download | `venv/bin/python -m unittest tests.test_network_certificate -v` |
 | Model installation state | `venv/bin/python -m unittest tests.test_model_install_state -v` |
 | Ollama pull API/CLI compatibility | `venv/bin/python -m unittest tests.test_ollama_pull -v` |
+| Ollama model-reference input validation | `venv/bin/python -m unittest tests.test_ollama_model_ref_validation -v` |
+| Ollama installer snippet parser and UI contract | `node --test tests/ollama_install.test.mjs tests/ollama_install_ui.test.mjs` |
 | Model export/import bundle | `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export tests.test_model_transfer_import -v` |
 
 Tests используют `unittest`; отдельные cases создают temporary SQLite/files и patch внешние процессы. Перед live-запуском всё равно проверяйте конкретный test body на обращение к локальным моделям/CLI.
+
+Installer tests are offline: they validate raw model refs/snippet parsing and the UI contract only. They do not call Ollama, pull a model, run `ollama run`, or alter selected-model/profile settings. The backend repeats the model-reference validation at the pull boundary; an actual download remains an explicit, confirmed user action.
 
 ### Controlled live-model security smoke
 

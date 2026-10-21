@@ -641,16 +641,6 @@
                         <select id="llmModelSelect" class="field__control"></select>
                     </label>
 
-                    <label class="field">
-                        <span class="field__label">Скачать или обновить модель Ollama</span>
-                        <div class="inline-field">
-                            <input id="downloadModelInput" class="field__control" type="text"
-                                placeholder="Например: qwen2.5:7b-instruct" />
-                            <button class="button button--primary" id="downloadModelButton"
-                                type="button">Запустить</button>
-                        </div>
-                    </label>
-
                     <div class="button-row">
                         <button class="button button--ghost" id="refreshModelsButton" type="button">Обновить
                             список</button>
@@ -844,6 +834,22 @@
                     </div>
 
                     <p class="inline-status" id="modelSettingsStatus"></p>
+                    <section class="ollama-installer" aria-labelledby="ollamaInstallerTitle">
+                        <p class="eyebrow">Установка · Только Ollama LLM</p>
+                        <h4 id="ollamaInstallerTitle">Добавить чат-модель</h4>
+                        <label class="field" for="downloadModelInput">
+                            <span class="field__label">Имя модели или команда установки Ollama</span>
+                            <textarea id="downloadModelInput" class="field__control" rows="3" maxlength="1024"
+                                spellcheck="false" aria-describedby="ollamaInstallerHelp ollamaInstallerStatus"
+                                placeholder="ollama pull gpt-oss:20b&#10;ollama run gpt-oss:20b"></textarea>
+                        </label>
+                        <p class="subtle" id="ollamaInstallerHelp">Принимается имя модели или одна строка ollama pull &lt;модель&gt; и необязательная ollama run той же модели. Выполняется только pull; run игнорируется. После загрузки модель можно выбрать вручную. Другие команды, shell-скрипты и установка ASR/TTS здесь не поддерживаются.</p>
+                        <div class="button-row">
+                            <button class="button button--primary" id="downloadModelButton" type="button">Скачать модель</button>
+                        </div>
+                        <p class="inline-status" id="ollamaInstallerStatus" role="status"></p>
+                        <div class="ollama-installer__downloads" id="ollamaInstallerDownloads" aria-label="Загрузки Ollama"></div>
+                    </section>
                 </section>
 
                 <section class="settings-group settings-group--vision" data-settings-tab-panel="vision">

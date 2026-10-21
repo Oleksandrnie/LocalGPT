@@ -4150,6 +4150,36 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     gap: 12px;
 }
 
+.ollama-installer {
+    display: grid;
+    gap: 12px;
+    margin-top: 8px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: rgba(14, 20, 28, 0.42);
+}
+
+.ollama-installer h4,
+.ollama-installer .eyebrow,
+.ollama-installer .field,
+.ollama-installer p {
+    margin: 0;
+}
+
+.ollama-installer__downloads {
+    display: grid;
+    gap: 10px;
+}
+
+.ollama-installer__download {
+    padding: 12px;
+}
+
+body.theme-light .ollama-installer {
+    background: rgba(255, 255, 255, 0.42);
+}
+
 .download-progress {
     width: 100%;
     height: 8px;
