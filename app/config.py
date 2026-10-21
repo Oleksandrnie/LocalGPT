@@ -433,6 +433,9 @@ DEFAULT_PIPELINE = {
     },
 }
 
+THINKING_TOKEN_BUDGET_MIN = 2048
+THINKING_TOKEN_BUDGET_DEFAULT = 4096
+
 DEFAULT_RUNTIME_SETTINGS = {
     "streaming_enabled": True,
     "pipeline_enabled": True,
@@ -458,7 +461,7 @@ DEFAULT_RUNTIME_SETTINGS = {
     "ocr_assist": "auto",
     "ocr_language": "",
     "ollama_think": "auto",
-    "thinking_tokens": 2048,
+    "thinking_tokens": THINKING_TOKEN_BUDGET_DEFAULT,
     "show_router_thinking_toggle": False,
     "pipeline": DEFAULT_PIPELINE,
 }

@@ -192,13 +192,13 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
                 profile_id=self.profile_id,
                 model_name="qwen3:8b",
                 output_tokens=900,
-                thinking_tokens=1800,
+                thinking_tokens=4096,
                 ollama_think="on",
             )
         )
 
         self.assertEqual(result["effective"]["output_tokens"], 900)
-        self.assertEqual(result["effective"]["thinking_tokens"], 1800)
+        self.assertEqual(result["effective"]["thinking_tokens"], 4096)
         self.assertEqual(result["effective"]["max_tokens"], 900)
         with self.assertRaises(HTTPException) as ctx:
             profile_routes.save_model_settings(

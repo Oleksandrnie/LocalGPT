@@ -196,7 +196,25 @@ The user authorized completing these items without intermediate approvals; provi
 
 Implementation complete: the Settings → Chat/LLM panel now accepts a bounded raw Ollama model reference, one `ollama pull` line, or that pull plus an exact matching `ollama run` line (which is explicitly ignored). It reuses existing confirmation, pull, status polling and cancellation; the inline panel shows recent pull status/progress, transfer size/ETA and cancellation. Backend validates again before accepting an API request; no shell command is executed and the selected model is not changed. Installer backlog item moved to the completed changelog. No model was downloaded and no app/profile state was changed.
 
-Validation passed: `node --check web_ui/js/app.js`; `node --test tests/ollama_install.test.mjs tests/ollama_install_ui.test.mjs` (6/6); `venv/bin/python -m unittest tests.test_ollama_model_ref_validation tests.test_ollama_pull -v` (7/7); `node tests/markdown_rendering.test.mjs` (4/4); `git diff --check`. UI/runtime acceptance is intentionally left for the user; LocalGPT was not restarted. Checkpoint: `aeb02bb feat(models): add guarded Ollama LLM installer`.
+Validation passed: `node --check web_ui/js/app.js`; `node --test tests/ollama_install.test.mjs tests/ollama_install_ui.test.mjs` (6/6); `venv/bin/python -m unittest tests.test_ollama_model_ref_validation tests.test_ollama_pull -v` (7/7); `node tests/markdown_rendering.test.mjs` (4/4); `git diff --check`. UI/runtime acceptance is intentionally left for the user; LocalGPT was not restarted. Checkpoint: `1231bb3 feat(models): add guarded Ollama LLM installer`.
+
+### CHAT-EVAL — cross-domain evidence and answer-completeness evaluation
+
+- Retrieval eval used `hybrid_v2` with an explicit `local_hash-v1` override (no Ollama embedding runtime); 10 synthetic queries / 12 synthetic documents, 8 positive and 2 unsupported. Expected-source/context recall was 7/8 positive cases (87.5%); unsupported queries were rejected 2/2; typo retrieval was 1/2. All 3 paraphrase cases selected the expected source and included it in context, but facet diagnostics returned `not_found` (facet-confirmed rate 0/3). This is a heuristic/status mismatch, not proof retrieval failed.
+- Sent the same six synthetic evidence cases sequentially to all five installed target models (`qwen2.5:3b-instruct`, `qwen2.5:7b-instruct`, `qwen3:4b`, `qwen2.5-coder:7b`, `mistral-nemo:12b`). All 30 final answers were non-empty and ended normally; revised lexical markers covered all five positive cases per model, each model abstained on the one unsupported question, and no unsupported color was emitted. These are fixed synthetic examples and lexical coverage markers, not semantic proof or full LocalGPT profile/session RAG tests.
+- Found and fixed a post-answer diagnostic bug: `overall_status=not_found` overrode a non-empty prompt evidence manifest and falsely returned `evidence_not_found`. Traceability now uses only actual included manifest content; absence of a manifest remains `evidence_not_found`. Generic regression covers traceable and untraceable outputs when facet status is `not_found`.
+
+### RESOURCE-MEASURE — sequential local model footprint
+
+Measured the five-model direct synthetic test with one-second runner RSS sampling, system free memory and `vm_stat` swapouts; each model was explicitly unloaded. Peak sampled runner RSS / minimum free memory: Qwen2.5 3B 2.1 GB / 52%; Qwen2.5 7B 4.7 GB / 36%; Qwen3 4B 3.4 GB / 42%; Qwen2.5 Coder 7B 4.6 GB / 32%; Mistral Nemo 12B 7.0 GB / 14%. Swapouts were 0 for the first four; Mistral Nemo 12B added 100,796 swapout pages. It took about 25 seconds and unloaded; a later idle snapshot had 83% free memory and empty `ollama ps`. `pmset` reported no thermal/performance warning; numeric temperature is unavailable here and no privileged `powermetrics` was used. RSS is sampled runner-only peak, not a guaranteed maximum or complete app footprint. Avoid concurrent local models; the 12B model caused material pressure/swap.
+
+Qwen3 4B in the same run was requested with `think=False` (`/no_think`) but returned reasoning text and took about 99 seconds across six short prompts. This does not mean Thinking was intentionally on; it means the no-thinking request did not suppress measured reasoning work. Track as a separate toggle/provider investigation.
+
+### Thinking-budget defaults — implemented, acceptance pending
+
+Raised the default `thinking_tokens` allowance to 4096 and enforced a minimum of 2048 in Settings/UI, API validation, effective model settings and runtime policy. Existing low overrides read as 2048 without database migration; Output tokens remains independent; higher manual overrides up to 32768 remain supported. This allowance affects Thinking ON and hybrid-Qwen OFF compatibility paths, not ordinary OFF output-only requests, and is not a guarantee of actual reasoning token consumption.
+
+Validation: 106 focused Python tests passed across model routing, RAG answer quality, live-eval scoring, retrieval eval and Vision runtime, plus the changed pipeline token-budget test; 12 Node UI/Markdown tests passed; compileall, JavaScript syntax and `git diff --check` passed. A broader `tests.test_pipeline_memory` run still has its previously known unrelated ASR-pipeline failures (`test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers`, `test_pipeline_tasks_are_normalized_for_transcript_record`). No model download, profile/database mutation, LocalGPT restart or parallel inference occurred. User acceptance of the installer and new Thinking-token display remains pending.
 
 ### Explicitly unchanged / deferred
 
@@ -204,8 +222,6 @@ Validation passed: `node --check web_ui/js/app.js`; `node --test tests/ollama_in
 - User considers current Vision/OCR capabilities sufficient; real photographed-table and degraded-image acceptance remains deferred.
 - Optional actual model-bundle transfer to another device remains deferred until a second device is available.
 - GigaAM, agent modes and image generation remain deferred.
-
-GigaAM, agent modes and image generation remain deferred unless reopened by the user.
 
 ## Known limitations
 

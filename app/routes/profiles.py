@@ -170,10 +170,11 @@ def _normalize_token_budget(value: int | None, key: str) -> int | None:
             status_code=422,
             detail={"code": f"invalid_{key}", "message": f"{key} must be an integer."},
         ) from exc
-    if normalized < 1 or normalized > 32768:
+    minimum = config.THINKING_TOKEN_BUDGET_MIN if key == "thinking_tokens" else 1
+    if normalized < minimum or normalized > 32768:
         raise HTTPException(
             status_code=422,
-            detail={"code": f"invalid_{key}", "message": f"{key} must be between 1 and 32768."},
+            detail={"code": f"invalid_{key}", "message": f"{key} must be between {minimum} and 32768."},
         )
     return normalized
 

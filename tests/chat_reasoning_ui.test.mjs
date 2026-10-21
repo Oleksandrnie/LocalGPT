@@ -10,6 +10,7 @@ test("LLM settings expose separate output and thinking budgets", () => {
   assert.match(html, /id="maxTokensInput"[\s\S]*id="thinkingTokensInput"/);
   assert.match(javascript, /output_tokens:\s*parseOptionalNumber\(els\.maxTokensInput/);
   assert.match(javascript, /thinking_tokens:\s*parseOptionalNumber\(els\.thinkingTokensInput/);
+  assert.match(html, /id="thinkingTokensInput"[^>]*min="2048"[^>]*placeholder="4096"/);
 });
 
 test("quick Thinking control is visible for declared thinking-capable models", () => {

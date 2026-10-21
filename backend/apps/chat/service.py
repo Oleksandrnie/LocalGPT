@@ -139,8 +139,9 @@ def apply_generation_budget_policy(
     output_tokens = _budget_value("output_tokens", legacy_output_tokens)
     thinking_tokens = _budget_value(
         "thinking_tokens",
-        int(config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens") or 2048),
+        int(config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens") or config.THINKING_TOKEN_BUDGET_DEFAULT),
     )
+    thinking_tokens = max(config.THINKING_TOKEN_BUDGET_MIN, thinking_tokens)
     think = _resolve_ollama_think(effective.get("ollama_think"))
     qwen3_structural_off = bool(
         think is False
@@ -518,11 +519,11 @@ def assess_rag_answer(
             if item.get("chunk_id") is not None
         )
     )
-    if retrieval_status == "not_found" or (retrieval_status != "disabled" and not included_evidence):
-        answer_status = "evidence_not_found"
-        matched_terms: list[str] = []
-    elif retrieval_status == "disabled":
+    if retrieval_status == "disabled":
         answer_status = "retrieval_disabled"
+        matched_terms = []
+    elif not included_evidence:
+        answer_status = "evidence_not_found"
         matched_terms = []
     else:
         def trace_terms(text: str) -> set[str]:

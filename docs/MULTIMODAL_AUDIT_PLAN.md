@@ -14,10 +14,8 @@ See the repository-root [`AGENTS.md`](../AGENTS.md) for the canonical model-rout
 
 ## Remaining work — approved order
 
-1. **Broader Chat/RAG evaluation:** the controlled single-question comparison across five installed target Chat models is already complete. Extend—not repeat—that baseline with a cross-domain test set and separate checks for retrieval coverage, evidence passed to the model, answer completeness and appropriate abstention. Run one model at a time, use fresh sessions, and do not download models or add corpus-specific rules.
-2. **Mac resource measurements:** the sequential load/unload smoke is complete. Measure available per-model/process and system memory signals during representative sequential inference; inspect built-in thermal-pressure reporting. First establish which peak RSS/thermal metrics are available without installing extra utilities; report unavailable numeric temperature as unavailable.
-3. **User-recording ASR reference (optional, domain-specific):** the public benchmark below establishes a reproducible baseline. To score the user's own long MP3, a human must verify a 30–60 second slice against the audio; a model transcript alone is not ground truth. A preliminary transcript can be supplied for correction.
-4. **Optional transfer acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
+1. **User-recording ASR reference (optional, domain-specific):** the public benchmark below establishes a reproducible baseline. To score the user's own long MP3, a human must verify a 30–60 second slice against the audio; a model transcript alone is not ground truth. A preliminary transcript can be supplied for correction.
+2. **Optional transfer acceptance:** perform a real model-bundle transfer to another device if one is available. Automated relocation tests are already complete.
 
 ## Deferred
 
@@ -90,6 +88,20 @@ All five clean RAG runs received the same five chunks from `rag_third_party.md` 
 Interpretation: for this deliberately noisy RAG corpus, the recurring short answer is not a model-specific failure. Retrieval/ranking, facet coverage and source ambiguity remain plausible upstream contributors; the current lexical trace cannot prove which factor caused each omission. Do not add CMS-specific rules. Test-fixture sessions were deleted after use. No repository code or profile settings were changed.
 
 Resource observation for the dedicated Mac stage: during sequential testing, `qwen3:4b` reached a reported resident size of about 7.5 GB and system-wide free-memory percentage fell to 18%; `mistral-nemo:12b` reported about 12 GB and free memory fell to 6%. Each model was unloaded after its test; free-memory percentage recovered to about 64–80%. macOS reported no thermal warning, but numeric temperature and peak per-process memory remain unmeasured. The 12B test was allowed to return its answer, then explicitly unloaded; no concurrent inference ran.
+
+### Cross-domain retrieval and answer-use extension — completed 2026-10-21
+
+Ran the existing synthetic retrieval fixture through `hybrid_v2` with an explicit `local_hash-v1` override (so this evaluation did not start or change Ollama embeddings): 10 queries / 12 synthetic documents, 8 positive and 2 unsupported. Expected-source/context recall was 7/8 positive cases (87.5%); both negative queries were rejected; typo retrieval was 1/2. All three paraphrase queries selected the expected source and included it in context, but strict facet diagnostics labelled them `not_found` (paraphrase facet-confirmed rate 0/3). This demonstrates that facet status is a heuristic and must not be conflated with whether evidence was actually included.
+
+Then sent the same six direct synthetic-evidence prompts to each already-installed text model sequentially: `qwen2.5:3b-instruct`, `qwen2.5:7b-instruct`, `qwen3:4b`, `qwen2.5-coder:7b` and `mistral-nemo:12b`. The prompts covered plant schedules, damaged shipments, battery recovery, calibration, a versioned museum conflict and one unsupported fact. With a per-call cap of 1024, all five produced non-empty final answers on all six cases; revised heuristic markers covered all five factual cases for each model, and each abstained on the unsupported case without naming a color. This is a small controlled evidence-use smoke—not a semantic benchmark, not a full LocalGPT RAG/session test, and not proof of performance on arbitrary company documents. The synthetic report was stored outside the repository.
+
+The run exposed a post-answer diagnostics mismatch: when facet status was `not_found`, the application reported `evidence_not_found` even if a non-empty structured manifest had actually been included in the prompt. Fixed the precedence so actual included evidence is traced independently of the facet heuristic; no evidence manifest still yields `evidence_not_found`. A generic regression covers both traceable and ignored answers under heuristic `not_found`. Targeted answer-quality, retrieval-eval and live-eval unit tests passed 11 tests; no corpus-specific rule or provider/model configuration was changed.
+
+### Mac resource sample — completed 2026-10-21
+
+Measured the preceding five-model run sequentially, sampling `llama-server`/Ollama runner RSS, `memory_pressure -Q`, `vm_stat` swap deltas and `pmset -g therm`; each model was explicitly unloaded. Peak sampled runner RSS / lowest free system memory: Qwen2.5 3B 2.1 GB / 52%; Qwen2.5 7B 4.7 GB / 36%; Qwen3 4B 3.4 GB / 42%; Qwen2.5 Coder 7B 4.6 GB / 32%; Mistral Nemo 12B 7.0 GB / 14%. Swapouts were zero for the first four; during the Mistral Nemo 12B pass the system counter increased by 100,796 pages. The run took about 25 seconds, followed by explicit unload; a later idle snapshot showed 83% free memory and an empty `ollama ps`.
+
+`pmset` recorded no thermal or performance warning. It does not provide numeric temperature here; `powermetrics` requires superuser access, which was not used. RSS is a one-second sampled peak of runner processes, not a guaranteed instantaneous maximum or full app footprint. This bounded sample does not establish sustained-load thermal safety; it does show material memory pressure/swap with Mistral Nemo 12B, so avoid concurrent local models and unload models when finished. Qwen3 4B was requested with `think=False` (`/no_think` at the Ollama boundary) but still returned reasoning text and took about 99 seconds across six short cases; the Thinking/provider behavior is a follow-up investigation, not a claim that thinking was successfully disabled.
 
 ## Vision/OCR quality — live smoke completed; table/OCR-language coverage remains open
 

@@ -1700,9 +1700,15 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     if overrides.get("output_tokens") is None and legacy_output_override is not None:
         effective["output_tokens"] = legacy_output_override
     effective["output_tokens"] = int(effective.get("output_tokens") or effective.get("max_tokens") or config.SETTINGS.max_tokens)
-    effective["thinking_tokens"] = int(
-        effective.get("thinking_tokens") or config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens") or 2048
-    )
+    try:
+        thinking_tokens = int(
+            effective.get("thinking_tokens")
+            or config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens")
+            or config.THINKING_TOKEN_BUDGET_DEFAULT
+        )
+    except (TypeError, ValueError):
+        thinking_tokens = config.THINKING_TOKEN_BUDGET_DEFAULT
+    effective["thinking_tokens"] = min(32768, max(config.THINKING_TOKEN_BUDGET_MIN, thinking_tokens))
     effective["max_tokens"] = effective["output_tokens"]
     if isinstance(overrides.get("pipeline"), dict):
         pipeline = _clone_jsonable(effective.get("pipeline") or {})
@@ -1728,6 +1734,11 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     returned_overrides = {key: overrides.get(key) for key in settings_keys}
     if returned_overrides.get("output_tokens") is None and returned_overrides.get("max_tokens") is not None:
         returned_overrides["output_tokens"] = returned_overrides["max_tokens"]
+    if returned_overrides.get("thinking_tokens") is not None:
+        returned_overrides["thinking_tokens"] = min(
+            32768,
+            max(config.THINKING_TOKEN_BUDGET_MIN, int(returned_overrides["thinking_tokens"])),
+        )
     for key in profile_runtime_keys:
         if key in profile_settings:
             returned_overrides[key] = profile_settings.get(key)

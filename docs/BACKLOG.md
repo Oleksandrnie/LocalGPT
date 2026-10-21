@@ -5,8 +5,7 @@
 ## Planned
 
 - Выполнить отдельную реальную Tailscale/tailnet validation; LAN Caddy HTTPS → localhost backend уже проверен с другого устройства в private Wi-Fi.
-- Расширить domain-independent оценку Chat/RAG за пределы уже завершённого одинакового CMS-вопроса на пяти установленных целевых моделях: cross-domain набор, полнота перечислений, корректное признание отсутствующих фактов, раздельная диагностика retrieval miss и факта, найденного, но проигнорированного моделью; затем определить нужны ли универсальный completeness contract и структурированная упаковка evidence. Повторять установленную матрицу моделей последовательно, без загрузки новых моделей и corpus-specific правил.
-- Провести отдельный последовательный Mac resource measurement на уже установленных представительных Chat-моделях: зафиксировать память модели/системы до, во время и после загрузки/выгрузки, доступный пик RSS и системный thermal-pressure сигнал. Сначала определить, какие метрики реально предоставляет macOS без установки дополнительных утилит; недоступную числовую температуру явно отметить как недоступную, не выдавать предупреждение macOS за измерение температуры. Не запускать модели параллельно.
+- Investigate Qwen3 reasoning that was returned with `think=False`/`/no_think`; determine how the Thinking control should report provider behavior rather than trusting request settings alone.
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
 - Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
 

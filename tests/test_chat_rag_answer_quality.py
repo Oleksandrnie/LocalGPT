@@ -86,6 +86,24 @@ class ChatRagAnswerQualityTestCase(unittest.TestCase):
         self.assertEqual(ignored["source_ids"], ["maintenance.md"])
         self.assertEqual(ignored["chunk_ids"], [7])
 
+    def test_answer_trace_uses_included_evidence_even_when_facet_diagnostic_is_not_found(self) -> None:
+        manifest = [
+            {
+                "source_id": "greenhouse-irrigation.md",
+                "chunk_id": 19,
+                "content": "Orchids are watered every four days.",
+            }
+        ]
+        diagnostics = {"overall_status": "not_found", "facet_coverage": []}
+
+        traceable = assess_rag_answer("Orchids need water every four days.", manifest, diagnostics)
+        unrelated = assess_rag_answer("I cannot answer that question.", manifest, diagnostics)
+
+        self.assertEqual(traceable["retrieval_status"], "not_found")
+        self.assertEqual(traceable["answer_status"], "evidence_traceable")
+        self.assertEqual(unrelated["retrieval_status"], "not_found")
+        self.assertEqual(unrelated["answer_status"], "evidence_found_answer_not_traceable")
+
     def test_source_filename_does_not_make_unrelated_answer_traceable(self) -> None:
         chunks = [
             {

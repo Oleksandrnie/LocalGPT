@@ -690,8 +690,9 @@
 
                         <label class="field">
                             <span class="field__label">Thinking tokens</span>
-                            <input id="thinkingTokensInput" class="field__control" type="number" min="1" max="32768"
-                                step="1" placeholder="2048" />
+                            <input id="thinkingTokensInput" class="field__control" type="number" min="2048" max="32768"
+                                step="1" placeholder="4096" />
+                            <span class="field__description">По умолчанию 4096, минимум 2048. Output tokens — отдельный лимит финального ответа.</span>
                         </label>
 
                         <label class="field">

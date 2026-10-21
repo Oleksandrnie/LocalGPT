@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added deterministic cross-domain Ollama evidence-use evaluation for installed chat models and sampled runner RSS, system memory pressure, swap deltas, unload and thermal-warning signals; post-answer RAG trace now follows the actual included evidence manifest even when heuristic facet status says `not_found`.
 - Settings → Chat/LLM now provides a guarded Ollama model installer: raw model refs or a restricted `ollama pull` snippet, inline progress and cancellation, with independent backend validation and no automatic model selection or command execution.
 - Code-enforced prompt/RAG/runtime security controls: metadata-only diagnostics/logging, task ownership, request/prompt/upload budgets, generation concurrency/timeout cleanup и bounded SSE reconnects.
 - `ADMIN_TOKEN` authorization для runtime/database/storage/debug operations; Web UI передаёт token header-ом и хранит только в browser session.
@@ -25,6 +26,8 @@
 
 ### Changed
 
+- Chat model `Thinking tokens` now defaults to 4096 with a 2048 minimum; old lower overrides are normalized in the effective UI/runtime settings while `Output tokens` remains independent.
+- Post-answer RAG diagnostics now trace only evidence spans actually included in the prompt, even when the separate heuristic facet-status classifier says `not_found`.
 - Chat/direct Vision и явный RAG-vision flow автоматически продолжают только подтверждённый provider length-stop с final content: до четырёх дополнительных проходов с прежним per-call budget, исходными instructions/evidence и exact overlap removal. Склеенный ответ проходит cross-pass privacy guard; cap exhaustion остаётся incomplete/failed и исключается из completed memory/history.
 - Vision получил отдельный профильный output-token limit с default/reset 1024 и рекомендацией не снижать его; legacy `0` разрешается в 1024, а явные 128–8192 сохраняются без изменения обычного text budget. Provider `done_reason`/`eval_count` сохраняются, а ответ, оборванный лимитом, завершается явной ошибкой вместо ложного `completed`.
 - Асинхронные ASR tasks используют один активный child-process и process-local FIFO с nonterminal `queued`; отмена queued-задачи очищает input без запуска worker, а active cancellation удерживает слот до подтверждённой смерти child.

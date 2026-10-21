@@ -8,6 +8,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app import config, db
+from app.routes.profiles import _normalize_token_budget
 from app.schemas import ChatRequest
 from app.services import models as model_service
 from backend.apps.chat.routes import _apply_auto_router, _prepare_chat_request, start_chat_task
@@ -17,6 +18,15 @@ from backend.apps.chat.services import local_calculator, model_residency, model_
 
 
 class ModelRouterTestCase(unittest.TestCase):
+    def test_thinking_budget_minimum_is_enforced_without_changing_output_budget_range(self):
+        self.assertEqual(_normalize_token_budget(2048, "thinking_tokens"), 2048)
+        self.assertEqual(_normalize_token_budget(4096, "thinking_tokens"), 4096)
+        self.assertEqual(_normalize_token_budget(1, "output_tokens"), 1)
+        with self.assertRaises(HTTPException) as context:
+            _normalize_token_budget(1024, "thinking_tokens")
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertEqual(context.exception.detail["code"], "invalid_thinking_tokens")
+
     def test_auto_model_aliases(self):
         self.assertTrue(model_router.is_auto_model("__auto_router__"))
         self.assertTrue(model_router.is_auto_model("Auto / Smart Router"))
@@ -231,7 +241,7 @@ class ModelRouterTestCase(unittest.TestCase):
             "qwen3:8b",
             messages=messages,
             temperature=0.1,
-            max_tokens=2053,
+            max_tokens=4101,
             keep_alive="5m",
             think=False,
         )
@@ -1133,7 +1143,7 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
             self.profile_id,
             "qwen3:8b",
             output_tokens=700,
-            thinking_tokens=1300,
+            thinking_tokens=4096,
             ollama_think="on",
         )
 
@@ -1141,9 +1151,19 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
 
         self.assertEqual(settings["effective"]["output_tokens"], 700)
         self.assertEqual(settings["effective"]["max_tokens"], 700)
-        self.assertEqual(settings["effective"]["thinking_tokens"], 1300)
+        self.assertEqual(settings["effective"]["thinking_tokens"], 4096)
         self.assertEqual(settings["overrides"]["output_tokens"], 700)
-        self.assertEqual(settings["overrides"]["thinking_tokens"], 1300)
+        self.assertEqual(settings["overrides"]["thinking_tokens"], 4096)
+
+    def test_default_and_legacy_low_thinking_budget_use_minimum_and_preserve_output_budget(self):
+        settings = db.effective_settings(self.profile_id, "qwen3:8b", config.DEFAULT_SETTINGS)
+        self.assertEqual(settings["effective"]["thinking_tokens"], 4096)
+
+        db.upsert_model_settings(self.profile_id, "qwen3:8b", output_tokens=700, thinking_tokens=512)
+        legacy = db.effective_settings(self.profile_id, "qwen3:8b", config.DEFAULT_SETTINGS)
+        self.assertEqual(legacy["effective"]["output_tokens"], 700)
+        self.assertEqual(legacy["effective"]["thinking_tokens"], 2048)
+        self.assertEqual(legacy["overrides"]["thinking_tokens"], 2048)
 
     def test_legacy_max_tokens_migrates_to_output_tokens(self):
         db.upsert_model_settings(self.profile_id, "qwen3:8b", max_tokens=777)
@@ -1162,13 +1182,13 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
 
     def test_generation_budget_policy_separates_on_and_off_semantics(self):
         enabled = apply_generation_budget_policy(
-            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "on"}
+            {"output_tokens": 700, "thinking_tokens": 4096, "ollama_think": "on"}
         )
         disabled = apply_generation_budget_policy(
-            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"}
+            {"output_tokens": 700, "thinking_tokens": 4096, "ollama_think": "off"}
         )
 
-        self.assertEqual(enabled["provider_num_predict"], 2000)
+        self.assertEqual(enabled["provider_num_predict"], 4796)
         self.assertEqual(enabled["generation_budget_policy"], "combined_compatibility_cap")
         self.assertTrue(enabled["thinking_budget_applied"])
         self.assertFalse(enabled["native_reasoning_budget_supported"])
@@ -1177,10 +1197,10 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
         self.assertFalse(disabled["thinking_budget_applied"])
 
         qwen3_disabled = apply_generation_budget_policy(
-            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"},
+            {"output_tokens": 700, "thinking_tokens": 4096, "ollama_think": "off"},
             model_name="qwen3:8b",
         )
-        self.assertEqual(qwen3_disabled["provider_num_predict"], 2000)
+        self.assertEqual(qwen3_disabled["provider_num_predict"], 4796)
         self.assertEqual(
             qwen3_disabled["generation_budget_policy"],
             "qwen3_off_structural_compatibility_cap",
@@ -1191,21 +1211,21 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
         service = ChatService()
         enabled = service._runtime_kwargs(
             "qwen3:8b",
-            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "on"},
+            {"output_tokens": 700, "thinking_tokens": 4096, "ollama_think": "on"},
         )
         disabled = service._runtime_kwargs(
             "qwen3:8b",
-            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"},
+            {"output_tokens": 700, "thinking_tokens": 4096, "ollama_think": "off"},
         )
 
-        self.assertEqual(enabled["max_tokens"], 2000)
+        self.assertEqual(enabled["max_tokens"], 4796)
         self.assertTrue(enabled["think"])
-        self.assertEqual(disabled["max_tokens"], 2000)
+        self.assertEqual(disabled["max_tokens"], 4796)
         self.assertFalse(disabled["think"])
 
         instruct_disabled = service._runtime_kwargs(
             "qwen2.5:7b-instruct",
-            {"output_tokens": 700, "thinking_tokens": 1300, "ollama_think": "off"},
+            {"output_tokens": 700, "thinking_tokens": 4096, "ollama_think": "off"},
         )
         self.assertEqual(instruct_disabled["max_tokens"], 700)
         self.assertFalse(instruct_disabled["think"])

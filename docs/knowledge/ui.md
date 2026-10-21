@@ -63,6 +63,8 @@ Image composer принимает PNG/JPEG/WebP через picker, paste и mult
 
 Если chat-модель отсутствует, composer остаётся доступным для ввода, но отправка блокируется с понятным сообщением. Загрузка модели требует явного подтверждения.
 
+В Settings → Chat / LLM `Thinking tokens` имеет default 4096, minimum 2048 и ручной диапазон до 32768; меньшие старые per-model overrides отображаются как минимум без изменения SQLite до сохранения. `Output tokens` остаётся независимым budget финального ответа.
+
 Внизу Settings → Chat / LLM находится Ollama installer: можно указать модель, вставить одну строку `ollama pull <model>` или типовой двухстрочный блок `ollama pull <model>` + `ollama run <model>`. Допускается только один pull; точный matching `run` распознаётся, но игнорируется и не запускается. Другие команды, аргументы, shell chaining/substitution и лишние строки отклоняются до запроса к backend. Pull progress, состояние и остановка показываются рядом с installer; завершение загрузки не выбирает и не запускает модель — её нужно выбрать отдельно. Это предназначено для Ollama chat-compatible моделей, не для Vision/ASR/TTS/embedding setup.
 
 Settings tab `Vision` не смешан с обычной chat library. Он показывает cards `qwen2.5vl:3b`, `qwen2.5vl:7b`, `gemma3:4b`, отдельно declared и runtime-confirmed capabilities, а также явные download/update/delete/primary actions. В этом tab находятся:
