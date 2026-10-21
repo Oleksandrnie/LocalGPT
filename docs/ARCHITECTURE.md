@@ -151,8 +151,6 @@ SQLite содержит profiles, sessions, messages, chat attachment metadata, 
 ## Legacy и transitional architecture
 
 - `app/server.py` и feature wrappers в `app/` — compatibility surface.
-- `LTrnsrb.*` — historical launcher aliases inside `compare-branch/`; active entry points use `LocalGPT` / `start_localgpt*`.
-- `compare-branch/` — read-only reference, не импортируется runtime и удаляется только после отдельного parity review.
 - Большие `web_ui/js/app.js` и `web_ui/css/style.css` остаются рабочим frontend; их модульный рефакторинг — отдельная задача.
 
 ## Подробности

@@ -155,7 +155,7 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 - `app/data/chat_attachments/profile-<id>/` — оригиналы и thumbnails chat-изображений;
 - `app/data/tts/` и `tmp_logs/` — runtime-артефакты.
 
-Эти текущие runtime-пути игнорируются Git. Пустая `LOCAL_MODEL` допустима: приложение запускается без chat-модели, а загрузка выполняется только по явному действию пользователя. Ignore rules не удаляют уже закоммиченные blobs: аудит доступной Git-истории обнаружил исторические credential-like значения и записи чатов. Публичная публикация этого репозитория пока заблокирована; детали и требуемые действия владельца — в [отчёте readiness/security](docs/security/OPEN_SOURCE_READINESS_AUDIT.md).
+Эти runtime-пути игнорируются Git. Пустая `LOCAL_MODEL` допустима: приложение запускается без chat-модели, а загрузка выполняется только по явному действию пользователя.
 
 ## Локальная демонстрация и пример сценария
 
@@ -177,7 +177,7 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 - `ADMIN_TOKEN` защищает выбранные administrative/runtime/database/storage/debug операции; он не является глобальной авторизацией для всех API endpoints.
 - При локальных providers inference может оставаться на устройстве. Настроенный OpenAI-compatible endpoint, пакетные установщики, Hugging Face/model downloads и явно включённый LAN-режим создают внешние сетевые соединения.
 - SQLite, документы RAG, изображения, аудио и модели не шифруются LocalGPT at rest; защищайте системную учётную запись и диск средствами ОС.
-- Local-first не означает гарантированную offline-работу или приватность от выбранного внешнего provider-а. Полные ограничения: [audit report](docs/security/OPEN_SOURCE_READINESS_AUDIT.md).
+- Local-first не означает гарантированную offline-работу или приватность от выбранного внешнего provider-а.
 
 ## Ограничения, troubleshooting и roadmap
 
@@ -185,13 +185,12 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 - Минимальные RAM/VRAM/disk значения не установлены; они зависят от выбранных моделей. Модели, Piper voices и их лицензии нужно проверять отдельно.
 - Для Chat/Vision требуется доступный Ollama service и установленная совместимая модель; для ASR/TTS/OCR нужны соответствующие модели, native binaries или language packs.
 - Если backend не стартует, запустите сначала setup, проверьте `venv/bin/python --version`, Ollama health и свободный порт. Для OCR проверьте `tesseract --version`; для ASR — состояние backend/model в ASR Library. При сетевой ошибке проверьте, выбран ли локальный или внешний provider и ожидаем ли доступ в сеть.
-- Открытые задачи и технический долг находятся в [BACKLOG.md](docs/BACKLOG.md). До public release нужно закрыть P1-риск истории, выбрать лицензию и решить модель аутентификации для сетевого доступа.
 
-## Лицензия и вклад
+## Лицензия
 
-Текущий корневой [`License`](License) содержит условие **All Rights Reserved**; проект пока не опубликован как open-source лицензированный продукт. Прямая Piper dependency объявляет GPL-3.0-or-later, а модели и голоса имеют собственные условия. Не распространяйте приложение, веса или голоса на основании этого README; лицензионное решение ожидает владельца и юридической проверки.
+Copyright (C) 2025–2026 Oleksandr Niemchenko.
 
-Публичный contribution process и приватный security disclosure канал пока не настроены. Не отправляйте реальные секреты, пользовательские данные или уязвимости в публичные issue/PR. Предварительные решения и release checklist находятся в [audit report](docs/security/OPEN_SOURCE_READINESS_AUDIT.md).
+Исходный код LocalGPT распространяется по лицензии [GNU GPL-3.0-or-later](LICENSE). Зависимости устанавливаются отдельно и сохраняют собственные лицензии. Piper voices и модели не входят в репозиторий: они загружаются отдельно, и условия каждого артефакта нужно проверять в его `MODEL_CARD` перед использованием или распространением.
 
 ## Документация
 
@@ -199,9 +198,5 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Тестирование](docs/TESTING.md)
 - [Зависимости и setup](docs/DEPENDENCIES.md)
-- [Open Source readiness и security audit](docs/security/OPEN_SOURCE_READINESS_AUDIT.md)
-- [Экспорт и импорт моделей](docs/MODEL_TRANSFER_SPEC.md)
-- [Backlog](docs/BACKLOG.md)
-- [Инструкции для coding-агентов](AGENTS.md)
 
 Подробности подсистем находятся в [`docs/knowledge/`](docs/knowledge/). Runtime prompt остаётся рядом с кодом: [`app/prompts/system_base.md`](app/prompts/system_base.md).

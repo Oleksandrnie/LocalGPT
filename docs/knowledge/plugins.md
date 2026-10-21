@@ -72,4 +72,4 @@ Hot reload arbitrary code отсутствует.
 - hot reload executable code;
 - миграция ASR/TTS/RAG/OCR/chat в plugins.
 
-Эти пункты требуют отдельного security design и перечислены в [BACKLOG.md](../BACKLOG.md).
+Любой переход от metadata-only manifests к запуску внешнего кода требует отдельного security design.

@@ -6,6 +6,7 @@
 
 ### Added
 
+- Licensed the original LocalGPT source under GNU GPL-3.0-or-later; model and voice artifacts remain separate and are not bundled.
 - Added direct LAN launchers for macOS, Linux and Windows. They explicitly bind to `0.0.0.0`, print a private-network URL and warn that LAN clients have unauthenticated HTTP access to LocalGPT data.
 
 ### Removed

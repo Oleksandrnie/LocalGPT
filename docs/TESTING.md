@@ -291,7 +291,7 @@ Model-transfer tests используют только temporary synthetic files
 6. Запустить `start_localgpt*`, проверить `/health` и `/ui/gui_html.html` по Backend smoke выше.
 7. Убедиться, что `.env`, models, RAG sources, profiles и public networking не создавались автоматически.
 
-Результаты platform acceptance фиксируются в активном task progress до финального cleanup.
+Фиксируйте результаты platform acceptance в release notes или проверочной задаче с указанием ОС, версии Python и реальных сетевых условий.
 
 ## Критерии прохождения
 
