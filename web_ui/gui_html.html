@@ -842,9 +842,9 @@
                             <span class="field__label">Имя модели или команда установки Ollama</span>
                             <textarea id="downloadModelInput" class="field__control" rows="3" maxlength="1024"
                                 spellcheck="false" aria-describedby="ollamaInstallerHelp ollamaInstallerStatus"
-                                placeholder="ollama pull model:tag&#10;ollama run model:tag"></textarea>
+                                placeholder="ollama pull model:tag"></textarea>
                         </label>
-                        <p class="subtle" id="ollamaInstallerHelp">Принимается имя модели или одна строка ollama pull &lt;модель&gt; и необязательная ollama run той же модели. Выполняется только pull; run игнорируется. После загрузки chat-модель появится в общем списке — выберите её вручную; автоматически она не запускается. Другие команды, shell-скрипты и установка ASR/TTS здесь не поддерживаются.</p>
+                        <p class="subtle" id="ollamaInstallerHelp">Укажите имя модели или команду ollama pull &lt;модель&gt;. Команду ollama run добавлять не нужно; если она есть во вставленном блоке, установщик её проигнорирует. После загрузки совместимая chat-модель появится в общем списке — выберите её вручную. Другие команды и shell-скрипты не поддерживаются.</p>
                         <div class="button-row">
                             <button class="button button--primary" id="downloadModelButton" type="button">Скачать модель</button>
                         </div>

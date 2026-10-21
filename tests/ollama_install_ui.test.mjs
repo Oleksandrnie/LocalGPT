@@ -13,11 +13,13 @@ test("Chat/LLM settings contain a bottom installer panel with explicit scope and
   assert.match(panel, /id="downloadModelButton"/);
   assert.match(panel, /id="ollamaInstallerStatus"[^>]+role="status"/);
   assert.match(panel, /id="ollamaInstallerDownloads"/);
-  assert.match(panel, /Выполняется только pull/);
+  assert.match(panel, /Команду ollama run добавлять не нужно/);
   assert.match(panel, /chat-модель появится в общем списке/);
   assert.match(panel, /выберите её вручную/);
-  assert.match(panel, /placeholder="ollama pull model:tag&#10;ollama run model:tag"/);
-  assert.doesNotMatch(panel, /placeholder="ollama pull gpt-oss/);
+  assert.match(panel, /placeholder="ollama pull model:tag"/);
+  assert.doesNotMatch(panel, /placeholder="[^"]*ollama run/);
+  assert.match(panel, /Команду ollama run добавлять не нужно/);
+  assert.match(panel, /установщик её проигнорирует/);
 });
 
 test("installer parses pasted text before using the existing confirmed pull lifecycle", () => {

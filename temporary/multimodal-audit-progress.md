@@ -206,6 +206,13 @@ The user authorized completing these items without intermediate approvals; provi
 - Validation: `node --check web_ui/js/app.js`; full `node --test tests/*.test.mjs` — 41/41; `git diff --check` passed. No browser automation, local model pull, or LocalGPT restart; live UI acceptance remains with the user.
 - Checkpoint: `1722e90 fix(models): expose installed custom chat models`.
 
+### LLM-INSTALL-COPY — make the example and helper explicit that `run` is unnecessary
+
+- Status: `completed`; copy-only follow-up to the installer selection stage.
+- Goal/result: show only `ollama pull model:tag` in the input placeholder and tell users that `ollama run` is unnecessary; if included in a pasted accepted snippet it is ignored. Clarify that the compatible model appears for manual selection after the pull.
+- Validation: `node --check web_ui/js/app.js`; full `node --test tests/*.test.mjs` — 41/41; `git diff --check` passed. No browser/server restart or model pull.
+- Checkpoint: pending.
+
 Implementation complete: the Settings → Chat/LLM panel now accepts a bounded raw Ollama model reference, one `ollama pull` line, or that pull plus an exact matching `ollama run` line (which is explicitly ignored). It reuses existing confirmation, pull, status polling and cancellation; the inline panel shows recent pull status/progress, transfer size/ETA and cancellation. Backend validates again before accepting an API request; no shell command is executed and the selected model is not changed. Installer backlog item moved to the completed changelog. No model was downloaded and no app/profile state was changed.
 
 Validation passed: `node --check web_ui/js/app.js`; `node --test tests/ollama_install.test.mjs tests/ollama_install_ui.test.mjs` (6/6); `venv/bin/python -m unittest tests.test_ollama_model_ref_validation tests.test_ollama_pull -v` (7/7); `node tests/markdown_rendering.test.mjs` (4/4); `git diff --check`. UI/runtime acceptance is intentionally left for the user; LocalGPT was not restarted. Checkpoint: `1231bb3 feat(models): add guarded Ollama LLM installer`.
