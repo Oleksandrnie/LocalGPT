@@ -139,11 +139,6 @@ __pycache__/
 *.log
 *.tmp
 *.env.backup
-# Ollama legacy folders: keep structure, ignore heavy blobs
-ollama/
-ollama_models/**
-!ollama_models/**/.gitkeep
-!ollama_models/**/Modelfile
 app/db/*.db
 app/db/*.sqlite
 app/db/*.sqlite3
@@ -188,12 +183,6 @@ rag_sources/**
 *.mkv
 *.mov
 
-# Allow committing project structure and instructions
-!INSTRUCTIONS_FOR_GPT.md
-!README.md
-!run_localgpt.sh
-!first_run.py
-
 # Editor settings
 .vscode/
 .idea/
@@ -206,7 +195,6 @@ rag_sources/**
 !hf_cache/.gitkeep
 !ctranslate2_cache/.gitkeep
 !.cache/**/.gitkeep
-!ollama_models/**/.gitkeep
 !venv/.gitkeep
 
 # Temporary task tracking
