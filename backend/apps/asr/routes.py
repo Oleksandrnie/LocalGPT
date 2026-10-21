@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app import config, db
+from app.services.upload_limits import UploadLimitExceeded, copy_limited
 from app.services.timeline import build_timeline
 from backend.apps.asr import pipeline as pipeline_service
 from backend.apps.asr import tasks as transcribe_tasks
 from backend.apps.asr.whisper import transcribe_with_fallback
 
 router = APIRouter()
+MAX_ASR_UPLOAD_BYTES = 100 * 1024 * 1024
 
 LANGUAGE_RE = re.compile(r"^[a-z0-9]{2,8}(?:-[a-z0-9]{2,8})?$")
 
@@ -22,9 +23,21 @@ LANGUAGE_RE = re.compile(r"^[a-z0-9]{2,8}(?:-[a-z0-9]{2,8})?$")
 def _store_upload_temp(file: UploadFile) -> tuple[str, str]:
     source_name = Path(file.filename or "uploaded_file").name
     suffix = Path(source_name).suffix
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-        shutil.copyfileobj(file.file, tmp_file)
-        temp_path = tmp_file.name
+    temp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            temp_path = tmp_file.name
+            copy_limited(file.file, tmp_file, max_bytes=MAX_ASR_UPLOAD_BYTES)
+    except Exception as exc:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+        if isinstance(exc, UploadLimitExceeded):
+            raise HTTPException(
+                status_code=413,
+                detail={"code": "asr_upload_too_large", "max_bytes": MAX_ASR_UPLOAD_BYTES},
+            ) from exc
+        raise
+    assert temp_path is not None
     return temp_path, source_name
 
 
@@ -171,7 +184,6 @@ def transcribe(
     store_result: bool = Form(default=True),
     origin: str = Form(default=""),
 ):
-    tmp_path, source_name = _store_upload_temp(file)
     model_name = (model or config.SETTINGS.whisper_default_model).strip()
     preset, preset_value = _normalize_preset(prompt_preset)
     language_raw, preferred_language = _normalize_language(language)
@@ -182,6 +194,7 @@ def transcribe(
         profile_id=profile_id,
         store_result=bool(store_result),
     )
+    tmp_path, source_name = _store_upload_temp(file)
 
     try:
         return _transcribe_sync(
@@ -257,7 +270,6 @@ def start_transcription_task(
     store_result: bool = Form(default=True),
     origin: str = Form(default=""),
 ):
-    tmp_path, source_name = _store_upload_temp(file)
     model_name = (model or config.SETTINGS.whisper_default_model).strip()
     preset, _ = _normalize_preset(prompt_preset)
     _, preferred_language = _normalize_language(language)
@@ -268,6 +280,7 @@ def start_transcription_task(
         profile_id=profile_id,
         store_result=bool(store_result),
     )
+    tmp_path, source_name = _store_upload_temp(file)
 
     try:
         return transcribe_tasks.start_transcription_task(

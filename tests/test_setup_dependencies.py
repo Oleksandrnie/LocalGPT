@@ -145,7 +145,7 @@ class SetupDependencyTests(unittest.TestCase):
         source = (ROOT / "setup" / "setup_localgpt.sh").read_text(encoding="utf-8")
         self.assertIn('PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)', source)
         self.assertIn('"$SCRIPT_DIR/setup_localgpt.py"', source)
-        self.assertIn("python3.13 python3.12 python3.11 python3.10 python3 python", source)
+        self.assertIn("python3.14 python3.13 python3.12 python3.11 python3 python", source)
 
     def test_dot_venv_is_preserved_and_explained(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -178,7 +178,7 @@ class SetupDependencyTests(unittest.TestCase):
             with self.subTest(name=name):
                 source = (ROOT / name).read_text(encoding="utf-8")
                 venv_position = source.index("venv/bin/python")
-                fallback_position = source.index("python3.13 python3.12")
+                fallback_position = source.index("python3.14 python3.13 python3.12")
                 self.assertLess(venv_position, fallback_position)
 
     def test_windows_start_launcher_prefers_runtime_venv(self) -> None:

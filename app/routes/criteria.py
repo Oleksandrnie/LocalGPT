@@ -5,9 +5,11 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from .. import db
+from ..services.upload_limits import UploadLimitExceeded, read_limited
 from ..services import criteria as criteria_service
 
 router = APIRouter()
+MAX_CRITERIA_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 @router.post("/criteria/parse")
@@ -24,7 +26,13 @@ def parse_criteria(
     source = None
     try:
         if file is not None:
-            content = file.file.read()
+            try:
+                content = read_limited(file.file, max_bytes=MAX_CRITERIA_UPLOAD_BYTES)
+            except UploadLimitExceeded as exc:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"code": "criteria_upload_too_large", "max_bytes": MAX_CRITERIA_UPLOAD_BYTES},
+                ) from exc
             if not content:
                 raise ValueError("empty_file")
             suffix = Path(file.filename or "").suffix.lower()
@@ -46,6 +54,8 @@ def parse_criteria(
             source = "text"
         else:
             raise ValueError("no_source")
+    except HTTPException:
+        raise
     except ValueError as exc:
         code = str(exc)
         if code == "unsupported_file":

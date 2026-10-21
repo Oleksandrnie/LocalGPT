@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import os
 import shutil
+import struct
 import threading
 import uuid
 import zipfile
 from pathlib import Path
 
 from app import config
-from .manifest import BundleManifest, BundleValidationError, sha256_file
+from app.services.upload_limits import UploadLimitExceeded, copy_limited
+from .manifest import MAX_BUNDLE_BYTES, MAX_BUNDLE_FILES, MAX_MANIFEST_BYTES, BundleManifest, BundleValidationError, sha256_file
 
 _UPLOADS: dict[str, Path] = {}
 _LOCK = threading.Lock()
+MAX_CENTRAL_DIRECTORY_BYTES = 32 * 1024 * 1024
 
 _RUNTIME_REQUIREMENTS = {
     "ollama": ("ollama_runtime",),
@@ -61,15 +64,104 @@ def clear_upload_storage() -> dict:
     return {"deleted_files": len(files), "freed_size": total_size}
 
 
+def _preflight_archive_directory(path: Path) -> None:
+    file_size = path.stat().st_size
+    tail_size = min(file_size, 22 + 65_535)
+    with path.open("rb") as stream:
+        stream.seek(file_size - tail_size)
+        tail = stream.read(tail_size)
+    eocd_offset = tail.rfind(b"PK\x05\x06")
+    eocd_values = None
+    while eocd_offset >= 0:
+        if eocd_offset + 22 <= len(tail):
+            candidate = struct.unpack_from("<4s4H2LH", tail, eocd_offset)
+            if eocd_offset + 22 + candidate[-1] == len(tail):
+                eocd_values = candidate
+                break
+        eocd_offset = tail.rfind(b"PK\x05\x06", 0, eocd_offset)
+    if eocd_values is None:
+        raise BundleValidationError("bundle_invalid", "Archive directory is missing or invalid.")
+
+    _, disk_number, directory_disk, disk_entries, total_entries, directory_size, directory_offset, _ = eocd_values
+    if disk_number or directory_disk:
+        raise BundleValidationError("bundle_invalid", "Multi-disk or malformed ZIP archives are not supported.")
+
+    if (
+        disk_entries == 0xFFFF
+        or total_entries == 0xFFFF
+        or directory_size == 0xFFFFFFFF
+        or directory_offset == 0xFFFFFFFF
+    ):
+        eocd_absolute = file_size - tail_size + eocd_offset
+        locator_absolute = eocd_absolute - 20
+        if locator_absolute < 0:
+            raise BundleValidationError("bundle_invalid", "ZIP64 directory locator is missing.")
+        with path.open("rb") as stream:
+            stream.seek(locator_absolute)
+            locator = stream.read(20)
+            if len(locator) != 20:
+                raise BundleValidationError("bundle_invalid", "ZIP64 directory locator is invalid.")
+            locator_signature, locator_disk, zip64_offset, disk_count = struct.unpack("<4sLQL", locator)
+            if locator_signature != b"PK\x06\x07" or locator_disk or disk_count != 1:
+                raise BundleValidationError("bundle_invalid", "ZIP64 directory locator is invalid.")
+            stream.seek(zip64_offset)
+            record = stream.read(56)
+        if len(record) != 56:
+            raise BundleValidationError("bundle_invalid", "ZIP64 directory record is invalid.")
+        values = struct.unpack("<4sQ2H2L4Q", record)
+        if values[0] != b"PK\x06\x06" or values[1] < 44 or values[4] or values[5] or values[6] != values[7]:
+            raise BundleValidationError("bundle_invalid", "Multi-disk or malformed ZIP64 archives are not supported.")
+        total_entries, directory_size = values[7], values[8]
+    elif disk_entries != total_entries:
+        raise BundleValidationError("bundle_invalid", "Multi-disk or malformed ZIP archives are not supported.")
+
+    if total_entries > MAX_BUNDLE_FILES + 1:
+        raise BundleValidationError("bundle_invalid", "Archive contains too many entries.")
+    if directory_size > MAX_CENTRAL_DIRECTORY_BYTES:
+        raise BundleValidationError("bundle_invalid", "Archive directory is too large.")
+
+
+def _read_bundle_manifest(bundle: zipfile.ZipFile, infos: list[zipfile.ZipInfo]) -> BundleManifest:
+    if len(infos) > MAX_BUNDLE_FILES + 1:
+        raise BundleValidationError("bundle_invalid", "Archive contains too many entries.")
+    manifest_infos = [info for info in infos if info.filename == "manifest.json"]
+    if not manifest_infos:
+        raise BundleValidationError("bundle_incomplete", "manifest.json is missing.")
+    if len(manifest_infos) != 1:
+        raise BundleValidationError("bundle_invalid", "Archive contains duplicate manifests.")
+    manifest_info = manifest_infos[0]
+    if manifest_info.flag_bits & 0x1:
+        raise BundleValidationError("bundle_invalid", "Encrypted archive entries are not supported.")
+    if manifest_info.file_size > MAX_MANIFEST_BYTES:
+        raise BundleValidationError("bundle_invalid", "Manifest is too large.")
+    with bundle.open(manifest_info) as manifest_stream:
+        manifest_raw = manifest_stream.read(MAX_MANIFEST_BYTES + 1)
+    return BundleManifest.parse(manifest_raw)
+
+
 def inspect_archive(path: Path) -> dict:
+    if path.stat().st_size > MAX_BUNDLE_BYTES:
+        raise BundleValidationError("bundle_too_large", "Model bundle exceeds the 50 GiB upload limit.")
+    _preflight_archive_directory(path)
     try:
         with zipfile.ZipFile(path) as bundle:
-            names = bundle.namelist()
-            if "manifest.json" not in names:
-                raise BundleValidationError("bundle_incomplete", "manifest.json is missing.")
-            manifest = BundleManifest.parse(bundle.read("manifest.json"))
+            infos = bundle.infolist()
+            manifest = _read_bundle_manifest(bundle, infos)
             expected = {item.path.casefold(): item for item in manifest.files}
-            actual = {name.casefold() for name in names if name != "manifest.json" and not name.endswith("/")}
+            actual: set[str] = set()
+            total_size = 0
+            for info in infos:
+                if info.filename == "manifest.json" or info.is_dir():
+                    continue
+                folded = info.filename.casefold()
+                if folded in actual:
+                    raise BundleValidationError("bundle_invalid", "Archive contains duplicate payload paths.")
+                actual.add(folded)
+                total_size += info.file_size
+                if total_size > MAX_BUNDLE_BYTES:
+                    raise BundleValidationError("bundle_invalid", "Bundle payload is too large.")
+                if info.flag_bits & 0x1:
+                    raise BundleValidationError("bundle_invalid", "Encrypted archive entries are not supported.")
             if actual != set(expected):
                 raise BundleValidationError("bundle_invalid", "Archive payload does not match manifest.")
             for info in bundle.infolist():
@@ -80,9 +172,15 @@ def inspect_archive(path: Path) -> dict:
                     raise BundleValidationError("bundle_checksum_mismatch", f"Size mismatch: {item.path}")
                 import hashlib
                 digest = hashlib.sha256()
+                member_size = 0
                 with bundle.open(info) as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    while chunk := stream.read(1024 * 1024):
+                        member_size += len(chunk)
+                        if member_size > item.size:
+                            raise BundleValidationError("bundle_checksum_mismatch", f"Size mismatch: {item.path}")
                         digest.update(chunk)
+                if member_size != item.size:
+                    raise BundleValidationError("bundle_checksum_mismatch", f"Size mismatch: {item.path}")
                 if digest.hexdigest() != item.sha256:
                     raise BundleValidationError("bundle_checksum_mismatch", f"Checksum mismatch: {item.path}")
             return {
@@ -148,8 +246,9 @@ def apply_import(upload_id: str) -> dict:
     staging_root = config.DATA_DIR / "model_transfer" / "import_staging" / upload_id
     published = skipped = 0
     try:
+        _preflight_archive_directory(archive)
         with zipfile.ZipFile(archive) as bundle:
-            manifest = BundleManifest.parse(bundle.read("manifest.json"))
+            manifest = _read_bundle_manifest(bundle, bundle.infolist())
             targets = [(item, _target_for(item.path)) for item in manifest.files]
             conflicts = [
                 item.path for item, target in targets
@@ -171,7 +270,12 @@ def apply_import(upload_id: str) -> dict:
                 staged = staging_root / item.path
                 staged.parent.mkdir(parents=True, exist_ok=True)
                 with bundle.open(item.path) as source, staged.open("wb") as destination:
-                    shutil.copyfileobj(source, destination, length=1024 * 1024)
+                    try:
+                        copied = copy_limited(source, destination, max_bytes=item.size)
+                    except UploadLimitExceeded as exc:
+                        raise BundleValidationError("bundle_checksum_mismatch", f"Size mismatch: {item.path}") from exc
+                if copied != item.size:
+                    raise BundleValidationError("bundle_checksum_mismatch", f"Size mismatch: {item.path}")
                 if staged.stat().st_size != item.size or sha256_file(staged) != item.sha256:
                     raise BundleValidationError("bundle_checksum_mismatch", f"Checksum mismatch: {item.path}")
                 target.parent.mkdir(parents=True, exist_ok=True)

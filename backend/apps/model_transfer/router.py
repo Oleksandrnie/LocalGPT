@@ -1,7 +1,10 @@
+import uuid
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.services.upload_limits import UploadLimitExceeded, copy_limited
 from .inventory import export_inventory
 from . import export_service
 from .import_service import (
@@ -13,7 +16,7 @@ from .import_service import (
     upload_storage_dir,
     upload_storage_summary,
 )
-from .manifest import BundleValidationError
+from .manifest import MAX_BUNDLE_BYTES, BundleValidationError
 
 router = APIRouter(prefix="/model-transfer", tags=["model-transfer"])
 
@@ -66,12 +69,18 @@ async def inspect_import(bundle: UploadFile = File(...)):
         raise HTTPException(422, detail={"code": "bundle_invalid", "message": "Выберите файл .localgpt-models."})
     staging = upload_storage_dir()
     staging.mkdir(parents=True, exist_ok=True)
-    path = staging / f"{__import__('uuid').uuid4()}.localgpt-models"
+    path = staging / f"{uuid.uuid4()}.localgpt-models"
     keep = False
     try:
         with path.open("wb") as target:
-            while chunk := await bundle.read(1024 * 1024):
-                target.write(chunk)
+            bundle.file.seek(0)
+            try:
+                copy_limited(bundle.file, target, max_bytes=MAX_BUNDLE_BYTES)
+            except UploadLimitExceeded as exc:
+                raise HTTPException(
+                    413,
+                    detail={"code": "bundle_too_large", "max_bytes": MAX_BUNDLE_BYTES},
+                ) from exc
         result = inspect_archive(path)
         upload_id = register_upload(path)
         keep = True

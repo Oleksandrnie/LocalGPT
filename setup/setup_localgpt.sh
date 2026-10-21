@@ -18,8 +18,8 @@ if [ "$(uname -s)" = "Linux" ] && [ ! -t 0 ] && [ "${LOCALGPT_SETUP_TERMINAL:-0}
 fi
 
 find_python() {
-  for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+  for candidate in python3.14 python3.13 python3.12 python3.11 python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
       command -v "$candidate"
       return 0
     fi
@@ -40,7 +40,7 @@ run_as_root() {
 
 PYTHON_BIN=$(find_python || true)
 if [ -z "$PYTHON_BIN" ]; then
-  printf 'Python 3.10+ is missing. Install it now? [Y/n] '
+  printf 'Python 3.11+ is missing. Install it now? [Y/n] '
   read -r answer
   case "$answer" in n|N|no|NO) echo 'Setup cancelled.'; exit 1 ;; esac
 
@@ -70,7 +70,7 @@ if [ -z "$PYTHON_BIN" ]; then
 fi
 
 if [ -z "$PYTHON_BIN" ]; then
-  echo 'Python 3.10+ is still unavailable. Reopen the terminal and rerun setup.'
+  echo 'Python 3.11+ is still unavailable. Install it using the official Python distribution for your OS, then rerun setup.'
   exit 1
 fi
 

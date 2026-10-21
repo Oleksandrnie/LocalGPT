@@ -12,6 +12,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
+from app.services.upload_limits import UploadLimitExceeded, copy_limited
+
 
 _WHITESPACE_RE = re.compile(r"[ \t]+")
 _WORD_RE = re.compile(r"[\wА-Яа-яЁёЇїІіЄєҐґ'-]+", re.UNICODE)
@@ -22,6 +24,7 @@ _DEFAULT_TSV_PSM = (os.getenv("OCR_TSV_PSM") or "11").strip() or "11"
 _AUTO_CROP_ENABLED = (os.getenv("OCR_AUTO_CROP") or "1").strip().lower() not in {"0", "false", "no", "off"}
 _AUTO_CROP_MIN_CONF = max(0.0, float((os.getenv("OCR_AUTO_CROP_MIN_CONF") or "25").strip() or "25"))
 _AUTO_CROP_PADDING = max(12, int((os.getenv("OCR_AUTO_CROP_PADDING") or "36").strip() or "36"))
+MAX_OCR_UPLOAD_BYTES = 20 * 1024 * 1024
 _CHAT_HEADER_RE = re.compile(r"^(?:LOCALGPT|CHATGPT|ASSISTANT|ВЫ|YOU)\b.*\d{2}\.\d{2},\s*\d{2}:\d{2}$", re.IGNORECASE)
 _TIME_ONLY_RE = re.compile(r"^\d{2}\.\d{2},\s*\d{2}:\d{2}$")
 _UI_NOISE_LINES = {
@@ -571,9 +574,21 @@ def _ensure_tesseract() -> str:
 def _store_temp_image(file: UploadFile) -> tuple[str, str]:
     filename = Path(file.filename or "image").name
     suffix = Path(filename).suffix or ".png"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-        shutil.copyfileobj(file.file, tmp_file)
-        temp_path = tmp_file.name
+    temp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            temp_path = tmp_file.name
+            copy_limited(file.file, tmp_file, max_bytes=MAX_OCR_UPLOAD_BYTES)
+    except Exception as exc:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+        if isinstance(exc, UploadLimitExceeded):
+            raise HTTPException(
+                status_code=413,
+                detail={"code": "ocr_upload_too_large", "max_bytes": MAX_OCR_UPLOAD_BYTES},
+            ) from exc
+        raise
+    assert temp_path is not None
     return temp_path, filename
 
 
@@ -591,11 +606,11 @@ def extract_text_from_image(file: UploadFile, *, lang: str | None = None) -> dic
     tesseract_bin = _ensure_tesseract()
     temp_path, filename = _store_temp_image(file)
     selected_lang = (lang or _DEFAULT_LANG).strip() or _DEFAULT_LANG
-    resolved_lang = _resolve_requested_langs(tesseract_bin, selected_lang)
     engine = "tesseract"
     cropped_temp_path: str | None = None
 
     try:
+        resolved_lang = _resolve_requested_langs(tesseract_bin, selected_lang)
         primary = _run_tesseract(
             tesseract_bin,
             temp_path,

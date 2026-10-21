@@ -6,9 +6,9 @@
 
 | Уровень | Компонент | Версия / контракт | Для чего нужен | До setup |
 | --- | --- | --- | --- | --- |
-| Setup / bootstrap | macOS, Linux или Windows | native Terminal/PowerShell и Python 3.10+ для общего core | запуск platform entry point и `setup/setup_localgpt.py` | entry point устанавливает Python при отсутствии, затем передаёт управление core |
+| Setup / bootstrap | macOS, Linux или Windows | native Terminal/PowerShell и Python 3.11+ для общего core | запуск platform entry point и `setup/setup_localgpt.py` | entry point предлагает установить Python при отсутствии; на Linux может потребоваться отдельная установка Python 3.11+ если версия дистрибутива старее |
 | Core | Homebrew, apt, dnf, pacman, zypper или winget | актуальная поддерживаемая версия | установка отсутствующих системных пакетов | определяется автоматически; Homebrew может быть установлен интерактивно |
-| Core | Python | 3.10+ | launcher, FastAPI backend, providers, RAG и plugins | устанавливается интерактивно через Homebrew |
+| Core | Python | 3.11+ | launcher, FastAPI backend, providers, RAG и plugins | устанавливается интерактивно через Homebrew |
 | Core | `venv`, `pip` | из выбранного Python | изолированное Python-окружение | создаётся/обновляется setup |
 | Core LLM runtime | Ollama CLI/service | актуальная поддерживаемая версия с `/api/chat`, `/api/pull`, `/api/ps` | chat, model discovery/download и vision | устанавливается интерактивно; модели не загружаются |
 | Media | FFmpeg | 6+; проверен проектный host 8.1.1 | ASR audio conversion, OCR video-frame extraction, TTS speed processing | устанавливается интерактивно |

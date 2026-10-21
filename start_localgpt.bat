@@ -20,5 +20,5 @@ if %ERRORLEVEL% EQU 0 (
   exit /b %ERRORLEVEL%
 )
 
-echo Python 3.10+ is not installed or not available in PATH.
+echo Python 3.11+ is not installed or not available in PATH.
 exit /b 1

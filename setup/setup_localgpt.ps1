@@ -10,7 +10,7 @@ function Find-CompatiblePython {
     foreach ($candidate in $candidates) {
         if (Get-Command $candidate.Command -ErrorAction SilentlyContinue) {
             $Prefix = $candidate.Prefix
-            & $candidate.Command @Prefix -c "import sys; raise SystemExit(sys.version_info < (3, 10))" 2>$null
+            & $candidate.Command @Prefix -c "import sys; raise SystemExit(sys.version_info < (3, 11))" 2>$null
             if ($LASTEXITCODE -eq 0) {
                 return $candidate
             }
@@ -22,7 +22,7 @@ function Find-CompatiblePython {
 try {
     $Python = Find-CompatiblePython
     if (-not $Python) {
-        $Answer = Read-Host "Python 3.10+ is missing. Install Python 3.13 with winget? [Y/n]"
+        $Answer = Read-Host "Python 3.11+ is missing. Install Python 3.13 with winget? [Y/n]"
         if ($Answer -match "^(n|no)$") {
             throw "Setup cancelled: Python is required."
         }

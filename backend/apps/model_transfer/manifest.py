@@ -9,6 +9,9 @@ from typing import Any
 SCHEMA = "localgpt-model-bundle"
 VERSION = 1
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
+MAX_BUNDLE_BYTES = 50 * 1024 * 1024 * 1024
+MAX_BUNDLE_FILES = 50_000
+MAX_BUNDLE_MODELS = 5_000
 FAMILIES = {"ollama", "faster-whisper", "whisper-cpp", "piper"}
 
 
@@ -63,8 +66,11 @@ class BundleManifest:
         files = payload.get("files")
         if not bundle_id or not created_at or not isinstance(models, list) or not isinstance(files, list):
             raise BundleValidationError("bundle_invalid", "Manifest fields are incomplete.")
+        if len(models) > MAX_BUNDLE_MODELS or len(files) > MAX_BUNDLE_FILES:
+            raise BundleValidationError("bundle_invalid", "Manifest contains too many entries.")
         parsed_files: list[BundleFile] = []
         seen: set[str] = set()
+        total_size = 0
         for item in files:
             if not isinstance(item, dict):
                 raise BundleValidationError("bundle_invalid", "Invalid file entry.")
@@ -75,8 +81,11 @@ class BundleManifest:
             seen.add(folded)
             size = item.get("size")
             digest = str(item.get("sha256") or "").lower()
-            if not isinstance(size, int) or size < 0 or len(digest) != 64:
+            if isinstance(size, bool) or not isinstance(size, int) or size < 0 or len(digest) != 64:
                 raise BundleValidationError("bundle_invalid", "Invalid file size or SHA-256.")
+            total_size += size
+            if total_size > MAX_BUNDLE_BYTES:
+                raise BundleValidationError("bundle_invalid", "Bundle payload is too large.")
             try:
                 int(digest, 16)
             except ValueError as exc:

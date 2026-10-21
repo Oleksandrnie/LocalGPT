@@ -5,8 +5,8 @@ piper-tts==1.4.2
 openai==2.33.0
 faster-whisper==1.2.1
 pydub==0.25.1
-python-multipart==0.0.27
+python-multipart==0.0.31
 openpyxl==3.1.5
 httpx==0.28.1
 huggingface_hub==1.13.0
-Pillow==12.3.0
+Pillow==13.0.0

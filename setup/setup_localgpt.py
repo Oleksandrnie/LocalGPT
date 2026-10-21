@@ -19,7 +19,7 @@ DOT_VENV_DIR = ROOT / ".venv"
 WHISPER_CPP_SETUP_SCRIPT = ROOT / "tools" / "setup_whisper_cpp_macos.sh"
 WHISPER_CPP_CLI = ROOT / "models" / "whisper_cpp" / "bin" / "whisper-cli"
 WHISPER_CPP_VAD_MODEL = ROOT / "models" / "whisper_cpp" / "ggml-silero-v6.2.0.bin"
-MIN_PYTHON = (3, 10)
+MIN_PYTHON = (3, 11)
 
 
 class SetupError(RuntimeError):
