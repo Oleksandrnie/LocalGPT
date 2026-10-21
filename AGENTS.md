@@ -21,11 +21,11 @@ Model routing применяется только к execution-задачам, �
 
 `Bounded task` — задача с заранее понятными scope, ожидаемым результатом, architectural boundaries, acceptance criteria и validation. `Fine-grained edit` — локализованное изменение с понятным результатом. Luna исполняет определённую работу; Sol самостоятельно определяет правильное инженерное решение.
 
-Для текущей мультимодальной работы пользователь задал отдельный routing: GPT-6 Luna с effort `xHigh` используется для рассуждений и синтеза результатов проверок; GPT-6.1 Sol с effort `Medium` — для архитектуры, технического дизайна и реализации, включая backend, lifecycle и persistence. Это заменяет прежние назначения для этих категорий. Routing зафиксирован здесь, в `AGENTS.md`; progress-файлы и subsystem-документы его не дублируют.
+Для текущей мультимодальной работы пользователь задал отдельный routing: GPT-6 Luna с effort `Max` используется для рассуждений и синтеза результатов проверок; GPT-6.1 Sol с effort `Medium` — для архитектуры, технического дизайна и реализации, включая backend, lifecycle и persistence. Это заменяет прежние назначения для этих категорий. Routing зафиксирован здесь, в `AGENTS.md`; progress-файлы и subsystem-документы его не дублируют.
 
 | Task | Default model | Effort |
 | --- | --- | --- |
-| Рассуждения, синтез evidence и анализ проверок в текущей мультимодальной работе | GPT-6 Luna | xHigh |
+| Рассуждения, синтез evidence и анализ проверок в текущей мультимодальной работе | GPT-6 Luna | Max |
 | Архитектура, технический дизайн и execution текущей мультимодальной работы | GPT-6.1 Sol | Medium |
 | Fine-grained edit, простой HTML/CSS/UI | GPT-6 Luna | Low |
 | Coordinated UI/responsive, bounded work по существующим patterns | GPT-6 Luna | Medium |
@@ -39,9 +39,9 @@ Model routing применяется только к execution-задачам, �
 
 Правила routing:
 
-- Оптимизировать стоимость корректно завершённой задачи, а не первого вызова. GPT-6 Luna не является automatic target для других задач, но в текущей мультимодальной работе применяется для рассуждений по указанному выше override.
+- Оптимизировать стоимость корректно завершённой задачи, а не первого вызова. GPT-6 Luna не является automatic target для других задач, но в текущей мультимодальной работе применяется для рассуждений с effort `Max` по указанному выше override.
 - Если среда поддерживает model-specific subagents, orchestrator делегирует по этому routing и передаёт только необходимый context, requirements, constraints, relevant docs и validation criteria.
-- Эскалировать с GPT-6 Luna на GPT-6.1 Sol Medium, если scope перестал быть bounded, неизвестен root cause, нужна migration/architecture, появились cross-system dependencies, сложный persistence/lifecycle или повторные разнородные failures.
+- Эскалировать с GPT-6 Luna Max на GPT-6.1 Sol Medium, если scope перестал быть bounded, неизвестен root cause, нужна migration/architecture, появились cross-system dependencies, сложный persistence/lifecycle или повторные разнородные failures.
 - Mixed task делить по естественным technical boundaries, если это полезнее передачи всей задачи самой сильной модели; маленькую тесно связанную работу искусственно не дробить.
 - Количество subagents определять структурой и риском. Несколько агентов оправданы для независимых параллельных частей, subsystem boundaries, сравнения подходов, ускорения сложной multi-part задачи или явно одобренного second opinion; agent swarm без понятной пользы запрещён.
 - GPT-6 Sol — независимый reviewer, а не обязательное продолжение implementation. Review запускается только по прямому запросу пользователя либо после предложения агента и явного approval; prompt должен быть нейтральным.
