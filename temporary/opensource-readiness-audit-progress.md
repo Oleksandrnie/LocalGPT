@@ -11,7 +11,7 @@
 - Effective executor metadata: unavailable.
 - Started: 2026-10-21.
 - Current status: in progress.
-- Current stage: readiness report, documentation and quality gates.
+- Current stage: final validation and cleanup.
 
 ## Instructions and precedence
 
@@ -62,12 +62,12 @@
 
 ## Baseline
 
-- Current behavior: LocalGPT is a static UI + FastAPI runtime with local SQLite/models, Ollama chat/vision, whisper.cpp/faster-whisper ASR, Piper TTS, Tesseract OCR, RAG, metadata-only plugins, model transfer and optional private network access. macOS no-argument launcher starts Caddy on a private LAN IP by default; backend has no global caller authentication. README and subsystem docs exist; CI workflow and release material do not.
-- Existing tests: broad `unittest` and Node suites documented in `docs/TESTING.md`; docs already record three known full-suite failures.
+- Current behavior: LocalGPT is a static UI + FastAPI runtime with local SQLite/models, Ollama chat/vision, whisper.cpp/faster-whisper ASR, Piper TTS, Tesseract OCR, RAG, metadata-only plugins, model transfer and optional private network access. Ordinary startup is now localhost-only; explicit LAN/Tailscale paths still have no global caller authentication. README and subsystem docs exist; this task adds a local CI workflow and release material.
+- Existing tests: broad `unittest` and Node suites documented in `docs/TESTING.md`; the three original full-suite fixture/isolation failures were corrected without changing runtime behavior.
 - Validation commands: `git diff --check`; `venv/bin/python -m compileall -q app backend tests`; `node --check web_ui/js/app.js`; `node tests/markdown_rendering.test.mjs`; `node --test tests/*.test.mjs`; full isolated `unittest discover` with `RAG_EMBEDDING_PROVIDER=local_hash` and temporary DB.
 - Validation scope: full-project audit; deterministic tests by affected subsystem, full suite where safe, isolated local health/UI smoke, and no live-model generation.
 - Scope decision and reason: Cross-cutting security and release-readiness review spans shared API, multiple feature uploads, install/security docs and Git history.
-- Pre-existing failures: Baseline full suite ran 424 tests: 421 passed; 3 failed (two ASR pipeline fixture/contract mismatches: `test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers`, `test_pipeline_tasks_are_normalized_for_transcript_record`; one plugin-doc test had missing SQLite table `app_settings`). `docs/BACKLOG.md` had already documented the ASR and plugin-suite issues. Node full suite passed 51/51; static baseline and Markdown rendering passed.
+- Baseline failures: The original full suite ran 424 tests with three failures. During this task, the two ASR fixtures were made explicit about enabled stages; temporary SQLite paths are restored and plugin-registry tests initialize isolated DB state. The full suite now passes 433/433.
 - Branch and working-tree state: `codex/opensource-readiness-audit`, clean at start, based on `e73a938`.
 - Unrelated user changes to preserve: Existing `temporary/multimodal-audit-progress.md` and all inherited project content.
 - Temporary files intentionally excluded from commits: synthetic upload/ZIP fixtures and runtime smoke database/output files under OS temporary directories.
@@ -103,31 +103,31 @@
 - Completion criterion: Default path and documented LAN/Tailscale controls agree with code; no public bind/Funnel behavior added.
 - Affected files: ordinary/explicit LAN launchers, `tools/LTrnsrb.sh`, stop entry points, launcher tests, README/network/testing docs.
 - Dependencies: Stage 0 audit evidence.
-- Checkpoint commit: `fix(security): make LAN access explicit` (to be created after staged-diff review).
+- Checkpoint commit: `85260e2 fix(security): make LAN access explicit`.
 
 ### Stage 3 — Readiness report, documentation and quality gates
 
 - Goal: Publish accurate local documentation and prepare repeatable PR/release checks.
-- Status: pending
-- Actions: Record architecture, risk register, dependency/license/history findings, supported-vs-unverified setup matrix, existing module tests/limitations, release checklist, draft GitHub About/topics/release text, and CI gates with least privilege.
+- Status: complete
+- Actions: Record architecture, risk register, dependency/license/history findings, supported-vs-unverified setup matrix, existing module tests/limitations, release checklist, draft GitHub About/topics/release text, and CI gates with least privilege. Add README public-facing content, supply-chain/platform notes, test-isolation fixes and a safe secret baseline.
 - Expected result: README points to a complete report/checklist; no unsupported offline/privacy/platform/license claims.
-- Validation: Markdown rendering, workflow YAML/config checks, dependency/secret scan as available, docs links and `git diff --check`.
+- Validation: Full Python 433/433 and Node 51/51; working-tree secret hook 0 new findings over 487 files; incremental Ruff and Bandit over 15 changed Python files passed; full Bandit app/backend scan returned 21 medium, 48 low, 0 high and the medium findings were manually categorized; `pip-audit` reports no known vulnerabilities; `git diff --check`, Python compile, shell syntax, Actions YAML and local Markdown links pass; all three Action SHAs match their upstream tags.
 - Completion criterion: Every TЗ deliverable is either evidenced, explicitly blocked on owner decision/external platform, or safely deferred; no publication action occurs.
 - Affected files: README and only factually affected docs; one report in `docs/security/`; `.github/workflows/` if a verified safe workflow is added; changelog.
 - Dependencies: Stages 1–2 findings.
-- Proposed checkpoint commit: `docs(security): record open source readiness audit`.
+- Checkpoint commit: pending staged-diff review.
 
 ### Stage 4 — Final validation and cleanup
 
 - Goal: Recheck the report against source and the full local diff, run proportional checks, update permanent records, close progress.
-- Status: pending
+- Status: in progress
 - Actions: Re-read TЗ/Definition of Done; run tests and static checks; record precise outcomes and owner actions; remove only this task's progress file after all approved stages are complete.
 - Expected result: Concise final report with branch, checkpoints, validation, readiness verdict and release blockers.
 - Validation: Full safe deterministic suite and static baseline; no live models/network exposure.
 - Completion criterion: All work is committed in focused checkpoints, local branch state understood, no task-owned temp artifact remains.
-- Affected files: permanent docs/changelog if needed.
+- Affected files: permanent docs/changelog, test fixtures, CI workflow and secret baseline.
 - Dependencies: Stages 1–3.
-- Proposed checkpoint commit: `docs(changelog): record readiness audit completion`.
+- Proposed checkpoint commit: `docs(changelog): record readiness audit completion` after the report checkpoint and final validation.
 
 ## Decisions
 
@@ -141,14 +141,14 @@
 
 ## Progress log
 
-### 2026-10-21 — initial audit
+### 2026-10-21 — implementation and readiness report
 
 - Stage: readiness report, documentation and quality gates.
-- Completed: Read root AGENTS, mandatory subsystem docs, and the pasted TЗ; created requested branch from clean `dev`; inspected release and Git-history posture; completed upload boundary and dependency remediation; made LAN exposure explicit and ordinary startup local-only.
-- Changed: Added bounded stream helpers, capped ASR/OCR/criteria/model-transfer uploads, guarded ZIP central-directory/manifest/member processing, cleaned partial temporary uploads, upgraded `python-multipart` to 0.0.31 and Pillow to 13.0.0, raised runtime/setup minimum to Python 3.11, added regression tests, updated supported Python docs, and changed network launcher defaults with an explicit Caddy stop path.
-- Validation: Baseline Node 51/51; baseline Python 421/424 with 3 pre-existing failures; stage 1 targeted tests 36/36; stage 2 launcher/setup tests 20/20; `venv/bin/python -m compileall -q app backend tests`, POSIX/zsh syntax, `venv/bin/python -m pip check`, `git diff --check` passed; isolated `pip-audit==2.10.1` scan of `app/requirements.txt` reports no known vulnerabilities. No user data or real model assets used.
-- Issues: Historical `.env` credentials and SQLite chat rows remain in reachable history; no values/content printed. No global API authentication remains, including for explicit LAN. Root `License` is proprietary/All Rights Reserved and includes a personal contact address; `piper-tts==1.4.2` is GPL-3.0-or-later. These require owner actions before public release. No source-history secret scanner is installed; release history scan was custom and limited.
-- Next action: Read the pasted TЗ deliverables once more, create the evidence report and CI/security workflow, update affected docs and changelog, and preserve unresolved owner actions as release blockers.
+- Completed: Read root AGENTS, mandatory subsystem docs, and the pasted TЗ; created requested branch from clean `dev`; inspected release and Git-history posture; completed upload boundary and dependency remediation; made LAN exposure explicit and ordinary startup local-only; added readiness report, README guidance, platform/dependency notes, release checklist, least-privilege CI workflow and secret baseline; repaired test-fixture isolation.
+- Changed: Added bounded stream helpers, capped ASR/OCR/criteria/model-transfer uploads, guarded ZIP central-directory/manifest/member processing, cleaned partial temporary uploads, upgraded `python-multipart` to 0.0.31 and Pillow to 13.0.0, raised runtime/setup minimum to Python 3.11, added regression tests, updated supported Python docs, changed network launcher defaults with an explicit Caddy stop path, added `.github/workflows/quality.yml`, `.secrets.baseline`, audit report and public README guidance.
+- Validation: Baseline Node 51/51; baseline Python 421/424 with 3 fixture/isolation issues; after test-only fixes, full Python suite 433/433; stage 1 targeted tests 36/36; stage 2 launcher/setup tests 20/20; final Node suite 51/51; Ruff and Bandit incremental checks on 15 changed Python files; full Bandit app/backend scan 69 findings (21 medium, 48 low, 0 high) manually reviewed; secret hook on 487 current files with 0 new findings; `pip-audit` no known vulnerabilities; compile, `pip check`, all launcher syntax, Actions YAML parse, zero broken local Markdown links, `git diff --check`; upstream SHA refs verified for the three pinned Actions. No user data or real model assets used.
+- Issues: Historical `.env` credentials and SQLite chat rows remain in reachable history; no values/content printed. No global API authentication remains, including for explicit LAN. Root `License` is proprietary/All Rights Reserved and includes a personal contact address; `piper-tts==1.4.2` is GPL-3.0-or-later. These require owner actions before public release. The working-tree secret scanner does not inspect history; history scan remains custom and limited.
+- Next action: Review and stage only Stage 3 task changes, create the readiness/CI checkpoint, then update this progress and make the cleanup commit.
 
 ## Changed files
 
@@ -159,12 +159,16 @@
 - `tests/test_upload_boundaries.py`
 - `stop_localgpt_lan.command`
 - `stop_localgpt_lan.sh`
+- `.secrets.baseline`
+- `docs/security/OPEN_SOURCE_READINESS_AUDIT.md`
+- `.github/workflows/quality.yml`
 
 ### Modified
 
 - `app/requirements.txt`, `app/routes/criteria.py`, `backend/apps/asr/routes.py`, `backend/apps/model_transfer/{import_service.py,manifest.py,router.py}`, `backend/apps/ocr/service.py`
 - `run_localgpt.py`, platform launchers/setup entry points, `README.md`, `docs/DEPENDENCIES.md`, `tests/test_setup_dependencies.py`
 - `tools/LTrnsrb.sh`, `docs/knowledge/networking.md`, `docs/TESTING.md`, `tests/test_lan_launcher.py`
+- `docs/{CHANGELOG,BACKLOG,README}.md`, `tests/{test_pipeline_memory,test_model_router,test_plugin_registry}.py`
 
 ### Deleted
 
@@ -172,11 +176,11 @@
 
 ## Validation results
 
-- Static checks: Baseline `git diff --check`, `venv/bin/python -m compileall -q app backend tests`, `node --check web_ui/js/app.js`, and `node tests/markdown_rendering.test.mjs` passed.
-- Unit/contract tests: Baseline full Python suite: 424 run, 421 passed, 2 ASR pipeline failures and 1 plugin registry error as detailed above; full Node suite: 51/51 passed. Stage 1 targeted Python tests: 36/36 passed.
+- Static checks: Baseline `git diff --check`, `venv/bin/python -m compileall -q app backend tests`, `node --check web_ui/js/app.js`, and `node tests/markdown_rendering.test.mjs` passed. GitHub Actions YAML parser passed.
+- Unit/contract tests: Initial baseline full Python suite: 424 run, 421 passed, two ASR fixture mismatches and one plugin DB isolation error; after test-only fixes full Python suite: 433/433 passed. Node suite: 51/51 passed on the final run. Stage 1 targeted Python tests: 36/36 passed.
 - Network contract: Stage 2 launcher/setup tests: 20/20 passed; POSIX and zsh syntax checks passed. Actual LAN listener lifecycle was not exercised to avoid changing the user's live network state.
 - Dependency audit: Before remediation, pinned `python-multipart==0.0.27` and `Pillow==12.3.0` had known advisories; after updating to 0.0.31 and 13.0.0, isolated `pip-audit -r app/requirements.txt` returned “No known vulnerabilities found”.
-- Integration/smoke tests: Not run yet.
+- Integration/smoke tests: No clean install, live-model generation, or live LAN/Tailscale network smoke was run; those require platform or external runtime conditions outside this deterministic audit.
 - Manual/regression checks: Read-only documentation and source review; findings recorded above and in subsequent updates.
 - Skipped checks and reasons: Live model/provider loads; publication and network exposure are explicitly out of scope.
 - Remaining uncertainty: Credential validity; exact public-history data review; licensing compatibility/legal interpretation; pip-audit result; clean installs on macOS/Linux/Windows; actual LAN/Tailscale behavior in a second-device network.
@@ -184,10 +188,10 @@
 ## Regressions and deferred work
 
 - New regressions: None found by Stage 1 targeted tests.
-- Pre-existing failures: Three full-suite failures listed in `docs/BACKLOG.md`, pending reproduction.
-- Resolved issues: None.
+- Pre-existing failures: None remain in current full Python suite after fixture/isolation corrections.
+- Resolved issues: Three baseline test fixture/isolation failures; unbounded uploads/archive expansion; temporary-file cleanup gaps; vulnerable direct dependency pins; implicit default LAN startup.
 - Resolved issues: Unbounded ASR/OCR/criteria/model-transfer upload and ZIP manifest/member processing; temporary-file cleanup on over-limit and validation failures; known vulnerable `python-multipart`/Pillow pins; Python 3.10 dependency compatibility mismatch; implicit macOS LAN startup and absent managed Caddy stop path.
-- Unresolved blockers: History credential/data exposure; current proprietary license and contact detail; Piper GPL terms; remote API authentication. Full suite has three baseline failures.
+- Unresolved blockers: History credential/data exposure; current proprietary license and contact detail; Piper GPL terms; unauthenticated remote API access. Owner approval remains necessary for history rewrite and license choice.
 - Deferred/technical debt: Full auth model for private network access; platform matrix outside available host; model/voice per-artifact license catalog.
 
 ## Documentation and permanent records
@@ -200,25 +204,25 @@
 
 ## Checkpoints
 
-Stage 1 checkpoint: `710ec83 fix(security): bound uploads and archive processing`. Stage 2 changes are prepared for `fix(security): make LAN access explicit`; staged diff review and commit are the immediate next action.
+Stage 1 checkpoint: `710ec83 fix(security): bound uploads and archive processing`. Stage 2 checkpoint: `85260e2 fix(security): make LAN access explicit`. Stage 3 report/CI checkpoint pending.
 
 ## Continuation state
 
-- Current stage: Readiness report, documentation and quality gates.
-- Last completed action: Made ordinary macOS startup local-only, stopped managed Caddy on return to local mode, retained explicit LAN start/stop commands, and passed launcher contract checks.
-- Current repository state: Stage 1 committed as `710ec83`; Stage 2 source/docs changes on `codex/opensource-readiness-audit`; stage 2 commit pending review; existing tracked multimodal progress preserved.
+- Current stage: Final validation and cleanup.
+- Last completed action: Added readiness report, README/platform/license/privacy updates, release checklist, pinned least-privilege CI checks and test isolation fixes; validations are recorded above.
+- Current repository state: Stage 1 `710ec83`; Stage 2 `85260e2`; Stage 3 docs/tests/CI changes are staged on `codex/opensource-readiness-audit`; existing tracked multimodal progress preserved.
 - Known risks: See risk and decision sections; do not push.
-- Next exact action: Review and commit Stage 2; then read the complete pasted TЗ and produce the readiness report/CI/docs/checklist.
+- Next exact action: Review and commit Stage 3, record its hash in this file, remove only this progress file, commit cleanup, and verify the branch is clean.
 - Next command or file: User-pasted TЗ attachment, `.github/workflows/`, `docs/security/`, `docs/CHANGELOG.md`, `docs/README.md`.
 
 ## Final checklist
 
-- [ ] Every approved stage is completed.
-- [ ] Every acceptance criterion and Definition of Done item is checked or explicitly blocked on owner/platform evidence.
-- [ ] Required validation passed or limitations are explicitly accepted.
-- [ ] Regressions were compared with baseline.
-- [ ] Only affected permanent documentation and records were updated.
-- [ ] Deferred work was captured without expanding scope.
-- [ ] No unrelated changes or task-owned temporary artifacts remain.
-- [ ] Final diff and working-tree state were inspected.
-- [ ] Progress file is ready to be deleted.
+- [x] Every approved implementation stage is completed; final cleanup commit remains.
+- [x] Every acceptance criterion and Definition of Done item is checked or explicitly blocked on owner/platform evidence.
+- [x] Required deterministic validation passed; platform and live-runtime limits are recorded.
+- [x] Regressions were compared with baseline and test fixture/isolation issues were repaired.
+- [x] Only affected permanent documentation and records were updated.
+- [x] Deferred owner/platform work was recorded without expanding scope.
+- [ ] No unrelated changes or task-owned temporary artifacts remain; final cleanup is pending.
+- [x] Final diff and working-tree state were inspected.
+- [ ] Progress file is ready to be deleted after the checkpoint commit.

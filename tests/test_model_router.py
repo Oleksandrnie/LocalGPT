@@ -896,6 +896,7 @@ class ModelRouterTestCase(unittest.TestCase):
 class AutoRouterChatFlowTestCase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
+        self.original_db_path = db.DB_PATH
         db.DB_PATH = Path(self.tmpdir.name) / "localgpt-test.db"
         db.init_db()
         self.profile_id = db.ensure_default_profile()
@@ -903,6 +904,7 @@ class AutoRouterChatFlowTestCase(unittest.TestCase):
 
     def tearDown(self):
         model_residency.reset_state()
+        db.DB_PATH = self.original_db_path
         self.tmpdir.cleanup()
 
     def test_auto_router_requires_router_model(self):

@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app import db
 from backend.apps.plugins import registry
 from backend.apps.plugins import tailscale
 
@@ -31,6 +32,16 @@ def _manifest(plugin_id: str, *, name: str | None = None) -> dict:
 
 
 class PluginRegistryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.original_db_path = db.DB_PATH
+        db.DB_PATH = Path(self.tmpdir.name) / "plugin-registry.db"
+        db.init_db()
+
+    def tearDown(self) -> None:
+        db.DB_PATH = self.original_db_path
+        self.tmpdir.cleanup()
+
     def test_empty_plugins_dir_returns_empty_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = registry.scan_plugins(plugins_dir=Path(tmp), enabled_state={}).as_response()

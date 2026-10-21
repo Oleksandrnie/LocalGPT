@@ -21,11 +21,15 @@
 - Full ASR analysis может заметно нагружать CPU/GPU и требует ручного разрешения.
 - Live functionality зависит от внешних binaries и локальных моделей; unit tests не подтверждают готовность конкретной машины.
 - LAN HTTPS path функционально проверен в реальной сети, но Safari certificate trust остаётся отдельной device-level настройкой; Tailscale availability проверяется только в реальной tailnet-среде.
-- Полный `unittest discover` сейчас имеет три pre-existing test-suite проблемы, не связанные с документацией:
-  - два ASR pipeline tests ожидают прежнее число/форму mocked LLM stages и падают при текущем pipeline;
-  - plugin-doc test проходит изолированно, но после полного suite может обращаться к неинициализированному restored SQLite state.
 
 ## Deferred decisions
+
+- Перед публичной публикацией приватно оценить и удалить чувствительные credential/chat-data blobs из доступной Git history после ротации действительных значений; требуются owner approval и независимая проверка после rewrite.
+- Выбрать project license и проверить совместимость с direct GPL Piper dependency и лицензиями каждой распространяемой модели/голоса; root `License` остаётся All Rights Reserved до решения владельца.
+- Спроектировать общую аутентификацию для API-клиентов LAN/Tailscale либо не включать эти entry points в release; `ADMIN_TOKEN` не является глобальной caller identity.
+- Закрепить install/build sources и checksums, добавить transitive dependency lock strategy и artifact license/provenance metadata.
+- Выполнить clean install, model setup и restart/persistence/shutdown smoke на каждом OS, который будет заявлен поддерживаемым; сейчас кроссплатформенные entry points ещё не подтверждены end-to-end.
+- Выбрать приватный security disclosure channel до открытия публичных issue/PR.
 
 - Direct Hugging Face chat inference and a UI flow for local Safetensors/GGUF import (`Modelfile` / `ollama create`) remain separate from the current Ollama-only runtime and guarded `ollama pull` installer. HF-origin models are supported by this work only after they are installed into Ollama and expose `/api/show` thinking metadata.
 - External plugin process API требует отдельного security design: isolation, permissions, IPC, lifecycle, timeouts и audit.

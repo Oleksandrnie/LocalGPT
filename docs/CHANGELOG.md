@@ -25,8 +25,13 @@
 - Подтверждённый dependency inventory и закреплённые версии прямых Python packages для воспроизводимого первого запуска.
 - Settings → System export/import complete Ollama, faster-whisper, whisper.cpp и Piper models через checksum-validated ZIP64 `.localgpt-models`, с выбором, прогрессом, подтверждением и conflict-safe publication.
 - Settings → System показывает usage временных архивов model import и позволяет подтверждённо очистить только эти backend-owned `.localgpt-models` files.
+- Technical/security readiness report with architecture, P0–P3 risks, owner release gates and GitHub About/topics/release copy prepared without publishing or changing repository visibility.
+- GitHub Actions quality workflow with pinned Actions, least-privilege permissions, deterministic Python/Node checks, incremental Ruff/Bandit, dependency audit and working-tree secret scan.
 
 ### Changed
+
+- Обычный LocalGPT launcher стал local-only: macOS Caddy LAN-доступ запускается отдельной явной командой; добавлена отдельная команда остановки. ASR/OCR/criteria uploads и model-transfer ZIP processing получили bounded limits и cleanup. `python-multipart` обновлён до 0.0.31, Pillow до 13.0.0; минимальная версия Python согласована на 3.11+.
+- Исправлена изоляция SQLite/ASR fixtures в полном Python suite, чтобы тесты не наследовали временный путь базы или ответы выключенных pipeline stages.
 
 - Settings → Chat/LLM model library now separates installed models from available downloads and keeps update/delete/details actions in a per-model disclosure, with one clear primary action per row.
 - Chat model `Thinking tokens` now defaults to 4096 with a 2048 minimum; old lower overrides are normalized in the effective UI/runtime settings while `Output tokens` remains independent.

@@ -20,6 +20,18 @@
 
 Жёсткий minimum для Ollama, Homebrew и Tailscale не зафиксирован кодом или manifest-ом проекта. Setup (bootstrap) поэтому проверяет работоспособный CLI и устанавливает текущую stable-версию package manager-а, не имитируя неподтверждённую совместимость со старыми версиями.
 
+## Поддержка платформ: заявлено vs проверено
+
+Наличие launcher/setup entry point не является подтверждением поддержки платформы. На дату этого аудита нет записи о clean end-to-end install → model setup → run → restart → shutdown для всех систем.
+
+| Платформа | Entry point в репозитории | Проверка в этой задаче | Статус для публичного release |
+| --- | --- | --- | --- |
+| macOS | `.command`, `.sh`, Python setup; отдельная сборка whisper.cpp на macOS | Статические/контрактные и unit проверки на текущем Darwin 27.0.0 arm64 host; чистый bootstrap и live model smoke не выполнялись | Требует clean install и lifecycle validation на чистой машине |
+| Linux | `.sh` и общий Python setup | Только source/contract tests и CI-контракты; полноценная установка системных пакетов не запускалась | Не объявлять поддерживаемой до clean install и lifecycle проверки |
+| Windows | `.bat`, PowerShell adapter и общий Python setup | Только source/contract tests; Windows install, API run и restart не выполнялись | Не объявлять поддерживаемой до clean install и lifecycle проверки |
+
+Project Python minimum — 3.11+. Текущий host для аудита имел Python 3.14.6 и Node 26.11.1; это не заменяет проверку минимальной версии Python. RAM, VRAM и минимальный объём диска не определены: они зависят от выбранных моделей, количества параллельных задач и локального кэша. Не утверждаются универсальная GPU-необходимость или фиксированная производительность.
+
 ## Python packages
 
 Канонический список прямых Python-зависимостей — [`app/requirements.txt`](../app/requirements.txt). Версии закреплены по проверенному окружению проекта, чтобы новый computer не собирал произвольную комбинацию несовместимых latest-релизов.
@@ -67,3 +79,10 @@ Secrets и machine-specific paths не должны попадать в Git.
 - `setup/setup_localgpt.py` отвечает за OS/package-manager detection, интерактивную установку системных компонентов, project dependencies и итоговую проверку; на macOS он также строит и проверяет `models/whisper_cpp/bin/whisper-cli` и `models/whisper_cpp/ggml-silero-v6.2.0.bin` для VAD, без загрузки речевой GGML-модели или CoreML encoder. Все platform entry points и Windows PowerShell adapter находятся рядом в `setup/`; они вычисляют корень проекта от собственного пути, поэтому не зависят от текущего рабочего каталога.
 
 Launcher запуска приложения не должен подменять setup системных пакетов: после первого setup обычный старт остаётся быстрым и идемпотентным.
+
+## Публичная поставка и provenance
+
+- Direct Python requirements имеют версии, но transitive dependency lock/constraints file не создан. `pip-audit` проверяет известные advisory для заявленных requirements на момент запуска, но не обеспечивает воспроизводимую сборку.
+- `setup_localgpt.py` содержит официальный `curl | sh` installer path; macOS build script клонирует/обновляет default branch whisper.cpp без заданного commit. VAD и некоторые другие скачиваемые assets не закреплены проверяемым checksum/signature в source manifest.
+- `piper-tts` — прямой runtime dependency с GPL-3.0-or-later; голоса и модели лицензируются отдельно. См. [security/readiness audit](security/OPEN_SOURCE_READINESS_AUDIT.md) до решения о распространении.
+- CI-only tooling (Ruff, pip-audit, detect-secrets, Node.js) не является runtime dependency LocalGPT и не добавлено в `app/requirements.txt`.

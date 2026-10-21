@@ -1,6 +1,6 @@
 # LocalGPT
 
-LocalGPT — локальное приложение для чата, транскрибации, синтеза речи, OCR и RAG. Данные, модели и runtime-артефакты остаются на компьютере; основной интерфейс доступен в браузере через FastAPI.
+LocalGPT — local-first приложение для чата, транскрибации, синтеза речи, OCR и RAG. При работе с локальными providers пользовательские данные, модели и runtime-артефакты по умолчанию сохраняются на этом компьютере; настроенные внешние providers, package managers и загрузчики моделей могут передавать запросы или скачивать файлы по сети.
 
 ## Возможности
 
@@ -13,7 +13,7 @@ LocalGPT — локальное приложение для чата, транс
 - profile-scoped RAG для Markdown-файлов, включая ASR context и явно сохраняемый text-only Vision context;
 - перенос complete Ollama, faster-whisper, whisper.cpp и Piper моделей между установками через один `.localgpt-models` bundle;
 - Plugin Registry v0 с trusted backend handlers;
-- локальный, LAN и private-tailnet доступ.
+- локальный доступ по умолчанию и явно включаемые LAN/private-tailnet paths.
 
 ## Стек
 
@@ -23,12 +23,27 @@ LocalGPT — локальное приложение для чата, транс
 - Piper для TTS;
 - Tesseract для OCR;
 - статический Web UI на HTML, CSS и JavaScript;
-- Caddy для LAN HTTPS;
+- Caddy для отдельного LAN HTTPS режима на macOS;
 - Tailscale Serve для опционального private-tailnet доступа.
+
+## Архитектура
+
+```mermaid
+flowchart LR
+    Setup["setup / launcher"] --> Runner["run_localgpt.py"] --> API["FastAPI · backend.server:app"]
+    Browser["Static Web UI"] <--> API
+    API --> Features["backend/apps/*"]
+    Features --> Providers["Ollama · ASR · Piper · Tesseract"]
+    API --> Shared["app/ · config, SQLite, storage"]
+    Features --> Data["local models, RAG files, attachments"]
+    Providers --> Network["optional remote APIs / downloads"]
+```
+
+Обычный запуск слушает localhost; внешний provider или загрузчик подключается только в соответствующем настроенном/явно запущенном сценарии. Подробности data flows — в [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Первый запуск проекта
 
-На новом компьютере запустите platform entry point. Он определит ОС и package manager, откроет Terminal/PowerShell, покажет отсутствующие компоненты и запросит согласие перед каждой установкой.
+В репозитории есть platform entry points для macOS, Linux и Windows. Скрипт определяет ОС/package manager, открывает Terminal/PowerShell, показывает недостающие компоненты и запрашивает согласие перед каждой установкой. Наличие entry point не означает подтверждённую поддержку: см. [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
 macOS — двойной клик по `setup/setup_localgpt.command` или команда:
 
@@ -51,7 +66,8 @@ Setup (технически — bootstrap):
 - отдельно предлагает опциональные Caddy, Tailscale и Node.js;
 - на macOS собирает штатный `whisper-cli` и небольшой Silero VAD-фильтр от распознавания тишины, но не загружает ASR-модели и CoreML-артефакты;
 - безопасно пропускает уже найденные компоненты и пригоден для повторного запуска;
-- не скачивает модели, RAG-данные, не создаёт `.env` и не включает сетевой доступ.
+- не скачивает речевые/LLM-модели или RAG-данные, не создаёт `.env` и не включает LAN/Tailscale-доступ LocalGPT;
+- для установки недостающих Python/system components использует настроенный package manager и может обращаться к официальным download endpoints.
 
 Канонический список Python packages находится в `app/requirements.txt`; отдельного корневого `requirements.txt` нет. Setup создаёт штатный `venv/`. Если ранее было вручную создано `.venv/`, оно останется нетронутым, но LocalGPT его не использует.
 
@@ -70,7 +86,7 @@ Setup (технически — bootstrap):
 - `ffmpeg` — конвертация аудио и часть ASR/TTS сценариев;
 - `whisper-cli` (собирается setup-ом на macOS) и GGML-модель — для backend `whisper_cpp`;
 - Tesseract — для OCR;
-- Caddy — для штатного LAN HTTPS launcher на macOS;
+- Caddy — для явно включаемого LAN HTTPS режима на macOS;
 - Tailscale — только для private-tailnet доступа.
 
 ## Обычный запуск
@@ -136,7 +152,43 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 - `app/data/chat_attachments/profile-<id>/` — оригиналы и thumbnails chat-изображений;
 - `app/data/tts/` и `tmp_logs/` — runtime-артефакты.
 
-Эти данные игнорируются Git. Пустая `LOCAL_MODEL` допустима: приложение запускается без chat-модели, а загрузка выполняется только по явному действию пользователя.
+Эти текущие runtime-пути игнорируются Git. Пустая `LOCAL_MODEL` допустима: приложение запускается без chat-модели, а загрузка выполняется только по явному действию пользователя. Ignore rules не удаляют уже закоммиченные blobs: аудит доступной Git-истории обнаружил исторические credential-like значения и записи чатов. Публичная публикация этого репозитория пока заблокирована; детали и требуемые действия владельца — в [отчёте readiness/security](docs/security/OPEN_SOURCE_READINESS_AUDIT.md).
+
+## Локальная демонстрация и пример сценария
+
+После обычного запуска откройте напечатанный launcher-ом URL. Backend health можно проверить на `http://127.0.0.1:<port>/health`, а UI — на `http://127.0.0.1:<port>/ui/gui_html.html`.
+
+Пример локального сценария:
+
+1. Установите Ollama и выберите совместимую модель в Settings → System; загрузка начинается только после явного действия.
+2. Создайте профиль и выполните обычный чат-запрос.
+3. Добавьте Markdown-файл в профильный RAG, затем явно попросите ответить по документам.
+4. В ASR Studio выберите локальный backend и установленную модель для транскрипции; при необходимости сохраните результат в историю или RAG.
+
+В репозитории пока нет подготовленного screenshot или отдельного публичного demo-сервера. Для минимальной проверки без модели используйте `/health` и UI; полный AI-запрос требует предварительно настроенного локального provider/model.
+
+## Privacy и безопасность
+
+- Обычный launcher слушает только localhost. LAN HTTPS включается отдельным macOS entry point; Tailscale Serve настраивается вручную.
+- LAN/Tailscale доступ не имеет общей аутентификации клиентов. TLS защищает транспорт, но не устанавливает личность пользователя. Не публикуйте backend в Internet и используйте сетевые режимы только в доверенной private network.
+- `ADMIN_TOKEN` защищает выбранные administrative/runtime/database/storage/debug операции; он не является глобальной авторизацией для всех API endpoints.
+- При локальных providers inference может оставаться на устройстве. Настроенный OpenAI-compatible endpoint, пакетные установщики, Hugging Face/model downloads и явный private-network режим создают внешние сетевые соединения.
+- SQLite, документы RAG, изображения, аудио и модели не шифруются LocalGPT at rest; защищайте системную учётную запись и диск средствами ОС.
+- Local-first не означает гарантированную offline-работу или приватность от выбранного внешнего provider-а. Полные ограничения: [audit report](docs/security/OPEN_SOURCE_READINESS_AUDIT.md).
+
+## Ограничения, troubleshooting и roadmap
+
+- Заявленный minimum Python — 3.11+. Полная чистая установка не проверена на всех ОС: см. платформенную матрицу в [DEPENDENCIES.md](docs/DEPENDENCIES.md).
+- Минимальные RAM/VRAM/disk значения не установлены; они зависят от выбранных моделей. Модели, Piper voices и их лицензии нужно проверять отдельно.
+- Для Chat/Vision требуется доступный Ollama service и установленная совместимая модель; для ASR/TTS/OCR нужны соответствующие модели, native binaries или language packs.
+- Если backend не стартует, запустите сначала setup, проверьте `venv/bin/python --version`, Ollama health и свободный порт. Для OCR проверьте `tesseract --version`; для ASR — состояние backend/model в ASR Library. При сетевой ошибке проверьте, выбран ли локальный или внешний provider и ожидаем ли доступ в сеть.
+- Открытые задачи и технический долг находятся в [BACKLOG.md](docs/BACKLOG.md). До public release нужно закрыть P1-риск истории, выбрать лицензию и решить модель аутентификации для сетевого доступа.
+
+## Лицензия и вклад
+
+Текущий корневой [`License`](License) содержит условие **All Rights Reserved**; проект пока не опубликован как open-source лицензированный продукт. Прямая Piper dependency объявляет GPL-3.0-or-later, а модели и голоса имеют собственные условия. Не распространяйте приложение, веса или голоса на основании этого README; лицензионное решение ожидает владельца и юридической проверки.
+
+Публичный contribution process и приватный security disclosure канал пока не настроены. Не отправляйте реальные секреты, пользовательские данные или уязвимости в публичные issue/PR. Предварительные решения и release checklist находятся в [audit report](docs/security/OPEN_SOURCE_READINESS_AUDIT.md).
 
 ## Документация
 
@@ -144,6 +196,7 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Тестирование](docs/TESTING.md)
 - [Зависимости и setup](docs/DEPENDENCIES.md)
+- [Open Source readiness и security audit](docs/security/OPEN_SOURCE_READINESS_AUDIT.md)
 - [Экспорт и импорт моделей](docs/MODEL_TRANSFER_SPEC.md)
 - [Backlog](docs/BACKLOG.md)
 - [Инструкции для coding-агентов](AGENTS.md)

@@ -323,7 +323,8 @@ def ensure_ollama_running() -> None:
 
     def ping() -> bool:
         try:
-            with urllib.request.urlopen(
+            # Endpoint is owner-configured; no request-controlled URL reaches this health check.
+            with urllib.request.urlopen(  # nosec B310
                 OLLAMA_HEALTH_URL, timeout=1
             ):
                 return True

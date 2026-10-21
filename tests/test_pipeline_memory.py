@@ -35,6 +35,7 @@ from backend.apps.rag import service as rag_service
 class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
+        self.original_db_path = db.DB_PATH
         db.DB_PATH = Path(self.tmpdir.name) / "localgpt-test.db"
         self.original_rag_source_dir = config.RAG_SOURCE_DIR
         self.original_asr_diagnostics_dir = config.ASR_DIAGNOSTICS_DIR
@@ -46,6 +47,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
     def tearDown(self):
         with chat_tasks._LOCK:
             chat_tasks._TASKS.clear()
+        db.DB_PATH = self.original_db_path
         config.RAG_SOURCE_DIR = self.original_rag_source_dir
         config.ASR_DIAGNOSTICS_DIR = self.original_asr_diagnostics_dir
         self.tmpdir.cleanup()
@@ -1391,6 +1393,10 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         )
 
     def test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers(self):
+        db.update_profile_preferences(
+            self.profile_id,
+            {"settings": {"pipeline": {"segmenter": {"enabled": True}, "speaker_resolver": {"enabled": True}}}},
+        )
         db.update_profile_preferences(self.profile_id, {"settings": {"asr_full_analysis_enabled": True}})
         transcript = db.create_transcript(
             profile_id=self.profile_id,
@@ -1948,6 +1954,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertIn("statex statey statez", merged["coverage_topics"])
 
     def test_pipeline_tasks_are_normalized_for_transcript_record(self):
+        db.update_profile_preferences(self.profile_id, {"settings": {"pipeline": {"segmenter": {"enabled": True}}}})
         transcript = db.create_transcript(profile_id=self.profile_id, name="Call", content="raw call")
         responses = [
             '[{"segment_id": 1, "text": "raw call"}]',

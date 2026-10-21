@@ -21,7 +21,24 @@ git diff --check
 venv/bin/python -m compileall -q app backend tests
 node --check web_ui/js/app.js
 node tests/markdown_rendering.test.mjs
+node --test tests/*.test.mjs
 ```
+
+## CI quality workflow
+
+`.github/workflows/quality.yml` запускает deterministic checks на PR, push и ручном старте: Python 3.11 clean dependency install, полный mock/unit suite с `local_hash`, Ruff и Bandit по изменённым Python-файлам, `pip-audit`, `detect-secrets` по текущему tracked tree, Python compile, Node UI contracts и shell syntax. Actions закреплены полными commit SHA, permissions ограничены `contents: read`, а live AI-модели не скачиваются.
+
+Ручной аналог dependency/security checks после установки requirements:
+
+```bash
+venv/bin/python -m venv /tmp/localgpt-qa-tools
+/tmp/localgpt-qa-tools/bin/python -m pip install 'ruff==0.17.0' 'bandit==1.9.4' 'pip-audit==2.10.1' 'detect-secrets==1.5.0'
+/tmp/localgpt-qa-tools/bin/pip-audit -r app/requirements.txt
+/tmp/localgpt-qa-tools/bin/bandit -r app backend -ll -iii
+git ls-files -z --cached --others --exclude-standard | xargs -0 /tmp/localgpt-qa-tools/bin/detect-secrets-hook --no-verify --json --baseline .secrets.baseline
+```
+
+Ruff в CI использует ограниченный набор `E4,E7,E9,F`, а Bandit — medium+ severity / high confidence, только для Python-файлов, изменённых относительно базовой ветки: старый lint/SAST debt не маскируется под новую регрессию. Полный локальный Bandit scan выявил существующие medium/low сигналы, перечисленные в readiness report. Secret hook проверяет current working tree, использует небольшой baseline с synthetic security-test literals и **не сканирует Git history**; CI выводит только путь, тип кандидата и строку без значения секрета. Историческую историю/бинарные blobs нужно перепроверить отдельным release gate. На данный момент в проекте не настроен отдельный formatter или полный lint policy.
 
 Setup/bootstrap contract без запуска package installers:
 
@@ -38,7 +55,7 @@ venv/bin/python -m unittest tests.test_setup_dependencies -v
 
 ## Unit tests
 
-Полный текущий Python suite:
+Полный текущий Python suite (на 2026-10-21 — 433 tests):
 
 ```bash
 venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
