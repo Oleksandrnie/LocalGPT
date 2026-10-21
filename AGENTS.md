@@ -71,7 +71,7 @@ Model routing применяется только к execution-задачам, �
 | Chat models, Ollama, ASR/TTS provider | [`docs/knowledge/providers.md`](docs/knowledge/providers.md), [`docs/TESTING.md`](docs/TESTING.md) |
 | RAG или ASR context | [`docs/knowledge/rag.md`](docs/knowledge/rag.md), затем backend/providers по flow |
 | Plugins | [`docs/knowledge/plugins.md`](docs/knowledge/plugins.md), а для address providers — [`docs/knowledge/networking.md`](docs/knowledge/networking.md) |
-| LAN, Caddy, Tailscale, CORS | [`docs/knowledge/networking.md`](docs/knowledge/networking.md), [`docs/TESTING.md`](docs/TESTING.md) |
+| LAN, Caddy, CORS | [`docs/knowledge/networking.md`](docs/knowledge/networking.md), [`docs/TESTING.md`](docs/TESTING.md) |
 | Web UI, responsive, accessibility | [`docs/knowledge/ui.md`](docs/knowledge/ui.md), [`docs/TESTING.md`](docs/TESTING.md) |
 | Планирование будущей работы | [`docs/BACKLOG.md`](docs/BACKLOG.md) |
 
@@ -129,7 +129,7 @@ node tests/markdown_rendering.test.mjs
 
 - Запускать targeted unit/integration tests по subsystem; full suite — когда это безопасно и полезно.
 - Не запускать live ASR, LLM/Ollama generation, full transcript pipeline или другую тяжёлую hardware-нагрузку без явного намерения и подходящей среды.
-- UI changes проверять в affected desktop/mobile viewports, обеих themes, keyboard/focus и relevant tool flows; networking — в реальной LAN/tailnet среде, если результат зависит от сети.
+- UI changes проверять в affected desktop/mobile viewports, обеих themes, keyboard/focus и relevant tool flows; networking — в реальной LAN-среде, если результат зависит от сети.
 - Не объявлять проверку пройденной, если она не запускалась/не осматривалась. Отделять pre-existing failures от новых regressions с точным test name/error.
 
 ## Documentation

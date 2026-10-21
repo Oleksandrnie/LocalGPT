@@ -23,7 +23,7 @@
 - [Plugins](knowledge/plugins.md) — Registry v0, manifests, trusted handlers и безопасность.
 - [RAG](knowledge/rag.md) — ingestion, indexing, retrieval, storage и ASR context.
 - [Web UI](knowledge/ui.md) — активный frontend, компоненты, responsive и accessibility.
-- [Networking](knowledge/networking.md) — local, LAN, Caddy, Tailscale, host/port/CORS.
+- [Networking](knowledge/networking.md) — local, LAN, Caddy, host/port/CORS.
 
 ## Ownership
 
@@ -32,7 +32,7 @@
 - Файлы `knowledge/*.md` содержат подробности одной крупной подсистемы.
 - `TESTING.md` — единственный общий источник тестовых команд и критериев.
 - `CHANGELOG.md` хранит завершённые значимые изменения; `BACKLOG.md` — только незавершённую работу.
-- Component-local README остаются рядом с конфигурацией, если их путь является частью runtime-контракта: `plugins/`, `plugins/tailscale/`, `rag_sources/`.
+- Component-local README остаются рядом с конфигурацией, если их путь является частью runtime-контракта: `plugins/`, `rag_sources/`.
 - Постоянный план и принятые результаты живут в `MULTIMODAL_AUDIT_PLAN.md`; active execution-state живёт в `temporary/<task-name>-progress.md` и удаляется после завершения задачи. `docs/progress/` предназначен только для постоянных исторических записей; `.gitkeep` сохраняет каталог.
 
 При изменении кода обновляются только затронутые документы, а не вся документация проекта.

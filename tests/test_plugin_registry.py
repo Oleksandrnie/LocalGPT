@@ -4,11 +4,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from app import db
 from backend.apps.plugins import registry
-from backend.apps.plugins import tailscale
 
 
 def _write_manifest(root: Path, plugin_id: str, payload: dict) -> None:
@@ -50,53 +48,49 @@ class PluginRegistryTests(unittest.TestCase):
         self.assertEqual(result["invalid_plugins"], [])
         self.assertIn("No plugins installed", result["message"])
 
-    def test_trusted_tailscale_manifest_is_detected_but_disabled(self) -> None:
+    def test_manifest_without_backend_handler_is_detected_but_untrusted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
-
+            _write_manifest(root, "example_plugin", _manifest("example_plugin", name="Example Plugin"))
             result = registry.scan_plugins(plugins_dir=root, enabled_state={}).as_response()
 
         self.assertEqual(len(result["plugins"]), 1)
         plugin = result["plugins"][0]
-        self.assertEqual(plugin["id"], "tailscale")
-        self.assertTrue(plugin["trusted"])
+        self.assertEqual(plugin["id"], "example_plugin")
+        self.assertFalse(plugin["trusted"])
         self.assertFalse(plugin["enabled"])
         self.assertFalse(plugin["effective_enabled"])
-        self.assertEqual(plugin["status"], "disabled")
+        self.assertEqual(plugin["status"], "untrusted")
 
     def test_manifest_docs_include_open_url_for_available_docs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
-            (root / "tailscale" / "README.md").write_text("# Tailscale docs\n", encoding="utf-8")
-
+            _write_manifest(root, "example_plugin", _manifest("example_plugin", name="Example Plugin"))
+            (root / "example_plugin" / "README.md").write_text("# Example docs\n", encoding="utf-8")
             result = registry.scan_plugins(plugins_dir=root, enabled_state={}).as_response()
 
         docs = result["plugins"][0]["docs_status"]
         self.assertEqual(docs[0]["path"], "README.md")
         self.assertTrue(docs[0]["available"])
-        self.assertEqual(docs[0]["url"], "/plugins/tailscale/docs/README.md")
+        self.assertEqual(docs[0]["url"], "/plugins/example_plugin/docs/README.md")
 
     def test_get_plugin_doc_reads_manifest_doc_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
-            (root / "tailscale" / "README.md").write_text("# Tailscale docs\n", encoding="utf-8")
-
-            doc = registry.get_plugin_doc("tailscale", "README.md", plugins_dir=root)
+            _write_manifest(root, "example_plugin", _manifest("example_plugin", name="Example Plugin"))
+            (root / "example_plugin" / "README.md").write_text("# Example docs\n", encoding="utf-8")
+            doc = registry.get_plugin_doc("example_plugin", "README.md", plugins_dir=root)
 
             with self.assertRaises(registry.PluginDocError):
-                registry.get_plugin_doc("tailscale", "../secret.txt", plugins_dir=root)
+                registry.get_plugin_doc("example_plugin", "../secret.txt", plugins_dir=root)
 
-        self.assertEqual(doc["content"], "# Tailscale docs\n")
+        self.assertEqual(doc["content"], "# Example docs\n")
         self.assertEqual(doc["filename"], "README.md")
 
     def test_unknown_manifest_is_untrusted_and_has_no_effective_enable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_manifest(root, "unknown", _manifest("unknown", name="Unknown Plugin"))
-
             result = registry.scan_plugins(plugins_dir=root, enabled_state={"unknown": True}).as_response()
 
         plugin = result["plugins"][0]
@@ -111,7 +105,6 @@ class PluginRegistryTests(unittest.TestCase):
             root = Path(tmp)
             (root / "bad").mkdir()
             (root / "bad" / "plugin.json").write_text("{not-json", encoding="utf-8")
-
             result = registry.scan_plugins(plugins_dir=root, enabled_state={}).as_response()
 
         self.assertEqual(result["plugins"], [])
@@ -119,85 +112,37 @@ class PluginRegistryTests(unittest.TestCase):
         self.assertEqual(result["invalid_plugins"][0]["status"], "invalid")
         self.assertFalse(result["invalid_plugins"][0]["trusted"])
 
-    def test_list_plugins_attaches_trusted_tailscale_handler_status(self) -> None:
+    def test_no_plugins_are_trusted_without_backend_handlers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
+            _write_manifest(root, "example_plugin", _manifest("example_plugin", name="Example Plugin"))
+            result = registry.list_plugins(plugins_dir=root, enabled_state={"example_plugin": True})
 
-            with patch.dict(
-                registry.TRUSTED_HANDLER_STATUS,
-                {
-                    "tailscale": lambda request=None: {
-                        "manual_command_template": "tailscale serve --bg http://127.0.0.1:<LOCALGPT_PORT>",
-                        "manual_command": "tailscale serve --bg http://127.0.0.1:8000",
-                        "security_warnings": list(registry.tailscale.SECURITY_WARNINGS),
-                        "cli_available": False,
-                    }
-                },
-            ):
-                result = registry.list_plugins(plugins_dir=root, enabled_state={})
-
+        self.assertEqual(registry.TRUSTED_PLUGIN_IDS, frozenset())
+        self.assertEqual(registry.TRUSTED_HANDLER_STATUS, {})
+        self.assertEqual(registry.TRUSTED_NETWORK_ADDRESS_ITEMS, {})
         plugin = result["plugins"][0]
-        self.assertEqual(plugin["id"], "tailscale")
-        self.assertIn("handler_status", plugin)
-        self.assertEqual(
-            plugin["handler_status"]["manual_command_template"],
-            "tailscale serve --bg http://127.0.0.1:<LOCALGPT_PORT>",
-        )
-        self.assertIn("Do not expose LocalGPT directly to the public internet.", plugin["security_warnings"])
+        self.assertFalse(plugin["trusted"])
+        self.assertFalse(plugin["effective_enabled"])
+        self.assertNotIn("handler_status", plugin)
 
-    def test_tailscale_manual_command_uses_request_server_port_before_defaults(self) -> None:
-        class Request:
-            scope = {"server": ("127.0.0.1", 8003)}
-
-        with tempfile.TemporaryDirectory() as tmp:
-            stale_port_file = Path(tmp) / "backend.port"
-            stale_port_file.write_text("8001", encoding="utf-8")
-            with (
-                patch.object(tailscale, "_BACKEND_PORT_FILE", stale_port_file),
-                patch.dict("os.environ", {"LOCALGPT_PORT": "8000", "LOCALGPT_BACKEND_PORT": "8002"}),
-            ):
-                self.assertEqual(tailscale.detect_localgpt_port(Request()), 8003)
-                self.assertEqual(
-                    tailscale.manual_command(request=Request()),
-                    "tailscale serve --bg http://127.0.0.1:8003",
-                )
-
-    def test_network_addresses_uses_enabled_trusted_tailscale_handler_only(self) -> None:
+    def test_network_addresses_ignore_untrusted_plugin_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
+            _write_manifest(root, "example_plugin", _manifest("example_plugin", name="Example Plugin"))
             result = registry.list_network_addresses(
                 plugins_dir=root,
-                enabled_state={"tailscale": True},
+                enabled_state={"example_plugin": True},
                 handler_status={
-                    "tailscale": {
+                    "example_plugin": {
                         "address_available": True,
-                        "url": "https://macbook.example.ts.net/ui/gui_html.html",
-                    }
-                },
-            )
-
-        self.assertEqual(len(result["items"]), 1)
-        self.assertEqual(result["items"][0]["provider_id"], "tailscale")
-        self.assertEqual(result["items"][0]["url"], "https://macbook.example.ts.net/ui/gui_html.html")
-
-    def test_network_addresses_omits_disabled_tailscale(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            _write_manifest(root, "tailscale", _manifest("tailscale", name="Tailscale Remote Access"))
-            result = registry.list_network_addresses(
-                plugins_dir=root,
-                enabled_state={},
-                handler_status={
-                    "tailscale": {
-                        "address_available": True,
-                        "url": "https://macbook.example.ts.net/ui/gui_html.html",
+                        "url": "https://example.invalid/ui/gui_html.html",
                     }
                 },
             )
 
         self.assertEqual(result["items"], [])
+        self.assertEqual(result["providers"], [])
         self.assertIn("No network addresses", result["message"])
 
     def test_network_addresses_includes_core_lan_item(self) -> None:

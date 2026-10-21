@@ -94,7 +94,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Piper provider | `venv/bin/python -m unittest tests.test_piper_provider -v` |
 | WAV post-processing | `venv/bin/python -m unittest tests.test_audio_postprocess_service -v` |
 | OCR heuristics | `venv/bin/python -m unittest tests.test_ocr_service -v` |
-| Plugin Registry и Tailscale handler | `venv/bin/python -m unittest tests.test_plugin_registry -v` |
+| Plugin Registry | `venv/bin/python -m unittest tests.test_plugin_registry -v` |
 | Caddy LAN certificate download | `venv/bin/python -m unittest tests.test_network_certificate -v` |
 | Model installation state | `venv/bin/python -m unittest tests.test_model_install_state -v` |
 | Ollama pull API/CLI compatibility | `venv/bin/python -m unittest tests.test_ollama_pull -v` |
@@ -264,8 +264,7 @@ Model-transfer tests используют только temporary synthetic files
 - malformed manifest остаётся видимым как invalid/untrusted;
 - untrusted plugin нельзя effectively enable;
 - docs path не выходит из plugin directory;
-- Tailscale checks read-only и не запускают Serve/Funnel;
-- core LAN/Tailscale addresses возвращаются backend-ом, а не hardcode-ятся UI.
+- core LAN/provider addresses возвращаются backend-ом, а не hardcode-ятся UI.
 
 ## UI regression
 
@@ -303,7 +302,7 @@ Model-transfer tests используют только temporary synthetic files
 
 1. На чистом macOS/Linux/Windows environment запустить соответствующий `setup/setup_localgpt.*` entry point.
 2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие речевых model downloads. На macOS убедиться, что `models/whisper_cpp/bin/whisper-cli` — исполняемая относительная ссылка на собранный binary, переживает перенос checkout и заменяет stale link при повторной подготовке; `models/whisper_cpp/ggml-silero-v6.2.0.bin` должен быть установлен для VAD.
-3. Согласиться на core dependencies; optional Caddy/Tailscale/Node проверить отдельно по нужному режиму.
+3. Согласиться на core dependencies; optional Caddy/Node проверить отдельно по нужному режиму.
 4. Убедиться, что final verification проходит и `venv/` содержит imports из `app/requirements.txt`.
    Отдельный `.venv/`, если он существовал до setup, должен остаться нетронутым и не считаться штатным runtime environment.
 5. Повторить setup: установленные system tools должны быть пропущены, pip не должен ломать environment.
@@ -325,5 +324,5 @@ Model-transfer tests используют только temporary synthetic files
 - автоматизированного end-to-end browser suite в репозитории нет;
 - live ASR/LLM/TTS/OCR зависит от установленных binaries, моделей и hardware;
 - vision output зависит от модели; smoke должен проверять заранее известные признаки изображения, а не точную формулировку ответа;
-- LAN/Tailscale требуют проверки в реальной сети;
+- LAN требует проверки в реальной сети;
 - manual accessibility и mobile regression остаются обязательными для заметных UI-изменений.

@@ -43,7 +43,7 @@ app/
 | TTS | `backend/apps/tts/router.py`, `service.py`, `providers/` | provider abstraction, generation, voice library, history |
 | OCR | `backend/apps/ocr/routes.py`, `service.py` | image OCR и cleanup |
 | RAG | `backend/apps/rag/routes.py`, `service.py`, `reindex_tasks.py` | sources, ingest, chunks, retrieval, context, explicit reindex lifecycle |
-| Plugins | `backend/apps/plugins/registry.py`, `routes.py`, `tailscale.py` | manifests, trust, state, docs и backend-owned handlers |
+| Plugins | `backend/apps/plugins/registry.py`, `routes.py` | metadata manifests, trust, state и docs; trusted handler сейчас не зарегистрирован |
 
 Shared routers:
 

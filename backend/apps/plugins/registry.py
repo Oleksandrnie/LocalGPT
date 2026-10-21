@@ -8,17 +8,12 @@ from typing import Any
 from urllib.parse import quote
 
 from app import config, db
-from backend.apps.plugins import tailscale
 
 PLUGIN_STATE_KEY = "plugins.enabled"
 PLUGINS_DIR = config.PROJECT_ROOT / "plugins"
-TRUSTED_PLUGIN_IDS = frozenset({"tailscale"})
-TRUSTED_HANDLER_STATUS = {
-    "tailscale": tailscale.get_status,
-}
-TRUSTED_NETWORK_ADDRESS_ITEMS = {
-    "tailscale": tailscale.network_address_item,
-}
+TRUSTED_PLUGIN_IDS = frozenset()
+TRUSTED_HANDLER_STATUS: dict[str, Any] = {}
+TRUSTED_NETWORK_ADDRESS_ITEMS: dict[str, Any] = {}
 
 PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 REQUIRED_FIELDS = (
@@ -247,8 +242,6 @@ def _attach_handler_status(response: dict[str, Any], *, request: Any | None = No
         if not status_provider:
             continue
         plugin["handler_status"] = status_provider(request=request)
-        if plugin["id"] == "tailscale":
-            plugin["security_warnings"] = list(tailscale.SECURITY_WARNINGS)
     return response
 
 

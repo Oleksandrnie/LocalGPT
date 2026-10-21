@@ -8007,29 +8007,6 @@ function renderPluginSecurityWarnings(plugin) {
   return `<div class="plugin-warning">Security warnings: ${renderPluginPills(warnings, "none", "plugin-pill--danger")}</div>`;
 }
 
-function renderPluginHandlerStatus(plugin) {
-  const handler = plugin?.handler_status;
-  if (!handler || typeof handler !== "object") return "";
-  const command = handler.manual_command || handler.manual_command_template || "";
-  const cliState = handler.cli_available ? "tailscale CLI found" : "tailscale CLI not found";
-  const serveState = handler.serve_localgpt_detected
-    ? "LocalGPT Serve active"
-    : handler.serve_active
-      ? "Serve active for another target"
-      : "Serve not detected";
-  const message = handler.message ? `<span>${escapeHtml(handler.message)}</span>` : "";
-  return `
-    <div class="plugin-runtime">
-      <div class="plugin-runtime__row">
-        <span>${escapeHtml(cliState)}</span>
-        <span>${escapeHtml(serveState)}</span>
-      </div>
-      ${command ? `<code>${escapeHtml(command)}</code>` : ""}
-      ${message}
-    </div>
-  `;
-}
-
 function renderPluginCard(plugin) {
   const id = String(plugin?.id || "");
   const trusted = plugin?.trusted === true;
@@ -8043,7 +8020,6 @@ function renderPluginCard(plugin) {
     ? "Trusted backend handler available."
     : "Detected, but not trusted. Execution unavailable.";
   const securityWarnings = renderPluginSecurityWarnings(plugin);
-  const handlerStatus = trusted ? renderPluginHandlerStatus(plugin) : "";
 
   return `
     <article class="plugin-card" data-plugin-id="${escapeHtml(id)}">
@@ -8066,7 +8042,6 @@ function renderPluginCard(plugin) {
           <span class="plugin-meta-row__label">Docs</span>
           <span>${renderPluginDocs(plugin)}</span>
         </div>
-        ${handlerStatus}
         <p class="plugin-note">${escapeHtml(plugin?.security_note || trustNote)}</p>
       </div>
       <label class="field field--checkbox plugin-toggle">

@@ -6,6 +6,8 @@
 
 ### Added
 
+- Removed the unused Tailscale plugin, manual Serve integration and optional setup prompt; the explicit LAN/Caddy path remains available.
+
 - Ollama per-model reasoning controls are discovered from `/api/show` and exposed in Settings and quick selectors; named levels are persisted and sent exactly, boolean-only models retain ON/OFF, and missing/unsupported metadata no longer relies on model-name heuristics. Direct Hugging Face inference remains out of scope.
 - Installed non-catalog Ollama chat models now appear in the normal model selectors after inventory refresh; utility/Vision catalog entries and embedding-only models stay out of this chat list. The installer example now uses generic `model:tag` syntax.
 - Added deterministic cross-domain Ollama evidence-use evaluation for installed chat models and sampled runner RSS, system memory pressure, swap deltas, unload and thermal-warning signals; post-answer RAG trace now follows the actual included evidence manifest even when heuristic facet status says `not_found`.

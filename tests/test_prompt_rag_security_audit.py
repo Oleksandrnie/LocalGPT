@@ -319,9 +319,9 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertEqual(results, [])
 
     def test_plugin_manifests_cannot_create_execution_handlers(self) -> None:
-        self.assertEqual(plugin_registry.TRUSTED_PLUGIN_IDS, frozenset({"tailscale"}))
-        self.assertEqual(set(plugin_registry.TRUSTED_HANDLER_STATUS), {"tailscale"})
-        self.assertEqual(set(plugin_registry.TRUSTED_NETWORK_ADDRESS_ITEMS), {"tailscale"})
+        self.assertEqual(plugin_registry.TRUSTED_PLUGIN_IDS, frozenset())
+        self.assertEqual(plugin_registry.TRUSTED_HANDLER_STATUS, {})
+        self.assertEqual(plugin_registry.TRUSTED_NETWORK_ADDRESS_ITEMS, {})
 
     def test_all_chat_l4_sources_are_wrapped_and_guard_precedes_history_and_current_query(self) -> None:
         messages = build_messages(

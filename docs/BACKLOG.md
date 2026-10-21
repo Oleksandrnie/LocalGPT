@@ -4,7 +4,6 @@
 
 ## Planned
 
-- Выполнить отдельную реальную Tailscale/tailnet validation; LAN Caddy HTTPS → localhost backend уже проверен с другого устройства в private Wi-Fi.
 - Investigate Qwen3 reasoning that was returned with `think=False`/`/no_think`; determine how the Thinking control should report provider behavior rather than trusting request settings alone.
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
 - Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
@@ -20,13 +19,13 @@
 
 - Full ASR analysis может заметно нагружать CPU/GPU и требует ручного разрешения.
 - Live functionality зависит от внешних binaries и локальных моделей; unit tests не подтверждают готовность конкретной машины.
-- LAN HTTPS path функционально проверен в реальной сети, но Safari certificate trust остаётся отдельной device-level настройкой; Tailscale availability проверяется только в реальной tailnet-среде.
+- LAN HTTPS path функционально проверен в реальной сети, но Safari certificate trust остаётся отдельной device-level настройкой.
 
 ## Deferred decisions
 
-- Перед публичной публикацией приватно оценить и удалить чувствительные credential/chat-data blobs из доступной Git history после ротации действительных значений; требуются owner approval и независимая проверка после rewrite.
-- Выбрать project license и проверить совместимость с direct GPL Piper dependency и лицензиями каждой распространяемой модели/голоса; root `License` остаётся All Rights Reserved до решения владельца.
-- Спроектировать общую аутентификацию для API-клиентов LAN/Tailscale либо не включать эти entry points в release; `ADMIN_TOKEN` не является глобальной caller identity.
+- Подготовить новый публичный репозиторий из проверенного исходного снимка без копирования прежних Git refs; текущий репозиторий и его историю оценить отдельно, включая ротацию действительных credentials. Новый repo не очищает уже существующие remote refs, PR refs, forks, clones или caches.
+- Для нового публичного репозитория владелец планирует GPL-3.0-or-later; до публикации подтвердить права на relicensing всех включённых компонентов и проверить лицензии распространяемых Piper voices/models. Текущий корневой `License` остаётся All Rights Reserved до отдельного изменения.
+- Спроектировать общую аутентификацию для API-клиентов LAN либо не включать этот entry point в release; `ADMIN_TOKEN` не является глобальной caller identity.
 - Закрепить install/build sources и checksums, добавить transitive dependency lock strategy и artifact license/provenance metadata.
 - Выполнить clean install, model setup и restart/persistence/shutdown smoke на каждом OS, который будет заявлен поддерживаемым; сейчас кроссплатформенные entry points ещё не подтверждены end-to-end.
 - Выбрать приватный security disclosure channel до открытия публичных issue/PR.

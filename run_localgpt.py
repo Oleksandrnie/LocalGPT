@@ -409,8 +409,7 @@ def build_ui_url(host: str, port: int) -> str:
 
 def report_access_mode(host: str, port: int) -> None:
     remote_enabled = env_bool("LOCALGPT_REMOTE_ACCESS", False)
-    remote_mode = (os.getenv("LOCALGPT_REMOTE_ACCESS_MODE", "local") or "local").strip().lower() or "local"
-    remote_label = f"enabled ({remote_mode})" if remote_enabled else "disabled"
+    remote_label = "enabled" if remote_enabled else "disabled"
     print(f"[i] Remote access: {remote_label}")
     print(f"[i] Bind address: {host}:{port}")
     if host in {"0.0.0.0", "::"}:
@@ -422,8 +421,6 @@ def report_access_mode(host: str, port: int) -> None:
         print("[!] Do not expose this port directly to the public internet.")
     else:
         print("[i] Public exposure: none by default; LocalGPT is bound to localhost/private host only.")
-        if remote_mode in {"tailscale", "tailnet"}:
-            print(f"[i] Tailscale Serve target: http://127.0.0.1:{port}")
 
 
 def open_browser_delayed(ui_url: str, delay_seconds: float = 1.0) -> None:

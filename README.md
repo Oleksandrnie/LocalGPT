@@ -12,8 +12,8 @@ LocalGPT — local-first приложение для чата, транскри�
 - OCR изображений через Tesseract;
 - profile-scoped RAG для Markdown-файлов, включая ASR context и явно сохраняемый text-only Vision context;
 - перенос complete Ollama, faster-whisper, whisper.cpp и Piper моделей между установками через один `.localgpt-models` bundle;
-- Plugin Registry v0 с trusted backend handlers;
-- локальный доступ по умолчанию и явно включаемые LAN/private-tailnet paths.
+- metadata-only Plugin Registry v0;
+- локальный доступ по умолчанию и явно включаемый LAN-доступ.
 
 ## Стек
 
@@ -24,7 +24,6 @@ LocalGPT — local-first приложение для чата, транскри�
 - Tesseract для OCR;
 - статический Web UI на HTML, CSS и JavaScript;
 - Caddy для отдельного LAN HTTPS режима на macOS;
-- Tailscale Serve для опционального private-tailnet доступа.
 
 ## Архитектура
 
@@ -63,10 +62,10 @@ Setup (технически — bootstrap):
 
 - при необходимости устанавливает Python и поддерживаемый package manager;
 - ставит обязательные system/runtime tools и закреплённые Python packages в `venv/`;
-- отдельно предлагает опциональные Caddy, Tailscale и Node.js;
+- отдельно предлагает опциональные Caddy и Node.js;
 - на macOS собирает штатный `whisper-cli` и небольшой Silero VAD-фильтр от распознавания тишины, но не загружает ASR-модели и CoreML-артефакты;
 - безопасно пропускает уже найденные компоненты и пригоден для повторного запуска;
-- не скачивает речевые/LLM-модели или RAG-данные, не создаёт `.env` и не включает LAN/Tailscale-доступ LocalGPT;
+- не скачивает речевые/LLM-модели или RAG-данные, не создаёт `.env` и не включает LAN-доступ LocalGPT;
 - для установки недостающих Python/system components использует настроенный package manager и может обращаться к официальным download endpoints.
 
 Канонический список Python packages находится в `app/requirements.txt`; отдельного корневого `requirements.txt` нет. Setup создаёт штатный `venv/`. Если ранее было вручную создано `.venv/`, оно останется нетронутым, но LocalGPT его не использует.
@@ -87,7 +86,6 @@ Setup (технически — bootstrap):
 - `whisper-cli` (собирается setup-ом на macOS) и GGML-модель — для backend `whisper_cpp`;
 - Tesseract — для OCR;
 - Caddy — для явно включаемого LAN HTTPS режима на macOS;
-- Tailscale — только для private-tailnet доступа.
 
 ## Обычный запуск
 
@@ -133,11 +131,9 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 
 Параметры окружения, `ADMIN_TOKEN`, model paths, CORS и ASR/TTS настройки перечислены в [`.env.example`](.env.example).
 
-## LAN и Tailscale
+## LAN доступ
 
 Для доступа в одной локальной сети на macOS явно запустите `start_localgpt_lan.command` или `./start_localgpt_lan.sh`. Этот режим оставляет backend на localhost и поднимает Caddy HTTPS на частном LAN IP. TLS шифрует соединение, но приложение не предоставляет общую аутентификацию для LAN-клиентов; используйте только доверенную сеть. Остановить listener можно через `stop_localgpt_lan.command` или `./stop_localgpt_lan.sh`. Подробности и диагностика: [networking](docs/knowledge/networking.md).
-
-Для удалённого доступа используйте только private Tailscale tailnet. LocalGPT не запускает `tailscale serve` автоматически и не рекомендует Funnel или прямую публикацию backend-порта. Инструкция находится в [Tailscale plugin](plugins/tailscale/README.md).
 
 ## Данные и модели
 
@@ -169,10 +165,10 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000 --strict-port
 
 ## Privacy и безопасность
 
-- Обычный launcher слушает только localhost. LAN HTTPS включается отдельным macOS entry point; Tailscale Serve настраивается вручную.
-- LAN/Tailscale доступ не имеет общей аутентификации клиентов. TLS защищает транспорт, но не устанавливает личность пользователя. Не публикуйте backend в Internet и используйте сетевые режимы только в доверенной private network.
+- Обычный launcher слушает только localhost. LAN HTTPS включается отдельным macOS entry point.
+- LAN-доступ не имеет общей аутентификации клиентов. TLS защищает транспорт, но не устанавливает личность пользователя. Не публикуйте backend в Internet и используйте LAN-режим только в доверенной сети.
 - `ADMIN_TOKEN` защищает выбранные administrative/runtime/database/storage/debug операции; он не является глобальной авторизацией для всех API endpoints.
-- При локальных providers inference может оставаться на устройстве. Настроенный OpenAI-compatible endpoint, пакетные установщики, Hugging Face/model downloads и явный private-network режим создают внешние сетевые соединения.
+- При локальных providers inference может оставаться на устройстве. Настроенный OpenAI-compatible endpoint, пакетные установщики, Hugging Face/model downloads и явно включённый LAN-режим создают внешние сетевые соединения.
 - SQLite, документы RAG, изображения, аудио и модели не шифруются LocalGPT at rest; защищайте системную учётную запись и диск средствами ОС.
 - Local-first не означает гарантированную offline-работу или приватность от выбранного внешнего provider-а. Полные ограничения: [audit report](docs/security/OPEN_SOURCE_READINESS_AUDIT.md).
 

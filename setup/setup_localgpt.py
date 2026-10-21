@@ -168,7 +168,6 @@ WINGET_PACKAGES = {
     "ollama": "Ollama.Ollama",
     "caddy": "CaddyServer.Caddy",
     "node": "OpenJS.NodeJS.LTS",
-    "tailscale": "Tailscale.Tailscale",
 }
 
 
@@ -285,7 +284,6 @@ def install_system_dependencies(system: str) -> None:
 def install_optional_dependencies(system: str) -> None:
     optional = (
         ("caddy", "Caddy is needed for the LocalGPT LAN HTTPS launcher."),
-        ("tailscale", "Tailscale is optional for private tailnet access; Serve is never enabled here."),
         ("node", "Node.js is only needed for frontend static checks and .mjs tests."),
     )
     for command, description in optional:
@@ -300,11 +298,8 @@ def install_optional_dependencies(system: str) -> None:
         if system == "macos":
             install_macos([command])
         elif system == "linux":
-            if command == "tailscale":
-                install_official_linux_script("https://tailscale.com/install.sh", "Tailscale")
-            else:
-                manager = linux_package_manager()
-                install_linux(manager, LINUX_PACKAGES[manager][command])
+            manager = linux_package_manager()
+            install_linux(manager, LINUX_PACKAGES[manager][command])
         else:
             install_windows([WINGET_PACKAGES[command]])
 

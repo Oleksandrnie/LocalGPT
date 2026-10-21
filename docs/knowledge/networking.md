@@ -6,9 +6,8 @@
 | --- | --- | --- | --- |
 | Local | `127.0.0.1:<port>` | нет | тот же компьютер |
 | LAN | `127.0.0.1:<port>` | Caddy HTTPS на private LAN IP | устройства в одной локальной сети |
-| Tailscale | `127.0.0.1:<port>` | ручной Tailscale Serve | устройства в private tailnet |
 
-Прямой bind на `0.0.0.0` возможен через CLI/config, но launcher выводит предупреждение. Штатные LAN/Tailscale paths не требуют публичного backend bind.
+Прямой bind на `0.0.0.0` возможен через CLI/config, но launcher выводит предупреждение. Штатный LAN path не требует публичного backend bind.
 
 ## Local runtime
 
@@ -56,23 +55,6 @@ curl http://127.0.0.1:8000/health
 
 Когда LAN HTTPS listener отвечает, Settings → System → «Доступ с телефона» позволяет сохранить публичный `root.crt` Caddy на текущем компьютере для iPhone или Android. Файл отдаётся только через guarded `GET /network/caddy/root-ca` с `Cache-Control: no-store`; он не содержит private key. Браузер сохраняет файл в выбранную папку или стандартные downloads — затем пользователь передаёт его на устройство и вручную включает доверие. Если LAN URL недоступен, действия сохранения отключены.
 
-## Tailscale private tailnet
-
-1. Запустите LocalGPT локально.
-2. Подключите Mac и client device к одному tailnet.
-3. Включите trusted Tailscale plugin в Settings.
-4. Выполните вручную:
-
-   ```bash
-   tailscale serve --bg http://127.0.0.1:<LOCALGPT_PORT>
-   ```
-
-5. Откройте Serve URL с client device.
-
-Backend handler только читает status и показывает команду/адрес. Он не запускает Serve. Полная инструкция: [`plugins/tailscale/README.md`](../../plugins/tailscale/README.md).
-
-Не используйте Funnel, router port forwarding, public IP exposure или public tunnel как default LocalGPT access.
-
 ## Host, port и CORS
 
 Основные настройки:
@@ -80,20 +62,18 @@ Backend handler только читает status и показывает ком�
 - `LOCALGPT_HOST`, `LOCALGPT_PORT`;
 - `LAN_HTTPS_PORT` (и поддерживаемые launcher aliases);
 - `LOCALGPT_CORS_ALLOW_ORIGINS`;
-- `LOCALGPT_CORS_ALLOW_ORIGIN_REGEX`;
-- `LOCALGPT_REMOTE_ACCESS`, `LOCALGPT_REMOTE_ACCESS_MODE`.
+- `LOCALGPT_CORS_ALLOW_ORIGIN_REGEX`.
 
-Default CORS regex разрешает localhost, loopback, RFC1918 ranges, Tailscale CGNAT range и `.local` hosts. `allow_credentials` выключен. Same-origin static UI обычно не требует добавлять origins.
+Default CORS regex разрешает localhost, loopback, RFC1918 ranges и `.local` hosts. `allow_credentials` выключен. Same-origin static UI обычно не требует добавлять origins.
 
 Не ставьте `*` без отдельного threat review.
 
 ## Security restrictions
 
 - backend по умолчанию слушает localhost;
-- Caddy/Tailscale terminate внешнее соединение и проксируют на localhost;
+- Caddy завершает внешнее соединение и проксирует на localhost;
 - обычный launcher остаётся local-only; LAN HTTPS включается отдельным явным entry point;
 - приложение не предоставляет общую identity/authentication для LAN-клиентов; TLS защищает транспорт, но любой клиент с сетевым доступом может обращаться к незакрытым API, поэтому используйте только доверенную сеть;
-- Tailscale plugin metadata не исполняется;
 - unknown plugins не получают effective enable;
 - network addresses формирует backend;
 - LocalGPT не настраивает firewall/router автоматически;
@@ -115,14 +95,6 @@ LocalGPT рассчитан на локального владельца/дов�
 - certificate trust;
 - что backend health доступен на localhost.
 
-### Tailscale адрес отсутствует
-
-- plugin trusted и enabled;
-- `tailscale status --json` успешен;
-- Serve направлен на активный backend port;
-- оба устройства в одном tailnet;
-- Mac не спит.
-
 ### CORS error
 
 Определите реальный Origin и добавьте только нужный origin/regex. Не маскируйте проблему открытием всего интернета.
@@ -133,4 +105,4 @@ LocalGPT рассчитан на локального владельца/дов�
 
 ## Проверки
 
-См. [TESTING.md](../TESTING.md), `tests/test_plugin_registry.py` и manual LAN/Tailscale matrix.
+См. [TESTING.md](../TESTING.md), `tests/test_plugin_registry.py` и manual LAN matrix.

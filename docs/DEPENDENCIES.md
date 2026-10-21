@@ -15,10 +15,9 @@
 | OCR | Tesseract | 5+; проверен project host 5.5.2 | image OCR; недоступные language packs отбрасываются runtime-ом | устанавливается интерактивно |
 | ASR build | Git, CMake, Apple Command Line Tools, curl, unzip | Git 2+, CMake 3.20+ | macOS-сборка `whisper-cli` и Silero VAD; получение ASR artifacts по явному действию пользователя | на macOS setup собирает CLI и загружает VAD без речевой модели; Homebrew packages ставятся интерактивно, CLT запрашиваются macOS |
 | LAN optional | Caddy | 2+; проверен project host 2.10.2 | `start_localgpt_lan.command`, private LAN HTTPS | отдельное интерактивное согласие |
-| Tailnet optional | Tailscale app/CLI | 1+ | read-only plugin status и manual Tailscale Serve | отдельное интерактивное согласие; Serve/Funnel не включаются |
 | QA only | Node.js | 18+ | `node --check` и `.mjs` tests | отдельное интерактивное согласие; frontend runtime Node не использует |
 
-Жёсткий minimum для Ollama, Homebrew и Tailscale не зафиксирован кодом или manifest-ом проекта. Setup (bootstrap) поэтому проверяет работоспособный CLI и устанавливает текущую stable-версию package manager-а, не имитируя неподтверждённую совместимость со старыми версиями.
+Жёсткий minimum для Ollama и Homebrew не зафиксирован кодом или manifest-ом проекта. Setup (bootstrap) поэтому проверяет работоспособный CLI и устанавливает текущую stable-версию package manager-а, не имитируя неподтверждённую совместимость со старыми версиями.
 
 ## Поддержка платформ: заявлено vs проверено
 

@@ -139,7 +139,6 @@ SQLite содержит profiles, sessions, messages, chat attachment metadata, 
 - Default bind — `127.0.0.1`; прямой public exposure отсутствует.
 - CORS по умолчанию ограничен localhost и private/local address ranges.
 - LAN launcher оставляет backend на localhost и проксирует его через Caddy HTTPS.
-- Tailscale handler выполняет только read-only status checks и возвращает manual command/address metadata.
 - Registry не исполняет plugin code и не делает untrusted plugin effectively enabled.
 - LocalGPT не включает Funnel, port forwarding или public tunnels.
 
