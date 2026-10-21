@@ -1,5 +1,5 @@
-#!/bin/zsh
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec /bin/zsh "${SCRIPT_DIR}/tools/LTrnsrb.sh"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$SCRIPT_DIR/start_localgpt.sh" "$@" --host 0.0.0.0

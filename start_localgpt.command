@@ -4,8 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-"$SCRIPT_DIR/tools/LTrnsrb.sh" --stop
-
 if [[ -x "$SCRIPT_DIR/venv/bin/python" ]]; then
   exec "$SCRIPT_DIR/venv/bin/python" run_localgpt.py "$@"
 fi

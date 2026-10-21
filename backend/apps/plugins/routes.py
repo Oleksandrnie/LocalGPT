@@ -51,5 +51,5 @@ def get_plugin_doc(plugin_id: str, doc_path: str) -> PlainTextResponse:
 def network_addresses(request: Request) -> dict[str, object]:
     return registry.list_network_addresses(
         request=request,
-        core_items=meta_routes.get_network_address_items(request),
+        core_items=meta_routes.get_network_address_items(),
     )

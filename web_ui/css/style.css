@@ -735,10 +735,6 @@ body.theme-light input[type="checkbox"]:checked {
     padding: 0;
 }
 
-.topbar__actions .button.lan-url-button--icon-only {
-    padding: 0;
-}
-
 .topbar-icon-button__icon {
     width: 20px;
     height: 20px;
@@ -781,32 +777,6 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     border-color: rgba(148, 163, 184, 0.34);
     background: rgba(255, 255, 255, 0.025);
     box-shadow: inset 0 1px 8px rgba(0, 0, 0, 0.22);
-}
-
-.lan-url-button {
-    gap: 8px;
-}
-
-.lan-url-button--icon-only {
-    width: 42px;
-    min-width: 42px;
-    padding: 0;
-}
-
-.lan-url-button__icon {
-    width: 17px;
-    height: 17px;
-    flex: 0 0 auto;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    opacity: 0.82;
-}
-
-.lan-url-button:disabled .lan-url-button__icon {
-    opacity: 0.45;
 }
 
 .rag-status-button {
@@ -2917,71 +2887,6 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 .rag-quick-menu__item input {
     width: 16px;
     height: 16px;
-}
-
-.network-address-menu {
-    position: fixed;
-    z-index: var(--z-menu);
-    min-width: 270px;
-    max-width: min(420px, calc(100vw - 24px));
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    background: rgba(19, 24, 30, 0.98);
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
-    backdrop-filter: blur(18px);
-}
-
-.network-address-menu[hidden] {
-    display: none;
-}
-
-.network-address-menu__header {
-    padding: 6px 10px 9px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-soft);
-}
-
-.network-address-menu__item {
-    display: grid;
-    gap: 6px;
-    width: 100%;
-    min-height: 54px;
-    padding: 10px 12px;
-    border-radius: 10px;
-    background: transparent;
-    color: var(--text);
-    text-align: left;
-    cursor: pointer;
-}
-
-.network-address-menu__item:hover,
-.network-address-menu__item:focus-visible {
-    background: rgba(255, 255, 255, 0.06);
-}
-
-.network-address-menu__item span {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-}
-
-.network-address-menu__item strong {
-    font-size: 13px;
-}
-
-.network-address-menu__item small {
-    color: var(--text-muted);
-    font-size: 12px;
-}
-
-.network-address-menu__item code {
-    overflow-wrap: anywhere;
-    color: var(--text-soft);
-    font-size: 12px;
 }
 
 @keyframes mic-pulse {
@@ -5984,8 +5889,7 @@ body.theme-light .app-select__caret {
 body.theme-light .app-select__menu,
 body.theme-light .composer-menu__dropdown,
 body.theme-light .voice-model-menu,
-body.theme-light .rag-quick-menu,
-body.theme-light .network-address-menu {
+body.theme-light .rag-quick-menu {
     background: rgba(255, 255, 255, 0.86);
     border-color: rgba(124, 92, 255, 0.14);
     box-shadow: 0 18px 48px rgba(31, 41, 55, 0.12), 0 0 26px rgba(124, 92, 255, 0.1);
@@ -5995,9 +5899,7 @@ body.theme-light .app-select__option:hover,
 body.theme-light .app-select__option:focus-visible,
 body.theme-light .composer-menu__item:hover,
 body.theme-light .voice-model-menu__item:hover,
-body.theme-light .rag-quick-menu__item:hover,
-body.theme-light .network-address-menu__item:hover,
-body.theme-light .network-address-menu__item:focus-visible {
+body.theme-light .rag-quick-menu__item:hover {
     background: rgba(124, 92, 255, 0.08);
 }
 
@@ -7195,8 +7097,7 @@ body.theme-light .tool-window__resize::before {
     }
 
     .composer-menu__item,
-    .voice-model-menu__item,
-    .network-address-menu__item {
+    .voice-model-menu__item {
         min-height: var(--mobile-touch-target);
     }
 
@@ -7258,7 +7159,6 @@ body.theme-light .tool-window__resize::before {
 
     .topbar__actions .button,
     .topbar__actions .button.topbar-icon-button,
-    .topbar__actions .button.lan-url-button--icon-only,
     .topbar__actions .theme-toggle-button {
         width: var(--mobile-touch-target);
         min-width: var(--mobile-touch-target);
@@ -7977,8 +7877,7 @@ body.theme-light .tool-window__resize::before {
     .send-button:hover:not(:disabled),
     .session-item:hover,
     .composer-menu__item:hover,
-    .voice-model-menu__item:hover,
-    .network-address-menu__item:hover {
+    .voice-model-menu__item:hover {
         transform: none;
     }
 }

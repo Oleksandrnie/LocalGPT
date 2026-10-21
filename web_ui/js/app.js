@@ -201,8 +201,6 @@ const els = {
   quickModelMobileButton: document.getElementById("quickModelMobileButton"),
   quickModelMobileMenu: document.getElementById("quickModelMobileMenu"),
   quickModelSelect: document.getElementById("quickModelSelect"),
-  copyLanUrlButton: document.getElementById("copyLanUrlButton"),
-  networkAddressMenu: document.getElementById("networkAddressMenu"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   openRagButton: document.getElementById("openRagButton"),
   themeToggleButton: document.getElementById("themeToggleButton"),
@@ -490,10 +488,6 @@ const els = {
   modelsDirInput: document.getElementById("modelsDirInput"),
   applyModelsDirButton: document.getElementById("applyModelsDirButton"),
   moveModelsDirButton: document.getElementById("moveModelsDirButton"),
-  lanUrlValue: document.getElementById("lanUrlValue"),
-  copyLanUrlFromSettingsButton: document.getElementById("copyLanUrlFromSettingsButton"),
-  downloadCaddyCertificateIosButton: document.getElementById("downloadCaddyCertificateIosButton"),
-  downloadCaddyCertificateAndroidButton: document.getElementById("downloadCaddyCertificateAndroidButton"),
   restartBackendButton: document.getElementById("restartBackendButton"),
   shutdownButton: document.getElementById("shutdownButton"),
   appRuntimeStatus: document.getElementById("appRuntimeStatus"),
@@ -550,7 +544,6 @@ const state = {
   serverHealthy: false,
   ttsHealthy: false,
   defaultModel: "",
-  lanUrl: "",
   isSending: false,
   isTranscribing: false,
   isRecordingVoice: false,
@@ -628,9 +621,6 @@ const state = {
     message: "",
   },
   pluginsLoading: false,
-  networkAddresses: [],
-  networkAddressesLoading: false,
-  networkAddressMenuPosition: null,
   activeSettingsTab: readStored(STORAGE_KEYS.settingsTab, "profile") || "profile",
   databaseMaintenanceBusy: false,
   appRuntimeBusy: false,
@@ -3686,27 +3676,6 @@ async function saveActiveProfilePreferences(preferencesPatch) {
     }
     setFooter(`Не удалось сохранить настройки профиля: ${error.message || error}`, "error");
     return null;
-  }
-}
-
-function fallbackLanUrl() {
-  const host = (window.location.hostname || "").trim().toLowerCase();
-  if (!host || host === "localhost" || host === "127.0.0.1" || host === "::1") {
-    return "";
-  }
-
-  try {
-    const url = new URL(window.location.href);
-    url.protocol = "https:";
-    if (!url.port || url.port === "8000") {
-      url.port = "8443";
-    }
-    url.pathname = "/ui/gui_html.html";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return "";
   }
 }
 
@@ -7845,108 +7814,6 @@ function renderOllamaInstallerDownloads() {
   }).join("");
 }
 
-function normalizeNetworkAddressItems(items) {
-  if (!Array.isArray(items)) return [];
-  return items
-    .map((item, index) => {
-      const rawUrl = String(item?.url || "").trim();
-      if (!rawUrl || rawUrl.includes("<") || rawUrl.includes(">")) return null;
-      try {
-        const parsed = new URL(rawUrl);
-        if (!["http:", "https:"].includes(parsed.protocol)) return null;
-      } catch {
-        return null;
-      }
-      return {
-        id: String(item?.id || item?.provider_id || `address-${index}`),
-        provider_id: String(item?.provider_id || item?.id || `address-${index}`),
-        label: String(item?.label || item?.provider_id || "Address"),
-        url: rawUrl,
-        detail: String(item?.detail || item?.security_note || ""),
-        copyable: item?.copyable !== false,
-        priority: Number.isFinite(Number(item?.priority)) ? Number(item.priority) : 100,
-      };
-    })
-    .filter((item) => item && item.copyable)
-    .sort((a, b) => (a.priority - b.priority) || a.label.localeCompare(b.label));
-}
-
-function availableNetworkAddresses() {
-  return Array.isArray(state.networkAddresses) ? state.networkAddresses : [];
-}
-
-function closeNetworkAddressMenu() {
-  if (!els.networkAddressMenu) return;
-  els.networkAddressMenu.hidden = true;
-  els.networkAddressMenu.style.left = "";
-  els.networkAddressMenu.style.top = "";
-  state.networkAddressMenuPosition = null;
-  els.copyLanUrlButton?.setAttribute("aria-expanded", "false");
-}
-
-function positionNetworkAddressMenu(clientX, clientY) {
-  if (!els.networkAddressMenu || els.networkAddressMenu.hidden) return;
-  const rect = els.networkAddressMenu.getBoundingClientRect();
-  const padding = 12;
-  const left = Math.max(padding, Math.min(clientX, window.innerWidth - rect.width - padding));
-  const top = Math.max(padding, Math.min(clientY, window.innerHeight - rect.height - padding));
-  els.networkAddressMenu.style.left = `${left}px`;
-  els.networkAddressMenu.style.top = `${top}px`;
-}
-
-function renderNetworkAddressMenu() {
-  if (!els.networkAddressMenu) return;
-  const items = availableNetworkAddresses();
-  els.networkAddressMenu.innerHTML = [
-    '<div class="network-address-menu__header">Адрес доступа</div>',
-    ...items.map((item, index) => `
-      <button class="network-address-menu__item" type="button" role="menuitem" data-network-address-index="${index}">
-        <span>
-          <strong>${escapeHtml(item.label)}</strong>
-          ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}
-        </span>
-        <code>${escapeHtml(item.url)}</code>
-      </button>
-    `),
-  ].join("");
-  if (!els.networkAddressMenu.hidden && state.networkAddressMenuPosition) {
-    positionNetworkAddressMenu(state.networkAddressMenuPosition.x, state.networkAddressMenuPosition.y);
-  }
-}
-
-function renderLanUrl() {
-  const value = state.lanUrl || "Недоступно";
-  const addresses = availableNetworkAddresses();
-  const topbarDisabled = state.networkAddressesLoading || !addresses.length;
-  if (els.lanUrlValue) {
-    els.lanUrlValue.textContent = value;
-  }
-  if (els.copyLanUrlButton) {
-    els.copyLanUrlButton.disabled = topbarDisabled;
-    els.copyLanUrlButton.setAttribute("aria-expanded", els.networkAddressMenu?.hidden === false ? "true" : "false");
-    if (addresses.length > 1) {
-      els.copyLanUrlButton.title = "Выбрать адрес доступа";
-      els.copyLanUrlButton.setAttribute("aria-label", "Выбрать адрес доступа");
-    } else if (addresses.length === 1) {
-      els.copyLanUrlButton.title = `Скопировать ${addresses[0].label} URL`;
-      els.copyLanUrlButton.setAttribute("aria-label", `Скопировать ${addresses[0].label} URL`);
-    } else {
-      els.copyLanUrlButton.title = "Адрес доступа недоступен";
-      els.copyLanUrlButton.setAttribute("aria-label", "Адрес доступа недоступен");
-    }
-  }
-  if (els.copyLanUrlFromSettingsButton) {
-    els.copyLanUrlFromSettingsButton.disabled = !state.lanUrl;
-  }
-  if (els.downloadCaddyCertificateIosButton) {
-    els.downloadCaddyCertificateIosButton.disabled = !state.lanUrl;
-  }
-  if (els.downloadCaddyCertificateAndroidButton) {
-    els.downloadCaddyCertificateAndroidButton.disabled = !state.lanUrl;
-  }
-  renderNetworkAddressMenu();
-}
-
 function pluginStatusLabel(plugin) {
   if (!plugin?.trusted) return "Detected, not trusted";
   if (plugin?.enabled && plugin?.effective_enabled) return "Enabled";
@@ -8452,7 +8319,6 @@ function renderSettings() {
   renderWhisperControls();
   renderTtsControls();
   renderDownloads();
-  renderLanUrl();
   renderPlugins();
   renderDatabaseMaintenance();
   renderAppRuntimeMaintenance();
@@ -8858,7 +8724,6 @@ function closeRagPanel() {
 function openRagQuickMenu() {
   if (!els.ragQuickMenu) return;
   closeRagPanel();
-  closeNetworkAddressMenu();
   closeQuickModelMenu();
   closeVoiceModelMenu();
   toggleComposerMenu(false);
@@ -9039,42 +8904,15 @@ async function loadHealth({ silent = false } = {}) {
     const data = await request("/health");
     state.serverHealthy = true;
     state.defaultModel = data?.model || state.defaultModel;
-    state.lanUrl = data?.lan_url || data?.ios_url || fallbackLanUrl();
     state.modelsDir = data?.models_dir || state.modelsDir || "";
     setHealthBadge("Онлайн", "success");
-    renderLanUrl();
     renderContextSummary();
-    await loadNetworkAddresses({ silent: true });
   } catch (error) {
     state.serverHealthy = false;
-    state.lanUrl = fallbackLanUrl();
-    state.networkAddresses = [];
     setHealthBadge("Нет связи", "error");
-    renderLanUrl();
     if (!silent) {
       setFooter(`Сервер недоступен: ${error.message || error}`, "error");
     }
-  }
-}
-
-async function loadNetworkAddresses({ silent = false } = {}) {
-  state.networkAddressesLoading = true;
-  renderLanUrl();
-  try {
-    const data = await request("/plugins/network-addresses");
-    state.networkAddresses = normalizeNetworkAddressItems(data?.items);
-    if (!state.networkAddresses.length) {
-      closeNetworkAddressMenu();
-    }
-  } catch (error) {
-    state.networkAddresses = [];
-    closeNetworkAddressMenu();
-    if (!silent) {
-      setFooter(`Не удалось загрузить адреса доступа: ${error.message || error}`, "error");
-    }
-  } finally {
-    state.networkAddressesLoading = false;
-    renderLanUrl();
   }
 }
 
@@ -9124,7 +8962,6 @@ async function setPluginEnabled(pluginId, enabled) {
     };
     setInlineStatus(els.pluginsStatus, enabled ? "Plugin включён." : "Plugin отключён.", "success");
     setFooter(enabled ? "Plugin включён." : "Plugin отключён.", "success");
-    await loadNetworkAddresses({ silent: true });
   } catch (error) {
     setInlineStatus(els.pluginsStatus, `Не удалось изменить plugin: ${error.message || error}`, "error");
     setFooter(`Plugin: ${error.message || error}`, "error");
@@ -10420,86 +10257,6 @@ async function deleteCurrentContext() {
   }
 }
 
-async function copyLanUrlOnly() {
-  if (!state.lanUrl) {
-    setFooter("LAN URL пока недоступен.", "warning");
-    return;
-  }
-  try {
-    await copyText(state.lanUrl);
-    setFooter("LAN URL скопирован.", "success");
-  } catch {
-    setFooter("Не удалось скопировать LAN URL.", "error");
-  }
-}
-
-function downloadCaddyRootCertificate(platform) {
-  if (!state.lanUrl) {
-    setFooter("LAN HTTPS через Caddy пока недоступен.", "warning");
-    return;
-  }
-
-  const link = document.createElement("a");
-  link.href = "/network/caddy/root-ca";
-  link.download = "localgpt-caddy-root-ca.crt";
-  link.hidden = true;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-
-  const device = platform === "ios" ? "iPhone" : "Android";
-  setFooter(`Файл сертификата для ${device} отправлен в загрузки браузера. При необходимости выберите папку в диалоге браузера.`, "success");
-}
-
-async function copyNetworkAddressItem(item) {
-  if (!item?.url) {
-    setFooter("Адрес доступа пока недоступен.", "warning");
-    return;
-  }
-  try {
-    await copyText(item.url);
-    setFooter(`${item.label || "Адрес"} URL скопирован.`, "success");
-  } catch {
-    setFooter("Не удалось скопировать адрес доступа.", "error");
-  }
-}
-
-function openNetworkAddressMenu() {
-  if (!els.networkAddressMenu || !els.copyLanUrlButton) return;
-  const items = availableNetworkAddresses();
-  if (items.length < 2) return;
-  closeRagQuickMenu();
-  closeQuickModelMenu();
-  closeVoiceModelMenu();
-  toggleComposerMenu(false);
-  const rect = els.copyLanUrlButton.getBoundingClientRect();
-  state.networkAddressMenuPosition = {
-    x: Math.round(rect.left),
-    y: Math.round(rect.bottom + 10),
-  };
-  renderNetworkAddressMenu();
-  els.networkAddressMenu.hidden = false;
-  els.copyLanUrlButton.setAttribute("aria-expanded", "true");
-  positionNetworkAddressMenu(state.networkAddressMenuPosition.x, state.networkAddressMenuPosition.y);
-  window.setTimeout(() => {
-    els.networkAddressMenu?.querySelector("[data-network-address-index]")?.focus();
-  }, 0);
-}
-
-async function copyNetworkAddress() {
-  await loadNetworkAddresses({ silent: true });
-  const items = availableNetworkAddresses();
-  if (!items.length) {
-    setFooter("Адрес доступа пока недоступен.", "warning");
-    return;
-  }
-  if (items.length === 1) {
-    await copyNetworkAddressItem(items[0]);
-    return;
-  }
-  openNetworkAddressMenu();
-}
-
 function isExpectedShutdownError(error) {
   const raw = String(error?.message || error || "").toLowerCase();
   return raw.includes("failed to fetch")
@@ -10576,7 +10333,7 @@ async function shutdownRuntime() {
   const approved = await openConfirmDialog({
     eyebrow: "Приложение",
     title: "Остановить приложение?",
-    message: "Backend и Caddy будут остановлены. После этого текущая страница потеряет связь с API; для нового старта понадобится launcher или ручной запуск.",
+    message: "Backend будет остановлен. После этого текущая страница потеряет связь с API; для нового старта понадобится launcher или ручной запуск.",
     confirmLabel: "Остановить",
     cancelLabel: "Отмена",
     returnFocus: els.shutdownButton,
@@ -11080,19 +10837,7 @@ function bindEvents() {
     if (event.target === els.reasoningBackdrop) closeReasoningDialog();
   });
 
-  els.copyLanUrlButton?.addEventListener("click", async () => copyNetworkAddress());
   els.clearContextButton?.addEventListener("click", async () => deleteCurrentContext());
-  els.copyLanUrlFromSettingsButton?.addEventListener("click", async () => copyLanUrlOnly());
-  els.downloadCaddyCertificateIosButton?.addEventListener("click", () => downloadCaddyRootCertificate("ios"));
-  els.downloadCaddyCertificateAndroidButton?.addEventListener("click", () => downloadCaddyRootCertificate("android"));
-  els.networkAddressMenu?.addEventListener("click", async (event) => {
-    const button = event.target instanceof Element ? event.target.closest("[data-network-address-index]") : null;
-    if (!button) return;
-    const index = Number(button.getAttribute("data-network-address-index"));
-    const item = Number.isFinite(index) ? availableNetworkAddresses()[index] : null;
-    closeNetworkAddressMenu();
-    await copyNetworkAddressItem(item);
-  });
   els.refreshPluginsButton?.addEventListener("click", async () => loadPlugins());
   els.pluginsList?.addEventListener("change", async (event) => {
     const input = event.target instanceof Element ? event.target.closest("[data-plugin-toggle]") : null;
@@ -11912,10 +11657,6 @@ function bindEvents() {
         closeRagQuickMenu();
         return;
       }
-      if (!els.networkAddressMenu?.hidden) {
-        closeNetworkAddressMenu();
-        return;
-      }
       if (!els.quickThinkingMenu?.hidden || !els.quickThinkingMobileMenu?.hidden) {
         const trigger = !els.quickThinkingMobileMenu?.hidden ? els.quickThinkingMobileButton : els.quickThinkingButton;
         closeQuickThinkingMenu();
@@ -11952,7 +11693,6 @@ function bindEvents() {
       || target?.closest("#quickThinkingMobileButton");
     const insideVoiceMenu = target?.closest("#voiceModelMenu") || target?.closest("#voiceRecordButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
-    const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu");
     const insideAsrHistoryContextMenu = target?.closest("#asrHistoryContextMenu");
     const insideAppSelect = target?.closest(".app-select");
@@ -11978,9 +11718,6 @@ function bindEvents() {
     if (!insideRagQuickMenu) {
       closeRagQuickMenu();
     }
-    if (!insideNetworkAddressMenu) {
-      closeNetworkAddressMenu();
-    }
     if (!insideAppSelect) {
       closeAppSelect();
     }
@@ -12001,7 +11738,6 @@ function bindEvents() {
       || target?.closest("#quickThinkingMobileMenu")
       || target?.closest("#quickThinkingMobileButton");
     const insideRagQuickMenu = target?.closest("#ragQuickMenu") || target?.closest("#openRagButton");
-    const insideNetworkAddressMenu = target?.closest("#networkAddressMenu") || target?.closest("#copyLanUrlButton");
     const insideSessionContextMenu = target?.closest("#sessionContextMenu") || target?.closest("[data-session-id]");
     const insideAsrHistoryContextMenu = target?.closest("#asrHistoryContextMenu") || target?.closest("[data-asr-history-id]");
     const insideAppSelect = target?.closest(".app-select");
@@ -12023,9 +11759,6 @@ function bindEvents() {
     if (!insideRagQuickMenu) {
       closeRagQuickMenu();
     }
-    if (!insideNetworkAddressMenu) {
-      closeNetworkAddressMenu();
-    }
     if (!insideAppSelect) {
       closeAppSelect();
     }
@@ -12043,7 +11776,6 @@ function bindEvents() {
     closeQuickModelMenu();
     closeVoiceModelMenu();
     closeRagQuickMenu();
-    closeNetworkAddressMenu();
     closeAppSelect();
     closeSessionContextMenu();
     closeAsrHistoryContextMenu();

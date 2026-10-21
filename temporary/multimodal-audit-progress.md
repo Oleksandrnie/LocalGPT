@@ -4,6 +4,8 @@
 
 ASR input quality, then Chat/RAG model comparison, Vision/OCR, Mac resource control and optional real model-bundle transfer acceptance. GigaAM, agent orchestration and image generation remain deferred. Local models run sequentially on the 16 GiB Mac; the user approved downloading only the Russian Tesseract traineddata needed for the current OCR evaluation (no LLM downloads). This active execution record is tracked in stage checkpoints as required by the repository `AGENTS.md`.
 
+The owner later added a separate Open Source readiness follow-up: remove the LocalGPT-managed Caddy integration completely, preserve loopback-only default startup, and provide a distinct LAN launcher that binds directly to `0.0.0.0` with a clear no-auth warning. Details and checkpoints are tracked below in this same active progress file; do not create a second progress file.
+
 ## Completed
 
 ### C1 — completed and committed
@@ -284,3 +286,18 @@ Checkpoint: `970ec9f fix(chat): clarify RAG evidence and reasoning budgets`.
 ## Known limitations
 
 The public ASR sample is only 9 short studio-recorded scripted utterances; it does not assess noisy/overlapping speech, diarization, long-form drift or the user's specific vocabulary. Synthetic Vision/OCR fixtures do not establish real camera-photo accuracy. Tesseract flatten-text CER does not measure cell/row association; the tested sparse-text mode still omitted quantity values. Vision still confuses visually similar Latin/Cyrillic glyphs and status wording; do not normalize these automatically. Numeric temperature and peak per-process memory remain unavailable. Lexical RAG trace remains a review signal, not semantic proof. Image generation is deferred.
+
+### Open Source follow-up — remove Caddy and provide explicit direct LAN launch
+
+- Status: `in_progress`.
+- Goal: remove Caddy-specific runtime, setup, UI, launcher and current operational documentation. Keep ordinary startup bound to `127.0.0.1`. Add dedicated shell/macOS/Windows launchers that start `run_localgpt.py --host 0.0.0.0`, print the detected private IPv4 URL and warn that every reachable LAN client can read/change LocalGPT data; no application-wide authentication or TLS is added.
+- Scope: `run_localgpt.py`, launchers, `app/routes/meta.py`, Settings UI, optional dependency setup, directly affected tests/docs, and deletion of Caddy-only files. Preserve plugin-owned network-address support, ADMIN_TOKEN behavior, normal local startup and all unrelated active progress work.
+- Acceptance: default launch remains loopback-only; dedicated LAN launcher sets the wildcard bind explicitly and reports usable URL or a clear no-interface message; address discovery is offered only in LAN mode; Caddy certificate endpoint/UI/install prompts/config/scripts are gone; no claims of LAN authentication/TLS; direct-device runtime smoke is reported separately if unavailable.
+- Security decision from owner: use only on a trusted private network; the warning must say all reachable devices may view and modify data. Do not configure firewall/router, retain a Caddy stop-only/migration shim, auto-uninstall a system Caddy package, enable port forwarding, or expose public Internet. Existing system-level Caddy state is out of scope and need not be cleaned up by LocalGPT.
+- Baseline: branch `codex/opensource-readiness-audit`, clean worktree, Tailscale-removal and public-snapshot planning commits present. Existing `docs/knowledge/networking.md` documents HTTPS through `tools/LTrnsrb.sh`; `run_localgpt.py` already accepts `--host`; UI Settings contains URL/certificate controls; setup offers Caddy as optional dependency.
+- Stage 1 (complete): replaced the Caddy-backed runtime with direct bind launchers, removed Caddy routes/shutdown/setup/UI and old Caddy-only tests, and removed remaining frontend URL/certificate/network-address menu remnants. Added the no-auth LAN warning and launch-mode address reporting. Per current task instruction, no tests were added or run. Checkpoint: `feat(networking): replace Caddy with explicit LAN bind`.
+- Stage 2 (pending): update README, networking/dependency/testing/architecture/security/changelog/backlog and this record; re-scan active project files for Caddy references, retaining only accurate historical audit/changelog statements as needed. Validate markdown and diff. Proposed checkpoint: `docs(networking): document direct LAN mode`.
+- Stage 3 (pending): final full proportional validation, inspect diff/status, close this follow-up section, and remove this progress file only when the larger active multimodal work is also genuinely complete; otherwise retain the shared active progress record.
+- Validation so far: `git diff --check` passed before staging. No tests were added or run. Direct access from a second LAN device has not been smoke-tested. Existing system-level Caddy installations/processes were not inspected or changed. README and permanent documentation updates are in the working tree for Stage 2.
+- Next action: after the owner resumes, complete Stage 2 documentation and repository-wide active-file scan; then continue remaining multimodal work without closing this shared progress record prematurely.
+- Owner requested a pause immediately after the Stage 1 checkpoint because the session usage limit is near.

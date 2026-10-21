@@ -124,22 +124,18 @@ def install_macos(packages: list[str]) -> None:
 LINUX_PACKAGES = {
     "apt-get": {
         "core": ["git", "curl", "unzip", "cmake", "build-essential", "ffmpeg", "tesseract-ocr"],
-        "caddy": ["caddy"],
         "node": ["nodejs", "npm"],
     },
     "dnf": {
         "core": ["git", "curl", "unzip", "cmake", "gcc-c++", "make", "ffmpeg", "tesseract"],
-        "caddy": ["caddy"],
         "node": ["nodejs", "npm"],
     },
     "pacman": {
         "core": ["git", "curl", "unzip", "cmake", "base-devel", "ffmpeg", "tesseract"],
-        "caddy": ["caddy"],
         "node": ["nodejs", "npm"],
     },
     "zypper": {
         "core": ["git", "curl", "unzip", "cmake", "gcc-c++", "make", "ffmpeg", "tesseract-ocr"],
-        "caddy": ["caddy"],
         "node": ["nodejs", "npm"],
     },
 }
@@ -166,7 +162,6 @@ WINGET_PACKAGES = {
     "ffmpeg": "Gyan.FFmpeg",
     "tesseract": "UB-Mannheim.TesseractOCR",
     "ollama": "Ollama.Ollama",
-    "caddy": "CaddyServer.Caddy",
     "node": "OpenJS.NodeJS.LTS",
 }
 
@@ -283,7 +278,6 @@ def install_system_dependencies(system: str) -> None:
 
 def install_optional_dependencies(system: str) -> None:
     optional = (
-        ("caddy", "Caddy is needed for the LocalGPT LAN HTTPS launcher."),
         ("node", "Node.js is only needed for frontend static checks and .mjs tests."),
     )
     for command, description in optional:

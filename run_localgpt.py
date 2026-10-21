@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable
 
+from backend.networking import detect_private_lan_ipv4, is_loopback_bind_host
+
 
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / "venv"
@@ -111,13 +113,6 @@ def read_env(path: Path) -> Dict[str, str]:
 ENV_VARS = read_env(ENV_FILE)
 for key, value in ENV_VARS.items():
     os.environ.setdefault(key, value)
-
-
-def env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name, "")
-    if not raw:
-        return default
-    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
 
 
 def env_int(name: str, default: int) -> int:
@@ -408,19 +403,19 @@ def build_ui_url(host: str, port: int) -> str:
 
 
 def report_access_mode(host: str, port: int) -> None:
-    remote_enabled = env_bool("LOCALGPT_REMOTE_ACCESS", False)
-    remote_label = "enabled" if remote_enabled else "disabled"
-    print(f"[i] Remote access: {remote_label}")
     print(f"[i] Bind address: {host}:{port}")
-    if host in {"0.0.0.0", "::"}:
-        print("[!] LocalGPT is listening on all network interfaces.")
-        if not remote_enabled:
-            print(
-                "[!] LOCALGPT_REMOTE_ACCESS is not enabled; use 127.0.0.1 unless you intentionally need LAN access."
-            )
-        print("[!] Do not expose this port directly to the public internet.")
+    if is_loopback_bind_host(host):
+        print("[i] Local-only bind: only clients on this computer can connect by default.")
+        return
+
+    print("[!] LocalGPT is listening on a network interface without application-wide authentication or TLS.")
+    print("[!] Any device that can reach this port can read and change LocalGPT data.")
+    print("[!] Use only on a trusted private network. Do not expose this port to the public internet.")
+    lan_ip = host if host not in {"0.0.0.0", "::"} and not is_loopback_bind_host(host) else detect_private_lan_ipv4()
+    if lan_ip:
+        print(f"[i] LAN UI URL: http://{lan_ip}:{port}/ui/gui_html.html")
     else:
-        print("[i] Public exposure: none by default; LocalGPT is bound to localhost/private host only.")
+        print("[i] Private LAN IPv4 was not detected; use this computer's private IPv4 address on your other device.")
 
 
 def open_browser_delayed(ui_url: str, delay_seconds: float = 1.0) -> None:
@@ -461,6 +456,9 @@ def start_backend(python: str, *, host: str, port: int, reload_enabled: bool, ex
     """Start uvicorn backend."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
+    env["LOCALGPT_HOST"] = host
+    env["LOCALGPT_PORT"] = str(port)
+    env["LOCALGPT_LAN_MODE"] = "0" if is_loopback_bind_host(host) else "1"
     cmd = build_backend_cmd(python, host, port, reload_enabled)
 
     print("[*] Starting FastAPI backend (uvicorn backend.server:app) ...")

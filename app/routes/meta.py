@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import os
 import signal
-import socket
-import subprocess
-import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
-from fastapi import Request
-from fastapi.responses import FileResponse
 
 from .. import chat_tasks, config, db
 from ..schemas import DatabaseCleanupRequest, DatabaseResetRequest
@@ -21,191 +16,38 @@ from .. import transcribe_tasks
 from ..services import tts_service
 from backend.apps.rag import service as rag_service
 from backend.apps.chat.services import attachment_storage
+from backend.networking import detect_private_lan_ipv4
 
 router = APIRouter()
 _USER_ID = os.getuid() if hasattr(os, "getuid") else 0
 _DEFAULT_RUNTIME_DIR = Path(tempfile.gettempdir()) / f"LocalGPT-{_USER_ID}"
 RUNTIME_DIR = Path(os.getenv("LOCALGPT_RUNTIME_DIR", str(_DEFAULT_RUNTIME_DIR)))
 BACKEND_PID_FILE = RUNTIME_DIR / "backend.pid"
-CADDY_PID_FILE = RUNTIME_DIR / "caddy.pid"
-CADDY_LAUNCH_AGENT_LABEL = "local.localgpt.caddy"
-CADDY_ROOT_CA_RELATIVE_PATH = Path("pki") / "authorities" / "local" / "root.crt"
 
 
-def _is_private_lan_ipv4(value: str | None) -> bool:
-    ip = (value or "").strip()
-    if not ip:
-        return False
-    parts = ip.split(".")
-    if len(parts) != 4:
-        return False
-    try:
-        octets = [int(part) for part in parts]
-    except ValueError:
-        return False
-    if any(part < 0 or part > 255 for part in octets):
-        return False
-    return (
-        octets[0] == 10
-        or (octets[0] == 192 and octets[1] == 168)
-        or (octets[0] == 172 and 16 <= octets[1] <= 31)
-    )
-
-
-def _command_output(args: list[str]) -> str:
-    try:
-        result = subprocess.run(args, check=False, capture_output=True, text=True, timeout=2)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    if result.returncode != 0:
-        return ""
-    return (result.stdout or "").strip()
-
-
-def _detect_wifi_interface() -> str | None:
-    output = _command_output(["/usr/sbin/networksetup", "-listallhardwareports"])
-    want_wifi = False
-    for raw_line in output.splitlines():
-        line = raw_line.strip()
-        if line == "Hardware Port: Wi-Fi":
-            want_wifi = True
-            continue
-        if want_wifi and line.startswith("Device:"):
-            return line.split(":", 1)[1].strip() or None
-    return None
-
-
-def _ipconfig_addr(interface: str | None) -> str | None:
-    if not interface:
-        return None
-    value = _command_output(["/usr/sbin/ipconfig", "getifaddr", interface])
-    return value if _is_private_lan_ipv4(value) else None
-
-
-def _detect_lan_ip() -> str | None:
-    for interface in [_detect_wifi_interface(), "en0", "en1", "en2"]:
-        lan_ip = _ipconfig_addr(interface)
-        if lan_ip:
-            return lan_ip
-
-    default_route = _command_output(["/sbin/route", "get", "default"])
-    default_interface = ""
-    for raw_line in default_route.splitlines():
-        line = raw_line.strip()
-        if line.startswith("interface:"):
-            default_interface = line.split(":", 1)[1].strip()
-            break
-    lan_ip = _ipconfig_addr(default_interface)
-    if lan_ip:
-        return lan_ip
-
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("1.1.1.1", 80))
-            lan_ip = sock.getsockname()[0]
-    except OSError:
-        return None
-
-    if not _is_private_lan_ipv4(lan_ip):
-        return None
-    return lan_ip
-
-
-def _get_access_url(request: Request) -> str | None:
-    host = (request.headers.get("host") or "").strip()
-    if host:
-        return f"{request.url.scheme}://{host}/ui/gui_html.html"
-    return None
-
-
-def _is_tcp_port_open(host: str, port: int) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=0.25):
-            return True
-    except OSError:
-        return False
-
-
-def _lan_https_port() -> str:
-    port = (os.getenv("LAN_HTTPS_PORT", "") or "").strip()
-    if not port:
-        port = (os.getenv("IOS_HTTPS_PORT", "8443") or "").strip()
-    return port or "8443"
-
-
-def _caddy_data_dir() -> Path:
-    configured = (os.getenv("LOCALGPT_CADDY_DATA_DIR", "") or "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Caddy"
-    return Path.home() / ".local" / "share" / "caddy"
-
-
-def _caddy_root_ca_path() -> Path:
-    return _caddy_data_dir() / CADDY_ROOT_CA_RELATIVE_PATH
-
-
-def _get_lan_url(request: Request) -> str | None:
-    explicit = (os.getenv("LAN_ACCESS_URL", "") or "").strip()
-    if not explicit:
-        explicit = (os.getenv("IOS_ACCESS_URL", "") or "").strip()
-    if explicit:
-        return explicit
-
-    host = (request.headers.get("host") or "").strip()
-    if host and not host.startswith(("127.0.0.1", "localhost", "[::1]")):
-        return f"https://{host}/ui/gui_html.html"
-
-    lan_ip = _detect_lan_ip()
+def get_network_address_items() -> list[dict[str, object]]:
+    if os.getenv("LOCALGPT_LAN_MODE", "0").strip() != "1":
+        return []
+    lan_ip = detect_private_lan_ipv4()
     if not lan_ip:
-        return None
-
-    port = _lan_https_port()
+        return []
     try:
-        port_int = int(port)
+        port = int(os.getenv("LOCALGPT_PORT", "8000"))
     except ValueError:
-        return None
-    if not _is_tcp_port_open(lan_ip, port_int):
-        return None
-    return f"https://{lan_ip}:{port}/ui/gui_html.html"
-
-
-def get_network_address_items(request: Request) -> list[dict[str, object]]:
-    lan_url = _get_lan_url(request)
-    if not lan_url:
         return []
     return [
         {
             "id": "lan",
             "provider_id": "lan",
             "label": "LAN",
-            "url": lan_url,
-            "detail": "LAN HTTPS через Caddy.",
-            "trusted": True,
+            "url": f"http://{lan_ip}:{port}/ui/gui_html.html",
+            "detail": "HTTP без TLS и общей авторизации.",
+            "trusted": False,
             "copyable": True,
             "priority": 10,
-            "security_note": "Доступен только когда LAN HTTPS listener реально отвечает.",
+            "security_note": "Любое устройство с доступом к порту может читать и изменять данные LocalGPT. Используйте только в доверенной локальной сети.",
         }
     ]
-
-
-@router.get("/network/caddy/root-ca", include_in_schema=False)
-def download_caddy_root_ca(request: Request):
-    """Download Caddy's public local CA only while the LAN proxy is live."""
-    if not _get_lan_url(request):
-        raise HTTPException(status_code=404, detail="LAN HTTPS через Caddy недоступен.")
-
-    certificate_path = _caddy_root_ca_path()
-    if not certificate_path.is_file() or certificate_path.is_symlink():
-        raise HTTPException(status_code=404, detail="Корневой сертификат Caddy не найден.")
-
-    return FileResponse(
-        certificate_path,
-        media_type="application/x-x509-ca-cert",
-        filename="localgpt-caddy-root-ca.crt",
-        headers={"Cache-Control": "no-store"},
-    )
 
 
 def _read_pid(path: Path) -> int | None:
@@ -239,35 +81,12 @@ def _safe_unlink(path: Path) -> None:
         pass
 
 
-def _stop_caddy_launch_agent() -> None:
-    if sys.platform != "darwin" or not hasattr(os, "getuid"):
-        return
-    uid = os.getuid()
-    launch_agent_file = Path.home() / "Library" / "LaunchAgents" / f"{CADDY_LAUNCH_AGENT_LABEL}.plist"
-    commands = [
-        ["/bin/launchctl", "bootout", f"gui/{uid}/{CADDY_LAUNCH_AGENT_LABEL}"],
-        ["/bin/launchctl", "bootout", f"gui/{uid}", str(launch_agent_file)],
-    ]
-    for command in commands:
-        try:
-            subprocess.run(command, check=False, capture_output=True, timeout=2)
-        except (OSError, subprocess.SubprocessError):
-            continue
-
-
 def _shutdown_worker() -> None:
     time.sleep(0.45)
 
     chat_tasks.cancel_all_tasks()
     transcribe_tasks.cancel_all_tasks()
     tts_service.cancel_all_tasks()
-
-    _stop_caddy_launch_agent()
-
-    caddy_pid = _read_pid(CADDY_PID_FILE)
-    if caddy_pid:
-        _terminate_pid(caddy_pid)
-    _safe_unlink(CADDY_PID_FILE)
 
     backend_pid = _read_pid(BACKEND_PID_FILE)
     if backend_pid:
