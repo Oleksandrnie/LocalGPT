@@ -216,6 +216,8 @@ Raised the default `thinking_tokens` allowance to 4096 and enforced a minimum of
 
 Validation: 106 focused Python tests passed across model routing, RAG answer quality, live-eval scoring, retrieval eval and Vision runtime, plus the changed pipeline token-budget test; 12 Node UI/Markdown tests passed; compileall, JavaScript syntax and `git diff --check` passed. A broader `tests.test_pipeline_memory` run still has its previously known unrelated ASR-pipeline failures (`test_full_analysis_skips_cleaner_by_default_and_sanitizes_speakers`, `test_pipeline_tasks_are_normalized_for_transcript_record`). No model download, profile/database mutation, LocalGPT restart or parallel inference occurred. User acceptance of the installer and new Thinking-token display remains pending.
 
+Checkpoint: `970ec9f fix(chat): clarify RAG evidence and reasoning budgets`.
+
 ### Explicitly unchanged / deferred
 
 - ASR accuracy on the user's 5:59.8 MP3 remains an optional manual reference-transcript exercise; short public-set smoke is not a substitute.
