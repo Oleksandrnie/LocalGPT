@@ -5,9 +5,9 @@
 | Режим | Backend bind | Внешний слой | Назначение |
 | --- | --- | --- | --- |
 | Local | `127.0.0.1:<port>` | нет | тот же компьютер |
-| LAN | `127.0.0.1:<port>` | Caddy HTTPS на private LAN IP | устройства в одной локальной сети |
+| LAN | `0.0.0.0:<port>` | нет; прямой HTTP | устройства в доверенной локальной сети |
 
-Прямой bind на `0.0.0.0` возможен через CLI/config, но launcher выводит предупреждение. Штатный LAN path не требует публичного backend bind.
+LAN-доступ включается только отдельным launcher-ом. Приложение не добавляет сетевую аутентификацию или TLS.
 
 ## Local runtime
 
@@ -23,44 +23,27 @@ Default:
 venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000
 ```
 
-Обычные `start_localgpt.command`, `./start_localgpt.sh` и platform launchers запускают только локальный backend; LAN listener не включается автоматически. На macOS обычный launcher также останавливает управляемый LocalGPT Caddy listener, оставшийся от предыдущего LAN-сеанса. Для отдельной остановки используйте `stop_localgpt_lan.command` или `./stop_localgpt_lan.sh`. Launcher выбирает следующий свободный порт, если requested port занят. `--strict-port` вместо этого прекращает запуск. `--port-file` записывает фактически выбранный порт.
+Обычные `start_localgpt.command`, `./start_localgpt.sh` и `start_localgpt.bat` по умолчанию запускают backend только на localhost. Launcher выбирает следующий свободный порт, если requested port занят. `--strict-port` вместо этого прекращает запуск. `--port-file` записывает фактически выбранный порт.
 
-Health endpoint возвращает минимальные runtime metadata и доступные private access URLs без filesystem paths:
+Health endpoint возвращает минимальные runtime metadata без filesystem paths:
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
-## LAN через Caddy
+## Прямой LAN-доступ
 
-На macOS доступ в локальной сети включается отдельным `start_localgpt_lan.command` или `./start_localgpt_lan.sh`. Они запускают `tools/LTrnsrb.sh` (legacy filename). Launcher:
+Запустите `./start_localgpt_lan.sh`; на macOS доступен `start_localgpt_lan.command`, на Windows — `start_localgpt_lan.bat`. Эти entry points передают общему launcher-у `--host 0.0.0.0`; обычный запуск остаётся loopback-only. Общий launcher выбирает свободный порт и выводит URL с обнаруженным private IPv4. Если IP определить не удалось, используйте адрес компьютера в той же Wi‑Fi сети вместе с напечатанным портом.
 
-- читает `LOCALGPT_PORT`/legacy backend port и `LAN_HTTPS_PORT`;
-- определяет private LAN IP;
-- запускает backend на localhost;
-- генерирует runtime Caddyfile во временном каталоге;
-- создаёт internal TLS listener на LAN IP и optional `.local` host;
-- явно bind-ит listener только к найденному private IP и не создаёт отдельный HTTP redirect listener на `:80`;
-- reverse-proxy-ит на фактический backend port;
-- перезапускает Caddy при изменении generated config, LAN IP или фактического backend port, чтобы не сохранить stale upstream;
-- хранит PID/log/port files в temporary runtime directory.
+`0.0.0.0` слушает все сетевые интерфейсы, не только Wi‑Fi. LocalGPT не проверяет личность сетевых клиентов: любое устройство, которое может достичь порта, сможет читать и изменять данные приложения. Используйте этот режим только в доверенной частной сети; не настраивайте port forwarding и не открывайте порт в публичный Интернет. Связь идёт по HTTP без TLS. Некоторые браузерные функции, включая доступ к микрофону, могут требовать защищённый контекст и не работать по HTTP с локального IP.
 
-`Caddyfile.lan` в репозитории — localhost fallback/example; launcher создаёт актуальный config динамически.
-
-Если Caddy не установлен или private LAN IP не обнаружен, launcher явно сообщает об этом и открывает только localhost UI.
-
-Для автоматизированной диагностики можно задать `LOCALGPT_NO_BROWSER=1`: launcher выполнит тот же startup flow и напечатает URL, но не откроет вкладку браузера.
-
-Первое устройство может потребовать доверия к Caddy local CA. Не публикуйте generated certificate/private key.
-
-Когда LAN HTTPS listener отвечает, Settings → System → «Доступ с телефона» позволяет сохранить публичный `root.crt` Caddy на текущем компьютере для iPhone или Android. Файл отдаётся только через guarded `GET /network/caddy/root-ca` с `Cache-Control: no-store`; он не содержит private key. Браузер сохраняет файл в выбранную папку или стандартные downloads — затем пользователь передаёт его на устройство и вручную включает доверие. Если LAN URL недоступен, действия сохранения отключены.
+Чтобы остановить LAN-сервер, завершите процесс в окне терминала (обычно `Ctrl+C`). Настройки firewall/router LocalGPT не меняет.
 
 ## Host, port и CORS
 
 Основные настройки:
 
 - `LOCALGPT_HOST`, `LOCALGPT_PORT`;
-- `LAN_HTTPS_PORT` (и поддерживаемые launcher aliases);
 - `LOCALGPT_CORS_ALLOW_ORIGINS`;
 - `LOCALGPT_CORS_ALLOW_ORIGIN_REGEX`.
 
@@ -70,10 +53,9 @@ Default CORS regex разрешает localhost, loopback, RFC1918 ranges и `.l
 
 ## Security restrictions
 
-- backend по умолчанию слушает localhost;
-- Caddy завершает внешнее соединение и проксирует на localhost;
-- обычный launcher остаётся local-only; LAN HTTPS включается отдельным явным entry point;
-- приложение не предоставляет общую identity/authentication для LAN-клиентов; TLS защищает транспорт, но любой клиент с сетевым доступом может обращаться к незакрытым API, поэтому используйте только доверенную сеть;
+- обычный launcher по умолчанию слушает localhost;
+- отдельный LAN launcher явно включает bind на `0.0.0.0` и прямой HTTP;
+- приложение не предоставляет общую identity/authentication или TLS для LAN-клиентов; любой клиент с сетевым доступом может читать и менять данные, поэтому используйте только доверенную сеть;
 - unknown plugins не получают effective enable;
 - network addresses формирует backend;
 - LocalGPT не настраивает firewall/router автоматически;
@@ -89,11 +71,10 @@ LocalGPT рассчитан на локального владельца/дов�
 
 ### LAN URL отсутствует
 
-- проверьте private IP;
-- Caddy process/listener;
-- `LAN_HTTPS_PORT`;
-- certificate trust;
-- что backend health доступен на localhost.
+- проверьте, что запущен `start_localgpt_lan` launcher;
+- проверьте private IPv4 адрес компьютера и фактический порт из вывода launcher-а;
+- убедитесь, что устройства находятся в одной сети и Wi‑Fi client isolation выключен;
+- проверьте системный firewall и что он допускает соединение на этот порт.
 
 ### CORS error
 
@@ -101,7 +82,7 @@ LocalGPT рассчитан на локального владельца/дов�
 
 ### UI открывается, API нет
 
-Проверьте reverse proxy upstream, фактический backend port, runtime logs и `/health` напрямую.
+В прямом LAN режиме UI и API используют один адрес; проверьте runtime logs, фактический порт и `/health` на этом же host.
 
 ## Проверки
 

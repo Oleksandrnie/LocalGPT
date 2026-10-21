@@ -14,7 +14,6 @@
 | Media | FFmpeg | 6+; проверен проектный host 8.1.1 | ASR audio conversion, OCR video-frame extraction, TTS speed processing | устанавливается интерактивно |
 | OCR | Tesseract | 5+; проверен project host 5.5.2 | image OCR; недоступные language packs отбрасываются runtime-ом | устанавливается интерактивно |
 | ASR build | Git, CMake, Apple Command Line Tools, curl, unzip | Git 2+, CMake 3.20+ | macOS-сборка `whisper-cli` и Silero VAD; получение ASR artifacts по явному действию пользователя | на macOS setup собирает CLI и загружает VAD без речевой модели; Homebrew packages ставятся интерактивно, CLT запрашиваются macOS |
-| LAN optional | Caddy | 2+; проверен project host 2.10.2 | `start_localgpt_lan.command`, private LAN HTTPS | отдельное интерактивное согласие |
 | QA only | Node.js | 18+ | `node --check` и `.mjs` tests | отдельное интерактивное согласие; frontend runtime Node не использует |
 
 Жёсткий minimum для Ollama и Homebrew не зафиксирован кодом или manifest-ом проекта. Setup (bootstrap) поэтому проверяет работоспособный CLI и устанавливает текущую stable-версию package manager-а, не имитируя неподтверждённую совместимость со старыми версиями.
@@ -66,7 +65,7 @@ Setup не устанавливает:
 
 - model/storage paths: `MODELS_DIR`, `OLLAMA_MODELS_DIR`, `WHISPER_MODELS_DIR`, `WHISPER_CPP_MODELS_DIR`, `TTS_MODELS_DIR`, `PIPER_MODELS_DIR`, cache/data paths;
 - providers: `LOCAL_BASE_URL`, `LOCAL_API_KEY`, `LOCAL_MODEL`, `OLLAMA_HOST`, ASR/TTS/OCR settings;
-- runtime/networking: `LOCALGPT_HOST`, `LOCALGPT_PORT`, remote-access flags, LAN URL/port и CORS overrides;
+- runtime/networking: `LOCALGPT_HOST`, `LOCALGPT_PORT` и CORS overrides;
 - optional download/auth overrides: Hugging Face tokens/endpoints and whisper.cpp repository/path settings.
 
 Secrets и machine-specific paths не должны попадать в Git.

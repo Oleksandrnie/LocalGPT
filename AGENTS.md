@@ -71,7 +71,7 @@ Model routing применяется только к execution-задачам, �
 | Chat models, Ollama, ASR/TTS provider | [`docs/knowledge/providers.md`](docs/knowledge/providers.md), [`docs/TESTING.md`](docs/TESTING.md) |
 | RAG или ASR context | [`docs/knowledge/rag.md`](docs/knowledge/rag.md), затем backend/providers по flow |
 | Plugins | [`docs/knowledge/plugins.md`](docs/knowledge/plugins.md), а для address providers — [`docs/knowledge/networking.md`](docs/knowledge/networking.md) |
-| LAN, Caddy, CORS | [`docs/knowledge/networking.md`](docs/knowledge/networking.md), [`docs/TESTING.md`](docs/TESTING.md) |
+| LAN, CORS | [`docs/knowledge/networking.md`](docs/knowledge/networking.md), [`docs/TESTING.md`](docs/TESTING.md) |
 | Web UI, responsive, accessibility | [`docs/knowledge/ui.md`](docs/knowledge/ui.md), [`docs/TESTING.md`](docs/TESTING.md) |
 | Планирование будущей работы | [`docs/BACKLOG.md`](docs/BACKLOG.md) |
 
@@ -112,7 +112,7 @@ temporary/<task-name>-progress.md
 ## Legacy и runtime files
 
 - `app/prompts/system_base.md` загружается `app/roles.py`; не менять/удалять его как обычную документацию.
-- `LTrnsrb.*` — legacy aliases; новые инструкции используют `LocalGPT` / `start_localgpt*`.
+- `LTrnsrb.*` — historical launcher aliases retained under `compare-branch/`; new instructions use `LocalGPT` / `start_localgpt*`.
 - Component-owned docs, указанные в plugin manifest или описывающие ignored runtime folder, остаются рядом с компонентом.
 - Не создавать project `skills/`; Codex Skills находятся вне project docs.
 

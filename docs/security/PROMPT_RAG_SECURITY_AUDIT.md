@@ -220,6 +220,8 @@ Behavioral failures remain model limitations: a model can repeat an attacker-pro
 
 ## Follow-up closure (Stages 5–13, 2026-08-14)
 
+The Caddy HTTPS behavior below records the validation of the then-current implementation. A later follow-up removed Caddy and replaced it with an explicit direct HTTP LAN bind; that new path has not been tested from a second device.
+
 - Profile and session ownership is enforced for history, summaries, criteria, transcripts, reasoning, attachments, tasks and derived Chat/Vision/ASR RAG. Manually managed Markdown remains profile-wide; derived sources remain session-owned, and ambiguous legacy rows are preserved but excluded from retrieval.
 - The history setting is end-to-end consistent: default `6` means six completed `user + assistant` pairs from the active session, while `0` disables history.
 - Prompt-only secrecy was rejected as an authority boundary after live Qwen failures. Backend fail-closed output guards now protect normal, streaming and vision delivery/persistence; Thinking OFF keeps hybrid Qwen structural reasoning out of chat and rejects incomplete reasoning-only/token-limited completions.

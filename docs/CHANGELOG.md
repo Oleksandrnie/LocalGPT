@@ -6,7 +6,13 @@
 
 ### Added
 
-- Removed the unused Tailscale plugin, manual Serve integration and optional setup prompt; the explicit LAN/Caddy path remains available.
+- Added direct LAN launchers for macOS, Linux and Windows. They explicitly bind to `0.0.0.0`, print a private-network URL and warn that LAN clients have unauthenticated HTTP access to LocalGPT data.
+
+### Removed
+
+- Removed LocalGPT-managed Caddy runtime, launchers, setup prompts, certificate API and Settings controls. The ordinary launcher stays loopback-only; installed system Caddy packages are not changed.
+- Removed obsolete Caddy-only launcher and certificate tests.
+- Removed the unused Tailscale plugin, manual Serve integration and optional setup prompt.
 
 - Ollama per-model reasoning controls are discovered from `/api/show` and exposed in Settings and quick selectors; named levels are persisted and sent exactly, boolean-only models retain ON/OFF, and missing/unsupported metadata no longer relies on model-name heuristics. Direct Hugging Face inference remains out of scope.
 - Installed non-catalog Ollama chat models now appear in the normal model selectors after inventory refresh; utility/Vision catalog entries and embedding-only models stay out of this chat list. The installer example now uses generic `model:tag` syntax.
@@ -22,7 +28,7 @@
 - Chat reasoning теперь отделён от финального ответа в normal/SSE lifecycle, появляется в terminal modal live после первого chunk и остаётся persisted после completion/cancel/error; Thinking имеет рабочие ON/OFF controls и отдельные persisted output/thinking budgets с явно обозначенной per-call Ollama compatibility policy.
 - User messages получили то же действие `Скопировать`, что и assistant messages: raw multiline/Markdown content передаётся в clipboard без изменения, а Chat → RAG остаётся отдельным действием.
 - Любое user message и completed assistant message можно явно отредактировать и добавить в profile-scoped RAG; role/source metadata сохраняется, reasoning и binary исключены, source удаляется независимо.
-- Settings → System can save Caddy's public LAN root certificate to the current computer for manual iPhone/Android transfer; the guarded no-store endpoint never serves a private key and is unavailable without live LAN HTTPS.
+- Settings → System previously provided the public LAN root certificate flow for manual iPhone/Android transfer; this flow was removed with the Caddy integration.
 - Интерактивный cross-platform setup (bootstrap) для macOS, Linux и Windows: native Terminal/PowerShell entry points, OS/package-manager detection, system/project dependency phases и final verification без загрузки моделей или пользовательских данных.
 - Подтверждённый dependency inventory и закреплённые версии прямых Python packages для воспроизводимого первого запуска.
 - Settings → System export/import complete Ollama, faster-whisper, whisper.cpp и Piper models через checksum-validated ZIP64 `.localgpt-models`, с выбором, прогрессом, подтверждением и conflict-safe publication.

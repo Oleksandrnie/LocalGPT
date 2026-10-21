@@ -138,7 +138,7 @@ SQLite содержит profiles, sessions, messages, chat attachment metadata, 
 
 - Default bind — `127.0.0.1`; прямой public exposure отсутствует.
 - CORS по умолчанию ограничен localhost и private/local address ranges.
-- LAN launcher оставляет backend на localhost и проксирует его через Caddy HTTPS.
+- Обычный launcher использует loopback bind; отдельные LAN launchers явно передают `--host 0.0.0.0` и показывают прямой HTTP URL с предупреждением об отсутствии общей авторизации и TLS.
 - Registry не исполняет plugin code и не делает untrusted plugin effectively enabled.
 - LocalGPT не включает Funnel, port forwarding или public tunnels.
 
@@ -151,7 +151,7 @@ SQLite содержит profiles, sessions, messages, chat attachment metadata, 
 ## Legacy и transitional architecture
 
 - `app/server.py` и feature wrappers в `app/` — compatibility surface.
-- `LTrnsrb.*` — legacy launcher aliases; основной naming — `LocalGPT` / `start_localgpt*`.
+- `LTrnsrb.*` — historical launcher aliases inside `compare-branch/`; active entry points use `LocalGPT` / `start_localgpt*`.
 - `compare-branch/` — read-only reference, не импортируется runtime и удаляется только после отдельного parity review.
 - Большие `web_ui/js/app.js` и `web_ui/css/style.css` остаются рабочим frontend; их модульный рефакторинг — отдельная задача.
 

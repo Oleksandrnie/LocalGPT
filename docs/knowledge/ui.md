@@ -137,7 +137,6 @@ Settings → System содержит компактные соседние де�
 - task status/events/cancel URL всегда несёт active `profile_id` и `session_id`; 429 на SSE connection limit должен перейти в существующий polling/error recovery без reconnect storm.
 - Scroll-to-latest не должен ломать auto-scroll пользователя, который читает историю.
 - RAG indicator отражает active profile.
-- Network address button: 0 адресов disabled, 1 копируется, 2+ открывают menu.
 - ASR full analysis остаётся явно разрешаемым и предупреждает о нагрузке.
 - Удаление ASR context должно синхронно обновлять RAG section.
 - Image-only message, mixed text+image paste и multi-image drop используют один upload flow; отправка ждёт завершения uploads.

@@ -23,7 +23,7 @@
 - [Plugins](knowledge/plugins.md) — Registry v0, manifests, trusted handlers и безопасность.
 - [RAG](knowledge/rag.md) — ingestion, indexing, retrieval, storage и ASR context.
 - [Web UI](knowledge/ui.md) — активный frontend, компоненты, responsive и accessibility.
-- [Networking](knowledge/networking.md) — local, LAN, Caddy, host/port/CORS.
+- [Networking](knowledge/networking.md) — local, direct LAN, host/port/CORS.
 
 ## Ownership
 

@@ -95,7 +95,6 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | WAV post-processing | `venv/bin/python -m unittest tests.test_audio_postprocess_service -v` |
 | OCR heuristics | `venv/bin/python -m unittest tests.test_ocr_service -v` |
 | Plugin Registry | `venv/bin/python -m unittest tests.test_plugin_registry -v` |
-| Caddy LAN certificate download | `venv/bin/python -m unittest tests.test_network_certificate -v` |
 | Model installation state | `venv/bin/python -m unittest tests.test_model_install_state -v` |
 | Ollama pull API/CLI compatibility | `venv/bin/python -m unittest tests.test_ollama_pull -v` |
 | Ollama model-reference input validation | `venv/bin/python -m unittest tests.test_ollama_model_ref_validation -v` |
@@ -188,28 +187,11 @@ System Settings model-transfer contract:
 node tests/model_transfer_ui.test.mjs
 ```
 
-System Settings LAN certificate controls:
+### Direct LAN
 
-```bash
-node tests/lan_certificate_ui.test.mjs
-```
+Реальную проверку выполняйте только в доверенной частной сети. Запустите `start_localgpt_lan` и проверьте, что launcher сообщает bind `0.0.0.0:<port>`, предупреждает об отсутствии общей авторизации/TLS и печатает URL с private IPv4. Откройте UI с телефона в той же Wi‑Fi сети; проверьте `/health`, статические файлы, profile/model API и потоковый chat SSE. Завершите процесс через `Ctrl+C`.
 
-### LAN/Caddy
-
-Проверка launcher-контрактов не поднимает тяжёлые модели и не открывает браузер:
-
-```bash
-/bin/zsh -n tools/LTrnsrb.sh
-venv/bin/python -m unittest tests.test_lan_launcher tests.test_network_certificate
-```
-
-Launcher contract checks require the ordinary macOS path to stop a stale LocalGPT Caddy listener and remain local-only; LAN exposure must use the explicit `start_localgpt_lan` entry point.
-
-Для реального LAN smoke запускайте launcher с `LOCALGPT_NO_BROWSER=1`, если автоматическое открытие окна не нужно. Проверяйте, что backend слушает только фактический `127.0.0.1:<runtime-port>`, а Caddy — только выбранный частный LAN IP и HTTPS-порт; listener на `0.0.0.0`, `*:80` или устаревший upstream недопустим.
-
-Через HTTPS проверяются `/health`, UI и static assets, profile/model API, потоковый chat SSE, разрешённый и запрещённый CORS Origin, отказ privileged API без `ADMIN_TOKEN` и выдача только публичного root CA без private key. После изменения IP или runtime-порта launcher должен пересобрать конфигурацию и перезапустить Caddy.
-
-Stage 7 LAN validation считается завершённой только после проверки со второго устройства в той же частной сети: UI/API открываются, SSE-ответ приходит, `/health` доступен, privileged endpoint без токена получает отказ, а клиент доверяет установленному публичному Caddy root CA. Не включайте Funnel, port forwarding или публичную привязку backend.
+Проверка со второго устройства должна отдельно зафиксировать firewall/router условия и доступность функций браузера по HTTP. Не включайте port forwarding и не публикуйте listener в Интернет. Обычный launcher должен оставаться на `127.0.0.1`; LAN URLs не должны отображаться при loopback-only запуске.
 
 Model-transfer tests используют только temporary synthetic files. Relocation regression создаёт chat/Vision/embedding Ollama, faster-whisper, whisper.cpp и Piper fixtures в source roots, проверяет отсутствие absolute source paths в manifest и импортирует их в другой набор configured destination roots. Отдельно проверяются destination runtime requirements; платформенные executable не считаются частью bundle. Реальный export/import локальных моделей запускается отдельно явным действием пользователя.
 
@@ -285,15 +267,15 @@ Model-transfer tests используют только temporary synthetic files
 - live reasoning icon/modal, close/reopen и cancel/error retention, два token budget поля, оба mobile Thinking controls и их cross-sync, user/assistant Copy и общий Chat → RAG dialog;
 - mobile session actions и message `Добавить в RAG`/`Скопировать` имеют фактический tap target не меньше 44 px;
 - Vision settings/library, runtime capability state и cache cleanup;
-- Plugins и network-address menu;
+- Plugins registry and enable/disable controls;
 - keyboard focus, aria states и reduced-motion-sensitive flows.
 
 Активный UI — `web_ui/gui_html.html` + `web_ui/js/app.js`. Старый modular flow под `web_ui/js/main.js` не подключён HTML entry point и не должен считаться текущим runtime без отдельной миграции.
 
 ## Platform-specific
 
-- macOS: `.command` launchers, Caddy certificate trust, whisper.cpp Metal/CoreML, microphone permissions;
-- Windows: `start_localgpt.bat`, Python launcher resolution, filesystem paths;
+- macOS: `.command` launchers, explicit LAN launcher, whisper.cpp Metal/CoreML, microphone permissions;
+- Windows: `start_localgpt.bat` and `start_localgpt_lan.bat`, Python launcher resolution, filesystem paths;
 - Linux: executable bit на shell scripts, `ffmpeg`, Tesseract и Ollama service.
 
 ## Setup/bootstrap acceptance на новом окружении
@@ -302,7 +284,7 @@ Model-transfer tests используют только temporary synthetic files
 
 1. На чистом macOS/Linux/Windows environment запустить соответствующий `setup/setup_localgpt.*` entry point.
 2. Проверить корректное определение ОС и package manager, понятные confirmation prompts и отсутствие речевых model downloads. На macOS убедиться, что `models/whisper_cpp/bin/whisper-cli` — исполняемая относительная ссылка на собранный binary, переживает перенос checkout и заменяет stale link при повторной подготовке; `models/whisper_cpp/ggml-silero-v6.2.0.bin` должен быть установлен для VAD.
-3. Согласиться на core dependencies; optional Caddy/Node проверить отдельно по нужному режиму.
+3. Согласиться на core dependencies; optional Node.js проверить отдельно для frontend checks.
 4. Убедиться, что final verification проходит и `venv/` содержит imports из `app/requirements.txt`.
    Отдельный `.venv/`, если он существовал до setup, должен остаться нетронутым и не считаться штатным runtime environment.
 5. Повторить setup: установленные system tools должны быть пропущены, pip не должен ломать environment.
