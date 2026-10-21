@@ -6,7 +6,7 @@
 
 - Investigate Qwen3 reasoning that was returned with `think=False`/`/no_think`; determine how the Thinking control should report provider behavior rather than trusting request settings alone.
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
-- Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
+- Решить, входит ли Caddy/LAN entry point в первый публичный снимок. Предпочтительный безопасный вариант — локальный запуск; сетевой доступ оставлять только вместе с общей аутентификацией API и проверкой в реальной сети.
 
 ## Technical debt
 
@@ -23,9 +23,11 @@
 
 ## Deferred decisions
 
-- Подготовить новый публичный репозиторий из проверенного исходного снимка без копирования прежних Git refs; текущий репозиторий и его историю оценить отдельно, включая ротацию действительных credentials. Новый repo не очищает уже существующие remote refs, PR refs, forks, clones или caches.
-- Для нового публичного репозитория владелец планирует GPL-3.0-or-later; до публикации подтвердить права на relicensing всех включённых компонентов и проверить лицензии распространяемых Piper voices/models. Текущий корневой `License` остаётся All Rights Reserved до отдельного изменения.
-- Спроектировать общую аутентификацию для API-клиентов LAN либо не включать этот entry point в release; `ADMIN_TOKEN` не является глобальной caller identity.
+- Создать новый публичный репозиторий из проверенного и отобранного source snapshot с новым root commit, не перенося старые Git refs. Перепись истории старого приватного репозитория не является условием этой публикации; отдельно заменить только те исторические credentials, которые ещё действуют или могли быть повторно использованы. Новый repo сам по себе не отзывает такие credentials.
+- Перед созданием snapshot провести полный review публикуемого дерева на provenance, лицензии и остатки пробных компонентов (включая third_party — сначала установить точное название/проект): source и imports, dependency manifests/lockfiles, installer/build scripts, configs, plugin manifests, UI, docs, assets и binaries. Удалить связанные неиспользуемые код, файлы, зависимости и упоминания; повторить поиск и проверить лицензии всех оставшихся распространяемых компонентов.
+- Владелец подтвердил намерение выпустить собственный код LocalGPT под GPL-3.0-or-later. Перед публикацией проверить, что в snapshot нет кода, на который права принадлежат третьим лицам, и подготовить корректные notices для всех зависимостей. Текущий корневой `License` старого checkout остаётся All Rights Reserved до отдельного изменения.
+- Piper runtime package распространяется под GPL-3.0-or-later, но лицензия Piper не распространяется автоматически на голоса и модели. Для каждого включаемого/раздаваемого артефакта проверить его собственные условия и происхождение; для Ryan low отдельно разрешить неоднозначность между лицензией датасета в model card и лицензией самого model artifact.
+- Для первого публичного snapshot по умолчанию оставить только локальный entry point и исключить Caddy/LAN UI, launchers и поддержку, если сетевой режим не нужен. Если LAN оставить, спроектировать общую аутентификацию API и проверить её вместе с реальным сетевым сценарием; простой bind на `0.0.0.0` не заменяет эту защиту.
 - Закрепить install/build sources и checksums, добавить transitive dependency lock strategy и artifact license/provenance metadata.
 - Выполнить clean install, model setup и restart/persistence/shutdown smoke на каждом OS, который будет заявлен поддерживаемым; сейчас кроссплатформенные entry points ещё не подтверждены end-to-end.
 - Выбрать приватный security disclosure channel до открытия публичных issue/PR.
