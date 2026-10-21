@@ -113,7 +113,10 @@ class VisionModelMetadataTestCase(unittest.TestCase):
             stderr="",
         )
 
-        with patch.object(model_service.subprocess, "run", return_value=completed) as run:
+        with (
+            patch.object(model_service, "urlopen", side_effect=OSError("offline")),
+            patch.object(model_service.subprocess, "run", return_value=completed) as run,
+        ):
             details = model_service._show_model_details("qwen2.5vl:3b")
 
         self.assertEqual(details["architecture"], "qwen2vl")
@@ -147,7 +150,10 @@ class VisionModelMetadataTestCase(unittest.TestCase):
             stderr="",
         )
 
-        with patch.object(model_service.subprocess, "run", side_effect=[unsupported_json, plain]):
+        with (
+            patch.object(model_service, "urlopen", side_effect=OSError("offline")),
+            patch.object(model_service.subprocess, "run", side_effect=[unsupported_json, plain]),
+        ):
             details = model_service._show_model_details("legacy")
 
         self.assertEqual(details["capabilities"], ["completion", "vision"])

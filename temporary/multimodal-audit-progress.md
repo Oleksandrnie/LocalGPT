@@ -237,6 +237,20 @@ Validation: 106 focused Python tests passed across model routing, RAG answer qua
 
 Checkpoint: `970ec9f fix(chat): clarify RAG evidence and reasoning budgets`.
 
+### LLM-REASONING-CONTROLS — discover and expose per-model thinking levels
+
+- Status: `in_progress`; R1 complete and validated, R2 next.
+- User requirement: newly installed models must expose their actual reasoning controls in model settings and quick model selection, including `low` / `medium` / `high` where supported; this must not be tied to the OpenAI model name or one model catalog.
+- Confirmed provider contract: Ollama `/api/show` returns top-level `thinking.values` and `thinking.default`; values are model-specific booleans or exact strings. Ollama `/api/chat` accepts a supported boolean/string in `think`. `gpt-oss` advertises `low`, `medium`, and `high`. Missing metadata is unknown/default behavior, not evidence that all models share those levels.
+- Scope: discover/sanitize Ollama thinking metadata, expose it for catalog and arbitrary installed chat models, persist the selected per-model value using existing `ollama_think`, pass supported values through native chat calls, and render dynamic settings/quick-picker controls. Preserve boolean-only Thinking and Qwen3 compatibility. Treat direct Hugging Face inference as out of scope because LocalGPT currently has no HF chat provider; HF models surfaced through Ollama use the same discovery path only when Ollama advertises metadata.
+- Acceptance: named-level and bool-only fixtures produce exact model-specific options/default; unknown/invalid metadata does not show guessed controls or send an unsupported override; custom installed Ollama models show their controls in Settings and quick picker; saving is per-profile/per-model; runtime receives exact supported string/boolean; existing Qwen3 hybrid OFF, reasoning display/privacy, token budgets, and legacy `auto/on/off` remain intact. No live inference, model pull, DB/profile mutation, or server restart during implementation.
+- Stages: R1 provider metadata parsing/API exposure + tests (complete; 35 targeted tests, py_compile, and `git diff --check` passed); R2 settings persistence/runtime serialization + compatibility tests; R3 Settings and quick-picker UI + UI regressions; R4 affected provider/architecture/testing/changelog docs and final validation.
+- Baseline: branch `feature/prompt-rag-security-hardening`, clean working tree. Relevant existing code uses model-name heuristics in `web_ui/js/app.js`, stores `ollama_think` as a text value, and currently serializes native thinking as boolean only. Direct HF chat provider is absent. Existing active progress file is retained per repository `AGENTS.md`; no second progress file is created.
+- Deferred: direct HF inference/provider installation and reasoning metadata adapters for non-Ollama runtimes.
+- R1 implementation: `app/services/models.py` queries the configured native Ollama `/api/show` endpoint, preserves CLI fallback, sanitizes `{values, default}` metadata, and exposes it on installed/custom and catalog model records. Explicit `[false]` stays distinct from absent metadata. Added `tests/test_ollama_thinking_metadata.py` and kept existing CLI fallback tests offline in `tests/test_chat_vision_runtime.py`.
+- R1 validation: `venv/bin/python -m unittest tests.test_ollama_thinking_metadata tests.test_model_install_state tests.test_chat_vision_runtime tests.test_ollama_pull -v` — 35 passed; targeted `py_compile` and `git diff --check` passed. No live inference/pull, profile or DB mutation, or restart.
+- Next action: implement R2 by preserving supported per-model booleans/named strings in settings and passing the exact choice to the native Ollama chat payload, while preserving Qwen3 hybrid `/think` and legacy auto/on/off behavior.
+
 ### Explicitly unchanged / deferred
 
 - ASR accuracy on the user's 5:59.8 MP3 remains an optional manual reference-transcript exercise; short public-set smoke is not a substitute.

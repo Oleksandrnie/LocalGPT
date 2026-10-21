@@ -29,6 +29,8 @@ MODEL_PULL_LOCK = threading.Lock()
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 PULL_LOG_TAIL_LIMIT = 80
 OLLAMA_API_PULL_TIMEOUT_SECONDS = 15
+OLLAMA_API_SHOW_TIMEOUT_SECONDS = 5
+THINKING_VALUE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 OLLAMA_MODEL_REF_RE = re.compile(
     r"(?:[A-Za-z0-9][A-Za-z0-9._-]*(?::[0-9]+)?/)*"
     r"[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?"
@@ -351,6 +353,29 @@ def _normalize_capabilities(value: Any) -> list[str]:
     return result
 
 
+def _normalize_thinking(value: Any) -> dict[str, Any] | None:
+    """Keep only a bounded provider-declared control; absent is not unsupported."""
+    if not isinstance(value, dict):
+        return None
+    raw_values = value.get("values")
+    if not isinstance(raw_values, list) or not 1 <= len(raw_values) <= 32:
+        return None
+
+    def valid(item: Any) -> bool:
+        return isinstance(item, bool) or (isinstance(item, str) and bool(THINKING_VALUE_RE.fullmatch(item)))
+
+    if not all(valid(item) for item in raw_values):
+        return None
+    values: list[bool | str] = []
+    for item in raw_values:
+        if item not in values:
+            values.append(item)
+    default = value.get("default")
+    if not valid(default) or default not in values:
+        default = None
+    return {"values": values, "default": default}
+
+
 def _show_json_details(payload: dict[str, Any]) -> dict[str, Any]:
     raw_details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
     model_info = payload.get("model_info") if isinstance(payload.get("model_info"), dict) else {}
@@ -387,6 +412,9 @@ def _show_json_details(payload: dict[str, Any]) -> dict[str, Any]:
     if capabilities:
         details["capabilities"] = capabilities
         details["capabilities_confirmed"] = True
+    thinking = _normalize_thinking(payload.get("thinking"))
+    if thinking is not None:
+        details["thinking"] = thinking
     return details
 
 
@@ -429,6 +457,20 @@ def _show_model_details(model_name: str) -> dict[str, Any]:
     target = str(model_name or "").strip()
     if not target:
         return {}
+    try:
+        request = Request(
+            f"{_native_ollama_base_url()}/api/show",
+            data=json.dumps({"model": target}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=OLLAMA_API_SHOW_TIMEOUT_SECONDS) as response:
+            payload = json.load(response)
+        if isinstance(payload, dict) and not payload.get("error"):
+            return _show_json_details(payload)
+    except (OSError, ValueError):
+        # Older/unreachable native endpoints retain the existing CLI discovery.
+        pass
     command = ["ollama", "show", target, "--json"]
     try:
         result = subprocess.run(
@@ -683,6 +725,11 @@ def _list_local_models() -> list[dict[str, Any]]:
         runtime_details = _show_model_details(name)
         if runtime_details:
             details = {**details, **runtime_details}
+        # Only /show declares this control; never publish unvalidated list data.
+        details.pop("thinking", None)
+        thinking = _normalize_thinking(runtime_details.get("thinking"))
+        if thinking is not None:
+            details["thinking"] = thinking
         capabilities = _normalize_capabilities(details.get("capabilities"))
         models.append(
             {
@@ -698,6 +745,7 @@ def _list_local_models() -> list[dict[str, Any]]:
                 "details": details,
                 "capabilities": capabilities,
                 "capabilities_confirmed": bool(details.get("capabilities_confirmed") and capabilities),
+                "thinking": thinking,
             }
         )
     return models
@@ -1097,6 +1145,7 @@ def list_models() -> dict[str, Any]:
                 and installed_info.get("capabilities_confirmed")
                 and runtime_capabilities
             ),
+            "thinking": _normalize_thinking((installed_info or {}).get("thinking")),
             "download": download_info,
             "partial_info": _public_partial_summary(partial_info),
             "storage": _public_storage_summary(storage_info),
