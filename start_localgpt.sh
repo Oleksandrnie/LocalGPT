@@ -4,10 +4,8 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIR"
 
-# On macOS, the ordinary no-argument launcher also provides private LAN HTTPS
-# through Caddy. Explicit arguments keep the direct backend launcher behavior.
-if [ "$(uname -s)" = "Darwin" ] && [ "$#" -eq 0 ]; then
-  exec /bin/zsh "$SCRIPT_DIR/tools/LTrnsrb.sh"
+if [ "$(uname -s)" = "Darwin" ]; then
+  /bin/zsh "$SCRIPT_DIR/tools/LTrnsrb.sh" --stop
 fi
 
 if [ -x "$SCRIPT_DIR/venv/bin/python" ]; then

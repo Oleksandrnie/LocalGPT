@@ -186,6 +186,8 @@ node tests/lan_certificate_ui.test.mjs
 venv/bin/python -m unittest tests.test_lan_launcher tests.test_network_certificate
 ```
 
+Launcher contract checks require the ordinary macOS path to stop a stale LocalGPT Caddy listener and remain local-only; LAN exposure must use the explicit `start_localgpt_lan` entry point.
+
 Для реального LAN smoke запускайте launcher с `LOCALGPT_NO_BROWSER=1`, если автоматическое открытие окна не нужно. Проверяйте, что backend слушает только фактический `127.0.0.1:<runtime-port>`, а Caddy — только выбранный частный LAN IP и HTTPS-порт; listener на `0.0.0.0`, `*:80` или устаревший upstream недопустим.
 
 Через HTTPS проверяются `/health`, UI и static assets, profile/model API, потоковый chat SSE, разрешённый и запрещённый CORS Origin, отказ privileged API без `ADMIN_TOKEN` и выдача только публичного root CA без private key. После изменения IP или runtime-порта launcher должен пересобрать конфигурацию и перезапустить Caddy.

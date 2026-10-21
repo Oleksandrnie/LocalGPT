@@ -31,11 +31,6 @@ LAUNCH_AGENT_FILE="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
 
 BOOTSTRAP_PYTHON="$(command -v python3 2>/dev/null || true)"
 
-if [[ -z "${BOOTSTRAP_PYTHON}" ]]; then
-  osascript -e 'display alert "LocalGPT" message "Python 3 was not found."'
-  exit 1
-fi
-
 read_dotenv_value() {
   local key="$1"
   [[ -f "${DOTENV_FILE}" ]] || {
@@ -572,6 +567,26 @@ start_or_restart_caddy() {
 
 if [[ "${LOCALGPT_LAUNCHER_LIBRARY_ONLY:-0}" == "1" ]]; then
   return 0 2>/dev/null || exit 0
+fi
+
+if [[ "${1:-}" == "--stop" ]]; then
+  stop_caddy_launch_agent
+  caddy_pid="$(read_pid_file "${CADDY_PID_FILE}")"
+  if [[ -n "${caddy_pid}" ]]; then
+    caddy_command="$(ps -p "${caddy_pid}" -o command= 2>/dev/null || true)"
+    if [[ "${caddy_command}" == *"caddy"*"${CADDY_CONFIG_FILE}"* ]]; then
+      stop_pid_file_process "${CADDY_PID_FILE}"
+    else
+      rm -f "${CADDY_PID_FILE}"
+    fi
+  fi
+  echo "[i] LocalGPT LAN HTTPS listener stopped."
+  exit 0
+fi
+
+if [[ -z "${BOOTSTRAP_PYTHON}" ]]; then
+  osascript -e 'display alert "LocalGPT" message "Python 3 was not found."'
+  exit 1
 fi
 
 start_backend || exit 1

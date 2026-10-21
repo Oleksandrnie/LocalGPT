@@ -24,7 +24,7 @@ Default:
 venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000
 ```
 
-Launcher выбирает следующий свободный порт, если requested port занят. `--strict-port` вместо этого прекращает запуск. `--port-file` записывает фактически выбранный порт.
+Обычные `start_localgpt.command`, `./start_localgpt.sh` и platform launchers запускают только локальный backend; LAN listener не включается автоматически. На macOS обычный launcher также останавливает управляемый LocalGPT Caddy listener, оставшийся от предыдущего LAN-сеанса. Для отдельной остановки используйте `stop_localgpt_lan.command` или `./stop_localgpt_lan.sh`. Launcher выбирает следующий свободный порт, если requested port занят. `--strict-port` вместо этого прекращает запуск. `--port-file` записывает фактически выбранный порт.
 
 Health endpoint возвращает минимальные runtime metadata и доступные private access URLs без filesystem paths:
 
@@ -34,7 +34,7 @@ curl http://127.0.0.1:8000/health
 
 ## LAN через Caddy
 
-На macOS обычный `start_localgpt.command` или `./start_localgpt.sh` без аргументов автоматически вызывает `tools/LTrnsrb.sh` (legacy filename); `start_localgpt_lan.command` остаётся compatibility alias. Launcher:
+На macOS доступ в локальной сети включается отдельным `start_localgpt_lan.command` или `./start_localgpt_lan.sh`. Они запускают `tools/LTrnsrb.sh` (legacy filename). Launcher:
 
 - читает `LOCALGPT_PORT`/legacy backend port и `LAN_HTTPS_PORT`;
 - определяет private LAN IP;
@@ -48,7 +48,7 @@ curl http://127.0.0.1:8000/health
 
 `Caddyfile.lan` в репозитории — localhost fallback/example; launcher создаёт актуальный config динамически.
 
-Если Caddy не установлен или private LAN IP не обнаружен, launcher явно сообщает об этом и открывает только localhost UI. Явные аргументы macOS launchers сохраняют direct local launch для диагностики.
+Если Caddy не установлен или private LAN IP не обнаружен, launcher явно сообщает об этом и открывает только localhost UI.
 
 Для автоматизированной диагностики можно задать `LOCALGPT_NO_BROWSER=1`: launcher выполнит тот же startup flow и напечатает URL, но не откроет вкладку браузера.
 
@@ -91,6 +91,8 @@ Default CORS regex разрешает localhost, loopback, RFC1918 ranges, Tails
 
 - backend по умолчанию слушает localhost;
 - Caddy/Tailscale terminate внешнее соединение и проксируют на localhost;
+- обычный launcher остаётся local-only; LAN HTTPS включается отдельным явным entry point;
+- приложение не предоставляет общую identity/authentication для LAN-клиентов; TLS защищает транспорт, но любой клиент с сетевым доступом может обращаться к незакрытым API, поэтому используйте только доверенную сеть;
 - Tailscale plugin metadata не исполняется;
 - unknown plugins не получают effective enable;
 - network addresses формирует backend;

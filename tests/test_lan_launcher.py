@@ -15,6 +15,21 @@ LAUNCHER = PROJECT_ROOT / "tools" / "LTrnsrb.sh"
 
 
 class LanLauncherContractTestCase(unittest.TestCase):
+    def test_ordinary_launchers_are_local_only_and_lan_is_explicit(self) -> None:
+        for name in ("start_localgpt.command", "start_localgpt.sh"):
+            with self.subTest(name=name):
+                source = (PROJECT_ROOT / name).read_text(encoding="utf-8")
+                self.assertNotIn("start_localgpt_lan", source)
+                self.assertIn("--stop", source)
+                self.assertNotIn('exec /bin/zsh "$SCRIPT_DIR/tools/LTrnsrb.sh"', source)
+
+        self.assertIn("start_localgpt_lan.sh", (PROJECT_ROOT / "start_localgpt_lan.command").read_text(encoding="utf-8"))
+        self.assertIn("tools/LTrnsrb.sh", (PROJECT_ROOT / "start_localgpt_lan.sh").read_text(encoding="utf-8"))
+        for name in ("stop_localgpt_lan.command", "stop_localgpt_lan.sh"):
+            with self.subTest(stop_entry=name):
+                self.assertIn("--stop", (PROJECT_ROOT / name).read_text(encoding="utf-8"))
+        self.assertIn('"${1:-}" == "--stop"', (PROJECT_ROOT / "tools/LTrnsrb.sh").read_text(encoding="utf-8"))
+
     def _render(self, *, backend_port: int = 8123, https_port: int = 9443) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "Caddyfile.auto"

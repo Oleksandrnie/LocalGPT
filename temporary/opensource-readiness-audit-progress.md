@@ -11,7 +11,7 @@
 - Effective executor metadata: unavailable.
 - Started: 2026-10-21.
 - Current status: in progress.
-- Current stage: secure-default networking and API posture.
+- Current stage: readiness report, documentation and quality gates.
 
 ## Instructions and precedence
 
@@ -91,19 +91,19 @@
 - Completion criterion: Oversize and malformed inputs fail with bounded errors and leave no artifacts; valid-path tests remain green.
 - Affected files: `app/services/upload_limits.py`, `app/routes/criteria.py`, `backend/apps/{asr,ocr,model_transfer}/`, `app/requirements.txt`, Python minimum-version launchers/setup/docs, `tests/test_upload_boundaries.py`, setup contract tests.
 - Dependencies: Stage 0 audit evidence.
-- Checkpoint commit: `fix(security): bound uploads and archive processing` (to be created after staged-diff review).
+- Checkpoint commit: `710ec83 fix(security): bound uploads and archive processing`.
 
 ### Stage 2 — Secure default networking and API posture
 
 - Goal: Align the default startup path with localhost-only trust; make LAN exposure an explicit, clearly documented opt-in or record any behavior that requires an owner decision.
-- Status: pending
-- Actions: Verify all entry points and existing launcher tests; implement only a compatible secure-by-default change with regression coverage; document the absence of per-client auth for explicit private-network access and privileged route boundaries.
+- Status: complete
+- Actions: Verify all entry points and existing launcher tests; make ordinary startup local-only; stop a previously managed Caddy LAN listener on macOS when returning to ordinary startup; retain explicit LAN start/stop commands; document the absence of per-client auth for explicit private-network access and privileged route boundaries.
 - Expected result: Ordinary startup does not silently expose user data to other devices; optional network access remains explicit and its limits are clear.
-- Validation: Launcher/setup/network tests and shell syntax checks; no real LAN/Tailscale listener changes in this environment.
+- Validation: `tests.test_lan_launcher` + setup contract tests 20/20 passed; POSIX and zsh syntax checks passed. No real LAN/Tailscale listener changes in this environment.
 - Completion criterion: Default path and documented LAN/Tailscale controls agree with code; no public bind/Funnel behavior added.
-- Affected files: Launchers, launcher tests, README/network docs, audit report as confirmed.
+- Affected files: ordinary/explicit LAN launchers, `tools/LTrnsrb.sh`, stop entry points, launcher tests, README/network/testing docs.
 - Dependencies: Stage 0 audit evidence.
-- Proposed checkpoint commit: `fix(security): keep network access opt-in`.
+- Checkpoint commit: `fix(security): make LAN access explicit` (to be created after staged-diff review).
 
 ### Stage 3 — Readiness report, documentation and quality gates
 
@@ -143,12 +143,12 @@
 
 ### 2026-10-21 — initial audit
 
-- Stage: secure-default networking and API posture.
-- Completed: Read root AGENTS, mandatory subsystem docs, and the pasted TЗ; created requested branch from clean `dev`; inspected release and Git-history posture; completed upload boundary remediation, Python minimum-version alignment, and pinned dependency updates.
-- Changed: Added bounded stream helpers, capped ASR/OCR/criteria/model-transfer uploads, guarded ZIP central-directory/manifest/member processing, cleaned partial temporary uploads, upgraded `python-multipart` to 0.0.31 and Pillow to 13.0.0, raised runtime/setup minimum to Python 3.11, added regression tests, and updated supported Python docs.
-- Validation: Baseline Node 51/51; baseline Python 421/424 with 3 pre-existing failures; targeted affected tests 36/36; `venv/bin/python -m compileall -q app backend tests`, POSIX `sh -n`, `venv/bin/python -m pip check`, `git diff --check` passed; isolated `pip-audit==2.10.1` scan of `app/requirements.txt` now reports no known vulnerabilities. No user data or real model assets used.
-- Issues: Historical `.env` credentials and SQLite chat rows remain in reachable history; no values/content printed. No global API authentication remains. Root `License` is proprietary/All Rights Reserved and includes a personal contact address; `piper-tts==1.4.2` is GPL-3.0-or-later. These require owner actions before public release. No source-history secret scanner is installed; release history scan was custom and limited.
-- Next action: Make ordinary startup localhost-only while retaining explicit LAN entry points, then document residual authorization/network risks.
+- Stage: readiness report, documentation and quality gates.
+- Completed: Read root AGENTS, mandatory subsystem docs, and the pasted TЗ; created requested branch from clean `dev`; inspected release and Git-history posture; completed upload boundary and dependency remediation; made LAN exposure explicit and ordinary startup local-only.
+- Changed: Added bounded stream helpers, capped ASR/OCR/criteria/model-transfer uploads, guarded ZIP central-directory/manifest/member processing, cleaned partial temporary uploads, upgraded `python-multipart` to 0.0.31 and Pillow to 13.0.0, raised runtime/setup minimum to Python 3.11, added regression tests, updated supported Python docs, and changed network launcher defaults with an explicit Caddy stop path.
+- Validation: Baseline Node 51/51; baseline Python 421/424 with 3 pre-existing failures; stage 1 targeted tests 36/36; stage 2 launcher/setup tests 20/20; `venv/bin/python -m compileall -q app backend tests`, POSIX/zsh syntax, `venv/bin/python -m pip check`, `git diff --check` passed; isolated `pip-audit==2.10.1` scan of `app/requirements.txt` reports no known vulnerabilities. No user data or real model assets used.
+- Issues: Historical `.env` credentials and SQLite chat rows remain in reachable history; no values/content printed. No global API authentication remains, including for explicit LAN. Root `License` is proprietary/All Rights Reserved and includes a personal contact address; `piper-tts==1.4.2` is GPL-3.0-or-later. These require owner actions before public release. No source-history secret scanner is installed; release history scan was custom and limited.
+- Next action: Read the pasted TЗ deliverables once more, create the evidence report and CI/security workflow, update affected docs and changelog, and preserve unresolved owner actions as release blockers.
 
 ## Changed files
 
@@ -157,11 +157,14 @@
 - `temporary/opensource-readiness-audit-progress.md`
 - `app/services/upload_limits.py`
 - `tests/test_upload_boundaries.py`
+- `stop_localgpt_lan.command`
+- `stop_localgpt_lan.sh`
 
 ### Modified
 
 - `app/requirements.txt`, `app/routes/criteria.py`, `backend/apps/asr/routes.py`, `backend/apps/model_transfer/{import_service.py,manifest.py,router.py}`, `backend/apps/ocr/service.py`
 - `run_localgpt.py`, platform launchers/setup entry points, `README.md`, `docs/DEPENDENCIES.md`, `tests/test_setup_dependencies.py`
+- `tools/LTrnsrb.sh`, `docs/knowledge/networking.md`, `docs/TESTING.md`, `tests/test_lan_launcher.py`
 
 ### Deleted
 
@@ -171,6 +174,7 @@
 
 - Static checks: Baseline `git diff --check`, `venv/bin/python -m compileall -q app backend tests`, `node --check web_ui/js/app.js`, and `node tests/markdown_rendering.test.mjs` passed.
 - Unit/contract tests: Baseline full Python suite: 424 run, 421 passed, 2 ASR pipeline failures and 1 plugin registry error as detailed above; full Node suite: 51/51 passed. Stage 1 targeted Python tests: 36/36 passed.
+- Network contract: Stage 2 launcher/setup tests: 20/20 passed; POSIX and zsh syntax checks passed. Actual LAN listener lifecycle was not exercised to avoid changing the user's live network state.
 - Dependency audit: Before remediation, pinned `python-multipart==0.0.27` and `Pillow==12.3.0` had known advisories; after updating to 0.0.31 and 13.0.0, isolated `pip-audit -r app/requirements.txt` returned “No known vulnerabilities found”.
 - Integration/smoke tests: Not run yet.
 - Manual/regression checks: Read-only documentation and source review; findings recorded above and in subsequent updates.
@@ -182,7 +186,7 @@
 - New regressions: None found by Stage 1 targeted tests.
 - Pre-existing failures: Three full-suite failures listed in `docs/BACKLOG.md`, pending reproduction.
 - Resolved issues: None.
-- Resolved issues: Unbounded ASR/OCR/criteria/model-transfer upload and ZIP manifest/member processing; temporary-file cleanup on over-limit and validation failures; known vulnerable `python-multipart`/Pillow pins; Python 3.10 dependency compatibility mismatch.
+- Resolved issues: Unbounded ASR/OCR/criteria/model-transfer upload and ZIP manifest/member processing; temporary-file cleanup on over-limit and validation failures; known vulnerable `python-multipart`/Pillow pins; Python 3.10 dependency compatibility mismatch; implicit macOS LAN startup and absent managed Caddy stop path.
 - Unresolved blockers: History credential/data exposure; current proprietary license and contact detail; Piper GPL terms; remote API authentication. Full suite has three baseline failures.
 - Deferred/technical debt: Full auth model for private network access; platform matrix outside available host; model/voice per-artifact license catalog.
 
@@ -196,16 +200,16 @@
 
 ## Checkpoints
 
-Stage 1 changes are prepared for `fix(security): bound uploads and archive processing`; staged diff review and commit are the immediate next action.
+Stage 1 checkpoint: `710ec83 fix(security): bound uploads and archive processing`. Stage 2 changes are prepared for `fix(security): make LAN access explicit`; staged diff review and commit are the immediate next action.
 
 ## Continuation state
 
-- Current stage: Secure-default networking and API posture.
-- Last completed action: Implemented and tested bounded file/archive handling, raised the supported Python floor to 3.11 for Pillow 13, and confirmed the pinned requirement set passes pip-audit.
-- Current repository state: Stage 1 source changes on `codex/opensource-readiness-audit`; stage commit pending review; existing tracked multimodal progress preserved.
+- Current stage: Readiness report, documentation and quality gates.
+- Last completed action: Made ordinary macOS startup local-only, stopped managed Caddy on return to local mode, retained explicit LAN start/stop commands, and passed launcher contract checks.
+- Current repository state: Stage 1 committed as `710ec83`; Stage 2 source/docs changes on `codex/opensource-readiness-audit`; stage 2 commit pending review; existing tracked multimodal progress preserved.
 - Known risks: See risk and decision sections; do not push.
-- Next exact action: Review the staged stage-1 diff and commit it; then trace ordinary and explicit LAN launch paths and tests to switch ordinary startup to localhost-only.
-- Next command or file: `start_localgpt.command`, `start_localgpt.sh`, `start_localgpt_lan.command`, `start_localgpt_lan.sh`, `tools/LTrnsrb.sh`, `tests/test_lan_launcher.py`.
+- Next exact action: Review and commit Stage 2; then read the complete pasted TЗ and produce the readiness report/CI/docs/checklist.
+- Next command or file: User-pasted TЗ attachment, `.github/workflows/`, `docs/security/`, `docs/CHANGELOG.md`, `docs/README.md`.
 
 ## Final checklist
 
