@@ -1497,6 +1497,10 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     left: 0;
     z-index: var(--z-dropdown);
     min-width: 148px;
+    width: max-content;
+    max-width: min(320px, calc(100vw - 24px));
+    max-height: min(400px, calc(100dvh - 120px));
+    overflow: auto;
     padding: 6px;
     border-radius: 14px;
     border: 1px solid var(--border);
@@ -1524,6 +1528,27 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     font-size: 13px;
     text-align: left;
     cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+.quick-model-picker__thinking-level {
+    flex: 0 1 auto;
+    max-width: 120px;
+    min-height: 44px;
+    margin-right: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#ollamaThinkField[hidden] {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .thinking-mode-menu button {
+        min-height: 44px;
+    }
 }
 
 .thinking-mode-menu button:hover,

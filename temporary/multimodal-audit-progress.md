@@ -239,7 +239,7 @@ Checkpoint: `970ec9f fix(chat): clarify RAG evidence and reasoning budgets`.
 
 ### LLM-REASONING-CONTROLS — discover and expose per-model thinking levels
 
-- Status: `in_progress`; R1 committed, R2 complete and validated, R3 next.
+- Status: `in_progress`; R1–R3 complete and validated, R4 documentation/final validation next.
 - User requirement: newly installed models must expose their actual reasoning controls in model settings and quick model selection, including `low` / `medium` / `high` where supported; this must not be tied to the OpenAI model name or one model catalog.
 - Confirmed provider contract: Ollama `/api/show` returns top-level `thinking.values` and `thinking.default`; values are model-specific booleans or exact strings. Ollama `/api/chat` accepts a supported boolean/string in `think`. `gpt-oss` advertises `low`, `medium`, and `high`. Missing metadata is unknown/default behavior, not evidence that all models share those levels.
 - Scope: discover/sanitize Ollama thinking metadata, expose it for catalog and arbitrary installed chat models, persist the selected per-model value using existing `ollama_think`, pass supported values through native chat calls, and render dynamic settings/quick-picker controls. Preserve boolean-only Thinking and Qwen3 compatibility. Treat direct Hugging Face inference as out of scope because LocalGPT currently has no HF chat provider; HF models surfaced through Ollama use the same discovery path only when Ollama advertises metadata.
@@ -251,7 +251,9 @@ Checkpoint: `970ec9f fix(chat): clarify RAG evidence and reasoning budgets`.
 - R1 validation: `venv/bin/python -m unittest tests.test_ollama_thinking_metadata tests.test_model_install_state tests.test_chat_vision_runtime tests.test_ollama_pull -v` — 35 passed; targeted `py_compile` and `git diff --check` passed. No live inference/pull, profile or DB mutation, or restart.
 - R2 implementation: shared resolver/validator in `app/services/thinking.py`; strict bool/string settings input; booleans persist canonically as legacy `on/off`, while model-declared named values persist verbatim. Chat budgets treat named levels as thinking-enabled; native sync/stream payloads preserve exact bool/string values and validate named values against `/api/show`. Qwen3 hybrid boolean OFF retains `/no_think`; ASR pipeline continues to accept legacy settings.
 - R2 validation: 113 focused tests passed across settings, metadata, router, Vision, and continuation; targeted `py_compile` and `git diff --check` passed. A broader 185-test regression had only the two previously documented ASR pipeline failures. No live inference/pull/restart or profile mutation.
-- Next action: add dynamic per-model reasoning controls to Settings and quick model selectors, including named level display and custom Ollama models; retain hidden controls when metadata is absent or explicitly unsupported.
+- R3 implementation: `web_ui/js/model_thinking.mjs` interprets model-declared metadata; Settings, desktop/mobile header menu, and quick model picker now expose per-model values, including custom installed models. Named values remain verbatim, boolean models keep ON/OFF compatibility, Auto uses Ollama default, unsupported/unknown models have no invented control, and reasoning trace visibility remains separate.
+- R3 validation: full frontend Node suite `node --test tests/*.test.mjs` — 50 passed; `node --check web_ui/js/app.js` and `git diff --check` passed. No live backend/browser visual QA; user-facing runtime testing remains for after implementation.
+- Next action: update permanent provider/UI/architecture/testing/changelog documentation and run final focused Python + frontend checks; no live model calls required.
 
 ### Explicitly unchanged / deferred
 

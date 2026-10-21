@@ -1,6 +1,7 @@
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 import { parseOllamaInstallInput } from "./ollama_install.mjs";
 import { buildSelectableChatModels } from "./chat_model_catalog.mjs";
+import { thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels } from "./model_thinking.mjs";
 
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
@@ -164,7 +165,6 @@ const RESIDENCY_DEFAULTS = {
   heavy_model_keep_alive: "60s",
   router_keep_alive: "2m",
 };
-const THINKING_MODEL_PATTERNS = [/^qwen3\b/i, /^deepseek-r1\b/i, /^gpt-oss\b/i, /^deepseek-v3\.1\b/i];
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
@@ -426,6 +426,8 @@ const els = {
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
   thinkingTokensInput: document.getElementById("thinkingTokensInput"),
+  ollamaThinkField: document.getElementById("ollamaThinkField"),
+  ollamaThinkSelect: document.getElementById("ollamaThinkSelect"),
   numCtxInput: document.getElementById("numCtxInput"),
   streamingEnabledToggle: document.getElementById("streamingEnabledToggle"),
   memTurnsInput: document.getElementById("memTurnsInput"),
@@ -742,17 +744,15 @@ function getCatalogItemById(modelName) {
   return [...getCatalogModels(), ...getUtilityModels()].find((item) => getModelId(item) === target) || null;
 }
 
-function modelSupportsThinking(modelName) {
+function getModelThinkingMetadata(modelName) {
   const target = String(modelName || "").trim();
-  if (!target) return false;
-  if (target === AUTO_MODEL_ID) return true;
-  const item = getCatalogItemById(target);
-  const category = String(item?.category || "").toLowerCase();
-  const description = String(item?.description || "").toLowerCase();
-  if (category.includes("thinking") || description.includes("thinking") || description.includes("reasoning")) {
-    return true;
-  }
-  return THINKING_MODEL_PATTERNS.some((pattern) => pattern.test(target));
+  if (target === AUTO_MODEL_ID) return { values: [true, false], default: null };
+  const installed = (state.installedModels || []).find((item) => getModelId(item) === target);
+  return thinkingMetadata(installed || getCatalogItemById(target));
+}
+
+function modelSupportsThinking(modelName) {
+  return Boolean(getModelThinkingMetadata(modelName));
 }
 
 function shouldShowThinkingToggleForModel(modelName) {
@@ -1680,6 +1680,7 @@ function toggleQuickThinkingMenu(forceState, source = "desktop") {
   closeQuickThinkingMenu();
   target.menu.hidden = !nextState;
   target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
+  if (nextState) target.menu.querySelector("[aria-checked='true']")?.focus();
 }
 
 function renderQuickModelPicker() {
@@ -1709,15 +1710,17 @@ function renderQuickModelPicker() {
     els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
   }
 
-  const thinkingValue = normalizeOllamaThink(
+  const thinkingValue = thinkingSelection(
     els.quickThinkingControl?.dataset.thinkingMode ?? state.modelSettingsState?.effective?.ollama_think,
-    "auto",
+    getModelThinkingMetadata(selectedName),
   );
-  const thinkingOn = thinkingValue !== "off";
   const menuHtml = items.map((item) => {
     const active = item.name === selectedName;
     const thinkingSupported = shouldShowThinkingToggleForModel(item.name);
-    const itemThinkingOn = active ? thinkingOn : false;
+    const metadata = getModelThinkingMetadata(item.name);
+    const namedLevels = hasNamedThinkingLevels(metadata);
+    const itemThinkingOn = active && thinkingValue !== "off" && (thinkingValue !== "auto" || metadata?.default !== false);
+    const itemThinkingValue = active ? thinkingValue : "auto";
     return `
       <div class="quick-model-picker__item-shell${active ? " quick-model-picker__item-shell--active" : ""}">
         <button
@@ -1729,9 +1732,11 @@ function renderQuickModelPicker() {
         >
           <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
         </button>
-        ${thinkingSupported ? `
-          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking">
-            <input type="checkbox" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
+        ${thinkingSupported && (namedLevels || !metadata.values.includes(false) || !metadata.values.includes(true)) ? `
+          <button type="button" role="menuitem" class="button button--ghost quick-model-picker__thinking-level" data-quick-thinking-open="${escapeHtml(item.name)}" aria-haspopup="menu" aria-label="Thinking — уровень для ${escapeHtml(item.name)}: ${escapeHtml(itemThinkingValue)}">${escapeHtml(itemThinkingValue)}</button>
+        ` : thinkingSupported ? `
+          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking — режим рассуждения">
+            <input type="checkbox" aria-label="Thinking для ${escapeHtml(item.name)}" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
             <span class="apple-switch__track" aria-hidden="true"></span>
           </label>
         ` : ""}
@@ -4919,18 +4924,21 @@ function renderQuickThinkingControl(rawValue = null) {
   if (!els.quickThinkingControl || !els.quickThinkingButton || !els.quickThinkingMenu) return;
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
   const supported = modelSupportsThinking(modelName);
-  const normalized = normalizeOllamaThink(rawValue, "auto");
-  const visibleValue = normalized === "off" ? "off" : "on";
+  const metadata = getModelThinkingMetadata(modelName);
+  const visibleValue = thinkingSelection(rawValue, metadata);
+  const options = thinkingOptions(metadata);
+  const label = options.find((option) => option.value === visibleValue)?.label || "Auto";
   const disabled = !supported || !state.activeProfileId || !modelName;
   const hint = supported
-    ? "Thinking влияет на скорость, CPU и полноту рассуждения для моделей, которые поддерживают этот режим."
+    ? `Thinking — режим / уровень рассуждения: ${label}. Видимость trace не меняется; откройте >_ у ответа.`
     : "Выбранная модель не объявлена как thinking-capable; параметр не отправляется.";
 
   els.quickThinkingControl.dataset.thinkingMode = visibleValue;
   els.quickThinkingButton.disabled = disabled;
-  els.quickThinkingButton.textContent = "Thinking";
+  els.quickThinkingButton.textContent = `Thinking: ${visibleValue}`;
+  els.quickThinkingButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   els.quickThinkingControl.hidden = !shouldShowThinkingToggleForModel(modelName);
-  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue !== "off");
   els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
   els.quickThinkingControl.title = hint;
 
@@ -4941,16 +4949,21 @@ function renderQuickThinkingControl(rawValue = null) {
   }
   if (els.quickThinkingMobileButton) {
     els.quickThinkingMobileButton.disabled = disabled;
-    els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking: ${visibleValue === "on" ? "включено" : "выключено"}`);
+    els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   }
 
   [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
-    menu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
-      const active = button.getAttribute("data-thinking-mode") === visibleValue;
-      button.classList.toggle("thinking-mode-menu__item--active", active);
-      button.setAttribute("aria-checked", active ? "true" : "false");
-    });
+    menu.innerHTML = options.map((option) => `<button type="button" role="menuitemradio" data-thinking-mode="${escapeHtml(option.value)}" class="${option.value === visibleValue ? "thinking-mode-menu__item--active" : ""}" aria-checked="${option.value === visibleValue}" ${disabled ? "disabled" : ""}>${escapeHtml(option.label)}</button>`).join("");
   });
+
+  if (els.ollamaThinkField) els.ollamaThinkField.hidden = !supported;
+  if (els.ollamaThinkSelect) {
+    const markup = options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+    if (els.ollamaThinkSelect.innerHTML !== markup) els.ollamaThinkSelect.innerHTML = markup;
+    els.ollamaThinkSelect.value = visibleValue;
+    els.ollamaThinkSelect.disabled = disabled;
+    syncAppSelect(els.ollamaThinkSelect);
+  }
 
   if (disabled) {
     closeQuickThinkingMenu();
@@ -9545,7 +9558,7 @@ async function saveModelSettingsFlow() {
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         ollama_keep_alive: collectKeepAliveValue(),
         ollama_think: modelSupportsThinking(modelName)
-          ? normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on")
+          ? thinkingSelection(els.ollamaThinkSelect?.value, getModelThinkingMetadata(modelName))
           : null,
       }),
     });
@@ -9641,7 +9654,7 @@ async function saveQuickThinkingModeFlow() {
     renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
     return;
   }
-  const nextMode = normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on");
+  const nextMode = thinkingSelection(els.quickThinkingControl?.dataset.thinkingMode, getModelThinkingMetadata(modelName));
   try {
     const data = await request("/model_settings", {
       method: "POST",
@@ -9649,7 +9662,7 @@ async function saveQuickThinkingModeFlow() {
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
-    setFooter(`Thinking ${nextMode === "off" ? "выключен" : "включён"} для текущей модели.`, "success");
+    setFooter(`Thinking: ${nextMode} для текущей модели.`, "success");
   } catch (error) {
     renderModelSettings();
     setFooter(`Не удалось сохранить Thinking: ${error.message || error}`, "error");
@@ -11144,6 +11157,10 @@ function bindEvents() {
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
   els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
   els.showRouterThinkingToggle?.addEventListener("change", async () => saveShowRouterThinkingToggleFlow());
+  els.ollamaThinkSelect?.addEventListener("change", () => {
+    renderQuickThinkingControl(els.ollamaThinkSelect.value);
+    renderQuickModelPicker();
+  });
   els.quickThinkingButton?.addEventListener("click", () => {
     closeQuickModelMenu();
     closeVoiceModelMenu();
@@ -11157,18 +11174,33 @@ function bindEvents() {
   const handleQuickThinkingMenuClick = async (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-thinking-mode]") : null;
     if (!(button instanceof HTMLElement)) return;
-    const nextMode = normalizeOllamaThink(button.dataset.thinkingMode, "on");
+    const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
+    const nextMode = thinkingSelection(button.dataset.thinkingMode, getModelThinkingMetadata(modelName));
     if (!els.quickThinkingControl) return;
+    const trigger = event.currentTarget === els.quickThinkingMobileMenu ? els.quickThinkingMobileButton : els.quickThinkingButton;
     closeQuickThinkingMenu();
-    els.quickThinkingControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+    trigger?.focus();
+    els.quickThinkingControl.dataset.thinkingMode = nextMode;
     if (els.quickThinkingMobileControl) {
-      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
     }
     renderQuickThinkingControl(nextMode);
     await saveQuickThinkingModeFlow();
   };
   els.quickThinkingMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   els.quickThinkingMobileMenu?.addEventListener("click", handleQuickThinkingMenuClick);
+  [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
+    menu.addEventListener("keydown", (event) => {
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const buttons = Array.from(menu.querySelectorAll("[data-thinking-mode]:not(:disabled)"));
+      if (!buttons.length) return;
+      event.preventDefault();
+      const current = buttons.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+        : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next].focus();
+    });
+  });
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
   els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
   els.asrFullAnalysisEnabledToggle?.addEventListener("change", async () => saveAsrFullAnalysisPreferenceFlow());
@@ -11205,6 +11237,18 @@ function bindEvents() {
   });
 
   const handleQuickModelMenuClick = async (event) => {
+    const thinkingButton = event.target instanceof Element ? event.target.closest("[data-quick-thinking-open]") : null;
+    if (thinkingButton) {
+      event.stopPropagation();
+      const modelName = thinkingButton.dataset.quickThinkingOpen || "";
+      const source = event.currentTarget === els.quickModelMobileMenu ? "mobile" : "desktop";
+      closeQuickModelMenu();
+      if (state.selectedLlmModel !== modelName) await applySelectedLlmModel(modelName);
+      toggleQuickThinkingMenu(true, source);
+      const menu = source === "mobile" ? els.quickThinkingMobileMenu : els.quickThinkingMenu;
+      menu?.querySelector("[aria-checked='true']")?.focus();
+      return;
+    }
     if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
       return;
     }
@@ -11917,6 +11961,12 @@ function bindEvents() {
       }
       if (!els.networkAddressMenu?.hidden) {
         closeNetworkAddressMenu();
+        return;
+      }
+      if (!els.quickThinkingMenu?.hidden || !els.quickThinkingMobileMenu?.hidden) {
+        const trigger = !els.quickThinkingMobileMenu?.hidden ? els.quickThinkingMobileButton : els.quickThinkingButton;
+        closeQuickThinkingMenu();
+        trigger?.focus();
         return;
       }
       closeSidebar();
