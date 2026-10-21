@@ -40,6 +40,8 @@ git ls-files -z --cached --others --exclude-standard | xargs -0 /tmp/localgpt-qa
 
 Ruff в CI использует ограниченный набор `E4,E7,E9,F`, а Bandit — medium+ severity / high confidence, только для Python-файлов, изменённых относительно базовой ветки: старый lint/SAST debt не маскируется под новую регрессию. Полный локальный Bandit scan выявил существующие medium/low сигналы, перечисленные в readiness report. Secret hook проверяет current working tree, использует небольшой baseline с synthetic security-test literals и **не сканирует Git history**; CI выводит только путь, тип кандидата и строку без значения секрета. Историческую историю/бинарные blobs нужно перепроверить отдельным release gate. На данный момент в проекте не настроен отдельный formatter или полный lint policy.
 
+Для отдельной проверки истории используйте `gitleaks git --log-opts=--all --redact=100 .`. `.gitleaksignore` содержит только два commit-qualified fingerprint для проверенных ложных срабатываний на хешах `detect-secrets` в `.secrets.baseline`; целые файлы, правила и новые коммиты не исключаются.
+
 Setup/bootstrap contract без запуска package installers:
 
 ```bash

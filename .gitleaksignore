@@ -1,0 +1,4 @@
+# Reviewed false positives: detect-secrets hashed_secret metadata, not credentials.
+# Commit-qualified fingerprints suppress only these two historical findings.
+ba935a1deddcdbef295ab9d1f38c3276871e7a62:.secrets.baseline:generic-api-key:139
+ba935a1deddcdbef295ab9d1f38c3276871e7a62:.secrets.baseline:generic-api-key:146
