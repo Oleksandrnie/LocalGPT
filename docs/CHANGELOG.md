@@ -6,6 +6,7 @@
 
 ### Added
 
+- Installed non-catalog Ollama chat models now appear in the normal model selectors after inventory refresh; utility/Vision catalog entries and embedding-only models stay out of this chat list. The installer example now uses generic `model:tag` syntax.
 - Added deterministic cross-domain Ollama evidence-use evaluation for installed chat models and sampled runner RSS, system memory pressure, swap deltas, unload and thermal-warning signals; post-answer RAG trace now follows the actual included evidence manifest even when heuristic facet status says `not_found`.
 - Settings → Chat/LLM now provides a guarded Ollama model installer: raw model refs or a restricted `ollama pull` snippet, inline progress and cancellation, with independent backend validation and no automatic model selection or command execution.
 - Code-enforced prompt/RAG/runtime security controls: metadata-only diagnostics/logging, task ownership, request/prompt/upload budgets, generation concurrency/timeout cleanup и bounded SSE reconnects.

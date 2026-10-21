@@ -14,13 +14,22 @@ test("Chat/LLM settings contain a bottom installer panel with explicit scope and
   assert.match(panel, /id="ollamaInstallerStatus"[^>]+role="status"/);
   assert.match(panel, /id="ollamaInstallerDownloads"/);
   assert.match(panel, /Выполняется только pull/);
-  assert.match(panel, /модель можно выбрать вручную/);
+  assert.match(panel, /chat-модель появится в общем списке/);
+  assert.match(panel, /выберите её вручную/);
+  assert.match(panel, /placeholder="ollama pull model:tag&#10;ollama run model:tag"/);
+  assert.doesNotMatch(panel, /placeholder="ollama pull gpt-oss/);
 });
 
 test("installer parses pasted text before using the existing confirmed pull lifecycle", () => {
   assert.match(javascript, /parseOllamaInstallInput\(els\.downloadModelInput\?\.value \|\| ""\)/);
   assert.match(javascript, /await startModelDownload\(parsed\.model\)/);
   assert.match(javascript, /request\("\/models\/pull", \{ method: "POST", body: \{ model: target \} \}\)/);
+  assert.match(javascript, /buildSelectableChatModels/);
+  assert.match(javascript, /getSelectableChatModels\(\)/);
+  assert.match(javascript, /const catalogIds = new Set\(getSelectableChatModels\(\)\.map/);
+  assert.match(javascript, /const installedCatalogIds = getCatalogModels\(\)/);
+  assert.match(javascript, /const installedCatalogModel = getCatalogModels\(\)\.find/);
+  assert.match(javascript, /setInterval\(\(\) => \{\s*loadModels\(\{ silent: true \}\)/);
   assert.match(javascript, /renderOllamaInstallerDownloads\(\)/);
   assert.match(javascript, /data-cancel-download/);
   assert.doesNotMatch(javascript, /exec\s*\(.*ollama|spawn\s*\(.*ollama/);

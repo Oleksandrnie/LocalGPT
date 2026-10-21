@@ -1,5 +1,6 @@
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 import { parseOllamaInstallInput } from "./ollama_install.mjs";
+import { buildSelectableChatModels } from "./chat_model_catalog.mjs";
 
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
@@ -728,6 +729,14 @@ function getUtilityModels() {
     .filter((item) => getModelId(item));
 }
 
+function getSelectableChatModels() {
+  return buildSelectableChatModels(
+    getCatalogModels(),
+    [...getUtilityModels(), ...(Array.isArray(state.visionModels) ? state.visionModels : [])],
+    state.installedModels,
+  );
+}
+
 function getCatalogItemById(modelName) {
   const target = String(modelName || "").trim();
   return [...getCatalogModels(), ...getUtilityModels()].find((item) => getModelId(item) === target) || null;
@@ -1115,7 +1124,7 @@ function getFilteredTtsVoiceCatalog() {
 
 function renderLibraryPanels() {
   const installedChatNames = new Set(state.installedModels.map((item) => item.name));
-  const chatCatalog = getCatalogModels();
+  const chatCatalog = getSelectableChatModels();
   const utilityCatalog = getUtilityModels();
   const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
   const chatTotal = utilityCatalog.length + chatCatalog.length;
@@ -1514,10 +1523,7 @@ function initAppSelects() {
 
 function getChatModelItems() {
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const catalog = getCatalogModels();
-  const source = catalog.length
-    ? catalog
-    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const source = getSelectableChatModels();
   const autoItem = {
     id: AUTO_MODEL_ID,
     name: AUTO_MODEL_ID,
@@ -4333,12 +4339,10 @@ function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const catalogItems = getCatalogModels().length
-    ? getCatalogModels()
-    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const catalogItems = getSelectableChatModels();
   const utilityItems = getUtilityModels();
   const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
-  const installedCatalogIds = catalogItems
+  const installedCatalogIds = getCatalogModels()
     .filter((item) => isRuntimeModelInstalled(item, installedByName))
     .map((item) => getModelId(item));
   const optionIds = new Set([AUTO_MODEL_ID, LOCAL_CALCULATOR_MODEL_ID, ...catalogIds]);
@@ -4473,7 +4477,7 @@ function renderChatModelLibrary() {
   }
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const catalogItems = [...getUtilityModels(), ...getCatalogModels()];
+  const catalogItems = [...getUtilityModels(), ...getSelectableChatModels()];
 
   if (!catalogItems.length) {
     els.chatModelLibrary.innerHTML = '<p class="subtle">Каталог Ollama-моделей пока пуст.</p>';
@@ -9182,7 +9186,7 @@ async function loadModels({ silent = false } = {}) {
     const isSelectableNow = (modelName) => (
       modelName === AUTO_MODEL_ID || modelName === LOCAL_CALCULATOR_MODEL_ID || installedModelNames.has(modelName)
     );
-    const catalogIds = new Set(getCatalogModels().map((item) => getModelId(item)));
+    const catalogIds = new Set(getSelectableChatModels().map((item) => getModelId(item)));
     catalogIds.add(AUTO_MODEL_ID);
     catalogIds.add(LOCAL_CALCULATOR_MODEL_ID);
     const installedCatalogModel = getCatalogModels().find((item) => (

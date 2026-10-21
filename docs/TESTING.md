@@ -82,7 +82,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Model installation state | `venv/bin/python -m unittest tests.test_model_install_state -v` |
 | Ollama pull API/CLI compatibility | `venv/bin/python -m unittest tests.test_ollama_pull -v` |
 | Ollama model-reference input validation | `venv/bin/python -m unittest tests.test_ollama_model_ref_validation -v` |
-| Ollama installer snippet parser and UI contract | `node --test tests/ollama_install.test.mjs tests/ollama_install_ui.test.mjs` |
+| Ollama installer parser, custom chat-model discovery and UI contract | `node --test tests/chat_model_catalog.test.mjs tests/ollama_install.test.mjs tests/ollama_install_ui.test.mjs` |
 | Model export/import bundle | `venv/bin/python -m unittest tests.test_model_transfer_manifest tests.test_model_transfer_inventory tests.test_model_transfer_export tests.test_model_transfer_import -v` |
 
 Tests используют `unittest`; отдельные cases создают temporary SQLite/files и patch внешние процессы. Перед live-запуском всё равно проверяйте конкретный test body на обращение к локальным моделям/CLI.
