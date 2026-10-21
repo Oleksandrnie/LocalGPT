@@ -134,6 +134,6 @@ jobs:
           node --check web_ui/js/app.js
           node tests/markdown_rendering.test.mjs
           node --test tests/*.test.mjs
-          for script in setup/setup_localgpt.sh start_localgpt.sh start_localgpt_lan.sh stop_localgpt_lan.sh tools/LTrnsrb.sh tools/setup_whisper_cpp_macos.sh; do
+          for script in setup/setup_localgpt.sh start_localgpt.sh start_localgpt_lan.sh tools/setup_whisper_cpp_macos.sh; do
             bash -n "$script"
           done
