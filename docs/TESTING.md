@@ -90,6 +90,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
 | ASR model download token and filesystem-path boundaries | `venv/bin/python -m unittest tests.test_asr_download_security -v` |
+| ASR inference does not auto-download a missing model | `venv/bin/python -m unittest tests.test_whisper_loading_security -v` |
 | ASR task FIFO, startup failures и cancellation lifecycle | `venv/bin/python -m unittest tests.test_asr_tasks -v` |
 | TTS routes | `venv/bin/python -m unittest tests.test_tts_routes -v` |
 | Piper provider | `venv/bin/python -m unittest tests.test_piper_provider -v` |

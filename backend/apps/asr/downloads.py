@@ -134,12 +134,6 @@ def _http_headers(endpoint: str) -> dict[str, str]:
     return headers
 
 
-def _huggingface_hub_token(endpoint: str) -> str | bool | None:
-    if not _is_official_hf_endpoint(endpoint):
-        return False
-    return _hf_token() or None
-
-
 def _validated_model_filename(filename: str) -> tuple[str, ...]:
     invalid = (
         not isinstance(filename, str)
@@ -481,31 +475,6 @@ def _http_status_from_exception(exc: BaseException) -> int | None:
     return int(status) if isinstance(status, int) else None
 
 
-def _is_auth_error(exc: BaseException) -> bool:
-    status = _http_status_from_exception(exc)
-    if status in {401, 403}:
-        return True
-
-    message = str(exc).lower()
-    return "401" in message or "403" in message
-
-
-def _directory_size(path: Path) -> int:
-    if not path.exists():
-        return 0
-
-    total = 0
-    for file_path in path.rglob("*"):
-        if not file_path.is_file():
-            continue
-        try:
-            total += file_path.stat().st_size
-        except OSError:
-            continue
-
-    return total
-
-
 def _auth_error_message(endpoint: str, status: int) -> tuple[str, str]:
     host = _endpoint_host(endpoint)
     if not _is_official_hf_endpoint(endpoint):
@@ -520,7 +489,7 @@ def _auth_error_message(endpoint: str, status: int) -> tuple[str, str]:
     return (
         "download_auth_required",
         f"Нет доступа к модели на {host} (HTTP {status}). "
-        "Добавьте HF_TOKEN в .env или выполните huggingface-cli login, затем перезапустите сервер.",
+        "Добавьте HF_TOKEN в .env и перезапустите сервер.",
     )
 
 
@@ -851,70 +820,6 @@ def _download_whisper_cpp_extra_file(
     return downloaded_bytes, max(total_bytes, downloaded_bytes)
 
 
-def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, int, float, str | None]:
-    from huggingface_hub import HfApi, snapshot_download
-
-    repo_id = repository_for_model(model)
-    model_dir = local_model_dir(model)
-    model_dir.mkdir(parents=True, exist_ok=True)
-    hub_token = _huggingface_hub_token(endpoint)
-    info = HfApi(endpoint=endpoint, token=hub_token).model_info(repo_id, files_metadata=True)
-    remote_revision = str(getattr(info, "sha", "") or "").strip() or None
-    files: list[str] = []
-    for sibling in getattr(info, "siblings", None) or []:
-        filename = getattr(sibling, "rfilename", None)
-        if not filename:
-            continue
-        _validated_model_filename(filename)
-        if filename.startswith(".") or filename.endswith(".gitattributes"):
-            continue
-        _model_file_path(model_dir, filename)
-        files.append(filename)
-    if not files:
-        raise PrepareModelError("Список файлов модели пуст", code="download_empty_file_list")
-
-    size_before = _directory_size(model_dir)
-    start_ts = _now()
-    stop_event = threading.Event()
-
-    def _monitor() -> None:
-        while not stop_event.wait(_PROGRESS_INTERVAL_SECONDS):
-            current_size = _directory_size(model_dir)
-            downloaded = max(current_size - size_before, 0)
-            elapsed = max(_now() - start_ts, 0.001)
-            _update_task(
-                task_id,
-                message="Загрузка через huggingface_hub...",
-                percent=0.0,
-                speed_bps=downloaded / elapsed,
-                downloaded_bytes=downloaded,
-                total_bytes=0,
-            )
-
-    monitor_thread = threading.Thread(target=_monitor, daemon=True)
-    monitor_thread.start()
-    try:
-        snapshot_download(
-            repo_id=repo_id,
-            local_dir=str(model_dir),
-            local_dir_use_symlinks=False,
-            resume_download=True,
-            endpoint=endpoint,
-            token=hub_token,
-            allow_patterns=files,
-        )
-        for filename in files:
-            _model_file_path(model_dir, filename)
-    finally:
-        stop_event.set()
-        monitor_thread.join(timeout=2.0)
-
-    size_after = _directory_size(model_dir)
-    downloaded = max(size_after - size_before, 0)
-    elapsed = max(_now() - start_ts, 0.001)
-    return downloaded, downloaded, downloaded / elapsed, remote_revision
-
-
 def _run_prepare_whisper_cpp_task(task_id: str) -> None:
     with _LOCK:
         task = _TASKS.get(task_id)
@@ -1076,41 +981,18 @@ def _run_prepare_task(task_id: str) -> None:
                     task_id, model, endpoint
                 )
             except Exception as exc:
-                if _is_auth_error(exc):
-                    try:
-                        _update_task(
-                            task_id,
-                            message="Получен HTTP 401/403. Пробуем загрузку через huggingface_hub...",
-                        )
-                        downloaded_bytes, total_bytes, final_speed, remote_revision = _download_via_hf_hub(
-                            task_id, model, endpoint
-                        )
-                    except Exception as fallback_exc:
-                        error_code, error_message = _format_download_error(endpoint, fallback_exc)
-                        has_next_endpoint = idx < len(endpoints) - 1
+                error_code, error_message = _format_download_error(endpoint, exc)
+                has_next_endpoint = idx < len(endpoints) - 1
 
-                        if has_next_endpoint:
-                            _update_task(
-                                task_id,
-                                message=f"{error_message} Пробуем резервный endpoint...",
-                                error_code=error_code,
-                            )
-                            continue
+                if has_next_endpoint:
+                    _update_task(
+                        task_id,
+                        message=f"{error_message} Пробуем резервный endpoint...",
+                        error_code=error_code,
+                    )
+                    continue
 
-                        raise PrepareModelError(error_message, code=error_code) from fallback_exc
-                else:
-                    error_code, error_message = _format_download_error(endpoint, exc)
-                    has_next_endpoint = idx < len(endpoints) - 1
-
-                    if has_next_endpoint:
-                        _update_task(
-                            task_id,
-                            message=f"{error_message} Пробуем резервный endpoint...",
-                            error_code=error_code,
-                        )
-                        continue
-
-                    raise PrepareModelError(error_message, code=error_code) from exc
+                raise PrepareModelError(error_message, code=error_code) from exc
 
             if not is_local_model_ready(model):
                 raise PrepareModelError("Модель загружена не полностью", code="download_incomplete_model")

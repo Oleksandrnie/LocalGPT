@@ -8,6 +8,7 @@
 | Проверить dependency inventory и setup/bootstrap contract | [DEPENDENCIES.md](DEPENDENCIES.md) |
 | Понять систему целиком | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Запустить или расширить проверки | [TESTING.md](TESTING.md) |
+| Посмотреть изменения проекта | [CHANGELOG.md](CHANGELOG.md) |
 | Проверить лицензию проекта | [GNU GPL-3.0-or-later](../LICENSE) |
 
 ## База знаний

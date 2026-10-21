@@ -44,6 +44,8 @@ flowchart LR
 
 В репозитории есть platform entry points для macOS, Linux и Windows. Скрипт определяет ОС/package manager, открывает Terminal/PowerShell, показывает недостающие компоненты и запрашивает согласие перед каждой установкой. Наличие entry point не означает подтверждённую поддержку: см. [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
+Проверки этого исходного снимка выполнялись на macOS (Darwin arm64). Чистая установка и полный сценарий запуска на macOS, Linux и Windows не проводились; для Linux и Windows нет нативной проверки. Подробности — в [матрице платформ](docs/DEPENDENCIES.md).
+
 macOS — двойной клик по `setup/setup_localgpt.command` или команда:
 
 ```bash

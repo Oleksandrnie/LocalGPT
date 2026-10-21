@@ -367,11 +367,14 @@ def _annotate_speakers(
 
 
 def _load_model(model_name: str, *, compute_type: str | None = None, device: str | None = None):
+    model = _normalize_model(model_name)
+    model_path = local_model_dir(model)
+    if not is_local_model_ready(model):
+        raise RuntimeError(f"WHISPER_MODEL_NOT_FOUND::{model}")
+
     from faster_whisper import WhisperModel
 
-    model = _normalize_model(model_name)
-    local_ready = is_local_model_ready(model)
-    model_source = str(local_model_dir(model)) if local_ready else model
+    model_source = str(model_path)
     resolved_device = (device or config.SETTINGS.whisper_device).strip()
     resolved_compute_type = (compute_type or config.SETTINGS.whisper_compute_type).strip()
 
@@ -391,6 +394,7 @@ def _load_model(model_name: str, *, compute_type: str | None = None, device: str
             device=resolved_device,
             compute_type=resolved_compute_type,
             download_root=str(config.WHISPER_MODELS_DIR),
+            local_files_only=True,
         )
         _MODEL_CACHE[model_key] = whisper_model
         return whisper_model
