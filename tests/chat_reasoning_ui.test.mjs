@@ -13,6 +13,23 @@ test("LLM settings expose separate output and thinking budgets", () => {
   assert.match(html, /id="thinkingTokensInput"[^>]*min="2048"[^>]*placeholder="4096"/);
 });
 
+test("Chat/LLM library groups models and keeps secondary actions in an accessible disclosure", () => {
+  const start = javascript.indexOf("function renderChatModelLibrary() {");
+  const end = javascript.indexOf("function visionSettingsValues()", start);
+  const renderLibrary = javascript.slice(start, end);
+
+  assert.match(renderLibrary, /renderGroup\("Установлены в Ollama"/);
+  assert.match(renderLibrary, /renderGroup\("Доступны для установки"/);
+  assert.match(renderLibrary, /model-row__primary/);
+  assert.match(renderLibrary, /<details class="model-row__menu">/);
+  assert.match(renderLibrary, /data-chat-model-action="update"/);
+  assert.match(renderLibrary, /data-chat-model-action="delete"/);
+  assert.match(renderLibrary, /data-model-help>Сведения/);
+  assert.match(css, /\.model-library__list\s*\{\s*display:\s*grid;\s*gap:/);
+  assert.match(css, /\.model-row__menu summary:focus-visible/);
+  assert.match(css, /body\.theme-light \.model-row__menu-panel/);
+});
+
 test("quick Thinking control is visible for declared thinking-capable models", () => {
   assert.match(javascript, /quickThinkingControl\.hidden = !shouldShowThinkingToggleForModel\(modelName\)/);
   assert.match(javascript, /quickThinkingMobileControl\.hidden = !shouldShowThinkingToggleForModel\(modelName\)/);

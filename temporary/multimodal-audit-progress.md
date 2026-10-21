@@ -266,6 +266,14 @@ Checkpoint: `970ec9f fix(chat): clarify RAG evidence and reasoning budgets`.
 - Validation: `node --test tests/chat_model_catalog.test.mjs` — 2/2; `node --test tests/*.test.mjs` — 50/50; `node --check web_ui/js/app.js` and `git diff --check` passed. No browser/server changes or Ollama mutation; user should refresh the UI to verify presentation.
 - Checkpoint: this UI inventory correction is committed separately; larger multimodal plan remains active.
 
+### LLM-LIBRARY-UX — separate model choice from secondary actions
+
+- Status: `completed`; replaced the visually crowded model-card grid with grouped, compact rows.
+- Scope delivered: installed and available models are separated into counted sections; each row presents concise status/meta and one primary action; update/delete/details are behind a keyboard-accessible “Действия” disclosure. Model selection, install/update/delete flows, detail tooltip, utility-model behavior, catalog data, and other model libraries remain unchanged.
+- Acceptance: grouping and one-primary-action structure have regression coverage; secondary actions are discoverable without competing in every row; keyboard focus, touch sizing, and dark/light styles are supported. Manual visual acceptance remains pending user refresh/inspection of the running UI.
+- Validation: `node --test tests/chat_reasoning_ui.test.mjs` (9/9), `node --test tests/*.test.mjs` (51/51), `node --check web_ui/js/app.js`, `node tests/markdown_rendering.test.mjs` (4/4), and `git diff --check` all pass.
+- Checkpoint: ready for a focused commit; no backend restart or model download is needed because this is a static UI change.
+
 ### Explicitly unchanged / deferred
 
 - ASR accuracy on the user's 5:59.8 MP3 remains an optional manual reference-transcript exercise; short public-set smoke is not a substitute.

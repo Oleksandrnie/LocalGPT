@@ -252,6 +252,8 @@ Model-transfer tests используют только temporary synthetic files
 
 `node --test tests/model_thinking_ui.test.mjs tests/chat_reasoning_ui.test.mjs tests/chat_model_catalog.test.mjs` checks named-level and boolean metadata, custom installed models, explicit/unknown unsupported states, settings/header synchronization, and unchanged token budgets. Full frontend checks use `node --test tests/*.test.mjs`.
 
+`chat_reasoning_ui.test.mjs` also guards the Chat/LLM model library's installed/available grouping, single primary action, accessible secondary-action disclosure, and dark/light row styling hooks.
+
 Минимальная ручная матрица:
 
 - desktop и mobile viewport;

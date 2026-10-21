@@ -805,21 +805,6 @@ function getModelActionLabel(item, installedByName = null) {
   return "Скачать / докачать";
 }
 
-function getModelRuntimeNote(item, task = null, installedByName = null) {
-  if (task?.message) return task.message;
-  if (item?.active) return "Модель загружена в память Ollama и готова отвечать.";
-  if (isRuntimeModelInstalled(item, installedByName)) {
-    return item?.partial_blob_found
-      ? "Модель зарегистрирована в project-scoped Ollama runtime; отдельно найден partial blob в одном из storage."
-      : "Модель зарегистрирована в текущем Ollama runtime.";
-  }
-  if (item?.partial) return "Найден partial blob: загрузку нужно продолжить, пока модель не появится в ollama list.";
-  if (item?.storage?.storage_present) {
-    return "Файлы модели найдены в model storage, но текущий Ollama runtime не видит её через ollama list.";
-  }
-  return getModelDescription(item) || "Модель есть в каталоге, но отсутствует в текущем Ollama runtime.";
-}
-
 function getModelTooltip(item, { short = false } = {}) {
   const id = getModelId(item);
   const title = getModelTitle(item);
@@ -838,45 +823,9 @@ function getModelTooltip(item, { short = false } = {}) {
   ].filter(Boolean).join("\n");
 }
 
-function getModelBadges(item) {
-  const category = String(item?.category || "");
-  const weight = String(item?.weight || "");
-  const badges = [];
-  if (item?.recommended) {
-    badges.push({ label: "recommended", tone: "recommended" });
-  }
-  if (item?.experimental) {
-    badges.push({ label: "experimental", tone: "experimental" });
-  }
-  if (item?.utility) {
-    badges.push({ label: "utility", tone: "utility" });
-  }
-  if (weight === "heavy") {
-    badges.push({ label: "heavy", tone: "heavy" });
-  }
-  if (category.includes("router")) {
-    badges.push({ label: "router", tone: "router" });
-  }
-  if (category.includes("code")) {
-    badges.push({ label: "code", tone: "code" });
-  }
-  return badges;
-}
-
-function renderModelBadges(item) {
-  return getModelBadges(item)
-    .map((badge) => `<span class="status-badge status-badge--${escapeHtml(badge.tone)}">${escapeHtml(badge.label)}</span>`)
-    .join("");
-}
-
 function renderModelInfoIcon(item, className = "model-info-button") {
   const tooltip = getModelTooltip(item);
   return `<span class="${escapeHtml(className)}" role="img" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</span>`;
-}
-
-function renderModelInfoButton(item) {
-  const tooltip = getModelTooltip(item);
-  return `<button class="model-info-button" type="button" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</button>`;
 }
 
 let tooltipTimer = null;
@@ -4489,66 +4438,95 @@ function renderChatModelLibrary() {
     return;
   }
 
-  els.chatModelLibrary.innerHTML = catalogItems
-    .map((item) => {
-      const name = getModelId(item);
-      const runtimeInfo = installedByName.get(name) || item.runtime || null;
-      const runtimeInstalled = isRuntimeModelInstalled(item, installedByName);
-      const selected = state.selectedLlmModel === name;
-      const runtimeActive = Boolean(item.active || runtimeInfo?.active);
-      const task = getActiveChatDownload(name);
-      const utility = Boolean(item.utility);
-      const runtimeState = task ? "downloading" : getRuntimeModelState(item, installedByName);
-      const statusTone = {
-        active: "active",
-        installed: "success",
-        downloading: "warning",
-        partial: "warning",
-        configured: "muted",
-        missing: "muted",
-      }[runtimeState] || "muted";
-      const statusLabel = task ? (task.state || "running") : getRuntimeModelStatusLabel(item, installedByName);
-      const statusBadge = `<span class="status-badge status-badge--${escapeHtml(statusTone)}">${escapeHtml(statusLabel)}</span>`;
-      const meta = [
-        `ID: ${name}`,
-        `Runtime: ${runtimeInstalled ? "installed" : "missing"}`,
-        item.category ? `Категория: ${item.category}` : null,
-        item.weight ? `Вес: ${item.weight}` : null,
-        runtimeInfo?.details?.quantization ? `Quant: ${runtimeInfo.details.quantization}` : null,
-        runtimeInfo?.size_gb ? `${runtimeInfo.size_gb} GB` : null,
-        item.storage?.storage_size_gb && !runtimeInstalled ? `Storage: ${item.storage.storage_size_gb} GB` : null,
-        runtimeInfo?.modified_at ? formatDateTime(runtimeInfo.modified_at) : null,
-      ].filter(Boolean).join(" • ");
-      const note = getModelRuntimeNote(item, task, installedByName);
-      return `
-        <article class="model-card${runtimeInstalled ? " model-card--installed" : ""}${selected ? " model-card--active" : ""} model-card--${escapeHtml(runtimeState)}">
-          <div class="model-card__head">
-            <div>
-              <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
-              <p class="model-card__meta">${escapeHtml(meta || name)}</p>
-            </div>
-            <div class="model-card__badges">
-              ${statusBadge}
-              ${runtimeActive ? '<span class="status-badge status-badge--active">В памяти</span>' : ""}
-              ${selected ? '<span class="status-badge status-badge--selected">Выбрана</span>' : ""}
-              ${item.partial_blob_found && !item.partial ? '<span class="status-badge status-badge--warning">Partial blob</span>' : ""}
-              ${item.configured ? '<span class="status-badge status-badge--configured">Configured</span>' : ""}
-              ${item.missing ? '<span class="status-badge status-badge--missing">Missing</span>' : ""}
-              ${renderModelBadges(item)}
-            </div>
-          </div>
-          <p class="model-card__note">${escapeHtml(note)}</p>
-          <div class="button-row">
-            ${runtimeInstalled && !utility ? `<button class="button ${selected ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
-            ${runtimeInstalled ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${escapeHtml(getModelActionLabel(item, installedByName))}</button>`}
-            <button class="button button--ghost" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>
-            ${runtimeInstalled ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
-            ${renderModelInfoButton(item)}
-          </div>
-        </article>
-      `;
-    })
-    .join("");
+  const categoryLabels = {
+    fast_rag: "Быстрый RAG",
+    default_chat: "Чат",
+    thinking: "Рассуждения",
+    pipeline_heavy: "Анализ",
+    code: "Код",
+    code_alt: "Код · альтернатива",
+    experimental: "Экспериментальная",
+    utility_router: "Маршрутизатор",
+    installed_custom: "Локальная модель",
+  };
+  const rows = catalogItems.map((item) => {
+    const name = getModelId(item);
+    const runtimeInfo = installedByName.get(name) || item.runtime || null;
+    const runtimeInstalled = isRuntimeModelInstalled(item, installedByName);
+    const selected = state.selectedLlmModel === name;
+    const runtimeActive = Boolean(item.active || runtimeInfo?.active);
+    const task = getActiveChatDownload(name);
+    const utility = Boolean(item.utility);
+    const runtimeState = task ? "downloading" : getRuntimeModelState(item, installedByName);
+    const statusTone = {
+      active: "active",
+      installed: "success",
+      downloading: "warning",
+      partial: "warning",
+      configured: "muted",
+      missing: "muted",
+    }[runtimeState] || "muted";
+    const statusLabel = task ? (task.state || "running") : getRuntimeModelStatusLabel(item, installedByName);
+    const size = runtimeInfo?.size_label || (runtimeInfo?.size_gb ? `${runtimeInfo.size_gb} GB` : "");
+    const meta = [categoryLabels[item.category] || (item.custom_installed ? "Локальная модель" : "Модель чата"), size].filter(Boolean).join(" · ");
+    const primaryAction = runtimeInstalled
+      ? utility
+        ? '<span class="model-row__utility">Служебная модель</span>'
+        : `<button class="button ${selected ? "button--primary" : "button--ghost"} model-row__primary" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}"${selected ? " disabled" : ""}>${selected ? "Выбрана" : "Выбрать"}</button>`
+      : `<button class="button button--primary model-row__primary" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${escapeHtml(getModelActionLabel(item, installedByName))}</button>`;
+    const secondaryActions = [
+      runtimeInstalled ? `<button class="model-row__menu-action" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>` : "",
+      runtimeInstalled ? `<button class="model-row__menu-action model-row__menu-action--danger" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : "",
+      `<button class="model-row__menu-action" type="button" aria-label="Сведения о модели ${escapeHtml(getModelTitle(item))}" data-tooltip="${escapeHtml(getModelTooltip(item))}" data-model-help>Сведения</button>`,
+    ].filter(Boolean).join("");
+    return {
+      item,
+      runtimeInstalled,
+      runtimeState,
+      runtimeActive,
+      selected,
+      statusLabel,
+      statusTone,
+      meta,
+      primaryAction,
+      secondaryActions,
+    };
+  });
+
+  const renderGroup = (title, groupRows, className) => {
+    if (!groupRows.length) return "";
+    return `
+      <section class="model-library__group ${className}">
+        <h4 class="model-library__group-title"><span>${title}</span><span class="model-library__count">${groupRows.length}</span></h4>
+        <div class="model-library__list">
+          ${groupRows.map((row) => `
+            <article class="model-row${row.runtimeInstalled ? " model-row--installed" : ""}${row.selected ? " model-row--selected" : ""} model-row--${escapeHtml(row.runtimeState)}">
+              <div class="model-row__copy">
+                <div class="model-row__title-line">
+                  <h5 class="model-row__title">${escapeHtml(getModelTitle(row.item))}</h5>
+                  <span class="status-badge status-badge--${escapeHtml(row.statusTone)}">${escapeHtml(row.statusLabel)}</span>
+                  ${row.runtimeActive ? '<span class="status-badge status-badge--active">В памяти</span>' : ""}
+                </div>
+                <p class="model-row__meta">${escapeHtml(row.meta)}</p>
+              </div>
+              <div class="model-row__actions">
+                ${row.primaryAction}
+                <details class="model-row__menu">
+                  <summary aria-label="Действия для ${escapeHtml(getModelTitle(row.item))}"><span>Действия</span><span aria-hidden="true">⌄</span></summary>
+                  <div class="model-row__menu-panel">${row.secondaryActions}</div>
+                </details>
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  };
+
+  els.chatModelLibrary.innerHTML = [
+    renderGroup("Установлены в Ollama", rows.filter((row) => row.runtimeInstalled), "model-library__group--installed"),
+    renderGroup("Доступны для установки", rows.filter((row) => !row.runtimeInstalled), "model-library__group--available"),
+  ].join("");
 }
 
 function visionSettingsValues() {

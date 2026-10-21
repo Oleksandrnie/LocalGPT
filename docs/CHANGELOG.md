@@ -28,6 +28,7 @@
 
 ### Changed
 
+- Settings → Chat/LLM model library now separates installed models from available downloads and keeps update/delete/details actions in a per-model disclosure, with one clear primary action per row.
 - Chat model `Thinking tokens` now defaults to 4096 with a 2048 minimum; old lower overrides are normalized in the effective UI/runtime settings while `Output tokens` remains independent.
 - Post-answer RAG diagnostics now trace only evidence spans actually included in the prompt, even when the separate heuristic facet-status classifier says `not_found`.
 - Chat/direct Vision и явный RAG-vision flow автоматически продолжают только подтверждённый provider length-stop с final content: до четырёх дополнительных проходов с прежним per-call budget, исходными instructions/evidence и exact overlap removal. Склеенный ответ проходит cross-pass privacy guard; cap exhaustion остаётся incomplete/failed и исключается из completed memory/history.

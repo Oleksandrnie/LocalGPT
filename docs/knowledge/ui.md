@@ -67,6 +67,8 @@ Image composer принимает PNG/JPEG/WebP через picker, paste и mult
 
 Внизу Settings → Chat / LLM находится Ollama installer: достаточно указать модель или вставить команду `ollama pull <model>`; `ollama run` добавлять не нужно. Если в двухстрочном блоке есть точная matching `ollama run <model>`, она распознаётся, но игнорируется и не запускается. Другие команды, аргументы, shell chaining/substitution и лишние строки отклоняются до запроса к backend. Pull progress, состояние и остановка показываются рядом с installer; после завершения списка моделей перечитывается, и установленная chat-модель вне встроенного каталога тоже появляется в выборе. Модель не выбирается и не запускается автоматически — её нужно выбрать отдельно. Подтверждённые embedding-only модели не попадают в chat-выбор; это не интерфейс установки Vision/ASR/TTS/embedding runtime.
 
+`Библиотека загрузки LLM` группирует модели по состоянию: установленные в Ollama и доступные для установки. Каждая модель показана компактной строкой с кратким статусом и одной основной кнопкой выбора/загрузки; обновление, удаление и сведения находятся в отдельном раскрываемом меню действий.
+
 Settings tab `Vision` не смешан с обычной chat library. Он показывает cards `qwen2.5vl:3b`, `qwen2.5vl:7b`, `gemma3:4b`, отдельно declared и runtime-confirmed capabilities, а также явные download/update/delete/primary actions. В этом tab находятся:
 
 - enable image chat и primary model/auto;
