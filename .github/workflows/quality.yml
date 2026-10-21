@@ -42,46 +42,13 @@ jobs:
           "$RUNNER_TEMP/localgpt-qa-tools/bin/python" -m pip install --disable-pip-version-check \
             'ruff==0.17.0' 'bandit==1.9.4' 'pip-audit==2.10.1' 'detect-secrets==1.5.0'
 
-      - name: Lint and scan changed Python files
+      - name: Lint and scan Python files
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BASE_SHA: ${{ github.event.before }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          "$RUNNER_TEMP/localgpt-qa-tools/bin/python" - <<'PY'
-          import os
-          import subprocess
-          from pathlib import Path
-
-          candidates = [os.environ.get("PR_BASE_SHA", ""), os.environ.get("PUSH_BASE_SHA", "")]
-          default_branch = os.environ.get("DEFAULT_BRANCH", "")
-          if default_branch:
-              candidates.append(f"origin/{default_branch}")
-          base = None
-          for candidate in candidates:
-              if not candidate or set(candidate) == {"0"}:
-                  continue
-              check = subprocess.run(["git", "rev-parse", "--verify", candidate], capture_output=True)
-              if check.returncode == 0:
-                  base = candidate
-                  break
-          if base is None:
-              raise SystemExit("Could not resolve a base revision for incremental Python lint.")
-
-          changed = subprocess.run(
-              ["git", "diff", "--name-only", "--diff-filter=ACMRT", f"{base}...HEAD"],
-              check=True,
-              capture_output=True,
-              text=True,
-          ).stdout.splitlines()
-          python_files = [path for path in changed if path.endswith(".py") and Path(path).is_file()]
-          if python_files:
-              tools = Path(os.environ["RUNNER_TEMP"]) / "localgpt-qa-tools/bin"
-              subprocess.run([str(tools / "ruff"), "check", "--select", "E4,E7,E9,F", *python_files], check=True)
-              subprocess.run([str(tools / "bandit"), "-q", "-ll", "-iii", *python_files], check=True)
-          else:
-              print("No changed Python files to lint.")
-          PY
+          "$RUNNER_TEMP/localgpt-qa-tools/bin/python" scripts/quality_python.py
 
       - name: Audit pinned Python requirements
         run: >-

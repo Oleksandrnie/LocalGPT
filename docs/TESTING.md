@@ -26,7 +26,7 @@ node --test tests/*.test.mjs
 
 ## CI quality workflow
 
-`.github/workflows/quality.yml` запускает deterministic checks на PR, push и ручном старте: Python 3.11 clean dependency install, полный mock/unit suite с `local_hash`, Ruff и Bandit по изменённым Python-файлам, `pip-audit`, `detect-secrets` по текущему tracked tree, Python compile, Node UI contracts и shell syntax. Actions закреплены полными commit SHA, permissions ограничены `contents: read`, а live AI-модели не скачиваются.
+`.github/workflows/quality.yml` запускает deterministic checks на PR, push и ручном старте: Python 3.11 clean dependency install, полный mock/unit suite с `local_hash`, Ruff и Bandit по изменённым Python-файлам, `pip-audit`, `detect-secrets` по текущему tracked tree, Python compile, Node UI contracts и shell syntax. Если нет отдельной merge base (включая первый push) или base совпадает с HEAD (например, ручной запуск на default branch), Ruff и Bandit проверяют весь tracked Python source. Actions закреплены полными commit SHA, permissions ограничены `contents: read`, а live AI-модели не скачиваются.
 
 Ручной аналог dependency/security checks после установки requirements:
 
@@ -55,7 +55,7 @@ venv/bin/python -m unittest tests.test_setup_dependencies -v
 
 ## Unit tests
 
-Полный текущий Python suite (на 2026-10-21 — 433 tests):
+Полный deterministic Python suite:
 
 ```bash
 venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
@@ -89,6 +89,7 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 | Chat image storage, lifecycle, vision runtime/output budgets/truncation, settings и RAG export | `venv/bin/python -m unittest tests.test_chat_attachments tests.test_chat_vision_context tests.test_chat_vision_lifecycle tests.test_chat_vision_runtime tests.test_vision_settings tests.test_vision_rag -v` |
 | ASR pipeline, memory и ASR context | `venv/bin/python -m unittest tests.test_pipeline_memory -v` |
 | whisper.cpp backend | `venv/bin/python -m unittest tests.test_whisper_cpp_backend -v` |
+| ASR model download token and filesystem-path boundaries | `venv/bin/python -m unittest tests.test_asr_download_security -v` |
 | ASR task FIFO, startup failures и cancellation lifecycle | `venv/bin/python -m unittest tests.test_asr_tasks -v` |
 | TTS routes | `venv/bin/python -m unittest tests.test_tts_routes -v` |
 | Piper provider | `venv/bin/python -m unittest tests.test_piper_provider -v` |
@@ -216,6 +217,7 @@ Model-transfer tests используют только temporary synthetic files
 
 - health/voices/library endpoints работают без повреждения history;
 - provider корректно обрабатывает missing runtime/model;
+- удаление голоса отклоняет traversal keys и symlink targets за пределами каталога моделей;
 - generation пишет output и history;
 - speed processing создаёт валидный WAV и не перезаписывает исходник неожиданно.
 

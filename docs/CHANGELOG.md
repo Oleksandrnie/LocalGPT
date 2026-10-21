@@ -40,6 +40,7 @@
 ### Changed
 
 - Обычный LocalGPT launcher стал local-only: macOS Caddy LAN-доступ запускается отдельной явной командой; добавлена отдельная команда остановки. ASR/OCR/criteria uploads и model-transfer ZIP processing получили bounded limits и cleanup. `python-multipart` обновлён до 0.0.31, Pillow до 13.0.0; минимальная версия Python согласована на 3.11+.
+- ASR model downloads now send Hugging Face credentials only to the official HTTPS origin, validate remote filenames and enforce model-directory containment; Piper voice deletion enforces storage containment; first-push/default-branch CI runs Ruff and Bandit over all tracked Python files.
 - Исправлена изоляция SQLite/ASR fixtures в полном Python suite, чтобы тесты не наследовали временный путь базы или ответы выключенных pipeline stages.
 
 - Settings → Chat/LLM model library now separates installed models from available downloads and keeps update/delete/details actions in a per-model disclosure, with one clear primary action per row.

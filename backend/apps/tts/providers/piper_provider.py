@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import wave
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.request import urlopen
 
@@ -13,6 +13,34 @@ from .base import SynthesisResult, TTSProvider, VoiceDefinition
 _LANGUAGE_RE = re.compile(r"^[a-z]{2}(?:_[A-Z]{2})?$")
 _QUALITY_TOKENS = {"x_low", "low", "medium", "high"}
 _VOICE_CATALOG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/voices.json?download=true"
+_WINDOWS_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | {
+    f"{prefix}{index}" for prefix in ("COM", "LPT") for index in range(1, 10)
+}
+
+
+def _valid_voice_key(voice_key: str) -> bool:
+    if not isinstance(voice_key, str) or not voice_key or "\\" in voice_key or "\x00" in voice_key or ":" in voice_key:
+        return False
+    parts = voice_key.split("/")
+    windows_path = PureWindowsPath(voice_key)
+    return not (
+        voice_key.startswith("/")
+        or windows_path.is_absolute()
+        or windows_path.drive
+        or any(part in {"", ".", ".."} or part != part.rstrip(" .") for part in parts)
+        or any(part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES for part in parts)
+    )
+
+
+def _contained_voice_file(path: Path, root: Path) -> Path | None:
+    candidate = Path(path)
+    try:
+        candidate.resolve(strict=False).relative_to(Path(root).resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if candidate.suffix.lower() not in {".onnx", ".json"}:
+        return None
+    return candidate
 
 
 class PiperProvider(TTSProvider):
@@ -131,21 +159,24 @@ class PiperProvider(TTSProvider):
 
     def delete_voice(self, voice_key: str) -> bool:
         voice_key = (voice_key or "").strip()
-        if not voice_key:
+        if not _valid_voice_key(voice_key):
             return False
 
+        model_root = Path(config.PIPER_MODELS_DIR).resolve(strict=False)
         files_to_remove: set[Path] = set()
         for voice in self.list_voices():
             if voice.id == voice_key or voice.id.startswith(f"{voice_key}::speaker:"):
-                files_to_remove.add(Path(voice.model_path))
-                files_to_remove.add(Path(voice.config_path))
+                for raw_path in (voice.model_path, voice.config_path):
+                    safe_path = _contained_voice_file(Path(raw_path), model_root)
+                    if safe_path is not None:
+                        files_to_remove.add(safe_path)
 
-        direct_model = config.PIPER_MODELS_DIR / f"{voice_key}.onnx"
+        direct_model = model_root / f"{voice_key}.onnx"
         direct_config = Path(f"{direct_model}.json")
-        if direct_model.exists():
-            files_to_remove.add(direct_model.resolve())
-        if direct_config.exists():
-            files_to_remove.add(direct_config.resolve())
+        for candidate in (direct_model, direct_config):
+            safe_path = _contained_voice_file(candidate, model_root)
+            if safe_path is not None and safe_path.exists():
+                files_to_remove.add(safe_path)
 
         removed = False
         for file_path in files_to_remove:

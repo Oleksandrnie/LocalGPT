@@ -10,9 +10,9 @@ import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -33,6 +33,9 @@ _DEFAULT_HF_ENDPOINT = "https://huggingface.co"
 _DEFAULT_HF_FALLBACK_ENDPOINT = "https://hf-mirror.com"
 _MODEL_META_FILENAME = ".localgpt_model_meta.json"
 _DEFAULT_WHISPER_CPP_REPO = "ggerganov/whisper.cpp"
+_WINDOWS_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | {
+    f"{prefix}{index}" for prefix in ("COM", "LPT") for index in range(1, 10)
+}
 
 
 class PrepareModelError(Exception):
@@ -107,12 +110,76 @@ def _hf_token() -> str:
     return token
 
 
-def _http_headers() -> dict[str, str]:
+def _is_official_hf_endpoint(endpoint: str) -> bool:
+    try:
+        parsed = urlsplit(endpoint)
+        return (
+            parsed.scheme.lower() == "https"
+            and parsed.hostname == "huggingface.co"
+            and parsed.port in {None, 443}
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _http_headers(endpoint: str) -> dict[str, str]:
     headers = {"User-Agent": "LocalGPT-Whisper-Transcriber/1.0"}
-    token = _hf_token()
+    token = _hf_token() if _is_official_hf_endpoint(endpoint) else ""
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def _huggingface_hub_token(endpoint: str) -> str | bool | None:
+    if not _is_official_hf_endpoint(endpoint):
+        return False
+    return _hf_token() or None
+
+
+def _validated_model_filename(filename: str) -> tuple[str, ...]:
+    invalid = (
+        not isinstance(filename, str)
+        or not filename
+        or "\\" in filename
+        or "\x00" in filename
+        or any(char in filename for char in ":*?[]")
+        or filename.startswith("/")
+    )
+    if invalid:
+        raise PrepareModelError("Имя файла модели содержит недопустимый путь", code="invalid_model_path")
+
+    parts = tuple(filename.split("/"))
+    windows_path = PureWindowsPath(filename)
+    if (
+        any(part in {"", ".", ".."} or part != part.rstrip(" .") for part in parts)
+        or windows_path.is_absolute()
+        or windows_path.drive
+        or any(part.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES for part in parts)
+    ):
+        raise PrepareModelError("Имя файла модели содержит недопустимый путь", code="invalid_model_path")
+    return parts
+
+
+def _model_file_path(model_dir: Path, filename: str) -> Path:
+    parts = _validated_model_filename(filename)
+    root = Path(model_dir).resolve(strict=False)
+    target = root.joinpath(*parts)
+
+    current = root
+    for part in parts:
+        current = current / part
+        if current.is_symlink():
+            raise PrepareModelError("Путь модели проходит через символическую ссылку", code="invalid_model_path")
+
+    try:
+        target.resolve(strict=False).relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PrepareModelError("Путь модели выходит за каталог хранения", code="invalid_model_path") from exc
+    return target
 
 
 def _huggingface_endpoints() -> list[str]:
@@ -336,9 +403,12 @@ def _get_model_files(client: httpx.Client, endpoint: str, repo_id: str) -> tuple
 
     files: list[dict[str, Any]] = []
     for sibling in siblings:
+        if not isinstance(sibling, dict):
+            continue
         filename = sibling.get("rfilename")
         if not filename:
             continue
+        _validated_model_filename(filename)
         if filename.startswith("."):
             continue
         if filename.endswith(".gitattributes"):
@@ -369,7 +439,7 @@ def _calculate_existing_bytes(model_dir: Path, files: list[dict[str, Any]]) -> t
     pending: list[dict[str, Any]] = []
 
     for item in files:
-        target = model_dir / item["name"]
+        target = _model_file_path(model_dir, item["name"])
         expected = int(item.get("size") or 0)
         if target.exists() and expected > 0:
             try:
@@ -436,6 +506,24 @@ def _directory_size(path: Path) -> int:
     return total
 
 
+def _auth_error_message(endpoint: str, status: int) -> tuple[str, str]:
+    host = _endpoint_host(endpoint)
+    if not _is_official_hf_endpoint(endpoint):
+        return (
+            "download_auth_required",
+            f"Нет доступа к модели на {host} (HTTP {status}). "
+            "HF_TOKEN не передаётся сторонним или пользовательским endpoint. "
+            "Для закрытой модели используйте официальный HTTPS endpoint huggingface.co.",
+        )
+    if _hf_token():
+        return ("download_auth_failed", f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN.")
+    return (
+        "download_auth_required",
+        f"Нет доступа к модели на {host} (HTTP {status}). "
+        "Добавьте HF_TOKEN в .env или выполните huggingface-cli login, затем перезапустите сервер.",
+    )
+
+
 def _hf_repo_cache_root(model_name: str) -> Path:
     repo_id = repository_for_model(model_name)
     org, repo_name = repo_id.split("/", 1)
@@ -490,28 +578,12 @@ def _format_download_error(endpoint: str, exc: BaseException) -> tuple[str, str]
         if status == 404:
             return ("download_model_not_found", f"Репозиторий модели недоступен на {host} (404).")
         if status in {401, 403}:
-            if _hf_token():
-                return ("download_auth_failed", f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN.")
-            return (
-                "download_auth_required",
-                f"Нет доступа к модели на {host} (HTTP {status}). "
-                "Добавьте HF_TOKEN в .env (или выполните huggingface-cli login) "
-                "или задайте HF_FALLBACK_ENDPOINT (например https://hf-mirror.com), "
-                "затем перезапустите сервер."
-            )
+            return _auth_error_message(endpoint, status)
         return ("download_http_error", f"Ошибка HTTP {status} при загрузке модели с {host}.")
 
     status = _http_status_from_exception(exc)
     if status in {401, 403}:
-        if _hf_token():
-            return ("download_auth_failed", f"Нет доступа к модели на {host} (HTTP {status}) даже с HF_TOKEN.")
-        return (
-            "download_auth_required",
-            f"Нет доступа к модели на {host} (HTTP {status}). "
-            "Добавьте HF_TOKEN в .env (или выполните huggingface-cli login) "
-            "или задайте HF_FALLBACK_ENDPOINT (например https://hf-mirror.com), "
-            "затем перезапустите сервер."
-        )
+        return _auth_error_message(endpoint, status)
 
     return ("model_prepare_failed", str(exc))
 
@@ -526,7 +598,7 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
         follow_redirects=True,
         timeout=httpx.Timeout(90.0, connect=30.0),
         trust_env=trust_env,
-        headers=_http_headers(),
+        headers=_http_headers(endpoint),
     ) as client:
         files, revision = _get_model_files(client, endpoint, repo_id)
         total_bytes = sum(int(item.get("size") or 0) for item in files)
@@ -548,17 +620,20 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
         for item in pending:
             filename = item["name"]
             expected_size = int(item.get("size") or 0)
-            target = model_dir / filename
+            target = _model_file_path(model_dir, filename)
             target.parent.mkdir(parents=True, exist_ok=True)
+            target = _model_file_path(model_dir, filename)
             encoded_name = quote(filename, safe="/")
             url = _join_url(endpoint, f"/{repo_id}/resolve/main/{encoded_name}")
-            temp_path = target.with_suffix(target.suffix + ".part")
+            temp_name = f"{filename}.part"
+            temp_path = _model_file_path(model_dir, temp_name)
 
             _update_task(task_id, message=f"Загрузка: {filename}")
 
             with client.stream("GET", url) as response:
                 response.raise_for_status()
 
+                temp_path = _model_file_path(model_dir, temp_name)
                 with temp_path.open("wb") as out:
                     for chunk in response.iter_bytes(chunk_size=_CHUNK_SIZE):
                         if not chunk:
@@ -583,6 +658,8 @@ def _download_from_endpoint(task_id: str, model: str, endpoint: str) -> tuple[in
                             )
                             last_progress_ts = now_ts
 
+            temp_path = _model_file_path(model_dir, temp_name)
+            target = _model_file_path(model_dir, filename)
             temp_path.replace(target)
 
             if expected_size <= 0:
@@ -636,7 +713,7 @@ def _download_whisper_cpp_from_endpoint(
         follow_redirects=True,
         timeout=httpx.Timeout(90.0, connect=30.0),
         trust_env=trust_env,
-        headers=_http_headers(),
+        headers=_http_headers(endpoint),
     ) as client:
         revision, etag, total_bytes = _fetch_whisper_cpp_remote_meta(client, endpoint, model)
         encoded_name = quote(filename, safe="/")
@@ -775,26 +852,26 @@ def _download_whisper_cpp_extra_file(
 
 
 def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, int, float, str | None]:
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import HfApi, snapshot_download
 
     repo_id = repository_for_model(model)
     model_dir = local_model_dir(model)
     model_dir.mkdir(parents=True, exist_ok=True)
-    remote_revision: str | None = None
-
-    trust_env = _env_flag("HF_TRUST_ENV", default=False)
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(30.0, connect=20.0),
-            trust_env=trust_env,
-            headers=_http_headers(),
-        ) as client:
-            payload = _fetch_model_payload(client, endpoint, repo_id)
-            raw_revision = payload.get("sha")
-            remote_revision = str(raw_revision).strip() if raw_revision else None
-    except Exception:
-        remote_revision = None
+    hub_token = _huggingface_hub_token(endpoint)
+    info = HfApi(endpoint=endpoint, token=hub_token).model_info(repo_id, files_metadata=True)
+    remote_revision = str(getattr(info, "sha", "") or "").strip() or None
+    files: list[str] = []
+    for sibling in getattr(info, "siblings", None) or []:
+        filename = getattr(sibling, "rfilename", None)
+        if not filename:
+            continue
+        _validated_model_filename(filename)
+        if filename.startswith(".") or filename.endswith(".gitattributes"):
+            continue
+        _model_file_path(model_dir, filename)
+        files.append(filename)
+    if not files:
+        raise PrepareModelError("Список файлов модели пуст", code="download_empty_file_list")
 
     size_before = _directory_size(model_dir)
     start_ts = _now()
@@ -823,8 +900,11 @@ def _download_via_hf_hub(task_id: str, model: str, endpoint: str) -> tuple[int, 
             local_dir_use_symlinks=False,
             resume_download=True,
             endpoint=endpoint,
-            token=_hf_token() or None,
+            token=hub_token,
+            allow_patterns=files,
         )
+        for filename in files:
+            _model_file_path(model_dir, filename)
     finally:
         stop_event.set()
         monitor_thread.join(timeout=2.0)
@@ -1286,22 +1366,22 @@ def check_model_update(model_name: str) -> dict[str, Any]:
 
         trust_env = _env_flag("HF_TRUST_ENV", default=False)
         endpoints = _huggingface_endpoints()
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(10.0, connect=5.0),
-            trust_env=trust_env,
-            headers=_http_headers(),
-        ) as client:
-            for endpoint in endpoints:
-                checked_endpoint = endpoint
-                try:
+        for endpoint in endpoints:
+            checked_endpoint = endpoint
+            try:
+                with httpx.Client(
+                    follow_redirects=True,
+                    timeout=httpx.Timeout(10.0, connect=5.0),
+                    trust_env=trust_env,
+                    headers=_http_headers(endpoint),
+                ) as client:
                     remote_revision, remote_etag, remote_size = _fetch_whisper_cpp_remote_meta(client, endpoint, model)
-                    error_code = None
-                    error_message = None
-                    break
-                except Exception as exc:
-                    error_code, error_message = _format_download_error(endpoint, exc)
-                    continue
+                error_code = None
+                error_message = None
+                break
+            except Exception as exc:
+                error_code, error_message = _format_download_error(endpoint, exc)
+                continue
 
         update_available = False
         status = "up_to_date"
@@ -1360,24 +1440,24 @@ def check_model_update(model_name: str) -> dict[str, Any]:
 
     trust_env = _env_flag("HF_TRUST_ENV", default=False)
     endpoints = _huggingface_endpoints()
-    with httpx.Client(
-        follow_redirects=True,
-        timeout=httpx.Timeout(10.0, connect=5.0),
-        trust_env=trust_env,
-        headers=_http_headers(),
-    ) as client:
-        for endpoint in endpoints:
-            checked_endpoint = endpoint
-            try:
+    for endpoint in endpoints:
+        checked_endpoint = endpoint
+        try:
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=httpx.Timeout(10.0, connect=5.0),
+                trust_env=trust_env,
+                headers=_http_headers(endpoint),
+            ) as client:
                 payload = _fetch_model_payload(client, endpoint, repo_id)
-                raw_revision = payload.get("sha")
-                remote_revision = str(raw_revision).strip() if raw_revision else None
-                error_code = None
-                error_message = None
-                break
-            except Exception as exc:
-                error_code, error_message = _format_download_error(endpoint, exc)
-                continue
+            raw_revision = payload.get("sha")
+            remote_revision = str(raw_revision).strip() if raw_revision else None
+            error_code = None
+            error_message = None
+            break
+        except Exception as exc:
+            error_code, error_message = _format_download_error(endpoint, exc)
+            continue
 
     update_available = False
     status = "up_to_date"

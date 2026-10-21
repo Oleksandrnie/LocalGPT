@@ -214,6 +214,47 @@ class PiperProviderTestCase(unittest.TestCase):
         self.assertFalse(model_path.exists())
         self.assertFalse(Path(f"{model_path}.json").exists())
 
+    def test_delete_voice_rejects_path_traversal_keys(self):
+        temp_root = Path(self.temp_dir.name)
+        model_root = temp_root / "models"
+        outside_root = temp_root / "outside"
+        model_root.mkdir()
+        outside_root.mkdir()
+        config.PIPER_MODELS_DIR = model_root
+        outside_model = write_voice_files(
+            outside_root,
+            "sentinel",
+            {"audio": {"sample_rate": 22050}, "espeak": {"voice": "en_US"}, "num_speakers": 1},
+        )
+        provider = PiperProvider()
+
+        self.assertFalse(provider.delete_voice("../outside/sentinel"))
+        self.assertFalse(provider.delete_voice(r"..\outside\sentinel"))
+        self.assertTrue(outside_model.exists())
+        self.assertTrue(Path(f"{outside_model}.json").exists())
+
+    def test_delete_voice_rejects_symlink_escape(self):
+        temp_root = Path(self.temp_dir.name)
+        model_root = temp_root / "models"
+        outside_root = temp_root / "outside"
+        model_root.mkdir()
+        outside_root.mkdir()
+        config.PIPER_MODELS_DIR = model_root
+        outside_model = write_voice_files(
+            outside_root,
+            "sentinel",
+            {"audio": {"sample_rate": 22050}, "espeak": {"voice": "en_US"}, "num_speakers": 1},
+        )
+        try:
+            (model_root / "linked").symlink_to(outside_root, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
+
+        provider = PiperProvider()
+        self.assertFalse(provider.delete_voice("linked/sentinel"))
+        self.assertTrue(outside_model.exists())
+        self.assertTrue(Path(f"{outside_model}.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
