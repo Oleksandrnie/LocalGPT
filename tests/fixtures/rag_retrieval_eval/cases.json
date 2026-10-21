@@ -1,0 +1,68 @@
+{
+  "schema": "localgpt.rag_retrieval_eval.v1",
+  "top_k": 5,
+  "max_context_chars": 3000,
+  "cases": [
+    {
+      "id": "library_exact",
+      "category": "exact",
+      "query": "How many calendar days may standard collection books be borrowed?",
+      "expected_sources": ["library-loans.md"]
+    },
+    {
+      "id": "warehouse_identifier",
+      "category": "exact_identifier",
+      "query": "What happens to a shipment in zone Q-17?",
+      "expected_sources": ["warehouse-damage.md"]
+    },
+    {
+      "id": "observatory_paraphrase",
+      "category": "paraphrase",
+      "query": "How often is the spectral analyser tuned using a reference gas source?",
+      "expected_sources": ["observatory-calibration.md"]
+    },
+    {
+      "id": "warehouse_paraphrase",
+      "category": "paraphrase",
+      "query": "Where are damaged parcels kept prior to inspection?",
+      "expected_sources": ["warehouse-damage.md"]
+    },
+    {
+      "id": "microgrid_paraphrase_ru",
+      "category": "paraphrase",
+      "query": "При каком уровне основной источник переключается на резервную батарею?",
+      "expected_sources": ["microgrid-storage.md"]
+    },
+    {
+      "id": "greenhouse_typo_ru",
+      "category": "typo",
+      "query": "Как часто нужно поить орхдеи?",
+      "expected_sources": ["greenhouse-irrigation.md"]
+    },
+    {
+      "id": "observatory_typo_en",
+      "category": "typo",
+      "query": "What is the calibraton interval for the spectrometre?",
+      "expected_sources": ["observatory-calibration.md"]
+    },
+    {
+      "id": "museum_conflict",
+      "category": "conflict",
+      "query": "Which humidity rule applied to textile exhibits in 2022 and 2026?",
+      "expected_sources": ["museum-climate-old.md", "museum-climate-current.md"],
+      "expected_status": "conflict"
+    },
+    {
+      "id": "negative_mars",
+      "category": "negative",
+      "query": "What colour spacesuit is required for a Mars landing?",
+      "expect_no_results": true
+    },
+    {
+      "id": "negative_payroll_ru",
+      "category": "negative",
+      "query": "Когда бухгалтерия выплачивает премию сотрудникам?",
+      "expect_no_results": true
+    }
+  ]
+}

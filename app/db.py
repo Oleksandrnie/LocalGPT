@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import config
+from .roles import DEFAULT_PROFILE_PERSONA, DEFAULT_PROFILE_PERSONA_VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("LOCALGPT_DB_PATH", str(PROJECT_ROOT / "db" / "localgpt.db"))).expanduser()
@@ -37,6 +38,7 @@ ATTACHMENT_STATUSES = {
 _MESSAGE_UNSET = object()
 _ATTACHMENT_UNSET = object()
 TRANSCRIPT_NAME_MAX_LEN = 120
+DEFAULT_PROFILE_PERSONA_MIGRATION_KEY = f"migration_default_profile_persona_v{DEFAULT_PROFILE_PERSONA_VERSION}"
 
 
 def _utcnow() -> str:
@@ -166,7 +168,9 @@ def _default_profile_preferences() -> dict[str, Any]:
     preferences = {
         "chat": {
             "dictation_model": whisper_model,
-            "system_prompt": "",
+            "system_prompt": DEFAULT_PROFILE_PERSONA,
+            "persona_origin": f"default_v{DEFAULT_PROFILE_PERSONA_VERSION}",
+            "persona_version": DEFAULT_PROFILE_PERSONA_VERSION,
         },
         "asr": {
             "studio_model": config.ASR_STUDIO_DEFAULT_MODEL,
@@ -192,6 +196,11 @@ def _normalize_profile_preferences(value: Any) -> dict[str, Any]:
     normalized = deepcopy(_default_profile_preferences())
     if isinstance(value, dict):
         _merge_dict(normalized, value)
+    # Legacy zero meant inheriting the text budget; resolve it without rewriting
+    # stored preferences so existing profiles get the dedicated Vision default.
+    settings = normalized.get("settings")
+    if isinstance(settings, dict) and settings.get("vision_output_tokens") in (0, "0"):
+        settings["vision_output_tokens"] = config.DEFAULT_RUNTIME_SETTINGS["vision_output_tokens"]
     return normalized
 
 
@@ -234,6 +243,38 @@ def _migrate_asr_studio_default(conn: sqlite3.Connection) -> None:
             (_to_json(preferences), now, row["id"]),
         )
 
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        (migration_key, "1", now),
+    )
+
+
+def _migrate_default_profile_persona(conn: sqlite3.Connection) -> None:
+    migration_key = DEFAULT_PROFILE_PERSONA_MIGRATION_KEY
+    existing = conn.execute("SELECT value FROM app_settings WHERE key = ?", (migration_key,)).fetchone()
+    if existing:
+        return
+    now = _utcnow()
+    rows = conn.execute("SELECT id, preferences_json FROM profiles").fetchall()
+    for row in rows:
+        preferences = _from_json(row["preferences_json"], {})
+        if not isinstance(preferences, dict):
+            preferences = {}
+        chat = preferences.get("chat")
+        if not isinstance(chat, dict):
+            chat = {}
+            preferences["chat"] = chat
+        current_prompt = str(chat.get("system_prompt") or "")
+        if not current_prompt.strip():
+            chat["system_prompt"] = DEFAULT_PROFILE_PERSONA
+            chat["persona_origin"] = f"default_v{DEFAULT_PROFILE_PERSONA_VERSION}"
+        else:
+            chat.setdefault("persona_origin", "existing_user_prompt")
+        chat["persona_version"] = DEFAULT_PROFILE_PERSONA_VERSION
+        conn.execute(
+            "UPDATE profiles SET preferences_json = ?, updated_at = ? WHERE id = ?",
+            (_to_json(preferences), now, int(row["id"])),
+        )
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
         (migration_key, "1", now),
@@ -638,6 +679,7 @@ def init_db() -> None:
         _migrate_whisper_cpp_dictation_default(conn)
         _migrate_asr_prompt_none_to_auto(conn)
         _migrate_asr_pipeline_summary_default_qwen3(conn)
+        _migrate_default_profile_persona(conn)
         conn.commit()
     ensure_default_profile()
 
@@ -816,6 +858,7 @@ def create_session(
 
 def delete_session(session_id: str) -> None:
     with closing(_connect()) as conn:
+        conn.execute("DELETE FROM source_documents WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
         conn.commit()
 
@@ -1070,6 +1113,35 @@ def get_messages(session_id: str, limit_pairs: int | None = None) -> list[dict[s
     messages = [item for row in rows if (item := _message_row_dict(row))]
     messages.reverse()
     return messages
+
+
+def _completed_conversation_turns(session_id: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Return chronological completed user/assistant turns for one session."""
+    messages = get_messages(session_id)
+    turns: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    pending_user: dict[str, Any] | None = None
+    for message in messages:
+        role = str(message.get("role") or "").strip().lower()
+        status = str(message.get("status") or "completed").strip().lower()
+        if role == "user":
+            pending_user = message if status == "completed" else None
+            continue
+        if role != "assistant":
+            continue
+        if pending_user is not None and status == "completed" and not bool(message.get("is_partial")):
+            turns.append((pending_user, message))
+        pending_user = None
+    return turns
+
+
+def get_prompt_history(session_id: str, *, limit_turns: int) -> list[dict[str, Any]]:
+    """Return the latest completed user/assistant conversation turns for one session."""
+    turn_limit = int(limit_turns or 0)
+    if turn_limit <= 0:
+        return []
+    turns = _completed_conversation_turns(session_id)
+    selected = turns[-turn_limit:]
+    return [message for turn in selected for message in turn]
 
 
 def create_chat_attachment(
@@ -1628,9 +1700,15 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     if overrides.get("output_tokens") is None and legacy_output_override is not None:
         effective["output_tokens"] = legacy_output_override
     effective["output_tokens"] = int(effective.get("output_tokens") or effective.get("max_tokens") or config.SETTINGS.max_tokens)
-    effective["thinking_tokens"] = int(
-        effective.get("thinking_tokens") or config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens") or 2048
-    )
+    try:
+        thinking_tokens = int(
+            effective.get("thinking_tokens")
+            or config.DEFAULT_RUNTIME_SETTINGS.get("thinking_tokens")
+            or config.THINKING_TOKEN_BUDGET_DEFAULT
+        )
+    except (TypeError, ValueError):
+        thinking_tokens = config.THINKING_TOKEN_BUDGET_DEFAULT
+    effective["thinking_tokens"] = min(32768, max(config.THINKING_TOKEN_BUDGET_MIN, thinking_tokens))
     effective["max_tokens"] = effective["output_tokens"]
     if isinstance(overrides.get("pipeline"), dict):
         pipeline = _clone_jsonable(effective.get("pipeline") or {})
@@ -1656,6 +1734,11 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     returned_overrides = {key: overrides.get(key) for key in settings_keys}
     if returned_overrides.get("output_tokens") is None and returned_overrides.get("max_tokens") is not None:
         returned_overrides["output_tokens"] = returned_overrides["max_tokens"]
+    if returned_overrides.get("thinking_tokens") is not None:
+        returned_overrides["thinking_tokens"] = min(
+            32768,
+            max(config.THINKING_TOKEN_BUDGET_MIN, int(returned_overrides["thinking_tokens"])),
+        )
     for key in profile_runtime_keys:
         if key in profile_settings:
             returned_overrides[key] = profile_settings.get(key)
@@ -1675,20 +1758,10 @@ def count_messages(session_id: str) -> int:
 
 
 def get_messages_before_latest(session_id: str, keep_pairs: int) -> list[dict[str, Any]]:
-    keep_count = max(0, int(keep_pairs or 0) * 2)
-    query = """
-        SELECT id, session_id, role, content, status, model, created_at, updated_at, error,
-               generation_started_at, generation_finished_at, is_partial, task_id
-        FROM chat_messages
-        WHERE session_id = ?
-        ORDER BY created_at ASC, id ASC
-    """
-    with closing(_connect()) as conn:
-        rows = conn.execute(query, (session_id,)).fetchall()
-    messages = [item for row in rows if (item := _message_row_dict(row))]
-    if keep_count <= 0:
-        return messages
-    return messages[:-keep_count]
+    keep_turns = max(0, int(keep_pairs or 0))
+    turns = _completed_conversation_turns(session_id)
+    selected = turns if keep_turns == 0 else turns[:-keep_turns]
+    return [message for turn in selected for message in turn]
 
 
 def create_session_summary(
@@ -2016,7 +2089,128 @@ def create_document_embedding(
         return int(cur.lastrowid)
 
 
-def list_rag_chunks(profile_id: int, embedding_model: str | None = None) -> list[dict[str, Any]]:
+def list_document_chunks(profile_id: int) -> list[dict[str, Any]]:
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT id AS chunk_id, document_id, profile_id, session_id, chunk_index, content, metadata_json
+            FROM document_chunks
+            WHERE profile_id = ?
+            ORDER BY id ASC
+            """,
+            (profile_id,),
+        ).fetchall()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item = _row_dict(row) or {}
+        item["metadata"] = _from_json(item.pop("metadata_json", None), {})
+        result.append(item)
+    return result
+
+
+def replace_embedding_generation(
+    profile_id: int,
+    embedding_model: str,
+    rows: list[dict[str, Any]],
+) -> int:
+    now = _utcnow()
+    with closing(_connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current_chunk_ids = {
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM document_chunks WHERE profile_id = ?",
+                (profile_id,),
+            ).fetchall()
+        }
+        replacement_chunk_ids = [int(row["chunk_id"]) for row in rows]
+        if (
+            len(replacement_chunk_ids) != len(set(replacement_chunk_ids))
+            or set(replacement_chunk_ids) != current_chunk_ids
+        ):
+            raise ValueError("rag_embedding_source_changed")
+        conn.execute(
+            "DELETE FROM document_embeddings WHERE profile_id = ? AND embedding_model = ?",
+            (profile_id, embedding_model),
+        )
+        conn.executemany(
+            """
+            INSERT INTO document_embeddings (
+                chunk_id, profile_id, embedding_model, embedding_json,
+                metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    int(row["chunk_id"]),
+                    profile_id,
+                    embedding_model,
+                    _to_json(row["embedding"]),
+                    _to_json(row.get("metadata")),
+                    now,
+                    now,
+                )
+                for row in rows
+            ],
+        )
+        conn.commit()
+    return len(rows)
+
+
+def rag_embedding_generation_stats(profile_id: int, embedding_model: str) -> dict[str, int]:
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(DISTINCT c.id) AS total_chunks,
+                COUNT(DISTINCT e.chunk_id) AS indexed_chunks
+            FROM document_chunks c
+            LEFT JOIN document_embeddings e
+              ON e.chunk_id = c.id
+             AND e.profile_id = c.profile_id
+             AND e.embedding_model = ?
+            WHERE c.profile_id = ?
+            """,
+            (embedding_model, profile_id),
+        ).fetchone()
+    total = int(row["total_chunks"] or 0) if row else 0
+    indexed = int(row["indexed_chunks"] or 0) if row else 0
+    return {
+        "total_chunks": total,
+        "indexed_chunks": indexed,
+        "missing_chunks": max(0, total - indexed),
+    }
+
+
+def list_embedding_generations(profile_id: int) -> list[dict[str, Any]]:
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT embedding_model, COUNT(DISTINCT chunk_id) AS indexed_chunks, MAX(updated_at) AS updated_at
+            FROM document_embeddings
+            WHERE profile_id = ?
+            GROUP BY embedding_model
+            ORDER BY updated_at DESC, embedding_model ASC
+            """,
+            (profile_id,),
+        ).fetchall()
+    return [
+        {
+            "embedding_model": str(row["embedding_model"] or ""),
+            "indexed_chunks": int(row["indexed_chunks"] or 0),
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+
+
+def list_rag_chunks(
+    profile_id: int,
+    embedding_model: str | None = None,
+    *,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
     query = """
         SELECT
             c.id AS chunk_id,
@@ -2037,8 +2231,24 @@ def list_rag_chunks(profile_id: int, embedding_model: str | None = None) -> list
         JOIN source_documents d ON d.id = c.document_id
         JOIN document_embeddings e ON e.chunk_id = c.id
         WHERE c.profile_id = ?
+          AND (
+            (
+              d.source_type NOT IN ('asr_context', 'vision_context', 'chat_context')
+              AND d.session_id IS NULL
+              AND c.session_id IS NULL
+            )
     """
     params: list[Any] = [profile_id]
+    if session_id:
+        query += """
+            OR (
+              d.source_type IN ('asr_context', 'vision_context', 'chat_context')
+              AND d.session_id = ?
+              AND c.session_id = ?
+            )
+        """
+        params.extend([session_id, session_id])
+    query += ")"
     if embedding_model:
         query += " AND e.embedding_model = ?"
         params.append(embedding_model)

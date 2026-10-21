@@ -82,9 +82,24 @@ class BundleManifest:
             except ValueError as exc:
                 raise BundleValidationError("bundle_invalid", "Invalid SHA-256.") from exc
             parsed_files.append(BundleFile(path, size, digest))
+        referenced: set[str] = set()
         for model in models:
             if not isinstance(model, dict) or model.get("family") not in FAMILIES or not str(model.get("id") or ""):
                 raise BundleValidationError("bundle_invalid", "Invalid model entry.")
+            family = str(model["family"])
+            model_id = str(model.get("model_id") or "").strip()
+            model_files = model.get("files")
+            if not model_id or not isinstance(model_files, list) or not model_files:
+                raise BundleValidationError("bundle_invalid", "Model metadata is incomplete.")
+            family_prefix = f"payload/{family}/"
+            for raw_path in model_files:
+                path = validate_bundle_path(raw_path)
+                folded = path.casefold()
+                if not path.startswith(family_prefix) or folded not in seen:
+                    raise BundleValidationError("bundle_invalid", "Model references an invalid payload file.")
+                referenced.add(folded)
+        if referenced != seen:
+            raise BundleValidationError("bundle_invalid", "Bundle contains unreferenced payload files.")
         return cls(bundle_id, created_at, tuple(models), tuple(parsed_files))
 
 

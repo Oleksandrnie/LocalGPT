@@ -233,8 +233,8 @@ def transcribe(
             ) from exc
         if msg == "empty_transcription":
             raise HTTPException(
-                status_code=502,
-                detail={"code": "empty_transcription", "message": "Whisper вернул пустую транскрипцию."},
+                status_code=422,
+                detail={"code": "empty_transcription", "message": "Речь в аудиофайле не обнаружена."},
             ) from exc
         raise
     finally:

@@ -29,6 +29,22 @@ MODEL_PULL_LOCK = threading.Lock()
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 PULL_LOG_TAIL_LIMIT = 80
 OLLAMA_API_PULL_TIMEOUT_SECONDS = 15
+OLLAMA_API_SHOW_TIMEOUT_SECONDS = 5
+THINKING_VALUE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+OLLAMA_MODEL_REF_RE = re.compile(
+    r"(?:[A-Za-z0-9][A-Za-z0-9._-]*(?::[0-9]+)?/)*"
+    r"[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9_][A-Za-z0-9._-]*)?"
+)
+
+
+def validate_pull_model_ref(model: str) -> str:
+    """Accept registry references only, never commands or CLI options."""
+    if not isinstance(model, str) or len(model) > 200 or not OLLAMA_MODEL_REF_RE.fullmatch(model):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_ollama_model_ref", "message": "Укажите корректное имя модели Ollama (до 200 символов), без команд, пробелов и shell-синтаксиса."},
+        )
+    return model
 
 
 def _size_gb(size: Any) -> float | None:
@@ -288,6 +304,38 @@ def _partial_models_by_name(partials: list[dict[str, Any]]) -> dict[str, dict[st
     return result
 
 
+def _public_storage_summary(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not value:
+        return None
+    return {
+        "model": value.get("model"),
+        "storage_present": bool(value.get("storage_present")),
+        "storage_size": value.get("storage_size"),
+        "storage_size_gb": value.get("storage_size_gb"),
+        "stores_count": len(value.get("stores") or []),
+    }
+
+
+def _public_partial_summary(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not value:
+        return None
+    return {
+        "model": value.get("model"),
+        "count": int(value.get("count") or 0),
+        "size": int(value.get("size") or 0),
+        "size_gb": value.get("size_gb"),
+    }
+
+
+def _public_partial_blob(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "size": value.get("size"),
+        "size_gb": value.get("size_gb"),
+        "modified_at": value.get("modified_at"),
+        "model_candidates": list(value.get("model_candidates") or []),
+    }
+
+
 def _normalize_capabilities(value: Any) -> list[str]:
     if isinstance(value, str):
         raw_items = re.split(r"[\s,]+", value)
@@ -303,6 +351,29 @@ def _normalize_capabilities(value: Any) -> list[str]:
         if normalized and normalized not in result:
             result.append(normalized)
     return result
+
+
+def _normalize_thinking(value: Any) -> dict[str, Any] | None:
+    """Keep only a bounded provider-declared control; absent is not unsupported."""
+    if not isinstance(value, dict):
+        return None
+    raw_values = value.get("values")
+    if not isinstance(raw_values, list) or not 1 <= len(raw_values) <= 32:
+        return None
+
+    def valid(item: Any) -> bool:
+        return isinstance(item, bool) or (isinstance(item, str) and bool(THINKING_VALUE_RE.fullmatch(item)))
+
+    if not all(valid(item) for item in raw_values):
+        return None
+    values: list[bool | str] = []
+    for item in raw_values:
+        if item not in values:
+            values.append(item)
+    default = value.get("default")
+    if not valid(default) or default not in values:
+        default = None
+    return {"values": values, "default": default}
 
 
 def _show_json_details(payload: dict[str, Any]) -> dict[str, Any]:
@@ -341,6 +412,9 @@ def _show_json_details(payload: dict[str, Any]) -> dict[str, Any]:
     if capabilities:
         details["capabilities"] = capabilities
         details["capabilities_confirmed"] = True
+    thinking = _normalize_thinking(payload.get("thinking"))
+    if thinking is not None:
+        details["thinking"] = thinking
     return details
 
 
@@ -383,6 +457,20 @@ def _show_model_details(model_name: str) -> dict[str, Any]:
     target = str(model_name or "").strip()
     if not target:
         return {}
+    try:
+        request = Request(
+            f"{_native_ollama_base_url()}/api/show",
+            data=json.dumps({"model": target}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=OLLAMA_API_SHOW_TIMEOUT_SECONDS) as response:
+            payload = json.load(response)
+        if isinstance(payload, dict) and not payload.get("error"):
+            return _show_json_details(payload)
+    except (OSError, ValueError):
+        # Older/unreachable native endpoints retain the existing CLI discovery.
+        pass
     command = ["ollama", "show", target, "--json"]
     try:
         result = subprocess.run(
@@ -533,6 +621,7 @@ def _public_pull_status(data: dict[str, Any]) -> dict[str, Any]:
     copy = dict(data)
     copy.pop("_last_completed", None)
     copy.pop("_last_ts", None)
+    copy.pop("output_tail", None)
     return copy
 
 
@@ -636,6 +725,11 @@ def _list_local_models() -> list[dict[str, Any]]:
         runtime_details = _show_model_details(name)
         if runtime_details:
             details = {**details, **runtime_details}
+        # Only /show declares this control; never publish unvalidated list data.
+        details.pop("thinking", None)
+        thinking = _normalize_thinking(runtime_details.get("thinking"))
+        if thinking is not None:
+            details["thinking"] = thinking
         capabilities = _normalize_capabilities(details.get("capabilities"))
         models.append(
             {
@@ -651,6 +745,7 @@ def _list_local_models() -> list[dict[str, Any]]:
                 "details": details,
                 "capabilities": capabilities,
                 "capabilities_confirmed": bool(details.get("capabilities_confirmed") and capabilities),
+                "thinking": thinking,
             }
         )
     return models
@@ -842,6 +937,7 @@ def _run_model_pull(task_id: str, model: str) -> None:
 
 
 def start_model_pull(model: str) -> dict[str, Any]:
+    validate_pull_model_ref(model)
     task_id = uuid.uuid4().hex
     entry = {
         "task_id": task_id,
@@ -924,7 +1020,7 @@ def pause_model_pull(task_id: str) -> dict[str, Any]:
         process.send_signal(signal.SIGSTOP)
         _update_pull(task_id, state="paused", message="Пауза", finished_at=None)
     except Exception as exc:  # pragma: no cover - сигналы зависят от ОС
-        raise HTTPException(status_code=500, detail=f"Не удалось поставить на паузу: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Не удалось поставить загрузку модели на паузу.") from exc
     return _public_pull_status(MODEL_PULLS[task_id])
 
 
@@ -940,7 +1036,7 @@ def resume_model_pull(task_id: str) -> dict[str, Any]:
         process.send_signal(signal.SIGCONT)
         _update_pull(task_id, state="running", message="Возобновлено", finished_at=None)
     except Exception as exc:  # pragma: no cover - сигналы зависят от ОС
-        raise HTTPException(status_code=500, detail=f"Не удалось возобновить: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Не удалось возобновить загрузку модели.") from exc
     return _public_pull_status(MODEL_PULLS[task_id])
 
 
@@ -998,7 +1094,7 @@ def list_models() -> dict[str, Any]:
         item["status"] = item["state"]
         item["status_label"] = _status_label(item["state"])
         if storage_by_model.get(name):
-            item["storage"] = storage_by_model[name]
+            item["storage"] = _public_storage_summary(storage_by_model[name])
 
     def _catalog_item(item: dict[str, Any]) -> dict[str, Any]:
         model_id = str(item.get("id") or "").strip()
@@ -1049,9 +1145,10 @@ def list_models() -> dict[str, Any]:
                 and installed_info.get("capabilities_confirmed")
                 and runtime_capabilities
             ),
+            "thinking": _normalize_thinking((installed_info or {}).get("thinking")),
             "download": download_info,
-            "partial_info": partial_info,
-            "storage": storage_info,
+            "partial_info": _public_partial_summary(partial_info),
+            "storage": _public_storage_summary(storage_info),
         }
 
     catalog = [_catalog_item(item) for item in config.MODEL_CATALOG]
@@ -1066,21 +1163,21 @@ def list_models() -> dict[str, Any]:
         "utility": utility,
         "recommended": catalog,
         "downloads": downloads,
-        "partial_blobs": partial_blobs,
-        "storage_models": list(storage_by_model.values()),
+        "partial_blobs": [_public_partial_blob(item) for item in partial_blobs],
+        "storage_models": [
+            summary
+            for item in storage_by_model.values()
+            if (summary := _public_storage_summary(item)) is not None
+        ],
         "diagnostics": {
-            "runtime_installed_models": sorted(installed_names),
-            "active_models": sorted(active_names),
-            "configured_models": sorted(configured_ids),
-            "configured_ollama_models_dir": str(config.MODEL_PATHS.ollama),
-            "ollama_host": config.OLLAMA_ENV.get("OLLAMA_HOST"),
-            "base_url": config.SETTINGS.base_url,
-            "scanned_ollama_store_dirs": [str(path) for path in _ollama_store_dirs()],
+            "runtime_installed_count": len(installed_names),
+            "active_count": len(active_names),
+            "configured_count": len(configured_ids),
             "partial_blob_count": len(partial_blobs),
             "storage_model_count": len(storage_by_model),
-            "active_error": active_error,
+            "runtime_available": not bool(active_error),
         },
-        "error": error,
+        "error": "model_runtime_unavailable" if error else None,
     }
 
 

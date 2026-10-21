@@ -27,6 +27,8 @@ FastAPI отдаёт статические assets из `web_ui/`.
 
 State частично хранится в profile preferences/backend, частично — в `localStorage` для чисто UI-настроек.
 
+`ADMIN_TOKEN` не относится к обычному UI state: privileged action запрашивает его интерактивно, передаёт через `X-LocalGPT-Admin-Token` и хранит только в `sessionStorage`. Не переносите token в `localStorage`, URL или persisted profile preferences.
+
 ## Component conventions
 
 ### Buttons
@@ -53,24 +55,35 @@ Assistant card рендерится из persisted `message.status`. Optimistic 
 
 Каждое непустое user и assistant message имеет действие `Скопировать`: общий clipboard path получает raw `message.content` выбранной карточки без Markdown-нормализации и показывает существующее подтверждение результата. User `Добавить в RAG` остаётся независимым действием.
 
+RAG panel показывает безопасное состояние configured embedding generation: готовность, необходимость обычного ingest, необходимость semantic reindex, ошибку конфигурации или активную/failed operation. Переиндексация доступна только для `reindex_required`, требует отдельного подтверждения с названием модели и количеством chunks и блокирует конкурирующие source actions. Прогресс восстанавливается при повторном открытии/refresh, пока process-local task существует; после backend restart UI пересчитывает состояние через `/rag/status`, не показывает raw backend error и не запускает операцию автоматически.
+
 Image composer принимает PNG/JPEG/WebP через picker, paste и multi-file drop. До отправки карточка показывает thumbnail, upload/error state и отдельную keyboard-accessible кнопку удаления. Обычная text paste не перехватывается, а backend settings остаются источником истины для count/byte/pixel/side limits. История загружает attachment metadata отдельно и рендерит ownership-checked thumbnail/media URLs, не binary data URI.
 
 ### Model state
 
 Если chat-модель отсутствует, composer остаётся доступным для ввода, но отправка блокируется с понятным сообщением. Загрузка модели требует явного подтверждения.
 
+В Settings → Chat / LLM `Thinking tokens` имеет default 4096, minimum 2048 и ручной диапазон до 32768; меньшие старые per-model overrides отображаются как минимум без изменения SQLite до сохранения. `Output tokens` остаётся независимым budget финального ответа.
+
+Внизу Settings → Chat / LLM находится Ollama installer: достаточно указать модель или вставить команду `ollama pull <model>`; `ollama run` добавлять не нужно. Если в двухстрочном блоке есть точная matching `ollama run <model>`, она распознаётся, но игнорируется и не запускается. Другие команды, аргументы, shell chaining/substitution и лишние строки отклоняются до запроса к backend. Pull progress, состояние и остановка показываются рядом с installer; после завершения списка моделей перечитывается, и установленная chat-модель вне встроенного каталога тоже появляется в выборе. Модель не выбирается и не запускается автоматически — её нужно выбрать отдельно. Подтверждённые embedding-only модели не попадают в chat-выбор; это не интерфейс установки Vision/ASR/TTS/embedding runtime.
+
+`Библиотека загрузки LLM` группирует модели по состоянию: установленные в Ollama и доступные для установки. Каждая модель показана компактной строкой с кратким статусом и одной основной кнопкой выбора/загрузки; обновление, удаление и сведения находятся в отдельном раскрываемом меню действий.
+
 Settings tab `Vision` не смешан с обычной chat library. Он показывает cards `qwen2.5vl:3b`, `qwen2.5vl:7b`, `gemma3:4b`, отдельно declared и runtime-confirmed capabilities, а также явные download/update/delete/primary actions. В этом tab находятся:
 
 - enable image chat и primary model/auto;
 - text-model fallback (`vision_context` или error);
 - Vision context size в токенах (4096–131072, default 8192);
+- Vision output tokens (128–8192, default/reset 1024); UI рекомендует не снижать лимит ниже 1024 из-за риска обрыва текста/таблицы, но сохраняет явно выбранные меньшие значения. Старое `0` отображается и сохраняется как 1024, без наследования обычного text budget; для больших таблиц может понадобиться больше;
 - OCR assist/language;
 - max images, file/total bytes, pixels и side;
 - attachment cache statistics и cleanup.
 
 После завершённого анализа действие Vision → RAG открывает dialog с редактируемым title/text. Export выполняется только после подтверждения пользователя и не переносит image binary.
 
-Settings → Chat / LLM показывает отдельные `Output tokens` и `Thinking tokens`. Быстрый Thinking ON/OFF видим для thinking-capable модели (для Auto — по profile preference) и сохраняет оба budget override без сброса.
+Settings → Chat / LLM показывает отдельные `Output tokens`, `Thinking tokens` и динамический `Thinking — режим / уровень`. Последний строится только по фактическому Ollama metadata выбранной установленной модели: named levels показываются без переименования, boolean-only модели сохраняют ON/OFF, `Auto` использует Ollama default, а отсутствующая/явно unsupported metadata не порождает выдуманный control. Кастомные installed Ollama-модели используют ту же схему. Desktop/mobile header menu синхронизируется с Settings; в quick model picker named-level модели открывают общий selector, а boolean-only модели сохраняют switch. Сохранение thinking choice не сбрасывает output/thinking budget overrides. Для Auto-router остаётся отдельная profile preference. Выбор reasoning effort не меняет видимость trace: её можно просматривать отдельно у ответа через `>_`.
+
+Там же `История чата, пар сообщений` задаёт profile default 6 в диапазоне 0–100. Один turn — завершённая пара `user + assistant` только текущего chat; `0` отключает short history. Setting сохраняется в profile preferences и применяется ко всем chat-моделям, но не смешивает sessions.
 
 ## Themes
 
@@ -79,6 +92,8 @@ Dark/light theme переключается topbar control и сохраняет
 ## Responsive strategy
 
 CSS содержит отдельные ranges для узких телефонов, 391–430, 431–480, tablet/mobile до 768, landscape-height и более широких layout transitions. Не добавляйте breakpoint только под один screenshot; сначала используйте общие mobile constraints.
+
+В mobile/short-landscape media range session open/delete и message `Добавить в RAG`/`Скопировать` имеют минимум 44 px по высоте; круглые session actions также 44×44 px.
 
 Проверять:
 
@@ -119,6 +134,7 @@ Settings → System содержит компактные соседние де�
 ## Regression considerations
 
 - SSE `delta` дедуплицируется по sequence; pagehide/close переходит к polling fallback.
+- task status/events/cancel URL всегда несёт active `profile_id` и `session_id`; 429 на SSE connection limit должен перейти в существующий polling/error recovery без reconnect storm.
 - Scroll-to-latest не должен ломать auto-scroll пользователя, который читает историю.
 - RAG indicator отражает active profile.
 - Network address button: 0 адресов disabled, 1 копируется, 2+ открывают menu.

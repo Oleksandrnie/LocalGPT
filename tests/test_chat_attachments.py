@@ -147,6 +147,25 @@ class ChatAttachmentApiTestCase(unittest.TestCase):
         self.assertEqual(deletion.status_code, 403)
         self.assertIsNotNone(db.get_chat_attachment(item["id"]))
 
+    def test_session_bound_media_requires_matching_session(self) -> None:
+        first = db.create_session(self.profile_id, "First images", "qwen2.5:7b-instruct")
+        second = db.create_session(self.profile_id, "Second images", "qwen2.5:7b-instruct")
+        item = self._upload(session_id=first["id"]).json()
+
+        missing_scope = self.client.get(
+            f"/chat/attachments/{item['id']}",
+            params={"profile_id": self.profile_id},
+        )
+        foreign_session = self.client.get(
+            f"/chat/attachments/{item['id']}",
+            params={"profile_id": self.profile_id, "session_id": second["id"]},
+        )
+        owned = self.client.get(item["media_url"])
+
+        self.assertEqual(missing_scope.status_code, 404)
+        self.assertEqual(foreign_session.status_code, 404)
+        self.assertEqual(owned.status_code, 200)
+
     def test_delete_removes_database_record_and_files(self) -> None:
         item = self._upload().json()
         record = db.get_chat_attachment(item["id"])
@@ -167,7 +186,7 @@ class ChatAttachmentApiTestCase(unittest.TestCase):
         record = db.get_chat_attachment(item["id"])
         image_path = attachment_storage.resolve_storage_path(record["storage_path"])
 
-        result = profile_routes.delete_chat_session(session["id"])
+        result = profile_routes.delete_chat_session(session["id"], self.profile_id)
 
         self.assertEqual(result["deleted"], session["id"])
         self.assertIsNone(db.get_chat_attachment(item["id"]))

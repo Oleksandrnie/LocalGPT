@@ -26,9 +26,10 @@ def _cleanup_temp_file(file_path: str) -> None:
 
 
 def _raise_service_error(exc: tts_service.TTSServiceError) -> None:
+    message = exc.message if exc.status_code < 500 else "Операция TTS не выполнена."
     raise HTTPException(
         status_code=exc.status_code,
-        detail={"code": exc.code, "message": exc.message},
+        detail={"code": exc.code, "message": message},
     ) from exc
 
 

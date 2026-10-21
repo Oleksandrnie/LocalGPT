@@ -58,10 +58,7 @@
                                 <button class="thinking-mode-control__button" id="quickThinkingButton" type="button"
                                     aria-label="Режим thinking текущей LLM" aria-haspopup="menu"
                                     aria-expanded="false">Thinking</button>
-                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden>
-                                    <button type="button" role="menuitemradio" data-thinking-mode="on">Включено</button>
-                                    <button type="button" role="menuitemradio" data-thinking-mode="off">Выключено</button>
-                                </div>
+                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden></div>
                             </div>
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
@@ -121,10 +118,7 @@
                             </svg>
                         </button>
                         <div class="thinking-mode-menu thinking-mode-menu--mobile" id="quickThinkingMobileMenu"
-                            role="menu" hidden>
-                            <button type="button" role="menuitemradio" data-thinking-mode="on">Включено</button>
-                            <button type="button" role="menuitemradio" data-thinking-mode="off">Выключено</button>
-                        </div>
+                            role="menu" hidden></div>
                     </div>
                     <button class="button button--ghost topbar-icon-button rag-status-button" id="openRagButton"
                         type="button" aria-pressed="false" aria-label="Открыть RAG, выключен"
@@ -641,16 +635,6 @@
                         <select id="llmModelSelect" class="field__control"></select>
                     </label>
 
-                    <label class="field">
-                        <span class="field__label">Скачать или обновить модель Ollama</span>
-                        <div class="inline-field">
-                            <input id="downloadModelInput" class="field__control" type="text"
-                                placeholder="Например: qwen2.5:7b-instruct" />
-                            <button class="button button--primary" id="downloadModelButton"
-                                type="button">Запустить</button>
-                        </div>
-                    </label>
-
                     <div class="button-row">
                         <button class="button button--ghost" id="refreshModelsButton" type="button">Обновить
                             список</button>
@@ -686,9 +670,10 @@
                         </label>
 
                         <label class="field">
-                            <span class="field__label">Память диалога (профиль)</span>
-                            <input id="memTurnsInput" class="field__control" type="number" min="1" step="1"
-                                placeholder="6" />
+                            <span class="field__label">История чата, пар сообщений</span>
+                            <input id="memTurnsInput" class="field__control" type="number" min="0" max="100"
+                                step="1" placeholder="6" />
+                            <span class="field__description">Только текущий чат. Одна пара — сообщение пользователя и завершённый ответ ассистента; 0 отключает историю.</span>
                         </label>
 
                         <label class="field">
@@ -697,10 +682,17 @@
                                 placeholder="512" />
                         </label>
 
+                        <label class="field" id="ollamaThinkField" hidden>
+                            <span class="field__label">Thinking — режим / уровень</span>
+                            <select id="ollamaThinkSelect" class="field__control" aria-describedby="ollamaThinkDescription"></select>
+                            <span class="field__description" id="ollamaThinkDescription">Режим рассуждения модели, не видимость trace. Auto использует значение Ollama по умолчанию. Trace открывается отдельно через &gt;_ у ответа.</span>
+                        </label>
+
                         <label class="field">
                             <span class="field__label">Thinking tokens</span>
-                            <input id="thinkingTokensInput" class="field__control" type="number" min="1" max="32768"
-                                step="1" placeholder="2048" />
+                            <input id="thinkingTokensInput" class="field__control" type="number" min="2048" max="32768"
+                                step="1" placeholder="4096" />
+                            <span class="field__description">По умолчанию 4096, минимум 2048. Output tokens — отдельный лимит финального ответа.</span>
                         </label>
 
                         <label class="field">
@@ -843,6 +835,22 @@
                     </div>
 
                     <p class="inline-status" id="modelSettingsStatus"></p>
+                    <section class="ollama-installer" aria-labelledby="ollamaInstallerTitle">
+                        <p class="eyebrow">Установка · Только Ollama LLM</p>
+                        <h4 id="ollamaInstallerTitle">Добавить чат-модель</h4>
+                        <label class="field" for="downloadModelInput">
+                            <span class="field__label">Имя модели или команда установки Ollama</span>
+                            <textarea id="downloadModelInput" class="field__control" rows="3" maxlength="1024"
+                                spellcheck="false" aria-describedby="ollamaInstallerHelp ollamaInstallerStatus"
+                                placeholder="ollama pull model:tag"></textarea>
+                        </label>
+                        <p class="subtle" id="ollamaInstallerHelp">Укажите имя модели или команду ollama pull &lt;модель&gt;. Команду ollama run добавлять не нужно; если она есть во вставленном блоке, установщик её проигнорирует. После загрузки совместимая chat-модель появится в общем списке — выберите её вручную. Другие команды и shell-скрипты не поддерживаются.</p>
+                        <div class="button-row">
+                            <button class="button button--primary" id="downloadModelButton" type="button">Скачать модель</button>
+                        </div>
+                        <p class="inline-status" id="ollamaInstallerStatus" role="status"></p>
+                        <div class="ollama-installer__downloads" id="ollamaInstallerDownloads" aria-label="Загрузки Ollama"></div>
+                    </section>
                 </section>
 
                 <section class="settings-group settings-group--vision" data-settings-tab-panel="vision">
@@ -891,6 +899,12 @@
                             <input id="visionNumCtxInput" class="field__control" type="number"
                                 min="4096" max="131072" step="1024" />
                             <small>Рекомендуется 8192. Больший context уменьшает риск ошибки, но требует больше памяти.</small>
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Vision output tokens</span>
+                            <input id="visionOutputTokensInput" class="field__control" type="number"
+                                min="128" max="8192" step="128" />
+                            <small>По умолчанию и рекомендуется — 1024. Ниже ставить не рекомендуется: текст или таблица могут обрезаться. Для больших таблиц может понадобиться больше; обычные текстовые ответы это не меняет.</small>
                         </label>
                         <label class="field">
                             <span class="field__label">OCR assist</span>
@@ -1139,6 +1153,7 @@
                         </div>
                     </div>
                     <p class="subtle">Создайте один файл <code>.localgpt-models</code> и перенесите его на другой компьютер любым способом.</p>
+                    <p class="subtle">Bundle переносит веса и provider-данные, но не платформенные runtime и исполняемые файлы. На новом устройстве Ollama, whisper.cpp/faster-whisper и Piper подготавливаются локально.</p>
                     <div class="button-row">
                         <button class="button button--primary" id="exportModelsButton" type="button">Экспорт моделей</button>
                         <button class="button button--ghost" id="importModelsButton" type="button">Импорт моделей</button>
@@ -1328,6 +1343,16 @@
                         <code id="ragSourceDirValue">rag_sources</code>
                     </div>
 
+                    <div class="rag-generation-card" id="ragEmbeddingCard" data-state="unknown" role="status"
+                        aria-live="polite">
+                        <div class="rag-generation-card__header">
+                            <span class="info-card__label">Семантический индекс</span>
+                            <strong id="ragEmbeddingState">Статус загружается…</strong>
+                        </div>
+                        <p class="subtle" id="ragEmbeddingDetails">Параметры generation появятся после выбора профиля.</p>
+                        <progress id="ragReindexProgress" max="100" value="0" hidden></progress>
+                    </div>
+
                     <label class="field field--checkbox">
                         <input id="ragEnabledToggle" type="checkbox" />
                         <span>Подмешивать RAG-контекст в чат для активного профиля</span>
@@ -1336,7 +1361,9 @@
                     <div class="button-row">
                         <button class="button button--primary" id="ragAddFilesButton" type="button">Добавить
                             файлы</button>
-                        <button class="button button--primary" id="ragIngestButton" type="button">Индексировать</button>
+                        <button class="button button--primary" id="ragIngestButton" type="button">Индексировать
+                            файлы</button>
+                        <button class="button button--ghost" id="ragReindexButton" type="button">Переиндексировать</button>
                         <button class="button button--ghost" id="ragRefreshButton" type="button">Обновить
                             список</button>
                     </div>
@@ -1344,6 +1371,7 @@
                         accept=".md,text/markdown" multiple hidden />
 
                     <p class="inline-status" id="ragStatusText">Добавляйте Markdown-файлы и индексируйте их для активного профиля.</p>
+                    <p class="subtle">Переиндексация запускается только вручную и может временно загрузить локальную embedding-модель.</p>
                     <div class="rag-file-list" id="ragFileList"></div>
                 </section>
             </div>

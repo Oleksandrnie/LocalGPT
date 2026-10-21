@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import time
+import wave
+from array import array
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +29,16 @@ DEFAULT_VAD_ARGS = (
     "0.3",
     "--vad-min-speech-duration-ms",
     "100",
+)
+SILENCE_PEAK_ABS_MAX = 16
+SILENCE_RMS_MAX = 4.0
+NO_SPEECH_ARTIFACT_RE = re.compile(
+    r"^(?:"
+    r"(?:субтитр\w*|перевод)\s+(?:созда\w*|сдела\w*|подготови\w*|редактировал\w*|автор\w*)"
+    r"|(?:автор|редактор)\w*\s+субтитр\w*"
+    r"|(?:subtitles?|captions?|translation)\s+(?:by|created by|made by|edited by)"
+    r")\b[^\n]{0,120}$",
+    re.IGNORECASE,
 )
 
 
@@ -241,6 +255,40 @@ def _prepare_audio(input_path: Path, temp_dir: Path) -> tuple[Path, dict[str, An
     return input_path, info
 
 
+def _wav_signal_metrics(path: Path) -> dict[str, Any] | None:
+    """Return conservative PCM signal metrics, or None for unsupported WAV data."""
+    try:
+        with wave.open(str(path), "rb") as wav_file:
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            frame_rate = wav_file.getframerate()
+            frame_count = wav_file.getnframes()
+            if channels != 1 or sample_width != 2 or frame_rate <= 0:
+                return None
+            samples = array("h", wav_file.readframes(frame_count))
+    except (OSError, EOFError, wave.Error):
+        return None
+
+    if not samples:
+        return {"duration_ms": 0, "sample_count": 0, "peak_abs": 0, "rms": 0.0, "silent": True}
+    if samples.itemsize == 2 and os.sys.byteorder == "big":
+        samples.byteswap()
+    peak_abs = max(abs(value) for value in samples)
+    rms = math.sqrt(sum(value * value for value in samples) / len(samples))
+    return {
+        "duration_ms": int(frame_count * 1000 / frame_rate),
+        "sample_count": len(samples),
+        "peak_abs": peak_abs,
+        "rms": round(rms, 3),
+        "silent": peak_abs <= SILENCE_PEAK_ABS_MAX and rms <= SILENCE_RMS_MAX,
+    }
+
+
+def _is_no_speech_artifact(text: str) -> bool:
+    normalized = " ".join(str(text or "").strip().split()).strip(" .,!?:;—–-\"'()[]")
+    return bool(normalized and NO_SPEECH_ARTIFACT_RE.fullmatch(normalized))
+
+
 def _offset_to_seconds(value: Any) -> float:
     try:
         return max(0.0, float(value) / 1000.0)
@@ -326,6 +374,25 @@ def transcribe_with_whisper_cpp(
         temp_dir = Path(temp_name)
         output_prefix = temp_dir / "transcript"
         input_path, audio_info = _prepare_audio(audio_path, temp_dir)
+        signal_metrics = _wav_signal_metrics(input_path)
+        if signal_metrics is not None:
+            audio_info["signal"] = signal_metrics
+        if signal_metrics and signal_metrics["silent"]:
+            runtime = {
+                "backend": "whisper_cpp",
+                "model": model_name,
+                "source_audio_path": str(audio_path),
+                "input_audio_path": str(input_path),
+                "audio": audio_info,
+                "language": language or "auto",
+                "no_speech": True,
+                "no_speech_reason": "silent_pcm",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "segments_count": 0,
+                "text_chars": 0,
+            }
+            _log_transcription_event({"event": "whisper_cpp_no_speech", "runtime": runtime})
+            return {"text": "", "segments": [], "language": None, "runtime": runtime}
         resolved_threads = int(threads if threads is not None else config.SETTINGS.whisper_cpp_threads)
         command = [
             _binary_path(),
@@ -406,6 +473,11 @@ def transcribe_with_whisper_cpp(
 
     segments = _dedupe_repeated_segments(_segments_from_payload(payload))
     text = "\n".join(segment["text"] for segment in segments).strip()
+    if _is_no_speech_artifact(text):
+        segments = []
+        text = ""
+        runtime["no_speech"] = True
+        runtime["no_speech_reason"] = "subtitle_credit_artifact"
     runtime["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
     runtime["returncode"] = completed.returncode
     runtime["detected_language"] = _language_from_payload(payload)

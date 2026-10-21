@@ -26,7 +26,7 @@ venv/bin/python run_localgpt.py --host 127.0.0.1 --port 8000
 
 Launcher выбирает следующий свободный порт, если requested port занят. `--strict-port` вместо этого прекращает запуск. `--port-file` записывает фактически выбранный порт.
 
-Health endpoint возвращает access URL, LAN URL и основные runtime/model paths:
+Health endpoint возвращает минимальные runtime metadata и доступные private access URLs без filesystem paths:
 
 ```bash
 curl http://127.0.0.1:8000/health
@@ -41,12 +41,16 @@ curl http://127.0.0.1:8000/health
 - запускает backend на localhost;
 - генерирует runtime Caddyfile во временном каталоге;
 - создаёт internal TLS listener на LAN IP и optional `.local` host;
+- явно bind-ит listener только к найденному private IP и не создаёт отдельный HTTP redirect listener на `:80`;
 - reverse-proxy-ит на фактический backend port;
+- перезапускает Caddy при изменении generated config, LAN IP или фактического backend port, чтобы не сохранить stale upstream;
 - хранит PID/log/port files в temporary runtime directory.
 
 `Caddyfile.lan` в репозитории — localhost fallback/example; launcher создаёт актуальный config динамически.
 
 Если Caddy не установлен или private LAN IP не обнаружен, launcher явно сообщает об этом и открывает только localhost UI. Явные аргументы macOS launchers сохраняют direct local launch для диагностики.
+
+Для автоматизированной диагностики можно задать `LOCALGPT_NO_BROWSER=1`: launcher выполнит тот же startup flow и напечатает URL, но не откроет вкладку браузера.
 
 Первое устройство может потребовать доверия к Caddy local CA. Не публикуйте generated certificate/private key.
 

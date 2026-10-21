@@ -12,8 +12,15 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from app import config, db
-from backend.apps.chat.service import ChatService, maybe_compress_session_history, sanitize_reply
-from backend.apps.chat.services import ollama_runtime, vision_context, vision_runtime
+from backend.apps.chat.service import (
+    ChatService,
+    assess_rag_answer,
+    enforce_protected_output,
+    guard_stream_events,
+    maybe_compress_session_history,
+    sanitize_reply,
+)
+from backend.apps.chat.services import continuation, ollama_runtime, vision_context, vision_runtime
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -21,8 +28,73 @@ TASKS_DIR.mkdir(parents=True, exist_ok=True)
 _PROCESS_CTX = mp.get_context("spawn")
 _LOCK = threading.Lock()
 _TASKS: dict[str, dict[str, Any]] = {}
+_STARTING_BY_PROFILE: dict[int, int] = {}
 _FINAL_STATES = {"completed", "failed", "error", "cancelled"}
 _ACTIVE_VISION_STATES = {"preparing", "analyzing", "loading_model", "generating", "streaming"}
+CHAT_TASK_MAX_ACTIVE_PER_PROFILE = max(1, int(os.getenv("CHAT_TASK_MAX_ACTIVE_PER_PROFILE", "2")))
+CHAT_TASK_MAX_ACTIVE_TOTAL = max(CHAT_TASK_MAX_ACTIVE_PER_PROFILE, int(os.getenv("CHAT_TASK_MAX_ACTIVE_TOTAL", "4")))
+CHAT_TASK_TIMEOUT_SECONDS = max(30, int(os.getenv("CHAT_TASK_TIMEOUT_SECONDS", "300")))
+
+
+class ChatTaskCapacityError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _vision_runtime_kwargs(
+    service: ChatService,
+    vision_model: str,
+    response_model: str,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    vision_settings = dict(settings)
+    default_output_tokens = config.DEFAULT_RUNTIME_SETTINGS["vision_output_tokens"]
+    try:
+        vision_output_tokens = int(vision_settings.get("vision_output_tokens") or default_output_tokens)
+    except (TypeError, ValueError):
+        vision_output_tokens = default_output_tokens
+    vision_settings["output_tokens"] = vision_output_tokens or default_output_tokens
+    runtime_kwargs = service._runtime_kwargs(vision_model, vision_settings, vision=True)
+    if vision_model != response_model:
+        # The profile toggle belongs to the selected response model. Passing it
+        # to a separate vision model can make Ollama reject a valid request.
+        runtime_kwargs.pop("think", None)
+        # A two-model image route is sequential on local hardware: release the
+        # analyzer before Ollama loads the response model.
+        runtime_kwargs["keep_alive"] = "0"
+    return runtime_kwargs
+
+
+def _reserve_starting_slot(profile_id: int | None) -> int:
+    profile_key = int(profile_id or 0)
+    with _LOCK:
+        active_tasks = [task for task in _TASKS.values() if task.get("state") not in _FINAL_STATES]
+        active_for_profile = sum(1 for task in active_tasks if int(task.get("profile_id") or 0) == profile_key)
+        starting_for_profile = int(_STARTING_BY_PROFILE.get(profile_key) or 0)
+        starting_total = sum(_STARTING_BY_PROFILE.values())
+        if active_for_profile + starting_for_profile >= CHAT_TASK_MAX_ACTIVE_PER_PROFILE:
+            raise ChatTaskCapacityError(
+                "chat_profile_concurrency_exceeded",
+                "The active profile has reached its chat task limit.",
+            )
+        if len(active_tasks) + starting_total >= CHAT_TASK_MAX_ACTIVE_TOTAL:
+            raise ChatTaskCapacityError(
+                "chat_runtime_concurrency_exceeded",
+                "The LocalGPT runtime has reached its chat task limit.",
+            )
+        _STARTING_BY_PROFILE[profile_key] = starting_for_profile + 1
+    return profile_key
+
+
+def _release_starting_slot(profile_key: int) -> None:
+    with _LOCK:
+        remaining = max(0, int(_STARTING_BY_PROFILE.get(profile_key) or 1) - 1)
+        if remaining:
+            _STARTING_BY_PROFILE[profile_key] = remaining
+        else:
+            _STARTING_BY_PROFILE.pop(profile_key, None)
 
 
 def _utc_now() -> str:
@@ -105,7 +177,6 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "task_id": task.get("id"),
         "message": task.get("message"),
         "error_code": task.get("error_code"),
-        "pid": task.get("pid"),
         "used_settings": task.get("used_settings"),
         "router_notice": task.get("router_notice"),
         "result": result,
@@ -154,11 +225,14 @@ def _chat_worker(
     error_path: str,
     attachment_descriptors: list[dict[str, Any]] | None = None,
     vision_route: dict[str, Any] | None = None,
+    rag_evidence_manifest: list[dict[str, Any]] | None = None,
+    rag_diagnostics: dict[str, Any] | None = None,
 ) -> None:
     attachment_descriptors = list(attachment_descriptors or [])
     attachment_ids = [str(item.get("id") or "") for item in attachment_descriptors if item.get("id")]
     image_paths = [str(item.get("path") or "") for item in attachment_descriptors if item.get("path")]
     derived_vision_context: str | None = None
+    image_rag_included = False
     ocr_evidence: vision_context.OcrEvidence | None = None
     reasoning = ""
     done_reason: str | None = None
@@ -211,44 +285,42 @@ def _chat_worker(
                     completion_model = "__ocr_only__"
                     completion_messages = []
             elif runtime_mode == "vision_context":
-                _set_worker_status(
-                    status_path,
-                    attachment_ids,
-                    "analyzing",
-                    "Analyzing images locally.",
-                )
-                analysis_messages = [
-                    *completion_messages,
-                    {
-                        "role": "system",
-                        "content": (
-                            "Сначала извлеки из изображений точный визуальный контекст для другого ассистента: "
-                            "объекты, читаемый текст, числа, расположение и неопределённости. "
-                            "Не отвечай на исходный вопрос и не выдумывай невидимые детали."
-                        ),
-                    },
-                ]
-                derived_vision_context = sanitize_reply(
-                    vision_runtime.chat_completion(
-                        vision_model,
-                        analysis_messages,
-                        image_paths,
-                        max_total_bytes=max_total_bytes,
-                        **service._runtime_kwargs(vision_model, settings, vision=True),
+                image_rag_included = vision_context.explicitly_requests_image_rag(messages)
+                if not image_rag_included:
+                    # A multimodal instruction model can execute the current image
+                    # request itself. Avoid a lossy second pass through a text-only
+                    # model unless the user explicitly asks to combine image and RAG.
+                    runtime_mode = "direct_vision"
+                    completion_model = vision_model
+                    completion_messages = vision_context.direct_image_response_messages(completion_messages)
+                else:
+                    _set_worker_status(
+                        status_path,
+                        attachment_ids,
+                        "analyzing",
+                        "Analyzing images locally.",
                     )
-                )
-                completion_model = response_model
-                completion_messages = [
-                    *messages,
-                    {
-                        "role": "user",
-                        "content": (
-                            "Локальная vision-модель извлекла из приложенных изображений следующий контекст. "
-                            "Используй его как данные, явно отмечай неопределённости и ответь на исходный запрос.\n\n"
-                            f"{derived_vision_context}"
+                    analysis_messages = vision_context.isolated_analysis_messages(completion_messages)
+                    vision_runtime_kwargs = _vision_runtime_kwargs(service, vision_model, response_model, settings)
+                    vision_analysis_result = continuation.complete(
+                        analysis_messages,
+                        lambda pass_messages: vision_runtime.chat_completion_result(
+                            vision_model, pass_messages, image_paths,
+                            max_total_bytes=max_total_bytes, **vision_runtime_kwargs,
                         ),
-                    },
-                ]
+                    )
+                    enforce_protected_output(analysis_messages, vision_analysis_result.content)
+                    enforce_protected_output(analysis_messages, vision_analysis_result.reasoning)
+                    service.require_final_answer(vision_analysis_result)
+                    derived_vision_context = sanitize_reply(vision_analysis_result.content)
+                    completion_model = response_model
+                    completion_messages = vision_context.build_image_response_messages(
+                        completion_messages,
+                        derived_vision_context,
+                        vision_model=vision_model,
+                        attachment_count=len(attachment_descriptors),
+                        include_rag=True,
+                    )
             else:
                 completion_model = vision_model
             _set_worker_status(
@@ -265,77 +337,82 @@ def _chat_worker(
             reasoning_sequence = 0
             streaming_started = False
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
-                delta_source = vision_runtime.chat_completion_stream(
-                    completion_model,
+                direct_vision_kwargs = (
+                    _vision_runtime_kwargs(service, completion_model, response_model, settings)
+                    if runtime_mode in {"direct", "direct_vision"}
+                    else service._runtime_kwargs(completion_model, settings, vision=True)
+                )
+                event_source = guard_stream_events(
                     completion_messages,
-                    image_paths,
-                    max_total_bytes=int(
-                        settings.get("chat_image_max_total_bytes")
-                        or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                    continuation.stream(
+                        completion_messages,
+                        lambda pass_messages: vision_runtime.chat_completion_stream_events(
+                            completion_model, pass_messages, image_paths,
+                            max_total_bytes=int(
+                                settings.get("chat_image_max_total_bytes")
+                                or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
+                            ),
+                            **direct_vision_kwargs,
+                        ),
                     ),
-                    **service._runtime_kwargs(completion_model, settings, vision=True),
                 )
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
-                delta_source = iter([ocr_evidence.text if ocr_evidence else ""])
+                event_source = iter(
+                    [ollama_runtime.ChatStreamEvent(content=ocr_evidence.text if ocr_evidence else "")]
+                )
             else:
                 event_source = service.chat_completion_stream_events(
                     completion_model,
                     completion_messages,
                     settings=settings,
                 )
-                for event in event_source:
-                    if event.reasoning:
-                        reasoning_chunks.append(event.reasoning)
-                        reasoning = "".join(reasoning_chunks)
-                        if assistant_message_id:
-                            db.update_message(assistant_message_id, reasoning=reasoning)
-                        reasoning_sequence += 1
-                        _append_reasoning_jsonl(reasoning_path, reasoning_sequence, event.reasoning)
-                    if event.done:
-                        done_reason = event.done_reason
-                        eval_count = event.eval_count
-                    delta = event.content
-                    if not delta:
-                        continue
-                    if not streaming_started:
-                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
-                        _set_attachment_status(attachment_ids, "generating")
-                        streaming_started = True
-                    sequence += 1
-                    chunks.append(delta)
-                    _append_delta_jsonl(delta_path, sequence, delta)
+            for event in event_source:
+                if event.reasoning:
+                    reasoning_chunks.append(event.reasoning)
+                    reasoning = "".join(reasoning_chunks)
                     if assistant_message_id:
-                        db.append_message_content(assistant_message_id, delta, status="streaming")
-                delta_source = None
-            if delta_source is not None:
-                for delta in delta_source:
-                    if not delta:
-                        continue
-                    if not streaming_started:
-                        _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
-                        _set_attachment_status(attachment_ids, "generating")
-                        streaming_started = True
-                    sequence += 1
-                    chunks.append(delta)
-                    _append_delta_jsonl(delta_path, sequence, delta)
-                    if assistant_message_id:
-                        db.append_message_content(assistant_message_id, delta, status="streaming")
+                        db.update_message(assistant_message_id, reasoning=reasoning)
+                    reasoning_sequence += 1
+                    _append_reasoning_jsonl(reasoning_path, reasoning_sequence, event.reasoning)
+                if event.done:
+                    done_reason = event.done_reason
+                    eval_count = event.eval_count
+                delta = event.content
+                if not delta:
+                    continue
+                if not streaming_started:
+                    _atomic_write_json(status_path, {"state": "streaming", "message": "Chat generation streaming."})
+                    _set_attachment_status(attachment_ids, "generating")
+                    streaming_started = True
+                sequence += 1
+                chunks.append(delta)
+                _append_delta_jsonl(delta_path, sequence, delta)
+                if assistant_message_id:
+                    db.append_message_content(assistant_message_id, delta, status="streaming")
             reasoning = "".join(reasoning_chunks)
             reply = sanitize_reply("".join(chunks))
         else:
             if attachment_descriptors and runtime_mode not in {"vision_context", "ocr_only"}:
-                reply = sanitize_reply(
-                    vision_runtime.chat_completion(
-                        completion_model,
-                        completion_messages,
-                        image_paths,
+                direct_vision_kwargs = (
+                    _vision_runtime_kwargs(service, completion_model, response_model, settings)
+                    if runtime_mode in {"direct", "direct_vision"}
+                    else service._runtime_kwargs(completion_model, settings, vision=True)
+                )
+                completion_result = continuation.complete(
+                    completion_messages,
+                    lambda pass_messages: vision_runtime.chat_completion_result(
+                        completion_model, pass_messages, image_paths,
                         max_total_bytes=int(
                             settings.get("chat_image_max_total_bytes")
                             or config.DEFAULT_RUNTIME_SETTINGS["chat_image_max_total_bytes"]
                         ),
-                        **service._runtime_kwargs(completion_model, settings, vision=True),
-                    )
+                        **direct_vision_kwargs,
+                    ),
                 )
+                reply = sanitize_reply(completion_result.content)
+                reasoning = completion_result.reasoning
+                done_reason = completion_result.done_reason
+                eval_count = completion_result.eval_count
             elif runtime_mode == "ocr_only" and completion_model == "__ocr_only__":
                 reply = ocr_evidence.text if ocr_evidence else ""
             else:
@@ -348,6 +425,8 @@ def _chat_worker(
                 reasoning = completion_result.reasoning
                 done_reason = completion_result.done_reason
                 eval_count = completion_result.eval_count
+        enforce_protected_output(completion_messages, reply)
+        enforce_protected_output(completion_messages, reasoning)
         service.require_final_answer(
             ollama_runtime.ChatCompletionResult(
                 content=reply,
@@ -356,7 +435,12 @@ def _chat_worker(
                 eval_count=eval_count,
             )
         )
-        result_payload: dict[str, Any] = {"reply": reply}
+        result_payload: dict[str, Any] = {"reply": reply, "model": completion_model}
+        result_payload["rag_answer_diagnostics"] = assess_rag_answer(
+            reply,
+            rag_evidence_manifest,
+            rag_diagnostics,
+        )
         if reasoning:
             result_payload["reasoning"] = reasoning
         if done_reason:
@@ -367,6 +451,8 @@ def _chat_worker(
             result_payload["vision_context"] = derived_vision_context
         if ocr_evidence:
             result_payload["ocr_evidence"] = ocr_evidence.to_dict()
+        if attachment_descriptors:
+            result_payload["image_rag_included"] = image_rag_included
         _atomic_write_json(result_path, result_payload)
         _set_attachment_status(attachment_ids, "completed")
         if session_id:
@@ -394,20 +480,29 @@ def _chat_worker(
     except Exception as exc:  # pragma: no cover - runtime path
         detail = getattr(exc, "detail", None)
         if isinstance(detail, dict):
-            message = detail.get("message") or detail.get("detail") or str(detail)
             error_code = str(detail.get("code") or getattr(exc, "code", None) or "chat_generation_failed")
         else:
-            message = getattr(exc, "message", None) or detail or str(exc) or "chat_generation_failed"
             error_code = str(getattr(exc, "code", None) or "chat_generation_failed")
+        message = "Local model generation failed."
+        safe_messages = {
+            "Thinking budget exhausted before the model produced a final answer.",
+            "The model response reached its token limit before completion.",
+            "The model completed without a final answer.",
+        }
+        detail_message = str(detail.get("message") or "") if isinstance(detail, dict) else ""
+        if error_code == "chat_final_answer_incomplete" and detail_message in safe_messages:
+            message = detail_message
         if assistant_message_id:
             try:
-                db.update_message(
-                    assistant_message_id,
-                    status="failed",
-                    model=model_name,
-                    error=str(message),
-                    is_partial=False,
-                )
+                update_fields: dict[str, Any] = {
+                    "status": "failed",
+                    "model": model_name,
+                    "error": str(message),
+                    "is_partial": False,
+                }
+                if error_code == "chat_final_answer_incomplete":
+                    update_fields.update({"content": "", "reasoning": ""})
+                db.update_message(assistant_message_id, **update_fields)
             except Exception:
                 pass
         _set_attachment_status(attachment_ids, "failed", error=str(message))
@@ -418,6 +513,11 @@ def _cleanup_task_files(task: dict[str, Any]) -> None:
     _safe_unlink(task.get("result_path"))
     _safe_unlink(task.get("error_path"))
     _safe_unlink(task.get("status_path"))
+
+
+def _cleanup_failed_stream_artifacts(task: dict[str, Any]) -> None:
+    _safe_unlink(task.get("delta_path"))
+    _safe_unlink(task.get("reasoning_path"))
 
 
 def _finalize_task_locked(task: dict[str, Any]) -> None:
@@ -440,6 +540,7 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
         task["message"] = "Chat generation completed."
         task["error_code"] = None
         task["result"] = result
+        task["completed_model"] = str(result.get("model") or task.get("model_name") or "")
         _update_assistant_from_task(
             task,
             status="completed",
@@ -469,6 +570,8 @@ def _finalize_task_locked(task: dict[str, Any]) -> None:
     task.pop("_process", None)
     task.pop("_monitor", None)
     _cleanup_task_files(task)
+    if task.get("state") != "completed":
+        _cleanup_failed_stream_artifacts(task)
 
 
 def _update_assistant_from_task(
@@ -485,7 +588,7 @@ def _update_assistant_from_task(
     try:
         updates: dict[str, Any] = {
             "status": status,
-            "model": task.get("model_name"),
+            "model": task.get("completed_model") or task.get("model_name"),
             "error": error,
             "is_partial": status in db.MESSAGE_ACTIVE_STATUSES,
         }
@@ -521,7 +624,35 @@ def _monitor_task(task_id: str) -> None:
             process = task.get("_process")
 
     if process is not None:
-        process.join()
+        process.join(timeout=CHAT_TASK_TIMEOUT_SECONDS)
+        if process.is_alive():
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            process.join(timeout=1.5)
+            if process.is_alive():
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                process.join(timeout=1.0)
+            with _LOCK:
+                task = _TASKS.get(task_id)
+                if task and task.get("state") not in _FINAL_STATES:
+                    task["state"] = "failed"
+                    task["message"] = "Chat generation exceeded the runtime timeout."
+                    task["error_code"] = "chat_task_timeout"
+                    task["result"] = None
+                    task["updated_at"] = _utc_now()
+                    task["pid"] = None
+                    _update_assistant_from_task(task, status="failed", error=task["message"])
+                    _set_attachment_status(list(task.get("attachment_ids") or []), "failed", error=task["message"])
+                    task.pop("_process", None)
+                    task.pop("_monitor", None)
+                    _cleanup_task_files(task)
+                    _cleanup_failed_stream_artifacts(task)
+            return
 
     with _LOCK:
         task = _TASKS.get(task_id)
@@ -665,6 +796,8 @@ def start_chat_task(
     stream: bool = False,
     attachment_descriptors: list[dict[str, Any]] | None = None,
     vision_route: dict[str, Any] | None = None,
+    rag_evidence_manifest: list[dict[str, Any]] | None = None,
+    rag_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = _generate_id()
     now = _utc_now()
@@ -694,31 +827,34 @@ def start_chat_task(
             error=None,
         )
 
-    process = _PROCESS_CTX.Process(
-        target=_chat_worker,
-        args=(
-            model_name,
-            messages,
-            used_settings,
-            session_id,
-            profile_id,
-            assistant_message_id,
-            bool(stream),
-            str(delta_path),
-            str(reasoning_path),
-            str(status_path),
-            str(result_path),
-            str(error_path),
-            descriptors,
-            vision_route,
-        ),
-        daemon=True,
-        name=f"localgpt_chat_{task_id}",
-    )
-
+    profile_key = _reserve_starting_slot(profile_id)
     try:
+        process = _PROCESS_CTX.Process(
+            target=_chat_worker,
+            args=(
+                model_name,
+                messages,
+                used_settings,
+                session_id,
+                profile_id,
+                assistant_message_id,
+                bool(stream),
+                str(delta_path),
+                str(reasoning_path),
+                str(status_path),
+                str(result_path),
+                str(error_path),
+                descriptors,
+                vision_route,
+                list(rag_evidence_manifest or []),
+                dict(rag_diagnostics or {}),
+            ),
+            daemon=True,
+            name=f"localgpt_chat_{task_id}",
+        )
         process.start()
     except Exception:
+        _release_starting_slot(profile_key)
         _safe_unlink(result_path)
         _safe_unlink(error_path)
         _safe_unlink(delta_path)
@@ -769,6 +905,7 @@ def start_chat_task(
 
     with _LOCK:
         _TASKS[task_id] = task
+    _release_starting_slot(profile_key)
 
     monitor.start()
     return _public_task(task)

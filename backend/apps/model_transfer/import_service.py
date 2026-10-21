@@ -13,6 +13,18 @@ from .manifest import BundleManifest, BundleValidationError, sha256_file
 _UPLOADS: dict[str, Path] = {}
 _LOCK = threading.Lock()
 
+_RUNTIME_REQUIREMENTS = {
+    "ollama": ("ollama_runtime",),
+    "faster-whisper": ("faster_whisper_runtime",),
+    "whisper-cpp": ("whisper_cpp_cli", "whisper_cpp_vad"),
+    "piper": ("piper_runtime",),
+}
+
+
+def _runtime_requirements(models: tuple[dict, ...]) -> list[str]:
+    families = {str(model.get("family") or "") for model in models}
+    return sorted({requirement for family in families for requirement in _RUNTIME_REQUIREMENTS.get(family, ())})
+
 
 def upload_storage_dir() -> Path:
     return config.DATA_DIR / "model_transfer" / "uploads"
@@ -79,6 +91,7 @@ def inspect_archive(path: Path) -> dict:
                 "models": list(manifest.models),
                 "file_count": len(manifest.files),
                 "total_size": sum(item.size for item in manifest.files),
+                "runtime_requirements": _runtime_requirements(manifest.models),
             }
     except zipfile.BadZipFile as exc:
         raise BundleValidationError("bundle_invalid", "File is not a valid model bundle.") from exc

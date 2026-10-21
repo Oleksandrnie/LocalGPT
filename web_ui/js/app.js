@@ -1,4 +1,7 @@
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
+import { parseOllamaInstallInput } from "./ollama_install.mjs";
+import { buildSelectableChatModels } from "./chat_model_catalog.mjs";
+import { thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels } from "./model_thinking.mjs";
 
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 const ASR_STUDIO_DEFAULT_MODEL = "large-v3-turbo";
@@ -45,6 +48,8 @@ const STORAGE_KEYS = {
   ttsLibraryOpen: "localgpt_simple_tts_library_open",
   settingsTab: "localgpt_simple_settings_tab",
 };
+const ADMIN_TOKEN_SESSION_KEY = "localgpt_admin_token";
+const ADMIN_TOKEN_HEADER = "X-LocalGPT-Admin-Token";
 
 const MESSAGE_STATUSES = new Set(["generating", "streaming", "completed", "failed", "cancelled"]);
 const MESSAGE_FINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
@@ -160,7 +165,6 @@ const RESIDENCY_DEFAULTS = {
   heavy_model_keep_alive: "60s",
   router_keep_alive: "2m",
 };
-const THINKING_MODEL_PATTERNS = [/^qwen3\b/i, /^deepseek-r1\b/i, /^gpt-oss\b/i, /^deepseek-v3\.1\b/i];
 const TTS_TOOL_MIN_WIDTH = 960;
 const TTS_TOOL_MIN_HEIGHT = 720;
 const MOBILE_LAYOUT_QUERY = "(max-width: 768px), (max-width: 960px) and (max-height: 480px)";
@@ -338,9 +342,12 @@ const els = {
   ragAddFilesButton: document.getElementById("ragAddFilesButton"),
   ragFileInput: document.getElementById("ragFileInput"),
   ragIngestButton: document.getElementById("ragIngestButton"),
-  ragForceIngestButton: document.getElementById("ragForceIngestButton"),
+  ragReindexButton: document.getElementById("ragReindexButton"),
   ragRefreshButton: document.getElementById("ragRefreshButton"),
-  ragCopyPathButton: document.getElementById("ragCopyPathButton"),
+  ragEmbeddingCard: document.getElementById("ragEmbeddingCard"),
+  ragEmbeddingState: document.getElementById("ragEmbeddingState"),
+  ragEmbeddingDetails: document.getElementById("ragEmbeddingDetails"),
+  ragReindexProgress: document.getElementById("ragReindexProgress"),
   ragStatusText: document.getElementById("ragStatusText"),
   ragFileList: document.getElementById("ragFileList"),
   confirmBackdrop: document.getElementById("confirmBackdrop"),
@@ -370,6 +377,8 @@ const els = {
   deleteModelButton: document.getElementById("deleteModelButton"),
   downloadModelInput: document.getElementById("downloadModelInput"),
   downloadModelButton: document.getElementById("downloadModelButton"),
+  ollamaInstallerStatus: document.getElementById("ollamaInstallerStatus"),
+  ollamaInstallerDownloads: document.getElementById("ollamaInstallerDownloads"),
   recommendedModels: document.getElementById("recommendedModels"),
   chatLibraryToggle: document.getElementById("chatLibraryToggle"),
   chatLibraryMeta: document.getElementById("chatLibraryMeta"),
@@ -382,6 +391,7 @@ const els = {
   visionModelSelect: document.getElementById("visionModelSelect"),
   visionFallbackSelect: document.getElementById("visionFallbackSelect"),
   visionNumCtxInput: document.getElementById("visionNumCtxInput"),
+  visionOutputTokensInput: document.getElementById("visionOutputTokensInput"),
   visionOcrAssistSelect: document.getElementById("visionOcrAssistSelect"),
   visionOcrLanguageInput: document.getElementById("visionOcrLanguageInput"),
   visionMaxImagesInput: document.getElementById("visionMaxImagesInput"),
@@ -416,6 +426,8 @@ const els = {
   temperatureInput: document.getElementById("temperatureInput"),
   maxTokensInput: document.getElementById("maxTokensInput"),
   thinkingTokensInput: document.getElementById("thinkingTokensInput"),
+  ollamaThinkField: document.getElementById("ollamaThinkField"),
+  ollamaThinkSelect: document.getElementById("ollamaThinkSelect"),
   numCtxInput: document.getElementById("numCtxInput"),
   streamingEnabledToggle: document.getElementById("streamingEnabledToggle"),
   memTurnsInput: document.getElementById("memTurnsInput"),
@@ -608,6 +620,7 @@ const state = {
   ttsHistoryCollapsed: readStored(STORAGE_KEYS.ttsHistoryCollapsed, "1") === "1",
   ragStatus: null,
   ragBusy: false,
+  ragReindexPolling: false,
   pluginsState: {
     plugins: [],
     invalid_plugins: [],
@@ -718,22 +731,28 @@ function getUtilityModels() {
     .filter((item) => getModelId(item));
 }
 
+function getSelectableChatModels() {
+  return buildSelectableChatModels(
+    getCatalogModels(),
+    [...getUtilityModels(), ...(Array.isArray(state.visionModels) ? state.visionModels : [])],
+    state.installedModels,
+  );
+}
+
 function getCatalogItemById(modelName) {
   const target = String(modelName || "").trim();
   return [...getCatalogModels(), ...getUtilityModels()].find((item) => getModelId(item) === target) || null;
 }
 
-function modelSupportsThinking(modelName) {
+function getModelThinkingMetadata(modelName) {
   const target = String(modelName || "").trim();
-  if (!target) return false;
-  if (target === AUTO_MODEL_ID) return true;
-  const item = getCatalogItemById(target);
-  const category = String(item?.category || "").toLowerCase();
-  const description = String(item?.description || "").toLowerCase();
-  if (category.includes("thinking") || description.includes("thinking") || description.includes("reasoning")) {
-    return true;
-  }
-  return THINKING_MODEL_PATTERNS.some((pattern) => pattern.test(target));
+  if (target === AUTO_MODEL_ID) return { values: [true, false], default: null };
+  const installed = (state.installedModels || []).find((item) => getModelId(item) === target);
+  return thinkingMetadata(installed || getCatalogItemById(target));
+}
+
+function modelSupportsThinking(modelName) {
+  return Boolean(getModelThinkingMetadata(modelName));
 }
 
 function shouldShowThinkingToggleForModel(modelName) {
@@ -786,21 +805,6 @@ function getModelActionLabel(item, installedByName = null) {
   return "Скачать / докачать";
 }
 
-function getModelRuntimeNote(item, task = null, installedByName = null) {
-  if (task?.message) return task.message;
-  if (item?.active) return "Модель загружена в память Ollama и готова отвечать.";
-  if (isRuntimeModelInstalled(item, installedByName)) {
-    return item?.partial_blob_found
-      ? "Модель зарегистрирована в project-scoped Ollama runtime; отдельно найден partial blob в одном из storage."
-      : "Модель зарегистрирована в текущем Ollama runtime.";
-  }
-  if (item?.partial) return "Найден partial blob: загрузку нужно продолжить, пока модель не появится в ollama list.";
-  if (item?.storage?.storage_present) {
-    return "Файлы модели найдены в model storage, но текущий Ollama runtime не видит её через ollama list.";
-  }
-  return getModelDescription(item) || "Модель есть в каталоге, но отсутствует в текущем Ollama runtime.";
-}
-
 function getModelTooltip(item, { short = false } = {}) {
   const id = getModelId(item);
   const title = getModelTitle(item);
@@ -819,45 +823,9 @@ function getModelTooltip(item, { short = false } = {}) {
   ].filter(Boolean).join("\n");
 }
 
-function getModelBadges(item) {
-  const category = String(item?.category || "");
-  const weight = String(item?.weight || "");
-  const badges = [];
-  if (item?.recommended) {
-    badges.push({ label: "recommended", tone: "recommended" });
-  }
-  if (item?.experimental) {
-    badges.push({ label: "experimental", tone: "experimental" });
-  }
-  if (item?.utility) {
-    badges.push({ label: "utility", tone: "utility" });
-  }
-  if (weight === "heavy") {
-    badges.push({ label: "heavy", tone: "heavy" });
-  }
-  if (category.includes("router")) {
-    badges.push({ label: "router", tone: "router" });
-  }
-  if (category.includes("code")) {
-    badges.push({ label: "code", tone: "code" });
-  }
-  return badges;
-}
-
-function renderModelBadges(item) {
-  return getModelBadges(item)
-    .map((badge) => `<span class="status-badge status-badge--${escapeHtml(badge.tone)}">${escapeHtml(badge.label)}</span>`)
-    .join("");
-}
-
 function renderModelInfoIcon(item, className = "model-info-button") {
   const tooltip = getModelTooltip(item);
   return `<span class="${escapeHtml(className)}" role="img" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</span>`;
-}
-
-function renderModelInfoButton(item) {
-  const tooltip = getModelTooltip(item);
-  return `<button class="model-info-button" type="button" aria-label="${escapeHtml(tooltip)}" data-tooltip="${escapeHtml(tooltip)}" data-model-help>?</button>`;
 }
 
 let tooltipTimer = null;
@@ -1105,12 +1073,10 @@ function getFilteredTtsVoiceCatalog() {
 
 function renderLibraryPanels() {
   const installedChatNames = new Set(state.installedModels.map((item) => item.name));
-  const chatCatalog = getCatalogModels();
+  const chatCatalog = getSelectableChatModels();
   const utilityCatalog = getUtilityModels();
   const chatInstalled = [...utilityCatalog, ...chatCatalog].filter((item) => installedChatNames.has(getModelId(item))).length;
   const chatTotal = utilityCatalog.length + chatCatalog.length;
-  const ollamaHost = state.modelDiagnostics?.ollama_host || state.modelDiagnostics?.base_url || "";
-  const chatRuntimeLabel = ollamaHost ? ` • ${ollamaHost}` : "";
   const asrInstalled = state.asrModels.filter((item) => isWhisperItemReady(item)).length;
   const asrTotal = state.asrModels.length || WHISPER_MODELS.length;
   const filteredTts = getFilteredTtsVoiceCatalog();
@@ -1124,7 +1090,7 @@ function renderLibraryPanels() {
       toggle: els.chatLibraryToggle,
       panel: els.chatLibraryPanel,
       meta: els.chatLibraryMeta,
-      metaText: `${chatInstalled} runtime • ${chatTotal} вариантов${chatRuntimeLabel}`,
+      metaText: `${chatInstalled} runtime • ${chatTotal} вариантов`,
     },
     {
       kind: "asr",
@@ -1506,10 +1472,7 @@ function initAppSelects() {
 
 function getChatModelItems() {
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const catalog = getCatalogModels();
-  const source = catalog.length
-    ? catalog
-    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const source = getSelectableChatModels();
   const autoItem = {
     id: AUTO_MODEL_ID,
     name: AUTO_MODEL_ID,
@@ -1666,6 +1629,7 @@ function toggleQuickThinkingMenu(forceState, source = "desktop") {
   closeQuickThinkingMenu();
   target.menu.hidden = !nextState;
   target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
+  if (nextState) target.menu.querySelector("[aria-checked='true']")?.focus();
 }
 
 function renderQuickModelPicker() {
@@ -1695,15 +1659,17 @@ function renderQuickModelPicker() {
     els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
   }
 
-  const thinkingValue = normalizeOllamaThink(
+  const thinkingValue = thinkingSelection(
     els.quickThinkingControl?.dataset.thinkingMode ?? state.modelSettingsState?.effective?.ollama_think,
-    "auto",
+    getModelThinkingMetadata(selectedName),
   );
-  const thinkingOn = thinkingValue !== "off";
   const menuHtml = items.map((item) => {
     const active = item.name === selectedName;
     const thinkingSupported = shouldShowThinkingToggleForModel(item.name);
-    const itemThinkingOn = active ? thinkingOn : false;
+    const metadata = getModelThinkingMetadata(item.name);
+    const namedLevels = hasNamedThinkingLevels(metadata);
+    const itemThinkingOn = active && thinkingValue !== "off" && (thinkingValue !== "auto" || metadata?.default !== false);
+    const itemThinkingValue = active ? thinkingValue : "auto";
     return `
       <div class="quick-model-picker__item-shell${active ? " quick-model-picker__item-shell--active" : ""}">
         <button
@@ -1715,9 +1681,11 @@ function renderQuickModelPicker() {
         >
           <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
         </button>
-        ${thinkingSupported ? `
-          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking">
-            <input type="checkbox" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
+        ${thinkingSupported && (namedLevels || !metadata.values.includes(false) || !metadata.values.includes(true)) ? `
+          <button type="button" role="menuitem" class="button button--ghost quick-model-picker__thinking-level" data-quick-thinking-open="${escapeHtml(item.name)}" aria-haspopup="menu" aria-label="Thinking — уровень для ${escapeHtml(item.name)}: ${escapeHtml(itemThinkingValue)}">${escapeHtml(itemThinkingValue)}</button>
+        ` : thinkingSupported ? `
+          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking — режим рассуждения">
+            <input type="checkbox" aria-label="Thinking для ${escapeHtml(item.name)}" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
             <span class="apple-switch__track" aria-hidden="true"></span>
           </label>
         ` : ""}
@@ -2300,10 +2268,22 @@ function updateAssistantMessageFromTask(task, updates = {}) {
   }
 }
 
-async function waitForChatTask(taskId, { timeoutMs = 300000 } = {}) {
+function chatTaskScopedUrl(taskId, suffix = "", task = null) {
+  const profileId = task?.profile_id ?? state.activeProfileId;
+  const sessionId = task?.session_id || task?.conversation_id || state.currentSessionId;
+  const params = new URLSearchParams({
+    profile_id: String(profileId ?? ""),
+    session_id: String(sessionId || ""),
+  });
+  return `/chat/tasks/${encodeURIComponent(taskId)}${suffix}?${params.toString()}`;
+}
+
+async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
+  const taskId = typeof taskOrId === "object" ? (taskOrId?.id || taskOrId?.task_id || "") : taskOrId;
+  const taskScope = typeof taskOrId === "object" ? taskOrId : null;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const task = await request(`/chat/tasks/${encodeURIComponent(taskId)}`);
+    const task = await request(chatTaskScopedUrl(taskId, "", taskScope));
     const taskState = String(task?.state || "");
     if (taskState === "completed" || taskState === "cancelled") {
       return task;
@@ -2325,7 +2305,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
   return new Promise((resolve, reject) => {
     interruptChatTaskEventStream("Открывается новое SSE-соединение.");
     prepareChatTaskReplay(task, replayBaseContent);
-    const source = new window.EventSource(`/chat/tasks/${encodeURIComponent(taskId)}/events`);
+    const source = new window.EventSource(chatTaskScopedUrl(taskId, "/events", task));
     let settled = false;
     let terminalEventReceived = false;
     let timeoutId = null;
@@ -2484,7 +2464,7 @@ function taskFromAssistantMessage(message) {
 async function refreshCurrentSessionMessages({ sessionId = state.currentSessionId, scroll = false } = {}) {
   const targetSessionId = String(sessionId || "").trim();
   if (!targetSessionId) return false;
-  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages`);
+  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`);
   if (String(state.currentSessionId || "") !== targetSessionId) {
     return false;
   }
@@ -2512,7 +2492,7 @@ async function recoverActiveChatTaskFromMessages() {
   try {
     task = {
       ...fallbackTask,
-      ...await request(`/chat/tasks/${encodeURIComponent(taskId)}`),
+      ...await request(chatTaskScopedUrl(taskId, "", fallbackTask)),
       assistant_message_id: activeMessage.id,
     };
     if (isFinalChatTaskState(task.state)) {
@@ -2532,10 +2512,10 @@ async function recoverActiveChatTaskFromMessages() {
           throw streamError;
         }
         setFooter("Поток ответа прервался, жду финальный результат…", "warning");
-        completedTask = await waitForChatTask(taskId);
+        completedTask = await waitForChatTask(task);
       }
     } else {
-      completedTask = await waitForChatTask(taskId);
+      completedTask = await waitForChatTask(task);
     }
 
     await refreshCurrentSessionMessages({ sessionId, scroll: true });
@@ -2578,11 +2558,11 @@ async function cancelCurrentChatGeneration() {
 
   if (taskId) {
     try {
-      await request(`/chat/tasks/${encodeURIComponent(taskId)}/cancel`, {
+      await request(chatTaskScopedUrl(taskId, "/cancel"), {
         method: "POST",
         body: {},
       });
-    } catch {
+    } catch (error) {
       if ((error?.status || 0) !== 404) {
         setFooter(`Не удалось остановить генерацию: ${error.message || error}`, "error");
         return;
@@ -3771,6 +3751,59 @@ async function request(path, options = {}) {
   throw error;
 }
 
+function cachedAdminToken() {
+  try {
+    return String(window.sessionStorage.getItem(ADMIN_TOKEN_SESSION_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function cacheAdminToken(token) {
+  try {
+    if (token) {
+      window.sessionStorage.setItem(ADMIN_TOKEN_SESSION_KEY, token);
+    } else {
+      window.sessionStorage.removeItem(ADMIN_TOKEN_SESSION_KEY);
+    }
+  } catch {
+    // A private/locked browser session may disable sessionStorage.
+  }
+}
+
+function requestAdminToken({ interactive = true } = {}) {
+  const cached = cachedAdminToken();
+  if (cached || !interactive) return cached;
+  const entered = window.prompt("Введите ADMIN_TOKEN для привилегированной операции LocalGPT", "");
+  const token = String(entered || "").trim();
+  if (token) cacheAdminToken(token);
+  return token;
+}
+
+async function privilegedRequest(path, options = {}, { interactive = true, retry = true } = {}) {
+  const token = requestAdminToken({ interactive });
+  if (!token) {
+    if (!interactive) return null;
+    const error = new Error("Для операции требуется ADMIN_TOKEN из .env.");
+    error.code = "admin_token_required";
+    throw error;
+  }
+  try {
+    return await request(path, {
+      ...options,
+      headers: { ...(options.headers || {}), [ADMIN_TOKEN_HEADER]: token },
+    });
+  } catch (error) {
+    if (error?.status === 403) {
+      cacheAdminToken("");
+      if (interactive && retry) {
+        return privilegedRequest(path, options, { interactive: true, retry: false });
+      }
+    }
+    throw error;
+  }
+}
+
 function syncDownloadsPolling() {
   const hasRunning = collectModelOperations().some((item) => isActiveDownloadState(item.state));
   if (!hasRunning && downloadsPollTimer) {
@@ -4034,7 +4067,7 @@ async function openReasoningDialog(messageId, trigger = null) {
     return;
   }
   try {
-    const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+    const result = await request(`/chat/messages/${encodeURIComponent(id)}/reasoning?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(state.currentSessionId)}`);
     const currentIndex = findMessageIndexById(id);
     const currentMessage = currentIndex >= 0 ? state.messages[currentIndex] : null;
     const mergedReasoning = mergeReasoningSnapshot(currentMessage?.live_reasoning, result.reasoning);
@@ -4260,12 +4293,10 @@ function renderModelControls() {
   if (!els.llmModelSelect || !els.recommendedModels) return;
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const catalogItems = getCatalogModels().length
-    ? getCatalogModels()
-    : state.installedModels.map((item) => ({ id: item.name, title: item.name, recommended: false }));
+  const catalogItems = getSelectableChatModels();
   const utilityItems = getUtilityModels();
   const catalogIds = catalogItems.map((item) => getModelId(item)).filter(Boolean);
-  const installedCatalogIds = catalogItems
+  const installedCatalogIds = getCatalogModels()
     .filter((item) => isRuntimeModelInstalled(item, installedByName))
     .map((item) => getModelId(item));
   const optionIds = new Set([AUTO_MODEL_ID, LOCAL_CALCULATOR_MODEL_ID, ...catalogIds]);
@@ -4400,73 +4431,102 @@ function renderChatModelLibrary() {
   }
 
   const installedByName = new Map(state.installedModels.map((item) => [item.name, item]));
-  const catalogItems = [...getUtilityModels(), ...getCatalogModels()];
+  const catalogItems = [...getUtilityModels(), ...getSelectableChatModels()];
 
   if (!catalogItems.length) {
     els.chatModelLibrary.innerHTML = '<p class="subtle">Каталог Ollama-моделей пока пуст.</p>';
     return;
   }
 
-  els.chatModelLibrary.innerHTML = catalogItems
-    .map((item) => {
-      const name = getModelId(item);
-      const runtimeInfo = installedByName.get(name) || item.runtime || null;
-      const runtimeInstalled = isRuntimeModelInstalled(item, installedByName);
-      const selected = state.selectedLlmModel === name;
-      const runtimeActive = Boolean(item.active || runtimeInfo?.active);
-      const task = getActiveChatDownload(name);
-      const utility = Boolean(item.utility);
-      const runtimeState = task ? "downloading" : getRuntimeModelState(item, installedByName);
-      const statusTone = {
-        active: "active",
-        installed: "success",
-        downloading: "warning",
-        partial: "warning",
-        configured: "muted",
-        missing: "muted",
-      }[runtimeState] || "muted";
-      const statusLabel = task ? (task.state || "running") : getRuntimeModelStatusLabel(item, installedByName);
-      const statusBadge = `<span class="status-badge status-badge--${escapeHtml(statusTone)}">${escapeHtml(statusLabel)}</span>`;
-      const meta = [
-        `ID: ${name}`,
-        `Runtime: ${runtimeInstalled ? "installed" : "missing"}`,
-        item.category ? `Категория: ${item.category}` : null,
-        item.weight ? `Вес: ${item.weight}` : null,
-        runtimeInfo?.details?.quantization ? `Quant: ${runtimeInfo.details.quantization}` : null,
-        runtimeInfo?.size_gb ? `${runtimeInfo.size_gb} GB` : null,
-        item.storage?.storage_size_gb && !runtimeInstalled ? `Storage: ${item.storage.storage_size_gb} GB` : null,
-        runtimeInfo?.modified_at ? formatDateTime(runtimeInfo.modified_at) : null,
-      ].filter(Boolean).join(" • ");
-      const note = getModelRuntimeNote(item, task, installedByName);
-      return `
-        <article class="model-card${runtimeInstalled ? " model-card--installed" : ""}${selected ? " model-card--active" : ""} model-card--${escapeHtml(runtimeState)}">
-          <div class="model-card__head">
-            <div>
-              <h5 class="model-card__title">${escapeHtml(getModelTitle(item))}</h5>
-              <p class="model-card__meta">${escapeHtml(meta || name)}</p>
-            </div>
-            <div class="model-card__badges">
-              ${statusBadge}
-              ${runtimeActive ? '<span class="status-badge status-badge--active">В памяти</span>' : ""}
-              ${selected ? '<span class="status-badge status-badge--selected">Выбрана</span>' : ""}
-              ${item.partial_blob_found && !item.partial ? '<span class="status-badge status-badge--warning">Partial blob</span>' : ""}
-              ${item.configured ? '<span class="status-badge status-badge--configured">Configured</span>' : ""}
-              ${item.missing ? '<span class="status-badge status-badge--missing">Missing</span>' : ""}
-              ${renderModelBadges(item)}
-            </div>
-          </div>
-          <p class="model-card__note">${escapeHtml(note)}</p>
-          <div class="button-row">
-            ${runtimeInstalled && !utility ? `<button class="button ${selected ? "button--primary" : "button--ghost"}" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}">Выбрать</button>` : ""}
-            ${runtimeInstalled ? "" : `<button class="button button--ghost" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${escapeHtml(getModelActionLabel(item, installedByName))}</button>`}
-            <button class="button button--ghost" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>
-            ${runtimeInstalled ? `<button class="button button--ghost" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : ""}
-            ${renderModelInfoButton(item)}
-          </div>
-        </article>
-      `;
-    })
-    .join("");
+  const categoryLabels = {
+    fast_rag: "Быстрый RAG",
+    default_chat: "Чат",
+    thinking: "Рассуждения",
+    pipeline_heavy: "Анализ",
+    code: "Код",
+    code_alt: "Код · альтернатива",
+    experimental: "Экспериментальная",
+    utility_router: "Маршрутизатор",
+    installed_custom: "Локальная модель",
+  };
+  const rows = catalogItems.map((item) => {
+    const name = getModelId(item);
+    const runtimeInfo = installedByName.get(name) || item.runtime || null;
+    const runtimeInstalled = isRuntimeModelInstalled(item, installedByName);
+    const selected = state.selectedLlmModel === name;
+    const runtimeActive = Boolean(item.active || runtimeInfo?.active);
+    const task = getActiveChatDownload(name);
+    const utility = Boolean(item.utility);
+    const runtimeState = task ? "downloading" : getRuntimeModelState(item, installedByName);
+    const statusTone = {
+      active: "active",
+      installed: "success",
+      downloading: "warning",
+      partial: "warning",
+      configured: "muted",
+      missing: "muted",
+    }[runtimeState] || "muted";
+    const statusLabel = task ? (task.state || "running") : getRuntimeModelStatusLabel(item, installedByName);
+    const size = runtimeInfo?.size_label || (runtimeInfo?.size_gb ? `${runtimeInfo.size_gb} GB` : "");
+    const meta = [categoryLabels[item.category] || (item.custom_installed ? "Локальная модель" : "Модель чата"), size].filter(Boolean).join(" · ");
+    const primaryAction = runtimeInstalled
+      ? utility
+        ? '<span class="model-row__utility">Служебная модель</span>'
+        : `<button class="button ${selected ? "button--primary" : "button--ghost"} model-row__primary" type="button" data-chat-model-action="select" data-chat-model="${escapeHtml(name)}"${selected ? " disabled" : ""}>${selected ? "Выбрана" : "Выбрать"}</button>`
+      : `<button class="button button--primary model-row__primary" type="button" data-chat-model-action="download" data-chat-model="${escapeHtml(name)}">${escapeHtml(getModelActionLabel(item, installedByName))}</button>`;
+    const secondaryActions = [
+      runtimeInstalled ? `<button class="model-row__menu-action" type="button" data-chat-model-action="update" data-chat-model="${escapeHtml(name)}">Обновить</button>` : "",
+      runtimeInstalled ? `<button class="model-row__menu-action model-row__menu-action--danger" type="button" data-chat-model-action="delete" data-chat-model="${escapeHtml(name)}">Удалить</button>` : "",
+      `<button class="model-row__menu-action" type="button" aria-label="Сведения о модели ${escapeHtml(getModelTitle(item))}" data-tooltip="${escapeHtml(getModelTooltip(item))}" data-model-help>Сведения</button>`,
+    ].filter(Boolean).join("");
+    return {
+      item,
+      runtimeInstalled,
+      runtimeState,
+      runtimeActive,
+      selected,
+      statusLabel,
+      statusTone,
+      meta,
+      primaryAction,
+      secondaryActions,
+    };
+  });
+
+  const renderGroup = (title, groupRows, className) => {
+    if (!groupRows.length) return "";
+    return `
+      <section class="model-library__group ${className}">
+        <h4 class="model-library__group-title"><span>${title}</span><span class="model-library__count">${groupRows.length}</span></h4>
+        <div class="model-library__list">
+          ${groupRows.map((row) => `
+            <article class="model-row${row.runtimeInstalled ? " model-row--installed" : ""}${row.selected ? " model-row--selected" : ""} model-row--${escapeHtml(row.runtimeState)}">
+              <div class="model-row__copy">
+                <div class="model-row__title-line">
+                  <h5 class="model-row__title">${escapeHtml(getModelTitle(row.item))}</h5>
+                  <span class="status-badge status-badge--${escapeHtml(row.statusTone)}">${escapeHtml(row.statusLabel)}</span>
+                  ${row.runtimeActive ? '<span class="status-badge status-badge--active">В памяти</span>' : ""}
+                </div>
+                <p class="model-row__meta">${escapeHtml(row.meta)}</p>
+              </div>
+              <div class="model-row__actions">
+                ${row.primaryAction}
+                <details class="model-row__menu">
+                  <summary aria-label="Действия для ${escapeHtml(getModelTitle(row.item))}"><span>Действия</span><span aria-hidden="true">⌄</span></summary>
+                  <div class="model-row__menu-panel">${row.secondaryActions}</div>
+                </details>
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  };
+
+  els.chatModelLibrary.innerHTML = [
+    renderGroup("Установлены в Ollama", rows.filter((row) => row.runtimeInstalled), "model-library__group--installed"),
+    renderGroup("Доступны для установки", rows.filter((row) => !row.runtimeInstalled), "model-library__group--available"),
+  ].join("");
 }
 
 function visionSettingsValues() {
@@ -4475,6 +4535,7 @@ function visionSettingsValues() {
     chat_images_enabled: settings.chat_images_enabled !== false,
     vision_model: String(settings.vision_model || "auto"),
     vision_num_ctx: Math.min(131072, Math.max(4096, Number(settings.vision_num_ctx) || 8192)),
+    vision_output_tokens: Math.min(8192, Math.max(128, Number(settings.vision_output_tokens) || 1024)),
     vision_fallback: String(settings.vision_fallback || "vision_context"),
     ocr_assist: String(settings.ocr_assist || "auto"),
     ocr_language: String(settings.ocr_language || ""),
@@ -4555,6 +4616,7 @@ function renderVisionSettings() {
   if (els.visionModelSelect) els.visionModelSelect.value = values.vision_model;
   if (els.visionFallbackSelect) els.visionFallbackSelect.value = values.vision_fallback;
   if (els.visionNumCtxInput) els.visionNumCtxInput.value = String(values.vision_num_ctx);
+  if (els.visionOutputTokensInput) els.visionOutputTokensInput.value = String(values.vision_output_tokens);
   if (els.visionOcrAssistSelect) els.visionOcrAssistSelect.value = values.ocr_assist;
   if (els.visionOcrLanguageInput) els.visionOcrLanguageInput.value = values.ocr_language;
   if (els.visionMaxImagesInput) els.visionMaxImagesInput.value = String(values.max_images_per_message);
@@ -4567,6 +4629,7 @@ function renderVisionSettings() {
     els.visionModelSelect,
     els.visionFallbackSelect,
     els.visionNumCtxInput,
+    els.visionOutputTokensInput,
     els.visionOcrAssistSelect,
     els.visionOcrLanguageInput,
     els.visionMaxImagesInput,
@@ -4601,6 +4664,7 @@ async function saveVisionSettingsFlow(settingsOverride = null) {
     chat_images_enabled: Boolean(els.chatImagesEnabledToggle?.checked),
     vision_model: String(els.visionModelSelect?.value || "auto"),
     vision_num_ctx: Number(els.visionNumCtxInput?.value || 8192),
+    vision_output_tokens: Number(els.visionOutputTokensInput?.value || 1024) || 1024,
     vision_fallback: String(els.visionFallbackSelect?.value || "vision_context"),
     ocr_assist: String(els.visionOcrAssistSelect?.value || "auto"),
     ocr_language: String(els.visionOcrLanguageInput?.value || "").trim(),
@@ -4625,6 +4689,7 @@ async function resetVisionSettingsFlow() {
     chat_images_enabled: true,
     vision_model: "auto",
     vision_num_ctx: 8192,
+    vision_output_tokens: 1024,
     vision_fallback: "vision_context",
     ocr_assist: "auto",
     ocr_language: "",
@@ -4742,7 +4807,7 @@ function renderModelSettings() {
   if (els.memTurnsInput) {
     els.memTurnsInput.disabled = disabled;
     els.memTurnsInput.value = values.mem_turns === "" ? "" : String(values.mem_turns);
-    els.memTurnsInput.title = "Общая память диалога для активного профиля. Применяется ко всем chat-моделям, включая Auto.";
+    els.memTurnsInput.title = "Число последних завершённых пар user + assistant только из текущего чата. 0 отключает историю.";
   }
   if (els.streamingEnabledToggle) {
     els.streamingEnabledToggle.disabled = profileDisabled;
@@ -4837,18 +4902,21 @@ function renderQuickThinkingControl(rawValue = null) {
   if (!els.quickThinkingControl || !els.quickThinkingButton || !els.quickThinkingMenu) return;
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
   const supported = modelSupportsThinking(modelName);
-  const normalized = normalizeOllamaThink(rawValue, "auto");
-  const visibleValue = normalized === "off" ? "off" : "on";
+  const metadata = getModelThinkingMetadata(modelName);
+  const visibleValue = thinkingSelection(rawValue, metadata);
+  const options = thinkingOptions(metadata);
+  const label = options.find((option) => option.value === visibleValue)?.label || "Auto";
   const disabled = !supported || !state.activeProfileId || !modelName;
   const hint = supported
-    ? "Thinking влияет на скорость, CPU и полноту рассуждения для моделей, которые поддерживают этот режим."
+    ? `Thinking — режим / уровень рассуждения: ${label}. Видимость trace не меняется; откройте >_ у ответа.`
     : "Выбранная модель не объявлена как thinking-capable; параметр не отправляется.";
 
   els.quickThinkingControl.dataset.thinkingMode = visibleValue;
   els.quickThinkingButton.disabled = disabled;
-  els.quickThinkingButton.textContent = "Thinking";
+  els.quickThinkingButton.textContent = `Thinking: ${visibleValue}`;
+  els.quickThinkingButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   els.quickThinkingControl.hidden = !shouldShowThinkingToggleForModel(modelName);
-  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue === "on");
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue !== "off");
   els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
   els.quickThinkingControl.title = hint;
 
@@ -4859,16 +4927,21 @@ function renderQuickThinkingControl(rawValue = null) {
   }
   if (els.quickThinkingMobileButton) {
     els.quickThinkingMobileButton.disabled = disabled;
-    els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking: ${visibleValue === "on" ? "включено" : "выключено"}`);
+    els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   }
 
   [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
-    menu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
-      const active = button.getAttribute("data-thinking-mode") === visibleValue;
-      button.classList.toggle("thinking-mode-menu__item--active", active);
-      button.setAttribute("aria-checked", active ? "true" : "false");
-    });
+    menu.innerHTML = options.map((option) => `<button type="button" role="menuitemradio" data-thinking-mode="${escapeHtml(option.value)}" class="${option.value === visibleValue ? "thinking-mode-menu__item--active" : ""}" aria-checked="${option.value === visibleValue}" ${disabled ? "disabled" : ""}>${escapeHtml(option.label)}</button>`).join("");
   });
+
+  if (els.ollamaThinkField) els.ollamaThinkField.hidden = !supported;
+  if (els.ollamaThinkSelect) {
+    const markup = options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+    if (els.ollamaThinkSelect.innerHTML !== markup) els.ollamaThinkSelect.innerHTML = markup;
+    els.ollamaThinkSelect.value = visibleValue;
+    els.ollamaThinkSelect.disabled = disabled;
+    syncAppSelect(els.ollamaThinkSelect);
+  }
 
   if (disabled) {
     closeQuickThinkingMenu();
@@ -6506,12 +6579,22 @@ function renderAsrTool() {
   queueSyncAppSelects();
 }
 
+function transcriptScopeUrl(transcriptId, suffix = "", transcript = null) {
+  const targetId = String(transcriptId || "");
+  const candidate = transcript
+    || (String(state.asrToolSelectedTranscript?.id || "") === targetId ? state.asrToolSelectedTranscript : null)
+    || (String(state.latestTranscript?.id || "") === targetId ? state.latestTranscript : null);
+  const query = new URLSearchParams({ profile_id: String(state.activeProfileId) });
+  if (candidate?.session_id) query.set("session_id", String(candidate.session_id));
+  return `/transcripts/${encodeURIComponent(targetId)}${suffix}?${query.toString()}`;
+}
+
 async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
   const target = Number(transcriptId || 0);
   if (!Number.isFinite(target) || target <= 0) return;
 
   try {
-    const transcript = await request(`/transcripts/${encodeURIComponent(target)}`);
+    const transcript = await request(transcriptScopeUrl(target));
     if (String(transcript?.labels?.origin || "") !== ASR_TOOL_ORIGIN) {
       throw new Error("Эта запись не относится к ASR Studio.");
     }
@@ -6522,7 +6605,7 @@ async function selectAsrToolTranscript(transcriptId, { silent = false } = {}) {
       els.asrToolOutput.value = transcript.content || "";
     }
     try {
-      const latestRun = await request(`/transcripts/${encodeURIComponent(target)}/pipeline/latest`);
+      const latestRun = await request(transcriptScopeUrl(target, "/pipeline/latest", transcript));
       state.asrToolPipelineRun = latestRun || null;
     } catch {
       state.asrToolPipelineRun = null;
@@ -6739,7 +6822,7 @@ async function saveAsrToolTranscript() {
   try {
     let transcript;
     if (state.asrToolSelectedTranscriptId) {
-      transcript = await request(`/transcripts/${encodeURIComponent(state.asrToolSelectedTranscriptId)}`, {
+      transcript = await request(transcriptScopeUrl(state.asrToolSelectedTranscriptId), {
         method: "PATCH",
         body: { content },
       });
@@ -6792,7 +6875,7 @@ async function deleteAsrToolTranscript(transcriptId, { clearIfSelected = false }
   if (!window.confirm("Удалить выбранную запись транскрибации?")) return;
 
   try {
-    await request(`/transcripts/${encodeURIComponent(targetId)}`, { method: "DELETE" });
+    await request(transcriptScopeUrl(targetId), { method: "DELETE" });
     if (clearIfSelected || Number(state.asrToolSelectedTranscriptId || 0) === targetId) {
       clearAsrToolEditor();
     }
@@ -7072,7 +7155,7 @@ async function runAsrPipelineAction(action, preset = "balanced") {
   renderAsrTool();
   setInlineStatus(els.asrToolStatus, "Идёт обработка транскрипта…", "warning");
   try {
-    const run = await request(`/transcripts/${encodeURIComponent(transcript.id)}/pipeline`, {
+    const run = await request(transcriptScopeUrl(transcript.id, "/pipeline", transcript), {
       method: "POST",
       body: { action, preset, model_name: ASR_PIPELINE_SETTINGS_MODEL_ID },
       signal: controller.signal,
@@ -7082,7 +7165,7 @@ async function runAsrPipelineAction(action, preset = "balanced") {
       els.asrToolOutput.value = run.cleaned_transcript;
     }
     try {
-      state.asrToolSelectedTranscript = await request(`/transcripts/${encodeURIComponent(transcript.id)}`);
+      state.asrToolSelectedTranscript = await request(transcriptScopeUrl(transcript.id, "", transcript));
       state.asrToolSelectedTranscriptId = state.asrToolSelectedTranscript?.id || transcript.id;
       await loadAsrToolHistory({ silent: true });
     } catch {
@@ -7178,7 +7261,7 @@ async function saveAsrSpeakerOverrides() {
   renderAsrTool();
   try {
     const updated = await request(
-      `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/speakers`,
+      transcriptScopeUrl(transcriptId, `/pipeline/${encodeURIComponent(run.id)}/speakers`),
       { method: "PATCH", body: { overrides } },
     );
     state.asrToolPipelineRun = updated;
@@ -7203,12 +7286,12 @@ async function regenerateAsrSummary() {
   renderAsrTool();
   try {
     const updated = await request(
-      `/transcripts/${encodeURIComponent(transcriptId)}/pipeline/${encodeURIComponent(run.id)}/summary`,
+      transcriptScopeUrl(transcriptId, `/pipeline/${encodeURIComponent(run.id)}/summary`),
       { method: "POST", body: { save_memory: true }, signal: controller.signal },
     );
     state.asrToolPipelineRun = updated;
     try {
-      state.asrToolSelectedTranscript = await request(`/transcripts/${encodeURIComponent(transcriptId)}`);
+      state.asrToolSelectedTranscript = await request(transcriptScopeUrl(transcriptId));
       await loadAsrToolHistory({ silent: true });
     } catch {
       // Summary was regenerated; stale history title is non-blocking.
@@ -7698,6 +7781,7 @@ async function downloadSelectedTtsToolRecord() {
 }
 
 function renderDownloads() {
+  renderOllamaInstallerDownloads();
   if (!els.downloadList) return;
   const items = collectModelOperations();
   if (!items.length) {
@@ -7731,6 +7815,34 @@ function renderDownloads() {
       `;
     })
     .join("");
+}
+
+function renderOllamaInstallerDownloads() {
+  if (!els.ollamaInstallerDownloads) return;
+  const items = (state.downloads || []).slice(0, 3);
+  if (!items.length) {
+    els.ollamaInstallerDownloads.innerHTML = '<p class="subtle">Загрузок Ollama пока нет.</p>';
+    return;
+  }
+  els.ollamaInstallerDownloads.innerHTML = items.map((item) => {
+    const percent = typeof item.percent === "number" ? Math.max(0, Math.min(100, item.percent)) : 0;
+    const downloaded = Number(item.downloaded_bytes || item.completed || 0);
+    const total = Number(item.total_bytes || item.total || 0);
+    const transfer = downloaded && total ? `${formatBytes(downloaded)} / ${formatBytes(total)}` : downloaded ? formatBytes(downloaded) : "";
+    const eta = Number(item.eta_seconds) > 0 ? ` • Осталось около ${Math.ceil(Number(item.eta_seconds))} с` : "";
+    const canCancel = isActiveDownloadState(item.state);
+    return `
+      <article class="download-card ollama-installer__download">
+        <div class="download-card__top">
+          <strong>${escapeHtml(item.model || "Модель Ollama")}</strong>
+          <span class="subtle">${escapeHtml(item.state || "")}${percent ? ` • ${percent}%` : ""}</span>
+        </div>
+        <div class="download-progress" role="progressbar" aria-label="Прогресс загрузки ${escapeHtml(item.model || "модели")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><div class="download-progress__bar" style="width:${percent}%;"></div></div>
+        <div class="subtle">${escapeHtml(item.message || "Ожидание")}${transfer ? ` • ${escapeHtml(transfer)}` : ""}${escapeHtml(eta)}</div>
+        ${canCancel ? `<div class="button-row"><button class="button button--ghost" type="button" data-cancel-download="${escapeHtml(item.task_id || "")}">Остановить</button></div>` : ""}
+      </article>
+    `;
+  }).join("");
 }
 
 function normalizeNetworkAddressItems(items) {
@@ -8162,6 +8274,17 @@ function archiveCountLabel(count) {
   return "архивов";
 }
 
+function formatModelTransferRuntimeRequirements(requirements = []) {
+  const labels = {
+    ollama_runtime: "Ollama",
+    faster_whisper_runtime: "faster-whisper",
+    whisper_cpp_cli: "whisper.cpp CLI",
+    whisper_cpp_vad: "Silero VAD для whisper.cpp",
+    piper_runtime: "Piper",
+  };
+  return requirements.map((item) => labels[item] || item).join(", ");
+}
+
 async function cleanupModelTransferUploads() {
   const uploads = state.modelTransferUploads;
   if (!uploads?.file_count) return;
@@ -8264,11 +8387,13 @@ async function inspectModelImport(file) {
   setInlineStatus(els.modelTransferStatus, `Проверяю ${file.name}…`, "warning");
   try {
     const result = await request("/model-transfer/import-inspect", { method: "POST", body: form });
-    setInlineStatus(els.modelTransferStatus, `Bundle исправен: ${result.models?.length || 0} моделей, ${formatBytes(result.total_size || 0)}. Ожидается подтверждение.`, "success");
+    const runtimeRequirements = formatModelTransferRuntimeRequirements(result.runtime_requirements || []);
+    const runtimeNotice = runtimeRequirements ? ` На целевом устройстве потребуются локальные runtime: ${runtimeRequirements}.` : "";
+    setInlineStatus(els.modelTransferStatus, `Bundle исправен: ${result.models?.length || 0} моделей, ${formatBytes(result.total_size || 0)}.${runtimeNotice} Ожидается подтверждение.`, "success");
     const approved = await openConfirmDialog({
       eyebrow: "Импорт моделей",
       title: `Импортировать ${result.models?.length || 0} моделей?`,
-      message: `LocalGPT повторно проверит bundle и добавит файлы в текущие пути моделей. Существующие отличающиеся файлы не будут заменены.`,
+      message: `LocalGPT повторно проверит bundle и добавит веса в текущие пути моделей. Существующие отличающиеся файлы не будут заменены.${runtimeNotice}`,
       confirmLabel: "Импортировать",
       cancelLabel: "Отмена",
       returnFocus: els.importModelsButton,
@@ -8280,7 +8405,9 @@ async function inspectModelImport(file) {
     }
     setInlineStatus(els.modelTransferStatus, "Повторно проверяю и импортирую модели…", "warning");
     const applied = await request("/model-transfer/imports", { method: "POST", body: { upload_id: result.upload_id } });
-    setInlineStatus(els.modelTransferStatus, `Импорт завершён: добавлено файлов ${applied.published_files || 0}, идентичных пропущено ${applied.skipped_files || 0}.`, "success");
+    const appliedRequirements = formatModelTransferRuntimeRequirements(applied.runtime_requirements || []);
+    const appliedNotice = appliedRequirements ? ` Проверьте локальные runtime: ${appliedRequirements}.` : "";
+    setInlineStatus(els.modelTransferStatus, `Импорт завершён: добавлено файлов ${applied.published_files || 0}, идентичных пропущено ${applied.skipped_files || 0}.${appliedNotice}`, "success");
     await Promise.all([
       loadModels({ silent: true }),
       loadWhisperModels({ silent: true }),
@@ -8479,8 +8606,90 @@ function renderRagQuickMenu() {
   }
 }
 
+function ragReindexErrorLabel(code) {
+  return {
+    rag_embedding_configuration_error: "Проверьте настройки embedding provider.",
+    rag_embedding_provider_unavailable: "Локальная embedding-модель недоступна.",
+    rag_embedding_provider_incompatible: "Embedding provider вернул несовместимые векторы.",
+    rag_embedding_source_changed: "Источники изменились во время работы. Запустите переиндексацию ещё раз.",
+    rag_embedding_reindex_failed: "Переиндексация завершилась ошибкой.",
+  }[String(code || "")] || "Переиндексация завершилась ошибкой.";
+}
+
+function renderRagEmbeddingGeneration(status) {
+  const generation = status?.embedding_generation || {};
+  const operation = generation.operation || null;
+  const operationActive = ["queued", "running"].includes(String(operation?.status || ""));
+  const failedOperation = operation?.status === "failed" && generation.status !== "ready";
+  const stateName = operationActive
+    ? String(operation.status)
+    : failedOperation
+      ? "failed"
+      : String(generation.status || "unknown");
+  const labels = {
+    ready: "Готов",
+    ingest_required: "Сначала индексируйте файлы",
+    reindex_required: "Нужна переиндексация",
+    configuration_error: "Ошибка настройки",
+    queued: "В очереди",
+    running: "Переиндексация…",
+    failed: "Ошибка переиндексации",
+    unknown: "Статус неизвестен",
+  };
+  const descriptor = status?.embedding || operation?.embedding || {};
+  const provider = [descriptor.provider, descriptor.model, descriptor.version]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" • ");
+  const indexed = Number(generation.indexed_chunks || 0);
+  const total = Number(generation.total_chunks || 0);
+  const missing = Number(generation.missing_chunks || 0);
+  const pendingSources = Number(generation.pending_sources || 0);
+  let details = provider || "Embedding provider не настроен.";
+  if (operationActive) {
+    const processed = Number(operation.processed_chunks || 0);
+    const operationTotal = Number(operation.total_chunks || total || 0);
+    details = `${details} • обработано ${processed} из ${operationTotal}`;
+  } else if (failedOperation) {
+    details = `${details} • ${ragReindexErrorLabel(operation.error_code)}`;
+  } else if (generation.status === "ingest_required") {
+    details = `${details} • изменённых или новых файлов: ${pendingSources}`;
+  } else if (generation.status === "reindex_required") {
+    details = `${details} • готово ${indexed} из ${total}, отсутствует ${missing}`;
+  } else if (generation.status === "ready") {
+    details = total ? `${details} • готово ${indexed} из ${total}` : `${details} • источников пока нет`;
+  } else if (generation.error_code) {
+    details = `${details} • ${ragReindexErrorLabel(generation.error_code)}`;
+  }
+  if (els.ragEmbeddingCard) {
+    els.ragEmbeddingCard.dataset.state = stateName;
+  }
+  if (els.ragEmbeddingState) {
+    els.ragEmbeddingState.textContent = labels[stateName] || labels.unknown;
+  }
+  if (els.ragEmbeddingDetails) {
+    els.ragEmbeddingDetails.textContent = details;
+  }
+  if (els.ragReindexProgress) {
+    els.ragReindexProgress.hidden = !operationActive;
+    if (operationActive) {
+      const processed = Number(operation.processed_chunks || 0);
+      const operationTotal = Number(operation.total_chunks || total || 0);
+      if (operationTotal > 0) {
+        els.ragReindexProgress.value = Math.min(100, Math.round((processed / operationTotal) * 100));
+      } else {
+        els.ragReindexProgress.removeAttribute("value");
+      }
+    } else {
+      els.ragReindexProgress.value = 0;
+    }
+  }
+  return operationActive;
+}
+
 function renderRagPanel() {
   const status = state.ragStatus || {};
+  const reindexActive = renderRagEmbeddingGeneration(status);
   renderRagButton();
   if (els.ragSourceDirValue) {
     els.ragSourceDirValue.textContent = status.source_dir || "rag_sources";
@@ -8489,13 +8698,21 @@ function renderRagPanel() {
     els.ragEnabledToggle.disabled = !state.activeProfileId || state.ragBusy;
     els.ragEnabledToggle.checked = activeProfileRagEnabled();
   }
-  [els.ragAddFilesButton, els.ragIngestButton, els.ragForceIngestButton, els.ragRefreshButton, els.ragCopyPathButton]
+  [els.ragAddFilesButton, els.ragIngestButton, els.ragRefreshButton]
     .filter(Boolean)
     .forEach((button) => {
-      button.disabled = state.ragBusy || (!state.activeProfileId && button !== els.ragRefreshButton && button !== els.ragCopyPathButton);
+      button.disabled = state.ragBusy || reindexActive || (!state.activeProfileId && button !== els.ragRefreshButton);
     });
   if (els.ragIngestButton) {
-    els.ragIngestButton.textContent = state.ragBusy ? "Индексация…" : "Индексировать";
+    els.ragIngestButton.textContent = state.ragBusy ? "Индексация…" : "Индексировать файлы";
+  }
+  if (els.ragReindexButton) {
+    const canReindex = status?.embedding_generation?.status === "reindex_required";
+    els.ragReindexButton.disabled = state.ragBusy || reindexActive || !state.activeProfileId || !canReindex;
+    els.ragReindexButton.textContent = reindexActive ? "Переиндексация…" : "Переиндексировать";
+    els.ragReindexButton.title = canReindex
+      ? "Создать configured embedding generation для всех chunks"
+      : "Переиндексация доступна, когда статус показывает отсутствующее generation";
   }
   if (els.ragStatusText) {
     const stats = status.stats || {};
@@ -8539,15 +8756,112 @@ function renderRagPanel() {
   }
 }
 
-async function loadRagStatus({ silent = false } = {}) {
+async function loadRagStatus({ silent = false, resumeReindex = true } = {}) {
   try {
-    const query = state.activeProfileId ? `?profile_id=${encodeURIComponent(state.activeProfileId)}` : "";
+    const query = state.activeProfileId
+      ? `?profile_id=${encodeURIComponent(state.activeProfileId)}${state.currentSessionId ? `&session_id=${encodeURIComponent(state.currentSessionId)}` : ""}`
+      : "";
     state.ragStatus = await request(`/rag/status${query}`);
     renderRagPanel();
+    const operation = state.ragStatus?.embedding_generation?.operation;
+    if (
+      resumeReindex
+      && operation?.task_id
+      && ["queued", "running"].includes(String(operation.status || ""))
+      && !state.ragReindexPolling
+    ) {
+      void pollRagReindexTask(String(operation.task_id), Number(state.activeProfileId));
+    }
   } catch (error) {
     if (!silent) {
       setFooter(`Не удалось загрузить статус RAG: ${error.message || error}`, "error");
     }
+  }
+}
+
+async function pollRagReindexTask(taskId, profileId) {
+  if (!taskId || !profileId || state.ragReindexPolling) return;
+  state.ragReindexPolling = true;
+  try {
+    while (Number(state.activeProfileId) === Number(profileId)) {
+      const query = new URLSearchParams({ profile_id: String(profileId) });
+      const task = await request(`/rag/reindex/${encodeURIComponent(taskId)}?${query.toString()}`);
+      state.ragStatus = state.ragStatus || {};
+      state.ragStatus.embedding_generation = {
+        ...(state.ragStatus.embedding_generation || {}),
+        operation: task,
+      };
+      renderRagPanel();
+      if (["completed", "failed"].includes(String(task.status || ""))) {
+        await loadRagStatus({ silent: true, resumeReindex: false });
+        if (task.status === "completed") {
+          setFooter(`RAG: переиндексация завершена, chunks ${task.processed_chunks || 0}.`, "success");
+        } else {
+          setFooter(`RAG: ${ragReindexErrorLabel(task.error_code)}`, "error");
+        }
+        break;
+      }
+      await sleep(600);
+    }
+  } catch (error) {
+    await loadRagStatus({ silent: true, resumeReindex: false });
+    setFooter(
+      error?.status === 404
+        ? "RAG: backend был перезапущен; состояние индекса пересчитано по локальной базе."
+        : `Не удалось получить прогресс RAG: ${error.message || error}`,
+      error?.status === 404 ? "warning" : "error",
+    );
+  } finally {
+    state.ragReindexPolling = false;
+    renderRagPanel();
+  }
+}
+
+async function startRagReindex(returnFocus = null) {
+  if (!state.activeProfileId) {
+    setFooter("Сначала выберите профиль для RAG.", "warning");
+    return;
+  }
+  const generation = state.ragStatus?.embedding_generation || {};
+  if (generation.status !== "reindex_required") {
+    setFooter("Переиндексация сейчас не требуется.", "warning");
+    return;
+  }
+  const descriptor = state.ragStatus?.embedding || {};
+  const model = String(descriptor.model || state.ragStatus?.embedding_model || "configured provider");
+  const approved = await openConfirmDialog({
+    eyebrow: "RAG",
+    title: "Переиндексировать семантический индекс?",
+    message: `Будут обработаны все ${generation.total_chunks || 0} chunks моделью ${model}. Операция запускается локально и может временно увеличить нагрузку.`,
+    confirmLabel: "Переиндексировать",
+    cancelLabel: "Отмена",
+    returnFocus,
+  });
+  if (!approved) return;
+  state.ragBusy = true;
+  renderRagPanel();
+  try {
+    const task = await request("/rag/reindex", {
+      method: "POST",
+      body: { profile_id: state.activeProfileId },
+    });
+    state.ragStatus = state.ragStatus || {};
+    state.ragStatus.embedding_generation = {
+      ...(state.ragStatus.embedding_generation || {}),
+      operation: task,
+    };
+    setFooter("RAG: переиндексация запущена локально.", "success");
+    void pollRagReindexTask(String(task.task_id || ""), Number(state.activeProfileId));
+  } catch (error) {
+    setFooter(
+      error?.message === "rag_embedding_reindex_in_progress"
+        ? "RAG: другая переиндексация уже выполняется."
+        : `Не удалось запустить переиндексацию RAG: ${error.message || error}`,
+      "error",
+    );
+  } finally {
+    state.ragBusy = false;
+    renderRagPanel();
   }
 }
 
@@ -8682,7 +8996,7 @@ async function deleteRagFile(sourceId, returnFocus = null) {
 
 async function deleteRagContext(sourceId, returnFocus = null) {
   const target = String(sourceId || "").trim();
-  if (!target || !state.activeProfileId) return;
+  if (!target || !state.activeProfileId || !state.currentSessionId) return;
   const approved = await openConfirmDialog({
     eyebrow: "RAG",
     title: "Удалить контекст?",
@@ -8695,7 +9009,11 @@ async function deleteRagContext(sourceId, returnFocus = null) {
   state.ragBusy = true;
   renderRagPanel();
   try {
-    const query = new URLSearchParams({ profile_id: String(state.activeProfileId), source_id: target });
+    const query = new URLSearchParams({
+      profile_id: String(state.activeProfileId),
+      session_id: String(state.currentSessionId),
+      source_id: target,
+    });
     const result = await request(`/rag/contexts?${query.toString()}`, { method: "DELETE" });
     state.ragStatus = result?.status || state.ragStatus;
     await loadRagStatus({ silent: true });
@@ -8859,7 +9177,7 @@ async function loadModels({ silent = false } = {}) {
     const isSelectableNow = (modelName) => (
       modelName === AUTO_MODEL_ID || modelName === LOCAL_CALCULATOR_MODEL_ID || installedModelNames.has(modelName)
     );
-    const catalogIds = new Set(getCatalogModels().map((item) => getModelId(item)));
+    const catalogIds = new Set(getSelectableChatModels().map((item) => getModelId(item)));
     catalogIds.add(AUTO_MODEL_ID);
     catalogIds.add(LOCAL_CALCULATOR_MODEL_ID);
     const installedCatalogModel = getCatalogModels().find((item) => (
@@ -8921,7 +9239,8 @@ async function loadWhisperModels({ silent = false } = {}) {
 
 async function loadStoragePaths() {
   try {
-    const data = await request("/storage/paths");
+    const data = await privilegedRequest("/storage/paths", {}, { interactive: false });
+    if (!data) return;
     state.modelsDir = data?.paths?.base || state.modelsDir || "";
     if (els.modelsDirInput) {
       els.modelsDirInput.value = state.modelsDir;
@@ -9066,7 +9385,7 @@ async function openSession(sessionId) {
 
   try {
     const [messagesData, transcriptsData, attachmentsData] = await Promise.all([
-      request(`/sessions/${encodeURIComponent(sessionId)}/messages`),
+      request(`/sessions/${encodeURIComponent(sessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`),
       request(`/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
       request(`/chat/attachments?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
     ]);
@@ -9217,7 +9536,7 @@ async function saveModelSettingsFlow() {
         num_ctx: parseOptionalNumber(els.numCtxInput?.value, "int"),
         ollama_keep_alive: collectKeepAliveValue(),
         ollama_think: modelSupportsThinking(modelName)
-          ? normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on")
+          ? thinkingSelection(els.ollamaThinkSelect?.value, getModelThinkingMetadata(modelName))
           : null,
       }),
     });
@@ -9313,7 +9632,7 @@ async function saveQuickThinkingModeFlow() {
     renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
     return;
   }
-  const nextMode = normalizeOllamaThink(els.quickThinkingControl?.dataset.thinkingMode, "on");
+  const nextMode = thinkingSelection(els.quickThinkingControl?.dataset.thinkingMode, getModelThinkingMetadata(modelName));
   try {
     const data = await request("/model_settings", {
       method: "POST",
@@ -9321,7 +9640,7 @@ async function saveQuickThinkingModeFlow() {
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
-    setFooter(`Thinking ${nextMode === "off" ? "выключен" : "включён"} для текущей модели.`, "success");
+    setFooter(`Thinking: ${nextMode} для текущей модели.`, "success");
   } catch (error) {
     renderModelSettings();
     setFooter(`Не удалось сохранить Thinking: ${error.message || error}`, "error");
@@ -9676,10 +9995,10 @@ async function sendPromptText(
           throw streamError;
         }
         setFooter("Поток ответа прервался, жду финальный результат…", "warning");
-        completedTask = await waitForChatTask(task?.id || "");
+        completedTask = await waitForChatTask(task);
       }
     } else {
-      completedTask = await waitForChatTask(task?.id || "");
+      completedTask = await waitForChatTask(task);
     }
     state.chatTaskId = null;
 
@@ -9803,14 +10122,16 @@ async function startModelDownload(modelName, { mode = "download" } = {}) {
     message: `Будет запущен ollama pull для модели: ${target}`,
     confirmLabel: isUpdate ? "Обновить" : "Загрузить",
   });
-  if (!confirmed) return;
+  if (!confirmed) return false;
 
   try {
     await request("/models/pull", { method: "POST", body: { model: target } });
     await loadModels({ silent: true });
     renderSettings();
+    return true;
   } catch (error) {
     setFooter(`Не удалось запустить ${isUpdate ? "обновление" : "загрузку"} модели: ${error.message || error}`, "error");
+    return null;
   }
 }
 
@@ -9981,7 +10302,7 @@ async function previewTtsVoice(voiceKey) {
 async function updateCurrentSessionMeta(patch) {
   if (!state.currentSessionId) return;
   try {
-    const updated = await request(`/sessions/${encodeURIComponent(state.currentSessionId)}`, {
+    const updated = await request(`/sessions/${encodeURIComponent(state.currentSessionId)}?profile_id=${encodeURIComponent(state.activeProfileId)}`, {
       method: "PATCH",
       body: patch,
     });
@@ -10007,7 +10328,7 @@ async function renameSessionById(sessionId) {
   if (title === currentTitle) return;
 
   try {
-    const updated = await request(`/sessions/${encodeURIComponent(sessionId)}`, {
+    const updated = await request(`/sessions/${encodeURIComponent(sessionId)}?profile_id=${encodeURIComponent(state.activeProfileId)}`, {
       method: "PATCH",
       body: { title },
     });
@@ -10042,7 +10363,7 @@ async function renameAsrToolTranscriptById(transcriptId) {
   if (title === currentTitle) return;
 
   try {
-    const updated = await request(`/transcripts/${encodeURIComponent(targetId)}`, {
+    const updated = await request(transcriptScopeUrl(targetId, "", transcript), {
       method: "PATCH",
       body: { name: title },
     });
@@ -10067,7 +10388,7 @@ async function saveModelsDir(moveExisting) {
   }
 
   try {
-    const data = await request("/storage/paths", {
+    const data = await privilegedRequest("/storage/paths", {
       method: "POST",
       body: { models_dir: target, move_existing: moveExisting },
     });
@@ -10086,7 +10407,7 @@ async function deleteSessionById(sessionId) {
   if (!window.confirm("Удалить этот диалог и историю сообщений?")) return;
 
   try {
-    await request(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    await request(`/sessions/${encodeURIComponent(sessionId)}?profile_id=${encodeURIComponent(state.activeProfileId)}`, { method: "DELETE" });
     const nextSession = state.sessions.find((item) => item.id !== sessionId)?.id || null;
     state.sessions = state.sessions.filter((item) => item.id !== sessionId);
     if (state.currentSessionId === sessionId) {
@@ -10114,7 +10435,7 @@ async function deleteCurrentContext() {
   });
   if (!approved) return;
   try {
-    await request(`/transcripts/${encodeURIComponent(transcriptId)}`, { method: "DELETE" });
+    await request(transcriptScopeUrl(transcriptId, "", state.latestTranscript), { method: "DELETE" });
     state.latestTranscript = null;
     renderTranscriptStrip();
     renderContextSummary();
@@ -10247,7 +10568,7 @@ async function restartBackendRuntime() {
   setHealthBadge("Перезапуск…", "warning");
 
   try {
-    await request("/runtime/restart", { method: "POST", body: {} });
+    await privilegedRequest("/runtime/restart", { method: "POST", body: {} });
   } catch (error) {
     if (!isExpectedShutdownError(error)) {
       setInlineStatus(els.appRuntimeStatus, `Не удалось запустить перезапуск: ${error.message || error}`, "error");
@@ -10291,7 +10612,7 @@ async function shutdownRuntime() {
   renderAppRuntimeMaintenance();
   setInlineStatus(els.appRuntimeStatus, "Остановка приложения…", "warning");
   try {
-    await request("/runtime/shutdown", { method: "POST", body: {} });
+    await privilegedRequest("/runtime/shutdown", { method: "POST", body: {} });
     setFooter("Остановка запущена. Для нового старта снова откройте launcher.", "warning");
     setHealthBadge("Остановка…", "error");
   } catch (error) {
@@ -10363,7 +10684,7 @@ async function cleanupDatabaseGarbage() {
   setInlineStatus(els.databaseStatus, "Очистка БД…", "warning");
 
   try {
-    const result = await request("/database/cleanup", { method: "POST", body: { vacuum: true } });
+    const result = await privilegedRequest("/database/cleanup", { method: "POST", body: { vacuum: true } });
     setInlineStatus(els.databaseStatus, formatDatabaseDeleted(result, "Мусор не найден."), "success");
     setFooter("Очистка БД завершена.", "success");
     await Promise.all([
@@ -10395,7 +10716,7 @@ async function resetDatabaseFully() {
   setInlineStatus(els.databaseStatus, "Полная очистка БД…", "warning");
 
   try {
-    const result = await request("/database/reset", {
+    const result = await privilegedRequest("/database/reset", {
       method: "POST",
       body: { confirm: "RESET_DATABASE", vacuum: true },
     });
@@ -10744,11 +11065,7 @@ function bindEvents() {
     await uploadRagFiles(els.ragFileInput.files);
   });
   els.ragIngestButton?.addEventListener("click", async () => ingestRagSources(true));
-  els.ragForceIngestButton?.addEventListener("click", async () => ingestRagSources(true));
-  els.ragCopyPathButton?.addEventListener("click", async () => {
-    await copyText(state.ragStatus?.source_dir || "rag_sources");
-    setFooter("Путь RAG скопирован.", "success");
-  });
+  els.ragReindexButton?.addEventListener("click", async () => startRagReindex(els.ragReindexButton));
   els.ragEnabledToggle?.addEventListener("change", async () => {
     await toggleRagForActiveProfile(Boolean(els.ragEnabledToggle.checked));
   });
@@ -10818,6 +11135,10 @@ function bindEvents() {
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
   els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
   els.showRouterThinkingToggle?.addEventListener("change", async () => saveShowRouterThinkingToggleFlow());
+  els.ollamaThinkSelect?.addEventListener("change", () => {
+    renderQuickThinkingControl(els.ollamaThinkSelect.value);
+    renderQuickModelPicker();
+  });
   els.quickThinkingButton?.addEventListener("click", () => {
     closeQuickModelMenu();
     closeVoiceModelMenu();
@@ -10831,18 +11152,33 @@ function bindEvents() {
   const handleQuickThinkingMenuClick = async (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-thinking-mode]") : null;
     if (!(button instanceof HTMLElement)) return;
-    const nextMode = normalizeOllamaThink(button.dataset.thinkingMode, "on");
+    const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
+    const nextMode = thinkingSelection(button.dataset.thinkingMode, getModelThinkingMetadata(modelName));
     if (!els.quickThinkingControl) return;
+    const trigger = event.currentTarget === els.quickThinkingMobileMenu ? els.quickThinkingMobileButton : els.quickThinkingButton;
     closeQuickThinkingMenu();
-    els.quickThinkingControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+    trigger?.focus();
+    els.quickThinkingControl.dataset.thinkingMode = nextMode;
     if (els.quickThinkingMobileControl) {
-      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode === "off" ? "off" : "on";
+      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
     }
     renderQuickThinkingControl(nextMode);
     await saveQuickThinkingModeFlow();
   };
   els.quickThinkingMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   els.quickThinkingMobileMenu?.addEventListener("click", handleQuickThinkingMenuClick);
+  [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
+    menu.addEventListener("keydown", (event) => {
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const buttons = Array.from(menu.querySelectorAll("[data-thinking-mode]:not(:disabled)"));
+      if (!buttons.length) return;
+      event.preventDefault();
+      const current = buttons.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+        : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next].focus();
+    });
+  });
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
   els.resetAsrPipelineSettingsButton?.addEventListener("click", async () => resetAsrPipelineSettingsFlow());
   els.asrFullAnalysisEnabledToggle?.addEventListener("change", async () => saveAsrFullAnalysisPreferenceFlow());
@@ -10879,6 +11215,18 @@ function bindEvents() {
   });
 
   const handleQuickModelMenuClick = async (event) => {
+    const thinkingButton = event.target instanceof Element ? event.target.closest("[data-quick-thinking-open]") : null;
+    if (thinkingButton) {
+      event.stopPropagation();
+      const modelName = thinkingButton.dataset.quickThinkingOpen || "";
+      const source = event.currentTarget === els.quickModelMobileMenu ? "mobile" : "desktop";
+      closeQuickModelMenu();
+      if (state.selectedLlmModel !== modelName) await applySelectedLlmModel(modelName);
+      toggleQuickThinkingMenu(true, source);
+      const menu = source === "mobile" ? els.quickThinkingMobileMenu : els.quickThinkingMenu;
+      menu?.querySelector("[aria-checked='true']")?.focus();
+      return;
+    }
     if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
       return;
     }
@@ -11330,10 +11678,21 @@ function bindEvents() {
   });
 
   els.downloadModelButton?.addEventListener("click", async () => {
-    const target = (els.downloadModelInput?.value || "").trim();
-    await startModelDownload(target);
-    if (els.downloadModelInput) {
-      els.downloadModelInput.value = "";
+    try {
+      const parsed = parseOllamaInstallInput(els.downloadModelInput?.value || "");
+      const started = await startModelDownload(parsed.model);
+      if (started) {
+        setInlineStatus(els.ollamaInstallerStatus, `Загрузка ${parsed.model} запущена. Прогресс — ниже; модель не запускается автоматически.`, "success");
+      } else if (started === false) {
+        setInlineStatus(els.ollamaInstallerStatus, "Загрузка не запущена: подтверждение отменено.", "warning");
+      } else {
+        setInlineStatus(els.ollamaInstallerStatus, "Не удалось запустить загрузку. Подробности — в строке состояния приложения.", "error");
+      }
+      if (parsed.ignoredRun && started) {
+        setInlineStatus(els.ollamaInstallerStatus, `Команда run проигнорирована. Загружается ${parsed.model}; после загрузки выбери модель вручную.`, "success");
+      }
+    } catch (error) {
+      setInlineStatus(els.ollamaInstallerStatus, error.message, "error");
     }
   });
 
@@ -11484,6 +11843,10 @@ function bindEvents() {
     if (!button) return;
     await cancelDownload(button.dataset.cancelDownload || "");
   });
+  els.ollamaInstallerDownloads?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-cancel-download]");
+    if (button) await cancelDownload(button.dataset.cancelDownload || "");
+  });
 
   els.applyModelsDirButton?.addEventListener("click", async () => {
     await saveModelsDir(false);
@@ -11576,6 +11939,12 @@ function bindEvents() {
       }
       if (!els.networkAddressMenu?.hidden) {
         closeNetworkAddressMenu();
+        return;
+      }
+      if (!els.quickThinkingMenu?.hidden || !els.quickThinkingMobileMenu?.hidden) {
+        const trigger = !els.quickThinkingMobileMenu?.hidden ? els.quickThinkingMobileButton : els.quickThinkingButton;
+        closeQuickThinkingMenu();
+        trigger?.focus();
         return;
       }
       closeSidebar();

@@ -13,7 +13,12 @@ class ModelTransferManifestTests(unittest.TestCase):
             "version": 1,
             "bundle_id": "bundle-1",
             "created_at": "2026-07-27T00:00:00Z",
-            "models": [{"id": "ollama:qwen3:8b", "family": "ollama"}],
+            "models": [{
+                "id": "ollama:qwen3:8b",
+                "family": "ollama",
+                "model_id": "qwen3:8b",
+                "files": ["payload/ollama/blobs/sha256-test"],
+            }],
             "files": [{"path": "payload/ollama/blobs/sha256-test", "size": 4, "sha256": "a" * 64}],
         }
         payload.update(changes)
@@ -43,6 +48,17 @@ class ModelTransferManifestTests(unittest.TestCase):
         with self.assertRaises(BundleValidationError) as ctx:
             BundleManifest.parse(self._manifest(version=2))
         self.assertEqual(ctx.exception.code, "unsupported_bundle_version")
+
+    def test_rejects_model_file_from_another_family(self):
+        models = [{
+            "id": "piper:voice",
+            "family": "piper",
+            "model_id": "voice",
+            "files": ["payload/ollama/blobs/sha256-test"],
+        }]
+        with self.assertRaises(BundleValidationError) as ctx:
+            BundleManifest.parse(self._manifest(models=models))
+        self.assertEqual(ctx.exception.code, "bundle_invalid")
 
 
 if __name__ == "__main__":

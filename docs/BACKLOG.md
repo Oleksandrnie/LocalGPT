@@ -4,7 +4,8 @@
 
 ## Planned
 
-- Выполнить [аудит и усиление RAG grounding, prompt policy и LLM-безопасности](PROMPT_RAG_SECURITY_AUDIT_SPEC.md) в отдельной новой feature-ветке: trust-aware prompt composition, retrieval/grounding eval, injection/leakage/resource/safe-sink controls и external-agent threat inventory.
+- Выполнить отдельную реальную Tailscale/tailnet validation; LAN Caddy HTTPS → localhost backend уже проверен с другого устройства в private Wi-Fi.
+- Investigate Qwen3 reasoning that was returned with `think=False`/`/no_think`; determine how the Thinking control should report provider behavior rather than trusting request settings alone.
 - Добавить безопасную очистку runtime logs из Settings с подтверждением и сохранением log rotation.
 - Рассмотреть metadata/trusted-handler модель для Caddy без изменения существующего LAN fast path.
 
@@ -19,13 +20,14 @@
 
 - Full ASR analysis может заметно нагружать CPU/GPU и требует ручного разрешения.
 - Live functionality зависит от внешних binaries и локальных моделей; unit tests не подтверждают готовность конкретной машины.
-- LAN HTTPS certificate trust и Tailscale availability проверяются только в реальной среде.
+- LAN HTTPS path функционально проверен в реальной сети, но Safari certificate trust остаётся отдельной device-level настройкой; Tailscale availability проверяется только в реальной tailnet-среде.
 - Полный `unittest discover` сейчас имеет три pre-existing test-suite проблемы, не связанные с документацией:
   - два ASR pipeline tests ожидают прежнее число/форму mocked LLM stages и падают при текущем pipeline;
   - plugin-doc test проходит изолированно, но после полного suite может обращаться к неинициализированному restored SQLite state.
 
 ## Deferred decisions
 
+- Direct Hugging Face chat inference and a UI flow for local Safetensors/GGUF import (`Modelfile` / `ollama create`) remain separate from the current Ollama-only runtime and guarded `ollama pull` installer. HF-origin models are supported by this work only after they are installed into Ollama and expose `/api/show` thinking metadata.
 - External plugin process API требует отдельного security design: isolation, permissions, IPC, lifecycle, timeouts и audit.
 - Plugin marketplace требует signing, trust, review, update и rollback model.
 - Hot reload arbitrary plugin code не поддерживается; текущая Registry v0 остаётся metadata-only.

@@ -248,6 +248,27 @@ def chat_completion(
         )
 
 
+def chat_completion_result(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    image_paths: Iterable[str | Path],
+    *,
+    max_total_bytes: int | None = None,
+    **runtime_kwargs: Any,
+) -> ollama_runtime.ChatCompletionResult:
+    multimodal_messages = build_multimodal_messages(
+        messages,
+        image_paths,
+        max_total_bytes=max_total_bytes,
+    )
+    with _VISION_INFERENCE_SEMAPHORE:
+        return ollama_runtime.chat_completion_result(
+            model_name,
+            messages=multimodal_messages,
+            **runtime_kwargs,
+        )
+
+
 def chat_completion_stream(
     model_name: str,
     messages: list[dict[str, Any]],
@@ -263,6 +284,27 @@ def chat_completion_stream(
     )
     with _VISION_INFERENCE_SEMAPHORE:
         yield from ollama_runtime.chat_completion_stream(
+            model_name,
+            messages=multimodal_messages,
+            **runtime_kwargs,
+        )
+
+
+def chat_completion_stream_events(
+    model_name: str,
+    messages: list[dict[str, Any]],
+    image_paths: Iterable[str | Path],
+    *,
+    max_total_bytes: int | None = None,
+    **runtime_kwargs: Any,
+) -> Iterator[ollama_runtime.ChatStreamEvent]:
+    multimodal_messages = build_multimodal_messages(
+        messages,
+        image_paths,
+        max_total_bytes=max_total_bytes,
+    )
+    with _VISION_INFERENCE_SEMAPHORE:
+        yield from ollama_runtime.chat_completion_stream_events(
             model_name,
             messages=multimodal_messages,
             **runtime_kwargs,

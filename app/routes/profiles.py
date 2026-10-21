@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from .. import config, db
+from ..roles import DEFAULT_PROFILE_PERSONA_VERSION
 from ..schemas import (
     ModelSettingsRequest,
     ModelSettingsReset,
@@ -19,6 +20,7 @@ from ..schemas import (
     SessionUpdate,
 )
 from ..services import criteria as criteria_service
+from ..services.thinking import normalize_thinking_setting
 from ..services.chat import normalize_model_name, session_title_hint
 from backend.apps.rag import service as rag_service
 from backend.apps.chat.services import attachment_storage
@@ -32,6 +34,13 @@ def _get_profile_or_404(profile_id: int) -> dict:
     if not profile or not profile.get("is_active", 1):
         raise HTTPException(status_code=404, detail="profile_not_found")
     return profile
+
+
+def _get_owned_session_or_404(profile_id: int, session_id: str) -> dict:
+    session = db.get_session(session_id)
+    if not session or int(session.get("profile_id") or 0) != int(profile_id):
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return session
 
 
 def _normalize_whisper_model(model_name: str) -> str:
@@ -136,20 +145,8 @@ def _normalize_bool_setting(value: object) -> bool:
     return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
-def _normalize_ollama_think(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = str(value or "").strip().lower()
-    if normalized in {"auto", "default", ""}:
-        return "auto"
-    if normalized in {"on", "true", "1", "yes", "think"}:
-        return "on"
-    if normalized in {"off", "false", "0", "no", "nothink"}:
-        return "off"
-    raise HTTPException(
-        status_code=422,
-        detail={"code": "invalid_ollama_think", "message": "ollama_think must be auto, on, or off."},
-    )
+def _normalize_ollama_think(value: bool | str | None, model_name: str = "") -> str | None:
+    return normalize_thinking_setting(value, model_name)
 
 
 def _normalize_token_budget(value: int | None, key: str) -> int | None:
@@ -162,10 +159,11 @@ def _normalize_token_budget(value: int | None, key: str) -> int | None:
             status_code=422,
             detail={"code": f"invalid_{key}", "message": f"{key} must be an integer."},
         ) from exc
-    if normalized < 1 or normalized > 32768:
+    minimum = config.THINKING_TOKEN_BUDGET_MIN if key == "thinking_tokens" else 1
+    if normalized < minimum or normalized > 32768:
         raise HTTPException(
             status_code=422,
-            detail={"code": f"invalid_{key}", "message": f"{key} must be between 1 and 32768."},
+            detail={"code": f"invalid_{key}", "message": f"{key} must be between {minimum} and 32768."},
         )
     return normalized
 
@@ -227,6 +225,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         "chat_image_max_side",
         "vision_model",
         "vision_num_ctx",
+        "vision_output_tokens",
         "vision_fallback",
         "ocr_assist",
         "ocr_language",
@@ -253,6 +252,20 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
         )
     if preset is not None:
         cleaned["default_pipeline_preset"] = str(preset).strip().lower()
+    bounded_positive_ints = {
+        "mem_turns": 100,
+        "max_transcript_chars": 100_000,
+        "max_context_chars": 256_000,
+        "summary_memory_limit": 100,
+        "rag_top_k": 20,
+        "rag_max_context_chars": 128_000,
+        "max_resident_target_models": 5,
+        "max_images_per_message": 10,
+        "chat_image_max_file_bytes": 50 * 1024 * 1024,
+        "chat_image_max_total_bytes": 100 * 1024 * 1024,
+        "chat_image_max_pixels": 100_000_000,
+        "chat_image_max_side": 32_768,
+    }
     for key in (
         "mem_turns",
         "max_transcript_chars",
@@ -269,19 +282,20 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
     ):
         if key in cleaned and cleaned[key] is not None:
             try:
-                parsed = max(1, int(cleaned[key]))
-                if key == "max_resident_target_models":
-                    cleaned[key] = min(5, parsed)
-                elif key == "max_images_per_message":
-                    if parsed > 10:
-                        raise ValueError
-                    cleaned[key] = parsed
-                else:
-                    cleaned[key] = parsed
+                parsed = int(cleaned[key])
+                minimum = 0 if key == "mem_turns" else 1
+                if parsed < minimum:
+                    raise ValueError
+                if parsed > bounded_positive_ints[key]:
+                    raise ValueError
+                cleaned[key] = parsed
             except (TypeError, ValueError) as exc:
                 raise HTTPException(
                     status_code=422,
-                    detail={"code": f"invalid_{key}", "message": f"{key} must be a positive integer."},
+                    detail={
+                        "code": f"invalid_{key}",
+                        "message": f"{key} must be between {minimum} and {bounded_positive_ints[key]}.",
+                    },
                 ) from exc
     for key in (
         "streaming_enabled",
@@ -327,6 +341,26 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 },
             )
         cleaned["vision_num_ctx"] = vision_num_ctx
+    if "vision_output_tokens" in cleaned:
+        try:
+            vision_output_tokens = int(cleaned["vision_output_tokens"])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_vision_output_tokens",
+                    "message": "Vision output tokens должен быть целым числом от 128 до 8192; legacy 0 означает 1024.",
+                },
+            ) from exc
+        if vision_output_tokens != 0 and not 128 <= vision_output_tokens <= 8192:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_vision_output_tokens",
+                    "message": "Vision output tokens должен быть целым числом от 128 до 8192; legacy 0 означает 1024.",
+                },
+            )
+        cleaned["vision_output_tokens"] = vision_output_tokens or config.DEFAULT_RUNTIME_SETTINGS["vision_output_tokens"]
     if "vision_fallback" in cleaned:
         fallback = str(cleaned["vision_fallback"] or "").strip().lower()
         if fallback not in {"vision_context", "error"}:
@@ -381,7 +415,16 @@ def create_profile(req: ProfileCreate):
         profile = db.create_profile(req.name, req.description, req.color)
         system_prompt = str(req.system_prompt or "").strip()
         if system_prompt:
-            profile = db.update_profile_preferences(int(profile["id"]), {"chat": {"system_prompt": system_prompt}}) or profile
+            profile = db.update_profile_preferences(
+                int(profile["id"]),
+                {
+                    "chat": {
+                        "system_prompt": system_prompt,
+                        "persona_origin": "user",
+                        "persona_version": DEFAULT_PROFILE_PERSONA_VERSION,
+                    }
+                },
+            ) or profile
         rag_service.ensure_profile_source_dir(int(profile["id"]))
         return profile
     except ValueError:
@@ -411,7 +454,13 @@ def update_profile(profile_id: int, req: ProfileUpdate):
     if "system_prompt" in fields_set:
         profile = db.update_profile_preferences(
             profile_id,
-            {"chat": {"system_prompt": str(req.system_prompt or "").strip()}},
+            {
+                "chat": {
+                    "system_prompt": str(req.system_prompt or "").strip(),
+                    "persona_origin": "user",
+                    "persona_version": DEFAULT_PROFILE_PERSONA_VERSION,
+                }
+            },
         ) or profile
     return profile
 
@@ -426,6 +475,8 @@ def update_profile_preferences(profile_id: int, req: ProfilePreferencesUpdate):
         updates.setdefault("chat", {})["dictation_model"] = _normalize_whisper_model(req.chat.dictation_model)
     if req.chat and req.chat.system_prompt is not None:
         updates.setdefault("chat", {})["system_prompt"] = req.chat.system_prompt.strip()
+        updates.setdefault("chat", {})["persona_origin"] = "user"
+        updates.setdefault("chat", {})["persona_version"] = DEFAULT_PROFILE_PERSONA_VERSION
 
     if req.asr:
         if req.asr.studio_model is not None:
@@ -515,20 +566,16 @@ def create_chat_session(req: SessionCreate):
 
 
 @router.delete("/sessions/{session_id}")
-def delete_chat_session(session_id: str):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def delete_chat_session(session_id: str, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     attachment_storage.delete_session_attachments(session_id)
     db.delete_session(session_id)
     return {"deleted": session_id}
 
 
 @router.patch("/sessions/{session_id}")
-def update_chat_session(session_id: str, req: SessionUpdate):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def update_chat_session(session_id: str, req: SessionUpdate, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     new_model = normalize_model_name(req.model_name) if req.model_name else None
     updated = db.update_session(session_id, title=req.title, model_name=new_model, role=None)
     if not updated:
@@ -537,10 +584,8 @@ def update_chat_session(session_id: str, req: SessionUpdate):
 
 
 @router.get("/sessions/{session_id}/messages")
-def get_session_messages(session_id: str, limit: int | None = None):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def get_session_messages(session_id: str, profile_id: int, limit: int | None = None):
+    _get_owned_session_or_404(profile_id, session_id)
     messages = db.get_messages(session_id, limit_pairs=limit if limit else None)
     return {"session_id": session_id, "messages": messages}
 
@@ -550,19 +595,15 @@ class SessionCriteriaPayload(BaseModel):
 
 
 @router.get("/sessions/{session_id}/criteria")
-def get_session_criteria(session_id: str):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def get_session_criteria(session_id: str, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     criteria = db.get_session_criteria(session_id) or []
     return {"session_id": session_id, "criteria": criteria}
 
 
 @router.post("/sessions/{session_id}/criteria")
-def save_session_criteria(session_id: str, payload: SessionCriteriaPayload):
-    session = db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session_not_found")
+def save_session_criteria(session_id: str, payload: SessionCriteriaPayload, profile_id: int):
+    _get_owned_session_or_404(profile_id, session_id)
     cleaned = criteria_service.normalize_criteria_list(payload.criteria or [])
     db.save_session_criteria(session_id, cleaned)
     return {"session_id": session_id, "criteria": cleaned}
@@ -594,7 +635,7 @@ def save_model_settings(req: ModelSettingsRequest):
         num_ctx=req.num_ctx,
         mem_turns=None,
         ollama_keep_alive=(req.ollama_keep_alive.strip() if isinstance(req.ollama_keep_alive, str) and req.ollama_keep_alive.strip() else None),
-        ollama_think=_normalize_ollama_think(req.ollama_think),
+        ollama_think=_normalize_ollama_think(req.ollama_think, model),
         pipeline_enabled=req.pipeline_enabled,
         summary_memory_enabled=req.summary_memory_enabled,
         rag_enabled=req.rag_enabled,

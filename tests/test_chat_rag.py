@@ -52,7 +52,7 @@ class ChatRagExportTestCase(unittest.TestCase):
             },
         )
 
-    def test_user_and_completed_assistant_export_with_role_metadata(self) -> None:
+    def test_user_export_is_evidence_and_completed_assistant_export_is_continuity_only(self) -> None:
         user_response = self._export(self.user_message["id"], "Отредактированный пользовательский контекст.")
         assistant_response = self._export(self.assistant_message["id"], "Проверенный ответ про кварцит.")
 
@@ -64,8 +64,20 @@ class ChatRagExportTestCase(unittest.TestCase):
         self.assertEqual(assistant_document["content"], "Проверенный ответ про кварцит.")
         self.assertFalse(assistant_document["metadata"]["reasoning_ingested"])
         self.assertNotIn("reasoning-marker", str(assistant_document))
-        results = rag_service.search(self.profile_id, "кварцит", top_k=3)
-        self.assertTrue(any(item["source_type"] == "chat_context" for item in results))
+        assistant_results = rag_service.search(
+            self.profile_id,
+            "кварцит",
+            top_k=3,
+            session_id=self.session["id"],
+        )
+        self.assertFalse(any(item["document_metadata"].get("message_role") == "assistant" for item in assistant_results))
+        user_results = rag_service.search(
+            self.profile_id,
+            "пользовательский контекст",
+            top_k=3,
+            session_id=self.session["id"],
+        )
+        self.assertTrue(any(item["document_metadata"].get("message_role") == "user" for item in user_results))
 
     def test_profile_ownership_and_incomplete_assistant_are_rejected(self) -> None:
         other_profile_id = int(db.create_profile("Other")["id"])
@@ -86,13 +98,43 @@ class ChatRagExportTestCase(unittest.TestCase):
         self.assertEqual(incomplete.status_code, 422)
         self.assertEqual(incomplete.json()["detail"], "chat_context_assistant_incomplete")
 
+    def test_search_and_corpus_audit_expose_structured_diagnostics(self) -> None:
+        exported = self._export(
+            self.user_message["id"],
+            "Региональное продвижение использует локальные страницы и поддомены.",
+        )
+        self.assertEqual(exported.status_code, 200, exported.text)
+
+        searched = self.client.post(
+            "/rag/search",
+            json={
+                "profile_id": self.profile_id,
+                "session_id": self.session["id"],
+                "query": "Как работает региональное продвижение?",
+                "top_k": 3,
+            },
+        )
+        self.assertEqual(searched.status_code, 200, searched.text)
+        self.assertEqual(searched.json()["strategy"], "hybrid_v2")
+        self.assertEqual(searched.json()["diagnostics"]["overall_status"], "supported")
+        self.assertTrue(searched.json()["diagnostics"]["facet_coverage"][0]["evidence"])
+
+        audited = self.client.get("/rag/audit", params={"profile_id": self.profile_id})
+        self.assertEqual(audited.status_code, 200, audited.text)
+        self.assertTrue(audited.json()["preview_only"])
+        self.assertEqual(audited.json()["mutations_performed"], 0)
+
     def test_delete_chat_context_does_not_touch_message_or_other_context(self) -> None:
         first = self._export(self.user_message["id"], "Первый независимый контекст.").json()
         second = self._export(self.assistant_message["id"], "Второй независимый контекст.").json()
 
         deleted = self.client.delete(
             "/rag/contexts",
-            params={"profile_id": self.profile_id, "source_id": first["source_id"]},
+            params={
+                "profile_id": self.profile_id,
+                "session_id": self.session["id"],
+                "source_id": first["source_id"],
+            },
         )
 
         self.assertEqual(deleted.status_code, 200, deleted.text)

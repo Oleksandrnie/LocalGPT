@@ -40,6 +40,8 @@ LocalGPT не определяет способ транспортировки, 
 - Автоматическое удаление исходной модели после экспорта или удаление уже установленной модели при конфликте.
 - Перенос между архитектурами/ОС как обещание работоспособности: package переносит байты, но provider/runtime остаётся ответственностью целевого профиля.
 
+Bundle сознательно не переносит платформенные runtime. Ollama models, включая chat, Vision и embedding tags, используют один и тот же переносимый manifest/blob механизм, но на получателе нужен локальный Ollama. Для whisper.cpp переносятся GGML/CoreML assets, а `whisper-cli` и Silero VAD подготавливаются штатным setup на целевом устройстве; faster-whisper и Piper также требуют свои локальные runtime. Inspect/import report возвращает эти требования до подтверждения и после применения bundle.
+
 ## Фактические границы текущего runtime
 
 | Family | Текущая canonical location | Что считается установленным |
@@ -186,6 +188,7 @@ UI показывает отдельное состояние для отмен�
 8. Transfer router не принимает arbitrary filesystem paths и не становится файловым API для LAN client без loopback/admin-token protection.
 9. После import UI показывает только модели, прошедшие existing provider discovery/runtime validation.
 10. Документация явно говорит, что bundle не сжимает веса существенно и требует места, сопоставимого с выбранными уникальными файлами.
+11. Relocation regression экспортирует synthetic units из одного набора configured roots и импортирует их в другой, проверяя отсутствие source absolute paths и корректную публикацию всех provider families в destination roots.
 
 ## План реализации
 

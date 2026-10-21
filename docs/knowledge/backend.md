@@ -42,7 +42,7 @@ app/
 | ASR | `backend/apps/asr/routes.py`, `pipeline.py`, `transcripts.py`, `whisper*.py` | transcription, history, model management, analysis pipeline |
 | TTS | `backend/apps/tts/router.py`, `service.py`, `providers/` | provider abstraction, generation, voice library, history |
 | OCR | `backend/apps/ocr/routes.py`, `service.py` | image OCR и cleanup |
-| RAG | `backend/apps/rag/routes.py`, `service.py` | sources, ingest, chunks, retrieval, context |
+| RAG | `backend/apps/rag/routes.py`, `service.py`, `reindex_tasks.py` | sources, ingest, chunks, retrieval, context, explicit reindex lifecycle |
 | Plugins | `backend/apps/plugins/registry.py`, `routes.py`, `tailscale.py` | manifests, trust, state, docs и backend-owned handlers |
 
 Shared routers:
@@ -56,14 +56,26 @@ Shared routers:
 Chat attachment HTTP boundary:
 
 - `POST /chat/attachments` — profile-owned upload и preprocessing PNG/JPEG/WebP;
-- `GET /chat/attachments` — session/message attachment metadata;
-- `GET /chat/attachments/{id}` и `/thumbnail` — ownership-checked media;
-- `DELETE /chat/attachments/{id}` — удаление неактивного attachment;
+- `GET /chat/attachments` — metadata только при совпадающих `profile_id + session_id`;
+- `GET /chat/attachments/{id}` и `/thumbnail` — media с проверкой profile/session ownership;
+- `DELETE /chat/attachments/{id}` — удаление неактивного attachment в том же scope;
 - `GET /chat/attachments/cache` и `POST /chat/attachments/cleanup` — статистика и явная очистка cache.
 
-`POST /chat/tasks` принимает только attachment ids. Router до запуска worker проверяет profile/session ownership, status, count и общий размер, связывает записи с единственным persisted user message/task и передаёт task-safe descriptors без публикации filesystem paths.
+`POST /chat/tasks` принимает только attachment ids. Router до запуска worker проверяет profile/session ownership, status, count и общий размер, связывает записи с единственным persisted user message/task и передаёт task-safe descriptors без публикации filesystem paths. Request blocks, runtime settings и собранный prompt имеют code-enforced budgets до inference.
 
-Chat runtime возвращает reasoning и final content раздельно. Worker пишет reasoning chunks в отдельный task artifact, инкрементально сохраняет их в `chat_messages.reasoning` и публикует replay-safe SSE `reasoning` с собственной sequence; SSE `delta` и `chat_messages.content` содержат только final content. После terminal state полный reasoning доступен через `GET /chat/messages/{message_id}/reasoning?profile_id=...` после проверки profile/session ownership. Обычный history endpoint возвращает только `has_reasoning`, поэтому reasoning не участвует в следующем prompt.
+Chat runtime возвращает reasoning и final content раздельно. Worker пишет reasoning chunks в отдельный task artifact, инкрементально сохраняет их в `chat_messages.reasoning` и публикует replay-safe SSE `reasoning` с собственной sequence; SSE `delta` и `chat_messages.content` содержат только final content. После terminal state полный reasoning доступен через `GET /chat/messages/{message_id}/reasoning?profile_id=...&session_id=...` после проверки обоих ownership keys. Обычный history endpoint возвращает только `has_reasoning`, поэтому reasoning не участвует в следующем prompt.
+
+Task status/events/cancel принимают обязательные `profile_id` и `session_id` и возвращают одинаковый not-found contract для чужого и неизвестного task. Runtime ограничивает active generation до 2/profile и 4 total, SSE до 3 connections/task и завершает worker по timeout через terminal failed state с очисткой partial artifacts.
+
+Prompt composition разделяет backend-owned global policy (L1), editable profile persona/configuration (L2) и untrusted evidence/data (L4). RAG, request context, summary memory, ASR transcript/analysis evidence, OCR/Vision-derived text, criteria и chat history проходят через uniform structured data envelopes; их instruction-shaped content не получает system authority. Assistant history используется только для continuity, не как factual evidence. Metadata snapshot показывает order/trust/owner/role без raw prompt values.
+
+Session-owned API и prompt paths требуют совпадающие `profile_id + session_id`: messages/criteria, transcripts и pipeline runs, reasoning, attachments, tasks и derived RAG. Foreign и unknown IDs возвращают одинаковый not-found contract. `mem_turns` — profile-owned setting диапазона 0–100 с default 6; единая chronological selection выбирает завершённые пары `user + assistant` только текущей session. Последние N пар остаются в short history, а summary compression получает только более старые пары; failed/cancelled/active/partial и orphan rows не входят в selection и не меняют split. Automatic chat-summary имеет content-addressed snapshot identity по этим сообщениям, `mem_turns` и effective `max_context_chars`, сериализует только целые turns и выбирается прямым source lookup даже при более чем 100 новых summary rows; прежние rows остаются в SQLite до штатного cleanup, но не дублируют prompt. Удаление session немедленно удаляет её derived RAG documents/chunks/embeddings и не затрагивает profile-wide Markdown или соседние sessions.
+
+RAG API дополнительно возвращает structured retrieval diagnostics: `POST /rag/search` содержит strategy, selected chunks, lexical/semantic pool provenance и facet-level evidence state; chat completion возвращает `rag_answer_diagnostics` с retrieval state, source/chunk IDs и lexical trace по structured manifest фактически включённых evidence content spans без raw evidence. Служебные context rules, filenames и diagnostic queries в trace не участвуют, а IDs не включают omitted chunks. Это позволяет отличить отсутствие evidence от найденного, но не traceable ответа; lexical trace не является семантическим quality score. `GET /rag/audit?profile_id=...` создаёт metadata-only preview corpus hygiene без изменения файлов/index. Default `hybrid_v2` можно локально откатить к `lexical_v1` через app setting `rag_retrieval_strategy`; этот rollback не вызывает semantic query и не меняет storage/corpus. Старое сохранённое значение `hybrid_v1` нормализуется к `hybrid_v2`, а `legacy` остаётся отдельным compatibility ranking.
+
+Operational RAG lifecycle остаётся явным: `GET /rag/status` возвращает configured descriptor, количество total/indexed/missing chunks, доступные generations и безопасный state без absolute paths/raw errors. `POST /rag/reindex` создаёт одну background operation на весь process, а `GET /rag/reindex/{task_id}?profile_id=...` доступен только owning profile. Task registry не является durable storage: после рестарта UI восстанавливает канонический ready/stale state из SQLite и source metadata. Backend не скачивает и не запускает embedding model до явного reindex; одновременные операции отклоняются.
+
+`ADMIN_TOKEN` обязателен для runtime shutdown/restart, database cleanup/reset, storage paths и chat debug. Token сравнивается constant-time; Web UI передаёт его header-ом и сохраняет только в `sessionStorage`. Public health/version и runtime diagnostics не публикуют filesystem/network details; chat event log и debug prompt/pipeline остаются metadata-only.
 
 ## API boundaries
 
@@ -88,11 +100,13 @@ Routers отвечают за HTTP validation/serialization и вызывают 
 
 Repository functions возвращают обычные dict. Runtime path берётся из `LOCALGPT_DB_PATH` или `app/db/localgpt.db`.
 
-Message lifecycle поля включают `status`, `model`, `error`, `task_id`, timestamps, `is_partial` и отдельное bounded поле `reasoning`. Legacy rows мигрируют в завершённое состояние. Model settings хранят `output_tokens` и `thinking_tokens`; legacy `max_tokens` мигрирует как output budget и остаётся compatibility alias.
+Message lifecycle поля включают `status`, `model`, `error`, `task_id`, timestamps, `is_partial` и отдельное bounded поле `reasoning`. Legacy rows мигрируют в завершённое состояние. Model settings хранят `output_tokens`, `thinking_tokens` и `ollama_think`; named Ollama thinking values сохраняются как точные строки на scope profile + model, legacy `auto/on/off` остаётся совместимым, а `auto` не отправляет override и использует provider default. Legacy `max_tokens` мигрирует как output budget и остаётся compatibility alias.
 
 `chat_attachments` хранит ownership, MIME/dimensions/size, backend-owned относительные storage/thumbnail paths, связи с message/task и lifecycle status. Binary/base64 не пишутся в таблицу или message content.
 
 ## Tasks и cancellation
+
+ASR `/transcribe/tasks` допускает один активный child-process на backend process; остальные задачи получают nonterminal `queued` и запускаются FIFO. Отмена queued-задачи удаляет её временный input без запуска worker; активная отмена сохраняет слот до подтверждённой смерти child. Finalization идемпотентна и запускает следующую задачу; массовая отмена сначала очищает очередь и подавляет dispatch до завершения остановки. Ошибки создания/старта worker или monitor завершают задачу ошибкой после остановки child; если child ещё жив, слот остаётся занят, а status/cancel выполняет reconciliation. Это не durable queue и не общий scheduler с Chat/TTS или синхронным `/transcribe`.
 
 Chat, transcription и TTS имеют in-process task registries. Runtime shutdown/reset сначала отменяет активные tasks. Эти registries не являются durable queue: после process loss backend восстанавливает пользовательское состояние через persisted records и reconciliation rules, а не продолжает Python thread. Для image chat reconciliation также переводит незавершённые attachment records в terminal failed/cancelled state; cleanup не удаляет attachment активной задачи.
 
