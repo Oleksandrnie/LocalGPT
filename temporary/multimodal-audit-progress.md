@@ -257,6 +257,15 @@ Checkpoint: `970ec9f fix(chat): clarify RAG evidence and reasoning budgets`.
 - R4 validation: `venv/bin/python -m unittest tests.test_ollama_thinking_settings tests.test_ollama_thinking_metadata tests.test_model_router tests.test_chat_vision_runtime tests.test_chat_continuation -q` — 113 passed; `node --test tests/*.test.mjs` — 50 passed; `node --check web_ui/js/app.js`, targeted `py_compile`, and `git diff --check` passed. Non-fatal existing datetime deprecation/resource warnings and mocked Metal fallback logs appeared. No live Ollama inference, browser visual QA, model download, profile mutation, or LocalGPT restart; user-facing acceptance remains pending.
 - R4 checkpoint: permanent documentation and this progress update are checkpointed separately from the three implementation commits. The larger multimodal plan remains active, so retain this single progress record.
 
+### MODEL-INVENTORY-DEDUP — display Ollama tags instead of digest IDs
+
+- Status: `completed`; screenshot showed configured Ollama models duplicated as `installed_custom` entries named by 12-character digests.
+- Root cause: `buildSelectableChatModels()` preferred inventory `id` over `name`, but Ollama uses `id` for the content digest and `name` for the actual selectable model tag. This caused both failed catalog deduplication and digest labels.
+- Scope: prefer runtime `name` when present, retain `id` fallback for catalog-like records, and add regression coverage for mixed inventory/catalog records. Do not change Ollama model inventory or delete models.
+- Acceptance: configured installed models appear only once with catalog labels; a genuinely custom installed model uses its Ollama tag, never the digest; existing embedding-only filtering remains intact.
+- Validation: `node --test tests/chat_model_catalog.test.mjs` — 2/2; `node --test tests/*.test.mjs` — 50/50; `node --check web_ui/js/app.js` and `git diff --check` passed. No browser/server changes or Ollama mutation; user should refresh the UI to verify presentation.
+- Checkpoint: this UI inventory correction is committed separately; larger multimodal plan remains active.
+
 ### Explicitly unchanged / deferred
 
 - ASR accuracy on the user's 5:59.8 MP3 remains an optional manual reference-transcript exercise; short public-set smoke is not a substitute.

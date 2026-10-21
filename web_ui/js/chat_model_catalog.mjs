@@ -1,5 +1,8 @@
 function modelId(item) {
-  return String(item?.id || item?.name || "").trim();
+  // Ollama inventory records use `id` for the digest and `name` for the
+  // selectable model tag. Prefer the tag so catalog entries deduplicate and
+  // custom models never appear under their digest.
+  return String(item?.name || item?.id || "").trim();
 }
 
 export function buildSelectableChatModels(catalog, excludedCatalogs, installedModels) {

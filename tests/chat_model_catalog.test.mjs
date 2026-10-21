@@ -8,10 +8,10 @@ test("selectable chat catalog includes installed non-catalog models without dupl
     [{ id: "qwen2.5:7b-instruct", title: "Qwen 2.5 7B" }],
     [{ id: "qwen3:0.6b" }, { id: "qwen2.5vl:3b" }],
     [
-      { name: "qwen2.5:7b-instruct", capabilities: ["completion"] },
-      { name: "hf.co/example/custom-model:Q4_K_M", capabilities: ["completion"] },
-      { name: "qwen3:0.6b", capabilities: ["completion"] },
-      { name: "qwen2.5vl:3b", capabilities: ["completion", "vision"] },
+      { id: "catalog-digest", name: "qwen2.5:7b-instruct", capabilities: ["completion"] },
+      { id: "custom-digest", name: "hf.co/example/custom-model:Q4_K_M", capabilities: ["completion"] },
+      { id: "router-digest", name: "qwen3:0.6b", capabilities: ["completion"] },
+      { id: "vision-digest", name: "qwen2.5vl:3b", capabilities: ["completion", "vision"] },
     ],
   );
 
@@ -21,6 +21,7 @@ test("selectable chat catalog includes installed non-catalog models without dupl
   ]);
   assert.equal(models[1].custom_installed, true);
   assert.equal(models[1].title, "hf.co/example/custom-model:Q4_K_M");
+  assert.notEqual(models[1].id, "custom-digest");
 });
 
 test("embedding-only installed models are not offered as chat models", () => {
