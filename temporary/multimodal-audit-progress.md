@@ -211,7 +211,7 @@ The user authorized completing these items without intermediate approvals; provi
 - Status: `completed`; copy-only follow-up to the installer selection stage.
 - Goal/result: show only `ollama pull model:tag` in the input placeholder and tell users that `ollama run` is unnecessary; if included in a pasted accepted snippet it is ignored. Clarify that the compatible model appears for manual selection after the pull.
 - Validation: `node --check web_ui/js/app.js`; full `node --test tests/*.test.mjs` — 41/41; `git diff --check` passed. No browser/server restart or model pull.
-- Checkpoint: pending.
+- Checkpoint: `a22eceb fix(ui): clarify Ollama pull-only install example`.
 
 Implementation complete: the Settings → Chat/LLM panel now accepts a bounded raw Ollama model reference, one `ollama pull` line, or that pull plus an exact matching `ollama run` line (which is explicitly ignored). It reuses existing confirmation, pull, status polling and cancellation; the inline panel shows recent pull status/progress, transfer size/ETA and cancellation. Backend validates again before accepting an API request; no shell command is executed and the selected model is not changed. Installer backlog item moved to the completed changelog. No model was downloaded and no app/profile state was changed.
 
