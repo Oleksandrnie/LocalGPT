@@ -79,7 +79,7 @@ Settings tab `Vision` не смешан с обычной chat library. Он п�
 
 После завершённого анализа действие Vision → RAG открывает dialog с редактируемым title/text. Export выполняется только после подтверждения пользователя и не переносит image binary.
 
-Settings → Chat / LLM показывает отдельные `Output tokens` и `Thinking tokens`. Быстрый Thinking ON/OFF видим для thinking-capable модели (для Auto — по profile preference) и сохраняет оба budget override без сброса. Desktop/mobile header menu и slider в desktop/mobile model picker используют один save handler и после изменения синхронно рендерят общее effective состояние.
+Settings → Chat / LLM показывает отдельные `Output tokens`, `Thinking tokens` и динамический `Thinking — режим / уровень`. Последний строится только по фактическому Ollama metadata выбранной установленной модели: named levels показываются без переименования, boolean-only модели сохраняют ON/OFF, `Auto` использует Ollama default, а отсутствующая/явно unsupported metadata не порождает выдуманный control. Кастомные installed Ollama-модели используют ту же схему. Desktop/mobile header menu синхронизируется с Settings; в quick model picker named-level модели открывают общий selector, а boolean-only модели сохраняют switch. Сохранение thinking choice не сбрасывает output/thinking budget overrides. Для Auto-router остаётся отдельная profile preference. Выбор reasoning effort не меняет видимость trace: её можно просматривать отдельно у ответа через `>_`.
 
 Там же `История чата, пар сообщений` задаёт profile default 6 в диапазоне 0–100. Один turn — завершённая пара `user + assistant` только текущего chat; `0` отключает short history. Setting сохраняется в profile preferences и применяется ко всем chat-моделям, но не смешивает sessions.
 

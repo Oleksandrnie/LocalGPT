@@ -135,9 +135,10 @@ Smoke считается пройденным, если `/health` возвращ
 - `stream=true` создаёт раздельные SSE `reasoning`/`delta`, а replay/reconnect не дублирует ни reasoning, ни final text;
 - non-streaming сохраняет тот же assistant lifecycle;
 - native reasoning отделён от final content в normal/streaming paths, инкрементально сохраняется, не входит в SSE `delta`/history; hybrid Qwen OFF сохраняет structural parser, использует output + thinking compatibility cap и скрывает reasoning; только явный length с final content запускает до четырёх продолжений с тем же per-call budget; cap/empty/reasoning-only exhaustion завершается ошибкой и очищает partial assistant row;
+- Ollama `thinking.values/default` sanitization covers named levels, boolean-only controls, `[false]`, absent/malformed metadata and catalog/custom installed inventory; settings validate per-model choices, persist named values exactly, preserve legacy `auto/on/off`, and native sync/stream payloads send exact declared values without name-based guessing;
 - deterministic continuation fixtures проверяют task stream/non-stream, direct Vision с теми же images, explicit RAG-vision без нового retrieval, exact overlap, единственный terminal SSE и privacy literal через границы passes;
 - protected L1/L2/private-session literal блокируется до non-streaming выдачи/сохранения; streaming/vision guard не выпускает полное значение даже при разбиении между chunks; user attack marker не считается protected автоматически;
-- `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их;
+- `output_tokens`/`thinking_tokens` мигрируют и round-trip независимо; быстрый Thinking не сбрасывает их; settings, desktop/mobile header menus and quick model picker show only discovered per-model reasoning values, and trace visibility remains separate;
 - thinking budget defaults to 4096 and rejects/clamps values below 2048 while preserving the separate output-token range and higher per-model overrides;
 - RAG context попадает в prompt только активного профиля;
 - RAG data остаётся L4 envelope; `hybrid_v2` покрывает multi-part facets через independent lexical/semantic pools и RRF без corpus-specific bonus, repeated/deictic recent turns сохраняют релевантную тему, а missing/conflicting evidence получает `not_found`/`conflict` diagnostics с provenance;
@@ -248,6 +249,8 @@ Model-transfer tests используют только temporary synthetic files
 - core LAN/Tailscale addresses возвращаются backend-ом, а не hardcode-ятся UI.
 
 ## UI regression
+
+`node --test tests/model_thinking_ui.test.mjs tests/chat_reasoning_ui.test.mjs tests/chat_model_catalog.test.mjs` checks named-level and boolean metadata, custom installed models, explicit/unknown unsupported states, settings/header synchronization, and unchanged token budgets. Full frontend checks use `node --test tests/*.test.mjs`.
 
 Минимальная ручная матрица:
 

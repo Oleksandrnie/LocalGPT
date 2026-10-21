@@ -27,6 +27,7 @@
 
 ## Deferred decisions
 
+- Direct Hugging Face chat inference and a UI flow for local Safetensors/GGUF import (`Modelfile` / `ollama create`) remain separate from the current Ollama-only runtime and guarded `ollama pull` installer. HF-origin models are supported by this work only after they are installed into Ollama and expose `/api/show` thinking metadata.
 - External plugin process API требует отдельного security design: isolation, permissions, IPC, lifecycle, timeouts и audit.
 - Plugin marketplace требует signing, trust, review, update и rollback model.
 - Hot reload arbitrary plugin code не поддерживается; текущая Registry v0 остаётся metadata-only.

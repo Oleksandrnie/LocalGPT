@@ -100,7 +100,7 @@ Routers отвечают за HTTP validation/serialization и вызывают 
 
 Repository functions возвращают обычные dict. Runtime path берётся из `LOCALGPT_DB_PATH` или `app/db/localgpt.db`.
 
-Message lifecycle поля включают `status`, `model`, `error`, `task_id`, timestamps, `is_partial` и отдельное bounded поле `reasoning`. Legacy rows мигрируют в завершённое состояние. Model settings хранят `output_tokens` и `thinking_tokens`; legacy `max_tokens` мигрирует как output budget и остаётся compatibility alias.
+Message lifecycle поля включают `status`, `model`, `error`, `task_id`, timestamps, `is_partial` и отдельное bounded поле `reasoning`. Legacy rows мигрируют в завершённое состояние. Model settings хранят `output_tokens`, `thinking_tokens` и `ollama_think`; named Ollama thinking values сохраняются как точные строки на scope profile + model, legacy `auto/on/off` остаётся совместимым, а `auto` не отправляет override и использует provider default. Legacy `max_tokens` мигрирует как output budget и остаётся compatibility alias.
 
 `chat_attachments` хранит ownership, MIME/dimensions/size, backend-owned относительные storage/thumbnail paths, связи с message/task и lifecycle status. Binary/base64 не пишутся в таблицу или message content.
 
