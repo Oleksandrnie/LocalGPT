@@ -12,7 +12,7 @@ rag_sources/
 
 Profile directories создаются приложением по мере необходимости. RAG-файлы являются runtime data и не должны попадать в Git.
 
-Поддерживается только `.md`. Path resolution запрещает выход из profile source directory.
+Поддерживаются `.md` и Telegram Desktop `.html` (произвольные веб-страницы не принимаются). Path resolution запрещает выход из profile source directory.
 
 ## Ingestion
 
@@ -20,7 +20,7 @@ Profile directories создаются приложением по мере не
 
 1. создаёт/находит directory профиля;
 2. сканирует поддерживаемые файлы;
-3. читает и нормализует Markdown;
+3. читает Markdown либо разбирает сообщения Telegram HTML;
 4. создаёт chunks;
 5. считает embeddings;
 6. синхронизирует `source_documents`, `document_chunks`, `document_embeddings`;
@@ -53,7 +53,7 @@ Semantic provider передаёт `truncate=false`, валидирует чис
 
 Переключение `RAG_EMBEDDING_PROVIDER`/model/version/dimensions не конвертирует индекс автоматически: search возвращает `rag_embedding_reindex_required`, пока все доступные chunks не получат выбранное generation. Переиндексация сначала полностью рассчитывает новое поколение и только затем атомарно публикует его; если source chunks изменились во время расчёта, публикация отклоняется с `rag_embedding_source_changed`, а прежнее generation остаётся целым. Сохранённые generations позволяют выполнить rollback возвратом прежней конфигурации без повторного чтения corpus.
 
-`GET /rag/status` сообщает configured descriptor, `total_chunks`, `indexed_chunks`, `missing_chunks`, `pending_sources` и metadata доступных generations. Состояния имеют чёткий порядок: invalid provider configuration → `configuration_error`; новые/изменённые Markdown sources → `ingest_required`; отсутствующее configured generation → `reindex_required`; совпадающий source/index → `ready`. Absolute paths и raw exception text наружу не передаются.
+`GET /rag/status` сообщает configured descriptor, `total_chunks`, `indexed_chunks`, `missing_chunks`, `pending_sources` и metadata доступных generations. Состояния имеют чёткий порядок: invalid provider configuration → `configuration_error`; новые/изменённые Markdown/Telegram sources → `ingest_required`; отсутствующее configured generation → `reindex_required`; совпадающий source/index → `ready`. Absolute paths и raw exception text наружу не передаются.
 
 Semantic reindex запускается только явно через `POST /rag/reindex`; UI перед запуском показывает модель, объём chunks и предупреждение о локальной нагрузке. На весь backend допускается одна background operation, прогресс читается через profile-owned `GET /rag/reindex/{task_id}`. Task state process-local, поэтому после рестарта незавершённая operation исчезает, а UI повторно получает канонический generation state из SQLite. Это не silent download/reindex: установка модели и обычный ingest sources остаются отдельными действиями.
 
@@ -99,7 +99,7 @@ HTTP search ограничивает query 16 000 символами и `top_k` 
 
 Retrieval имеет два независимых ownership scope:
 
-- Markdown files из `rag_sources/profile-<id>/` являются явно profile-wide;
+- Markdown/Telegram files из `rag_sources/profile-<id>/` являются явно profile-wide;
 - `chat_context`, `vision_context` и `asr_context` сохраняют `profile_id + session_id` и доступны только исходной session.
 
 Запрос без `session_id` возвращает только profile-wide sources. Derived row с отсутствующим/неоднозначным legacy `session_id` сохраняется в SQLite, но исключается из chat retrieval вместо неявного расширения scope. Promotion derived content в profile-wide RAG не реализован; для общего знания пользователь создаёт/редактирует обычный Markdown source отдельно.
@@ -135,7 +135,7 @@ SQLite:
 - `document_chunks` — text и position;
 - `document_embeddings` — vector JSON/model id.
 
-Session deletion удаляет принадлежащие ей derived documents/chunks/embeddings, но не profile-wide Markdown и не соседние sessions. Profile deletion/reset удаляет profile source directory и все дочерние DB records. Git не является хранилищем пользовательского RAG.
+Session deletion удаляет принадлежащие ей derived documents/chunks/embeddings, но не profile-wide Markdown/Telegram sources и не соседние sessions. Profile deletion/reset удаляет profile source directory и все дочерние DB records. Git не является хранилищем пользовательского RAG.
 
 ## Reindexing
 
@@ -177,3 +177,23 @@ Session deletion удаляет принадлежащие ей derived document
 - сравнение source metadata с profile directory.
 
 Команды: [TESTING.md](../TESTING.md).
+
+
+## Telegram HTML через обычный RAG
+
+В активном профиле откройте RAG → «Добавить файлы», выберите `messages.html` (и нужные `messages2.html` и т. д.), нажмите «Индексировать файлы» и включите RAG для чата. Обычные сообщения становятся отдельными фрагментами с датой, автором, ID и названием чата; служебные события не индексируются. Длинные сообщения разбиваются с повторением provenance в каждой части. Исходный экспорт не изменяется; загруженная копия хранится в профильном `rag_sources`, как Markdown.
+
+Примеры последовательных запросов в одном чате:
+
+1. «Найди сообщения, где обсуждали оркестрацию агентов».
+2. «За какие даты эти сообщения? Укажи ID и авторов».
+3. «Оставь за июль 2026» или «Только с 11.07.2026 по 15.07.2026».
+4. «Уточни по ключевым словам: делегирование, задачи».
+
+Поддержаны строгие фильтры ISO-даты, `DD.MM.YYYY`, диапазона из двух дат и русского месяца с годом. Текущая дата в уточнении имеет приоритет перед историей. Время остаётся временем экспорта; исходный timestamp с UTC offset сохраняется, если он есть. Даты без года не превращаются в строгий фильтр. Поиск остальных источников RAG продолжает работать по прежним правилам.
+
+Для Telegram требуется `local_hash` и локальный endpoint chat-модели (`localhost`, `127.0.0.1`, `::1`). При внешнем endpoint или другом embedding-provider приложение возвращает явную ошибку, включая попытку переиндексации. Переключение на внешний chat-provider блокируется для профиля с проиндексированным Telegram. Это защита данного pipeline; существующие LAN-настройки и отсутствие шифрования SQLite остаются свойствами LocalGPT.
+
+Хешевые embeddings не обеспечивают семантический поиск синонимов. Ответ использует текущие top_k и context budget, поэтому полный аудит каждого сообщения не гарантируется. Проверяйте приведённые ID/даты по исходному экспорту. Media-файлы не распознаются, ресурсы и ссылки из HTML не загружаются.
+
+Пределы загрузки остаются прежними: 5 MiB на файл, 12 файлов и 20 MiB на upload. Удаление файла из RAG очищает его индекс. Содержимое экспорта нельзя переносить в Git; тесты используют искусственные сообщения.
