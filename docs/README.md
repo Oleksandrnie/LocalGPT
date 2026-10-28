@@ -19,5 +19,6 @@
 - [RAG](knowledge/rag.md) — ingestion, indexing, retrieval, storage и ASR context.
 - [Web UI](knowledge/ui.md) — активный frontend, компоненты, responsive и accessibility.
 - [Networking](knowledge/networking.md) — local, direct LAN, host/port/CORS.
+- [ТЗ: поиск по HTML-выгрузкам Telegram](knowledge/telegram_export_search_spec.md) — локальный импорт, поиск сообщений и требования к приватности.
 
 Архитектура, тесты и subsystem contracts описаны в соответствующих документах выше и в `knowledge/`. Модели и пользовательские данные не входят в исходный snapshot.
