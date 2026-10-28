@@ -253,6 +253,9 @@ def rank_hybrid(
                 "source_id": chunk.get("source_id"),
                 "chunk_id": chunk.get("chunk_id"),
                 "chunk_index": chunk.get("chunk_index"),
+                **({k: (chunk.get("chunk_metadata") or {}).get(k)
+                    for k in ("message_id", "timestamp", "author", "ordinal")}
+                   if (chunk.get("chunk_metadata") or {}).get("format") == "telegram_html" else {}),
             },
         }
         candidates.append(item)

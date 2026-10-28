@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from html.parser import HTMLParser
@@ -94,9 +95,13 @@ def parse(content: bytes):
             # English month names without dependence on process locale.
             months = {m: i for i, m in enumerate('January February March April May June July August September October November December'.split(), 1)}
             try:
-                day, month, year, clock = raw_date.replace(',', '').split()
-                h, minute, second = map(int, clock.split(':'))
-                timestamp = datetime(int(year), months[month], int(day), h, minute, second).isoformat()
+                numeric = re.match(r'^(\d{1,2}\.\d{1,2}\.\d{4}) (\d{2}:\d{2}:\d{2})(?: UTC[+-]\d{2}:\d{2})?$', raw_date)
+                if numeric:
+                    timestamp = datetime.strptime(' '.join(numeric.groups()), '%d.%m.%Y %H:%M:%S').isoformat()
+                else:
+                    day, month, year, clock = raw_date.replace(',', '').split()
+                    h, minute, second = map(int, clock.split(':'))
+                    timestamp = datetime(int(year), months[month], int(day), h, minute, second).isoformat()
             except (ValueError, KeyError):
                 warnings.append(f'Блок {ordinal + 1}: неизвестный формат даты')
         elif not service:
@@ -147,3 +152,45 @@ def bundle(files):
                     missing_author=sum(not m['author'] for m in messages),
                     missing_id=sum(not m['message_id'] for m in messages)),
         date_start=min(dates) if dates else None, date_end=max(dates) if dates else None)
+
+
+def rag_message_chunks(parsed, splitter):
+    """One message per chunk; repeat provenance on every part of long messages."""
+    result = []
+    for m in parsed['messages']:
+        if m['service']:
+            continue
+        meta = {k: m[k] for k in ('message_id', 'ordinal', 'timestamp', 'raw_date', 'author')}
+        meta['format'] = 'telegram_html'
+        header = (f"Telegram chat: {parsed['title']}\nMessage ID: {m['message_id'] or 'unknown'}\n"
+                  f"Date: {m['timestamp'] or 'unknown'} (export time)\nOriginal date: {m['raw_date'] or 'unknown'}\n"
+                  f"Author: {m['author'] or 'unknown'}\n")
+        body = m['text']
+        if m['forwarded_from']: body += '\n'+m['forwarded_from']
+        if m['reply']: body += '\nReply: '+m['reply']
+        if m['links']: body += '\nLinks: '+' '.join(m['links'])
+        if m['media']: body += '\n[Media attachment; content not indexed]'
+        for part in splitter(body) or ['[No text]']:
+            result.append((header+part, dict(meta)))
+    return result
+
+
+def date_bounds(query):
+    """Use current query (first line) before history, so follow-ups override dates."""
+    import re
+    import calendar
+    for line in query.splitlines():
+        dates = re.findall(r'\b(\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4})\b', line)
+        if dates:
+            try:
+                values = [datetime.strptime(d, '%Y-%m-%d' if '-' in d else '%d.%m.%Y').date().isoformat() for d in dates]
+            except ValueError as exc:
+                raise ValueError('Некорректная дата в запросе') from exc
+            return min(values), max(values)
+        months = 'январ феврал март апрел ма июн июл август сентябр октябр ноябр декабр'.split()
+        match = re.search(r'\b('+'|'.join(months)+r')\w*\s+(\d{4})\b', line.casefold())
+        if match:
+            month = months.index(match[1])+1; year = int(match[2])
+            if not 1 <= year <= 9999: raise ValueError('Некорректный год')
+            return f'{year:04d}-{month:02d}-01', f'{year:04d}-{month:02d}-{calendar.monthrange(year,month)[1]}'
+    return None

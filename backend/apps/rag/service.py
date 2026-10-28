@@ -10,6 +10,7 @@ from fastapi import HTTPException, UploadFile
 
 from app import config, db
 from backend.apps.rag import embeddings, retrieval
+from backend.apps.telegram_search import parser as telegram
 
 SOURCE_TYPE = "manual_file"
 ASR_CONTEXT_SOURCE_TYPE = "asr_context"
@@ -18,7 +19,7 @@ CHAT_CONTEXT_SOURCE_TYPE = "chat_context"
 EMBEDDING_MODEL = "local-hash-v1"
 RETRIEVAL_STRATEGY_SETTING = "rag_retrieval_strategy"
 DEFAULT_RETRIEVAL_STRATEGY = "hybrid_v2"
-SUPPORTED_SUFFIXES = {".md"}
+SUPPORTED_SUFFIXES = {".md", ".html"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_FILES = 12
 MAX_UPLOAD_TOTAL_BYTES = 20 * 1024 * 1024
@@ -109,7 +110,7 @@ def _iter_source_files(profile_id: int) -> list[Path]:
 def _read_text_file(path: Path) -> str:
     if path.stat().st_size > MAX_FILE_BYTES:
         raise ValueError("file_too_large")
-    return path.read_text(encoding="utf-8", errors="replace")
+    return path.read_text(encoding="utf-8", errors="strict" if path.suffix.lower() == ".html" else "replace")
 
 
 def _extract_sections(text: str) -> list[dict[str, Any]]:
@@ -712,7 +713,10 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     reindex_required = 0
     seen_source_ids: set[str] = set()
 
-    for path in _iter_source_files(profile_id):
+    paths = _iter_source_files(profile_id)
+    if any(p.suffix.lower() == '.html' for p in paths):
+        require_telegram_local(provider)
+    for path in paths:
         scanned += 1
         source_id = _relative_source_id(path, profile_id)
         seen_source_ids.add(source_id)
@@ -748,8 +752,16 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             continue
 
         try:
-            text = _read_text_file(path)
-            chunks = _chunk_text(text)
+            chunk_metadata = []
+            if path.suffix.lower() == '.html':
+                parsed = telegram.parse(_read_text_file(path).encode('utf-8'))
+                pairs = telegram.rag_message_chunks(parsed, _chunk_text)
+                chunks = [text for text, _ in pairs]
+                chunk_metadata = [meta for _, meta in pairs]
+                metadata.update(format='telegram_html', chat_title=parsed['title'],
+                                parser_warnings=parsed['warnings'], message_count=len(parsed['messages']))
+            else:
+                chunks = _chunk_text(_read_text_file(path))
             if not chunks:
                 skipped += 1
                 continue
@@ -777,7 +789,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
                 session_id=None,
                 chunk_index=idx,
                 content=chunk,
-                metadata={"path": source_id, "chunk_index": idx},
+                metadata={"path": source_id, "chunk_index": idx, **(chunk_metadata[idx] if chunk_metadata else {})},
             )
             db.create_document_embedding(
                 chunk_id=chunk_id,
@@ -826,6 +838,10 @@ def reindex_embeddings(
     total_chunks = len(chunks)
     batch_size = max(1, int(config.SETTINGS.rag_embedding_batch_size))
     rows: list[dict[str, Any]] = []
+    protect_telegram_profile(profile_id)
+    if any((d.get('metadata') or {}).get('format') == 'telegram_html'
+           for d in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)):
+        require_telegram_local(selected)
     descriptor = _descriptor_metadata(selected)
     if progress_callback:
         progress_callback(0, total_chunks)
@@ -989,6 +1005,7 @@ def _legacy_search(
         return []
     provider = _embedding_provider()
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
+    raw_chunks = _filter_telegram_dates(raw_chunks, cleaned_query, provider)
     if not raw_chunks:
         return []
     query_vector = _embed_texts(provider, [cleaned_query])[0]
@@ -1087,6 +1104,7 @@ def search_with_diagnostics(
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
     provider = _embedding_provider()
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
+    raw_chunks = _filter_telegram_dates(raw_chunks, cleaned_query, provider)
     if not raw_chunks:
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
@@ -1293,6 +1311,13 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
                 status_code=413,
                 detail={"code": "rag_upload_total_bytes_exceeded", "max_bytes": MAX_UPLOAD_TOTAL_BYTES},
             )
+        if suffix == '.html':
+            require_telegram_local(_embedding_provider())
+            try:
+                telegram.parse(data)
+            except (ValueError, RecursionError) as exc:
+                errors.append({"file": original_name, "error": str(exc)})
+                continue
         pending.append((original_name, target, data))
     for original_name, target, data in pending:
         try:
@@ -1342,3 +1367,32 @@ def migrate_legacy_root_files(profile_id: int) -> dict[str, Any]:
         shutil.move(str(path), str(target))
         moved.append(_relative_source_id(target, profile_id))
     return {"moved": moved, "status": status(profile_id)}
+
+
+def require_telegram_local(provider=None):
+    from urllib.parse import urlsplit
+    host = urlsplit(config.SETTINGS.base_url).hostname
+    if host not in {'localhost', '127.0.0.1', '::1'}:
+        raise HTTPException(409, 'telegram_requires_local_model_endpoint')
+    if provider is not None and provider.descriptor.provider != 'local_hash':
+        raise HTTPException(409, 'telegram_requires_local_hash_embeddings')
+
+
+def protect_telegram_profile(profile_id):
+    if any((d.get('metadata') or {}).get('format') == 'telegram_html'
+           for d in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)):
+        require_telegram_local(_embedding_provider())
+
+
+def _filter_telegram_dates(chunks, query, provider):
+    if not any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in chunks):
+        return chunks
+    require_telegram_local(provider)
+    try:
+        bounds = telegram.date_bounds(query)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not bounds:
+        return chunks
+    return [m for m in chunks if (m.get('document_metadata') or {}).get('format') != 'telegram_html'
+            or bounds[0] <= str((m.get('chunk_metadata') or {}).get('timestamp') or '')[:10] <= bounds[1]]

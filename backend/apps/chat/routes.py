@@ -96,6 +96,7 @@ def compose_rag_query(user_query: str, history_user_queries: list[str], *, histo
     # unrelated earlier questions dilute an explicit current topic.
     if len(parts) == 1 and recent_history and (
         len(current_terms) <= 3 or RAG_REFERENTIAL_QUERY_RE.search(current)
+        or re.search(r"(?:за какие даты|за (?:январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)|ключев\w* слова|\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4})", current, re.I)
     ):
         parts.append(recent_history[0][0])
     return "\n".join(parts)
@@ -614,6 +615,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         for item in history
         if item.get("role") == "user" and str(item.get("content") or "").strip()
     ][-3:]
+    rag_service.protect_telegram_profile(int(profile_id))
     if rag_enabled:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
