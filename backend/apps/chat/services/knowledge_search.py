@@ -5,7 +5,7 @@ import json
 import re
 from datetime import date
 from typing import Any, Callable
-from urllib import request
+from urllib import request, error as urlerror
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -92,17 +92,50 @@ def _planner_completion(model: str, query: str) -> str:
     return content
 
 
+def _auto_planner_model() -> str:
+    """Select an installed completion model using local provider metadata only."""
+    base = ollama_runtime.native_ollama_base_url()
+    def read_json(req):
+        with embeddings.open_local_request(req, timeout=5) as response:
+            raw = response.read(1_048_577)
+        if len(raw) > 1_048_576:
+            raise ValueError("planner_metadata_too_large")
+        return json.loads(raw)
+    payload = read_json(request.Request(base + "/api/tags"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        raise ValueError("planner_metadata_invalid")
+    candidates = [item for item in payload["models"] if isinstance(item, dict)
+                  and isinstance(item.get("name"), str) and item["name"].strip()]
+    def priority(item):
+        size = item.get("size")
+        size = size if isinstance(size, (int, float)) and size > 0 else float("inf")
+        return (item["name"] != model_router.ROUTER_MODEL_ID, size, item["name"])
+    for item in sorted(candidates, key=priority)[:32]:
+        req = request.Request(base + "/api/show", data=json.dumps({"model": item["name"]}).encode(),
+                              headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            info = read_json(req)
+        except urlerror.HTTPError as exc:
+            if exc.code == 404:  # Model may have been removed after /tags.
+                continue
+            raise
+        capabilities = info.get("capabilities") if isinstance(info, dict) else None
+        if isinstance(capabilities, list) and "completion" in capabilities:
+            return item["name"]
+    return ""
+
+
 def _plan(query: str, model_name: str) -> tuple[SearchPlan, dict[str, Any], list[str]]:
     fallback_topics = [SearchTopic(topic=item["query"][:160]) for item in retrieval.split_query_facets(query)[:MAX_TOPICS]]
     fallback = SearchPlan(topics=fallback_topics or [SearchTopic(topic=query[:160])])
     model = str(model_name or "").strip()
-    if model_router.is_auto_model(model):
-        model = model_router.ROUTER_MODEL_ID
-    if not model or model == model_router.LOCAL_CALCULATOR_TARGET:
-        return fallback, {"status": "model_required", "model": None}, [
-            "Планировщик не запущен: выберите локальную чат-модель. Использован исходный запрос и его отдельные темы."
-        ]
     try:
+        if model_router.is_auto_model(model):
+            model = _auto_planner_model()
+        if not model or model == model_router.LOCAL_CALCULATOR_TARGET:
+            return fallback, {"status": "model_required", "model": None}, [
+                "Планировщик не запущен: выберите установленную локальную чат-модель. Использован исходный запрос и его отдельные темы."
+            ]
         text = _planner_completion(model, query)
         if len(text) > 12_000:
             raise ValueError("planner_output_too_large")
@@ -132,7 +165,7 @@ def _plan(query: str, model_name: str) -> tuple[SearchPlan, dict[str, Any], list
             "unavailable": "Не удалось получить план от локальной модели.",
         }
         reason = ("invalid_plan" if isinstance(exc, ValidationError) else
-                  "timeout" if isinstance(exc, TimeoutError) else
+                  "timeout" if isinstance(exc, TimeoutError) or (isinstance(exc, urlerror.URLError) and isinstance(exc.reason, TimeoutError)) else
                   str(exc) if isinstance(exc, ValueError) and str(exc) in reasons else "unavailable")
         return fallback, {"status": "unavailable", "model": model, "reason": reason}, [
             reasons[reason] + " Поиск выполнен по исходному запросу и его темам."

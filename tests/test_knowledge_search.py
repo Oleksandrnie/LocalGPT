@@ -213,6 +213,34 @@ class KnowledgeSearchTests(unittest.TestCase):
         for url in ['https://external.invalid', 'http://localhost@external.invalid', 'ftp://127.0.0.1', 'http://127.0.0.1?token=x']:
             self.assertFalse(embeddings.is_loopback_endpoint(url))
 
+    def test_auto_planner_skips_embeddings_and_prefers_installed_completion(self):
+        import io, json
+        from backend.apps.chat.services import knowledge_search as smart
+        tags = {"models": [{"name":"embed", "size":1}, {"name":"chat-large", "size":20}, {"name":"chat-small", "size":10}]}
+        def transport(req, **kwargs):
+            data = tags if req.full_url.endswith("/tags") else {"capabilities": ["embedding"] if json.loads(req.data)["model"] == "embed" else ["completion"]}
+            return io.BytesIO(json.dumps(data).encode())
+        with patch.object(embeddings,"open_local_request",side_effect=transport):
+            self.assertEqual(smart._auto_planner_model(),"chat-small")
+        with patch.object(smart,"_auto_planner_model",return_value="chat-small"), patch.object(smart,"_planner_completion",return_value='{"topics":[{"topic":"synthetic"}]}') as completion:
+            _,diagnostic,_=smart._plan("synthetic","auto")
+            self.assertEqual(diagnostic["status"],"ready")
+            completion.assert_called_once_with("chat-small","synthetic")
+
+    def test_auto_without_completion_model_never_sends_embedding_model_a_chat(self):
+        from backend.apps.chat.services import knowledge_search as smart
+        with patch.object(smart,"_auto_planner_model",return_value=""),patch.object(smart,"_planner_completion") as completion:
+            _,diagnostic,_=smart._plan("synthetic","auto")
+            self.assertEqual(diagnostic["status"],"model_required");completion.assert_not_called()
+
+    def test_wrapped_network_timeout_is_reported_without_transport_text(self):
+        from urllib.error import URLError
+        from backend.apps.chat.services import knowledge_search as smart
+        with patch.object(smart,"_planner_completion",side_effect=URLError(TimeoutError("private transport text"))):
+            _,diagnostic,warnings=smart._plan("synthetic","chat")
+        self.assertEqual(diagnostic["reason"],"timeout")
+        self.assertNotIn("private",str(diagnostic)+str(warnings))
+
     def test_structured_qwen_planner_disables_native_reasoning(self):
         import io, json
         from backend.apps.chat.services import knowledge_search as smart
