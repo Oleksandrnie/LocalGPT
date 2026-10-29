@@ -3027,6 +3027,15 @@ function setInlineStatus(element, message = "", tone = "neutral") {
   }
 }
 
+async function copyChatMessage(message) {
+  try {
+    await copyText(message?.content || "");
+    showToast("Сообщение скопировано", "success", { title: "Скопировано", dedupe: false });
+  } catch {
+    showToast("Не удалось скопировать сообщение.", "error", { title: "Ошибка" });
+  }
+}
+
 function closeToast() {
   if (state.toastTimer) {
     window.clearTimeout(state.toastTimer);
@@ -3035,11 +3044,11 @@ function closeToast() {
   els.toastStack?.querySelectorAll(".toast").forEach((toast) => toast.remove());
 }
 
-function showToast(message = "", tone = "info", { title = "Уведомление", duration = 2800 } = {}) {
+function showToast(message = "", tone = "info", { title = "Уведомление", duration = 2800, dedupe = true } = {}) {
   if (!els.toastStack || !message) return;
   const dedupeKey = `${tone}:${title}:${message}`;
   const now = Date.now();
-  if (state.lastToastKey === dedupeKey && now - state.lastToastAt < 8000) return;
+  if (dedupe && state.lastToastKey === dedupeKey && now - state.lastToastAt < 8000) return;
   state.lastToastKey = dedupeKey;
   state.lastToastAt = now;
   const toast = document.createElement("div");
@@ -10818,14 +10827,9 @@ function bindEvents() {
 
     const copyButton = event.target.closest("[data-copy-index]");
     if (!copyButton) return;
-    try {
-      const index = Number(copyButton.dataset.copyIndex);
-      const message = Number.isFinite(index) ? state.messages[index] : null;
-      await copyText(message?.content || "");
-      setFooter("Сообщение скопировано.", "success");
-    } catch {
-      setFooter("Не удалось скопировать сообщение.", "error");
-    }
+    const index = Number(copyButton.dataset.copyIndex);
+    const message = Number.isFinite(index) ? state.messages[index] : null;
+    await copyChatMessage(message);
   });
 
   const openRagQuickFromPointer = (event) => {
