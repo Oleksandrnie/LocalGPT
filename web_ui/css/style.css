@@ -2617,16 +2617,33 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 }
 
 .knowledge-search-info {
+    display: inline-flex;
     flex: 0 0 44px;
     width: 44px;
     height: 44px;
-    border-radius: 12px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
     color: var(--text-muted);
     font-weight: 700;
+    padding: 0;
+    background: transparent;
 }
 
-.knowledge-search-info:hover,
-.knowledge-search-info:focus-visible {
+.knowledge-search-info__mark {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.knowledge-search-info:hover .knowledge-search-info__mark,
+.knowledge-search-info:focus-visible .knowledge-search-info__mark {
     background: rgba(255, 255, 255, 0.08);
     color: var(--text);
 }
@@ -2648,8 +2665,8 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     line-height: 1.5;
 }
 
-.knowledge-search-menu-row:hover .knowledge-search-help,
-.knowledge-search-menu-row:focus-within .knowledge-search-help {
+.knowledge-search-info:hover + .knowledge-search-help,
+.knowledge-search-info:focus + .knowledge-search-help {
     visibility: visible;
 }
 

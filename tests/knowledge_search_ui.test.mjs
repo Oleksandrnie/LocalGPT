@@ -210,12 +210,12 @@ test('images are explicitly rejected and long query is rejected without sending'
 test('RAG menu search switch has accessible help and compact input indicator', () => {
   const html = fs.readFileSync(new URL('../web_ui/gui_html.html', import.meta.url), 'utf8');
   const css = fs.readFileSync(new URL('../web_ui/css/style.css', import.meta.url), 'utf8');
-  assert.match(html, /id="knowledgeSearchToggle" type="checkbox" aria-describedby="knowledgeSearchHelp"/);
+  assert.match(html, /id="knowledgeSearchToggle" type="checkbox"/);
   assert.match(html, /id="knowledgeSearchIndicator"/);
   assert.doesNotMatch(html, /class="knowledge-search-control"/);
   assert.match(html, /class="knowledge-search-info" type="button"/);
-  assert.match(css, /\.knowledge-search-menu-row:hover \.knowledge-search-help/);
-  assert.match(css, /\.knowledge-search-menu-row:focus-within \.knowledge-search-help/);
+  assert.match(css, /\.knowledge-search-info:hover \+ \.knowledge-search-help/);
+  assert.match(css, /\.knowledge-search-info:focus(?:-visible)? \+ \.knowledge-search-help/);
   assert.match(css, /\.knowledge-search-indicator\[hidden\]/);
 });
 

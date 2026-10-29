@@ -1362,11 +1362,12 @@
         </label>
         <div class="knowledge-search-menu-row">
             <label class="rag-quick-menu__item knowledge-search-menu-toggle">
-                <input id="knowledgeSearchToggle" type="checkbox" aria-describedby="knowledgeSearchHelp" />
+                <input id="knowledgeSearchToggle" type="checkbox" />
                 <span>Поиск по базе</span>
             </label>
             <button class="knowledge-search-info" type="button" aria-label="Как работает поиск по базе"
-                aria-describedby="knowledgeSearchHelp">?</button>
+                aria-describedby="knowledgeSearchHelp"><span class="knowledge-search-info__mark"
+                    aria-hidden="true">?</span></button>
             <span class="knowledge-search-help" id="knowledgeSearchHelp" role="tooltip">Локальная выбранная модель составляет план поиска. Ищем по словам и семантически, если embeddings настроены. В ответе — дословные цитаты из найденных источников с ID.</span>
         </div>
     </div>
