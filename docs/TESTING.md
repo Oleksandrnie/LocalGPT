@@ -367,3 +367,6 @@ Console diagnostics:130 Node tests pass, including console snapshot allowlisting
 
 
 Diagnostics follow-up review:135 Node tests passed after regression checks for cross-profile/model snapshot isolation, console-sink failure tolerance, server-created session correlation and preservation of original request metadata. JS syntax and diff checks passed. Read-only backend probes confirmed two remaining limitations: wrapped URLError(TimeoutError) yields planner.reason=unavailable, and the Auto planner router is not installed on the running instance. No Python source edits, live inference or backend restart were performed during Personal reindex for this review.
+
+
+Post-index follow-up:39 focused Python knowledge-search/embedding-setup tests passed after adding installed Auto completion-model selection (embedding excluded/no completion fallback) and wrapped-timeout diagnostics. Synthetic local Auto planning selected qwen3:4b and returned ready in4.63s with no warnings. QA and Personal semantic generations completed15889/15889 and165096/165096 respectively; missing_chunks=0. Activation persisted across backend auto-reload. No private source content or history was printed. These checks verify indexing/planning readiness, not exhaustive relevance of all search results. Independent configurable planner reasoning remains a documented future improvement.
