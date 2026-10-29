@@ -21,9 +21,8 @@ MAX_RETRIEVAL_QUERIES = 13
 MAX_PLANNER_BYTES = 65_536
 SEMANTIC_GUIDANCE = (
     "Семантический поиск выключен: local_hash ищет по словам. Для настоящих embeddings "
-    "установите локальную embedding-модель в Ollama, задайте RAG_EMBEDDING_PROVIDER=ollama, "
-    "RAG_EMBEDDING_MODEL, RAG_EMBEDDING_VERSION и RAG_EMBEDDING_DIMENSIONS в .env, перезапустите backend и вручную "
-    "нажмите «Переиндексировать» в «Знания». Используйте только loopback endpoint."
+    "откройте «Знания» → «Настроить семантический поиск»: установите модель и включите "
+    "семантический индекс для выбранного профиля. Источники обрабатываются локально."
 )
 
 
@@ -122,11 +121,11 @@ def _plan(query: str, model_name: str) -> tuple[SearchPlan, dict[str, Any], list
         ]
 
 
-def _local_provider():
+def _local_provider(profile_id: int | None = None):
     if not embeddings.is_loopback_endpoint(config.SETTINGS.base_url):
         raise HTTPException(409, {"code": "knowledge_search_requires_local_endpoint",
                                  "message": "Планировщик и embeddings требуют локальный loopback endpoint Ollama."})
-    provider = rag._embedding_provider()
+    provider = rag._embedding_provider(profile_id)
     if provider.descriptor.provider == "local_hash":
         return provider
     if isinstance(provider, embeddings.OllamaEmbeddingProvider) and embeddings.is_loopback_endpoint(provider.base_url):
@@ -158,7 +157,7 @@ def _merge(groups: list[list[dict[str, Any]]], top_k: int) -> tuple[list[dict[st
 def search(profile_id: int, query: str, *, session_id: str | None, top_k: int, model_name: str = "",
            check_cancelled: Callable[[], None] = lambda: None) -> dict[str, Any]:
     check_cancelled()
-    provider = _local_provider()
+    provider = _local_provider(profile_id)
     semantic = provider.descriptor.provider == "ollama"
     try:
         corpus = rag.prepare_search_corpus(profile_id, provider, session_id=session_id)

@@ -73,7 +73,7 @@ def _public_error_code(exc: Exception) -> str:
     return "rag_embedding_reindex_failed"
 
 
-def _run(task_id: str, provider: Any) -> None:
+def _run(task_id: str, provider: Any, on_complete=None) -> None:
     global _ACTIVE_TASK_ID
     _update_task(task_id, status="running", started_at=_now())
     try:
@@ -82,6 +82,8 @@ def _run(task_id: str, provider: Any) -> None:
             provider=provider,
             progress_callback=lambda processed, total: _progress(task_id, processed, total),
         )
+        if on_complete is not None:
+            on_complete()
         _update_task(
             task_id,
             status="completed",
@@ -103,12 +105,12 @@ def _run(task_id: str, provider: Any) -> None:
                 _ACTIVE_TASK_ID = None
 
 
-def start_reindex(profile_id: int) -> dict[str, Any]:
+def start_reindex(profile_id: int, *, provider_override=None, on_complete=None) -> dict[str, Any]:
     global _ACTIVE_TASK_ID
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
     try:
-        provider = service._embedding_provider()
+        provider = provider_override or service._embedding_provider(profile_id)
     except HTTPException as exc:
         raise HTTPException(status_code=503, detail="rag_embedding_configuration_error") from exc
 
@@ -146,7 +148,7 @@ def start_reindex(profile_id: int) -> dict[str, Any]:
 
     threading.Thread(
         target=_run,
-        args=(task_id, provider),
+        args=(task_id, provider, on_complete),
         daemon=True,
         name=f"localgpt_rag_reindex_{task_id[:8]}",
     ).start()

@@ -118,3 +118,27 @@ def rag_evidence(chunk_id: int, profile_id: int = Query(..., gt=0),
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
     })
+
+
+@router.get('/rag/embedding-setup')
+def rag_embedding_setup_status(profile_id: int = Query(..., gt=0)):
+    from backend.apps.rag import embedding_setup
+    return embedding_setup.status(profile_id)
+
+
+@router.post('/rag/embedding-setup/install')
+def rag_embedding_setup_install(profile_id: int = Query(..., gt=0)):
+    from backend.apps.rag import embedding_setup
+    return embedding_setup.install(profile_id)
+
+
+@router.post('/rag/embedding-setup/activate', status_code=202)
+def rag_embedding_setup_activate(profile_id: int = Query(..., gt=0)):
+    from backend.apps.rag import embedding_setup
+    return embedding_setup.activate(profile_id)
+
+
+@router.post('/rag/embedding-setup/lexical')
+def rag_embedding_setup_lexical(profile_id: int = Query(..., gt=0)):
+    from backend.apps.rag import embedding_setup
+    return embedding_setup.use_lexical(profile_id)

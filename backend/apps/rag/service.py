@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from dataclasses import replace
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -315,11 +316,19 @@ def embed_text(text: str) -> list[float]:
     return _embed_texts(provider, [text])[0]
 
 
-def _embedding_provider() -> embeddings.EmbeddingProvider:
+def _embedding_provider(profile_id: int | None = None) -> embeddings.EmbeddingProvider:
     try:
+        raw = db.get_app_setting(f"rag_embedding_profile:{profile_id}") if profile_id is not None else None
+        if raw:
+            override = json.loads(raw)
+            selected = replace(config.SETTINGS, rag_embedding_provider=override["provider"],
+                               rag_embedding_model=override.get("model", config.SETTINGS.rag_embedding_model),
+                               rag_embedding_version=override.get("version", config.SETTINGS.rag_embedding_version),
+                               rag_embedding_dimensions=override.get("dimensions", config.SETTINGS.rag_embedding_dimensions))
+            return embeddings.provider_from_settings(selected)
         return embeddings.provider_from_settings()
-    except embeddings.EmbeddingError as exc:
-        raise HTTPException(status_code=503, detail=f"rag_embedding_configuration_error:{exc}") from exc
+    except (embeddings.EmbeddingError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=503, detail="rag_embedding_configuration_error") from exc
 
 
 def _embed_texts(
@@ -378,7 +387,7 @@ def _index_text_document(
     if not chunks:
         raise HTTPException(status_code=422, detail="rag_context_empty")
 
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     vectors = _embed_texts(provider, chunks)
     descriptor = _descriptor_metadata(provider)
 
@@ -703,7 +712,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
 
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     embedding_model = provider.descriptor.storage_key
     descriptor = _descriptor_metadata(provider)
     existing = _existing_documents(profile_id)
@@ -837,7 +846,7 @@ def reindex_embeddings(
 ) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
-    selected = provider or _embedding_provider()
+    selected = provider or _embedding_provider(profile_id)
     chunks = db.list_document_chunks(profile_id)
     total_chunks = len(chunks)
     batch_size = max(1, int(config.SETTINGS.rag_embedding_batch_size))
@@ -959,7 +968,7 @@ def status(profile_id: int | None = None, *, session_id: str | None = None) -> d
     provider: embeddings.EmbeddingProvider | None = None
     configuration_error: str | None = None
     try:
-        provider = _embedding_provider()
+        provider = _embedding_provider(profile_id)
     except HTTPException:
         configuration_error = "rag_embedding_configuration_error"
     embedding_model = provider.descriptor.storage_key if provider else None
@@ -1024,7 +1033,7 @@ def _legacy_search(
     cleaned_query = (query or "").strip()
     if not cleaned_query or top_k <= 0:
         return []
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
     raw_chunks = _filter_telegram_dates(raw_chunks, cleaned_query, provider)
     if any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in raw_chunks):
@@ -1132,7 +1141,7 @@ def search_with_diagnostics(
     if not cleaned_query or top_k <= 0:
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
-    provider = embedding_provider or _embedding_provider()
+    provider = embedding_provider or _embedding_provider(profile_id)
     if prepared_corpus is not None and (
         prepared_corpus.profile_id != profile_id or prepared_corpus.session_id != session_id
         or prepared_corpus.embedding_key != provider.descriptor.storage_key
@@ -1202,7 +1211,7 @@ def search(
 def audit_corpus(profile_id: int) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     chunks = _current_generation_chunks(profile_id, provider)
     return {"profile_id": profile_id, **retrieval.corpus_audit(chunks)}
 
@@ -1342,7 +1351,7 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
         safe_name = _slug(Path(original_name).stem) + suffix
         target = target_dir / safe_name
         if suffix == '.html':
-            require_telegram_local(_embedding_provider())
+            require_telegram_local(_embedding_provider(profile_id))
             try:
                 telegram.parse_stream(upload.file)
             except (ValueError, RecursionError) as exc:
@@ -1438,7 +1447,7 @@ def require_telegram_local(provider=None):
 def protect_telegram_profile(profile_id):
     if any((d.get('metadata') or {}).get('format') == 'telegram_html'
            for d in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)):
-        require_telegram_local(_embedding_provider())
+        require_telegram_local(_embedding_provider(profile_id))
 
 
 def _filter_telegram_dates(chunks, query, provider):
@@ -1497,7 +1506,7 @@ def exact_telegram_quote(profile_id: int, query: str) -> str | None:
                  if (d.get('metadata') or {}).get('format') == 'telegram_html']
     if not documents:
         return None
-    require_telegram_local(_embedding_provider())
+    require_telegram_local(_embedding_provider(profile_id))
     try:
         bounds = telegram.date_bounds(query)
     except ValueError as exc:
