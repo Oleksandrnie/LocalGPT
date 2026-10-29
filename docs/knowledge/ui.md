@@ -177,3 +177,8 @@ A stable screen-reader status announces the operation once; the animated dots ar
 Upward wheel/touch/keyboard input pauses following before the native scroll event, including small movements within the former96px proximity threshold. Repaint/programmatic events no longer infer following from proximity alone. Scrollbar movement is detected before DOM replacement; only actual bottom position or a deliberate downward input reaching the end resumes following. Queued jumps carry a revision token so upward input can invalidate them. End and the latest-message button intentionally jump to the current growing end.
 
 Completion, cancellation and same-session refresh preserve the reading position. Navigating to a different session/profile or a new empty chat resets following, so a paused old chat does not affect the next conversation. No backend behavior or stored message content changes.
+
+
+### Guided semantic setup
+
+The Knowledge panel contains an embedding-model setup card with metadata availability, download progress/cancel, refresh, activation and lexical rollback. Installation is offered once on startup or after an unconfigured search warning, with a Later choice. Activation explains that only the selected profile is reindexed, sources stay local and the old index remains active until success. Profile/session changes cannot apply late setup responses to another screen. The .env instructions are replaced by UI actions; model-install readiness is distinct from LLM planner JSON availability.
