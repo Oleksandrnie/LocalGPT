@@ -2179,6 +2179,22 @@ body.theme-light .settings-icon-button .settings-slider-knob {
         0 10px 30px rgba(0, 0, 0, 0.22);
 }
 
+.message-row--waiting .message-card {
+    min-height: 0;
+}
+
+.chat-waiting-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .message-row--status-failed .message-card {
     box-shadow:
         0 0 0 1px rgba(255, 107, 107, 0.24),
@@ -2441,6 +2457,49 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     background: rgba(174, 153, 255, 0.92);
     animation: message-stream-pulse 1s ease-in-out infinite;
     vertical-align: text-bottom;
+}
+
+.message-waiting-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 20px;
+    vertical-align: middle;
+}
+
+.message-waiting-dots__dot {
+    width: 5px;
+    height: 5px;
+    flex: 0 0 5px;
+    border-radius: 50%;
+    background: rgba(174, 153, 255, 0.94);
+    animation: message-waiting-dot 1.15s ease-in-out infinite;
+}
+
+.message-waiting-dots__dot:nth-child(2) {
+    animation-delay: 0.14s;
+}
+
+.message-waiting-dots__dot:nth-child(3) {
+    animation-delay: 0.28s;
+}
+
+@keyframes message-waiting-dot {
+    0%, 70%, 100% {
+        opacity: 0.38;
+        transform: translateY(0);
+    }
+    35% {
+        opacity: 1;
+        transform: translateY(-3px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .message-waiting-dots__dot {
+        animation: none;
+        opacity: 0.76;
+    }
 }
 
 @keyframes message-stream-pulse {

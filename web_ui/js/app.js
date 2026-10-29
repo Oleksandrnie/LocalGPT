@@ -1,3 +1,4 @@
+import { waitForKnowledgeSearch } from "./knowledge_search_client.mjs";
 import { renderThinkingSegments } from "./thinking_switch_view.mjs";
 import { ragUploadReport, describeRagUploadError, uploadRagBatches } from "./rag_upload.mjs";
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
@@ -211,6 +212,7 @@ const els = {
   chatModelNotice: document.getElementById("chatModelNotice"),
   chatModelNoticeSettingsButton: document.getElementById("chatModelNoticeSettingsButton"),
   messageList: document.getElementById("messageList"),
+  chatWaitingStatus: document.getElementById("chatWaitingStatus"),
   messageScrollEnd: document.getElementById("messageScrollEnd"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
@@ -554,6 +556,8 @@ const state = {
   ttsHealthy: false,
   defaultModel: "",
   isSending: false,
+  isCancellingChatTask: false,
+  chatWaitingStatusOperationId: null,
   isTranscribing: false,
   isRecordingVoice: false,
   isVoiceTranscribing: false,
@@ -2483,6 +2487,7 @@ async function recoverActiveChatTaskFromMessages() {
   let task = fallbackTask;
   state.chatTaskId = taskId;
   state.isSending = true;
+  renderMessages();
   updateSendButtonState();
 
   try {
@@ -2533,6 +2538,7 @@ async function recoverActiveChatTaskFromMessages() {
       closeChatTaskEventSource();
       clearChatTaskReplay(taskId);
       clearChatTypingStreams(taskId);
+      renderMessages();
       updateSendButtonState();
     }
   }
@@ -2550,6 +2556,11 @@ async function cancelCurrentChatGeneration() {
     return;
   }
 
+  const pendingBeforeCancel = state.pendingChatMessage;
+  const wasWaiting = pendingBeforeCancel?.showWaitingDots;
+  state.isCancellingChatTask = true;
+  if (pendingBeforeCancel) pendingBeforeCancel.showWaitingDots = false;
+  renderMessages();
   setFooter("Останавливаю генерацию ответа…", "warning");
 
   if (controller) {
@@ -2564,6 +2575,9 @@ async function cancelCurrentChatGeneration() {
       });
     } catch (error) {
       if ((error?.status || 0) !== 404) {
+        state.isCancellingChatTask = false;
+        if (state.pendingChatMessage === pendingBeforeCancel && pendingBeforeCancel) pendingBeforeCancel.showWaitingDots = wasWaiting;
+        renderMessages();
         setFooter(`Не удалось остановить генерацию: ${error.message || error}`, "error");
         return;
       }
@@ -2575,7 +2589,9 @@ async function cancelCurrentChatGeneration() {
   closeChatTaskEventSource();
   clearChatTaskReplay();
   clearChatTypingStreams(taskId, { flush: true });
+  state.isCancellingChatTask = false;
   state.isSending = false;
+  renderMessages();
   if (state.currentSessionId) {
     await loadSessions({ preferredSessionId: state.currentSessionId });
   }
@@ -4191,6 +4207,83 @@ async function saveVisionContextToRag() {
   }
 }
 
+function chatWaitingDotsMarkup() {
+  return `<span class="message-waiting-dots" aria-hidden="true">
+    <span class="message-waiting-dots__dot" aria-hidden="true"></span>
+    <span class="message-waiting-dots__dot" aria-hidden="true"></span>
+    <span class="message-waiting-dots__dot" aria-hidden="true"></span>
+  </span>`;
+}
+
+function updateChatWaitingStatus(operationId, label = "") {
+  const nextId = String(operationId || "");
+  if (!nextId) {
+    if (state.chatWaitingStatusOperationId) {
+      if (els.chatWaitingStatus) els.chatWaitingStatus.textContent = "";
+      state.chatWaitingStatusOperationId = null;
+    }
+    return;
+  }
+  if (state.chatWaitingStatusOperationId === nextId) return;
+  state.chatWaitingStatusOperationId = nextId;
+  if (els.chatWaitingStatus) els.chatWaitingStatus.textContent = label;
+}
+
+function pendingChatContextMatches(pending, { profileId, sessionId, knowledgeSearchMode }) {
+  if (!pending || String(pending.profileId ?? "") !== String(profileId ?? "")) return false;
+  const sessions = [pending.sessionId, pending.acceptedSessionId].map((value) => String(value ?? ""));
+  if (!sessions.includes(String(sessionId ?? ""))) return false;
+  return Boolean(pending.knowledgeSearchMode) === Boolean(knowledgeSearchMode);
+}
+
+function assistantMessageMatchesPending(message, pending, sessionId = state.currentSessionId) {
+  if (message?.role !== "assistant" || !pending) return false;
+  if (String(message.session_id ?? sessionId ?? "") !== String(sessionId ?? "")) return false;
+  const taskId = String(pending.taskId || "");
+  const assistantMessageId = String(pending.assistantMessageId || "");
+  return Boolean(
+    (taskId && String(message.task_id || "") === taskId)
+    || (assistantMessageId && String(message.id || "") === assistantMessageId),
+  );
+}
+
+function shouldShowPendingChatWaitingDots({
+  pending = state.pendingChatMessage,
+  messages = state.messages,
+  isSending = state.isSending,
+  profileId = state.activeProfileId,
+  sessionId = state.currentSessionId,
+  knowledgeSearchMode = state.knowledgeSearchMode,
+} = {}) {
+  if (!pending?.showWaitingDots || !isSending) return false;
+  if (!pendingChatContextMatches(pending, { profileId, sessionId, knowledgeSearchMode })) return false;
+  return !(messages || []).some((message) => assistantMessageMatchesPending(message, pending, sessionId));
+}
+
+function shouldShowAssistantWaitingDots(message, {
+  pending = state.pendingChatMessage,
+  chatTaskId = state.chatTaskId,
+  isSending = state.isSending,
+  profileId = state.activeProfileId,
+  sessionId = state.currentSessionId,
+  knowledgeSearchMode = state.knowledgeSearchMode,
+  isCancelling = state.isCancellingChatTask,
+} = {}) {
+  if (message?.role !== "assistant" || !isSending || isCancelling || !isAssistantMessageActive(message)) return false;
+  if (String(message.session_id ?? sessionId ?? "") !== String(sessionId ?? "")) return false;
+  if (String(message.content || "").trim() || message.has_reasoning || String(message.live_reasoning || "").trim()) {
+    return false;
+  }
+  const pendingIsCurrent = pendingChatContextMatches(pending, { profileId, sessionId, knowledgeSearchMode });
+  if (pending && !pendingIsCurrent) return false;
+  if (pendingIsCurrent && !pending.showWaitingDots) return false;
+  const taskId = String(message.task_id || "");
+  const currentTaskMatches = Boolean(chatTaskId && taskId && String(chatTaskId) === taskId);
+  const pendingMatches = pendingIsCurrent && pending.showWaitingDots
+    && assistantMessageMatchesPending(message, pending, sessionId);
+  return currentTaskMatches || pendingMatches;
+}
+
 function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
@@ -4202,6 +4295,35 @@ function renderMessages() {
     && [pending.sessionId, pending.acceptedSessionId].includes(state.currentSessionId)
     && !stored.some((message) => pending.persistedId && String(message.id) === String(pending.persistedId));
   const items = pendingVisible ? [...stored, pending] : stored;
+  const pendingWaitingDotsVisible = shouldShowPendingChatWaitingDots();
+  const waitingAssistant = stored.find((message) => shouldShowAssistantWaitingDots(message)) || null;
+  const waitingPendingForStatus = pendingWaitingDotsVisible
+    ? pending
+    : (waitingAssistant && pendingChatContextMatches(pending, {
+      profileId: state.activeProfileId,
+      sessionId: state.currentSessionId,
+      knowledgeSearchMode: state.knowledgeSearchMode,
+    }) && assistantMessageMatchesPending(waitingAssistant, pending) ? pending : null);
+  const waitingStatusId = waitingPendingForStatus?.id
+    ? `pending:${waitingPendingForStatus.id}`
+    : waitingAssistant ? `task:${waitingAssistant.task_id || waitingAssistant.id}` : "";
+  const waitingStatusLabel = waitingPendingForStatus?.knowledgeSearchMode || waitingAssistant?.model === "knowledge_search"
+    ? "Ищу в базе знаний"
+    : "Готовлю ответ";
+  updateChatWaitingStatus(waitingStatusId, waitingStatusLabel);
+  const waitingSearch = Boolean(pending?.knowledgeSearchMode);
+  const pendingWaitingMarkup = pendingWaitingDotsVisible ? `
+    <div class="message-row message-row--assistant message-row--waiting message-row--pending-waiting">
+      <article class="message-card">
+        <div class="message-card__top">
+          <span class="message-card__author-group">
+            <span class="message-card__author">${waitingSearch ? "База знаний" : "LocalGPT"}</span>
+          </span>
+        </div>
+        <div class="message-card__body">${chatWaitingDotsMarkup()}</div>
+      </article>
+    </div>
+  ` : "";
   state.renderedCodeBlocks = [];
   els.emptyState.hidden = items.length > 0;
   els.messageList.innerHTML = items
@@ -4218,7 +4340,10 @@ function renderMessages() {
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
       const canCopy = !message.pending && hasContent && (role === "user" || role === "assistant");
-      const hasReasoning = role === "assistant" && Boolean(message.has_reasoning);
+      const hasReasoning = role === "assistant"
+        && Boolean(message.has_reasoning || String(message.live_reasoning || "").trim());
+      const showAssistantWaitingDots = !blockedTransport && shouldShowAssistantWaitingDots(message);
+      const waitingDotsMarkup = chatWaitingDotsMarkup();
       const canExportVision = role === "assistant"
         && status === "completed"
         && hasContent
@@ -4237,6 +4362,9 @@ function renderMessages() {
             hasContent ? formatRichMessage(content) : "",
             `<p class="message-status-text">${escapeHtml(statusMeta.text)}</p>`,
           ].filter(Boolean).join("");
+        }
+        if (showAssistantWaitingDots) {
+          return waitingDotsMarkup;
         }
         if (!hasContent && status === "generating") {
           return `<p class="message-status-text">${escapeHtml(statusMeta.text)}</p>`;
@@ -4263,7 +4391,7 @@ function renderMessages() {
           </div>`
         : "";
       return `
-        <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}` : ""}">
+        <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}${showAssistantWaitingDots ? " message-row--waiting" : ""}` : ""}">
           <article class="message-card">
             <div class="message-card__top">
               <span class="message-card__author-group">
@@ -4289,7 +4417,7 @@ function renderMessages() {
         </div>
       `;
     })
-    .join("");
+    .join("") + pendingWaitingMarkup;
   if (els.messageScroll) {
     els.messageScroll.scrollTo({
       top: followBottom ? els.messageScroll.scrollHeight : scrollTop,
@@ -9876,10 +10004,36 @@ async function ensureModelInstalled(modelName) {
   return false;
 }
 
+function closeKnowledgeSearchWaitDialog(operation) {
+  if (operation?.waitDialogResolver && state.confirmResolver === operation.waitDialogResolver) {
+    resolveConfirmDialog(true);
+  }
+  if (operation) operation.waitDialogResolver = null;
+}
+
+function askKnowledgeSearchContinue(operation, visible) {
+  if (!visible() || state.confirmResolver) return Promise.resolve(null);
+  const decision = openConfirmDialog({
+    eyebrow: "Поиск в базе", title: "Поиск ещё выполняется",
+    message: "Поиск занимает больше 30 секунд. Продолжить ожидание? Пока окно открыто, поиск продолжает работать.",
+    confirmLabel: "Продолжить поиск", cancelLabel: "Отменить поиск", returnFocus: els.promptInput,
+  });
+  const owner = state.confirmResolver;
+  operation.waitDialogResolver = owner;
+  return decision.then((answer) => {
+    // Opening another application dialog dismisses the old one with false.
+    // That replacement is not an explicit request to cancel this search.
+    return state.confirmResolver && state.confirmResolver !== owner ? null : answer;
+  }).finally(() => {
+    if (operation.waitDialogResolver === owner) operation.waitDialogResolver = null;
+  });
+}
+
 function cancelKnowledgeSearch({ silent = false } = {}) {
   const operation = state.knowledgeSearchRequest;
   if (!operation) return;
   state.knowledgeSearchRequest = null;
+  closeKnowledgeSearchWaitDialog(operation);
   operation.controller.abort();
   state.pendingChatMessage = null;
   state.isSending = false;
@@ -9928,6 +10082,7 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
     id: `knowledge-pending-${Date.now()}`, role: "user", content: query, pending: true,
     status: "completed", profileId: operation.profileId, sessionId: operation.sessionId,
     acceptedSessionId: operation.sessionId,
+    knowledgeSearchMode: true, showWaitingDots: true,
   };
   if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = "Планирую запрос и ищу в базе…";
   renderMessages();
@@ -9937,10 +10092,24 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
   }
   updateSendButtonState();
   try {
-    const result = await request("/chat/knowledge-search", {
-      method: "POST", signal: operation.controller.signal,
-      body: { query, profile_id: operation.profileId, session_id: operation.sessionId,
-        model_name: String(state.selectedLlmModel || "") },
+    const result = await waitForKnowledgeSearch({
+      request, body: { query, profile_id: operation.profileId, session_id: operation.initialSessionId,
+        model_name: String(state.selectedLlmModel || "") }, signal: operation.controller.signal,
+      onTask: (task) => { operation.serverTaskId = task.task_id; },
+      askContinue: () => askKnowledgeSearchContinue(operation, visible),
+      onCancel: async () => {
+        if (!visible()) return;
+        if (operation.serverTaskId) {
+          const params = new URLSearchParams({profile_id: String(operation.profileId)});
+          if (operation.initialSessionId) params.set("session_id", operation.initialSessionId);
+          try {
+            const snapshot = await request(`/chat/knowledge-search/tasks/${encodeURIComponent(operation.serverTaskId)}/cancel?${params}`, {method: "POST", body: {}, signal: AbortSignal.timeout(5000)});
+            if (snapshot.state === "completed") return;
+          } catch { /* Local cancellation still releases the UI if the server is unavailable. */ }
+        }
+        if (visible()) cancelKnowledgeSearch();
+      },
+      onMonitorStop: () => closeKnowledgeSearchWaitDialog(operation),
     });
     if (!visible()) return;
     const searchDetails = result.semantic?.status === "ready" ? "слова + семантика" : "по словам · семантика не настроена";
@@ -10005,16 +10174,18 @@ async function sendPromptText(
 
   const profileId = state.activeProfileId;
   const sessionId = state.currentSessionId;
-  state.pendingChatMessage = {
+  const pendingMessage = {
     id: `pending-${Date.now()}`, role: "user", content: query, status: "completed", pending: true,
     profileId, sessionId, acceptedSessionId: sessionId,
+    knowledgeSearchMode: false, showWaitingDots: true,
   };
-  renderMessages();
+  state.pendingChatMessage = pendingMessage;
   state.isSending = true;
   state.chatTaskId = null;
   const controller = new AbortController();
   state.chatTaskStartController = controller;
   updateSendButtonState();
+  renderMessages();
   renderChatAttachments();
   if (clearInput && els.promptInput) {
     els.promptInput.value = "";
@@ -10024,7 +10195,9 @@ async function sendPromptText(
 
   let activeTaskId = "";
   const contextVisible = () => String(state.activeProfileId) === String(profileId)
-    && [sessionId, state.pendingChatMessage?.acceptedSessionId].includes(state.currentSessionId);
+    && [sessionId, pendingMessage.acceptedSessionId].includes(state.currentSessionId)
+    && !state.knowledgeSearchMode
+    && state.pendingChatMessage === pendingMessage;
   try {
     const payload = {
       query,
@@ -10040,16 +10213,19 @@ async function sendPromptText(
     if (sessionId) payload.session_id = sessionId;
 
     const task = await request("/chat/tasks", { method: "POST", body: payload, signal: controller.signal });
+    if (controller.signal.aborted || !contextVisible()) return;
     if (consumeComposerAttachments && normalizedAttachmentIds.length) {
       await clearChatAttachments({ deleteRemote: false });
     }
     activeTaskId = task?.id || task?.task_id || "";
     state.chatTaskStartController = null;
-    state.chatTaskId = task?.id || null;
+    state.chatTaskId = activeTaskId || null;
     const nextSessionId = task?.session_id || sessionId;
-    if (state.pendingChatMessage) {
-      state.pendingChatMessage.persistedId = task?.user_message_id;
-      state.pendingChatMessage.acceptedSessionId = nextSessionId;
+    if (state.pendingChatMessage === pendingMessage) {
+      pendingMessage.persistedId = task?.user_message_id;
+      pendingMessage.acceptedSessionId = nextSessionId;
+      pendingMessage.taskId = task?.id || task?.task_id || "";
+      pendingMessage.assistantMessageId = task?.assistant_message_id || "";
     }
     if (contextVisible()) {
       state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
@@ -10082,6 +10258,8 @@ async function sendPromptText(
     state.chatTaskId = null;
 
     if (String(completedTask?.state || "") === "cancelled") {
+      pendingMessage.showWaitingDots = false;
+      renderMessages();
       if (nextSessionId && contextVisible()) {
         await loadSessions({
           preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
@@ -10097,6 +10275,8 @@ async function sendPromptText(
       });
     }
   } catch (error) {
+    pendingMessage.showWaitingDots = false;
+    if (state.pendingChatMessage === pendingMessage) renderMessages();
     if (clearInput && els.promptInput && !els.promptInput.value.trim()
         && contextVisible()) {
       els.promptInput.value = query;
@@ -10111,17 +10291,20 @@ async function sendPromptText(
     }
     setFooter(`Ошибка чата: ${error.message || error}`, "error");
   } finally {
-    state.pendingChatMessage = null;
-    renderMessages();
-    state.chatTaskId = null;
-    state.chatTaskStartController = null;
-    closeChatTaskEventSource();
-    clearChatTaskReplay();
-    clearChatTypingStreams(activeTaskId);
-    state.isSending = false;
-    updateSendButtonState();
-    renderChatAttachments();
-    scrollMessagesToBottom({ force: true });
+    if (state.pendingChatMessage === pendingMessage) {
+      const shouldFollowCurrentContext = contextVisible();
+      state.pendingChatMessage = null;
+      renderMessages();
+      state.chatTaskId = null;
+      state.chatTaskStartController = null;
+      closeChatTaskEventSource();
+      clearChatTaskReplay();
+      clearChatTypingStreams(activeTaskId);
+      state.isSending = false;
+      updateSendButtonState();
+      renderChatAttachments();
+      if (shouldFollowCurrentContext) scrollMessagesToBottom({ force: true });
+    }
   }
 }
 

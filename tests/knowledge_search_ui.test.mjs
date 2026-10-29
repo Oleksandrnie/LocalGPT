@@ -19,12 +19,13 @@ function harness(request = async () => ({status: 'matches', session_id: 's1', us
     LOCAL_CALCULATOR_MODEL_ID: 'calculator', AUTO_MODEL_ID: 'auto',
     els: {promptInput: {value: 'quartz'}, knowledgeSearchStatus: {}, sendButton: button},
     request: (path, options) => {paths.push(path); return request(path, options)},
+    waitForKnowledgeSearch: ({request, body, signal}) => request('/chat/knowledge-search/tasks', {method:'POST',body,signal}),
     setFooter: (...args) => notices.push(args), renderMessages() {}, autoResizePrompt() {},
     renderChatAttachments() {}, renderChatModelNotice() {},
     ensureModelInstalled: () => {throw new Error('Search must not check model availability')},
     loadSessions: async ({preferredSessionId}) => {loads.push(preferredSessionId); state.currentSessionId = preferredSessionId},
   });
-  for (const name of ['cancelKnowledgeSearch', 'syncKnowledgeSearchControl', 'updateSendButtonState']) install(context, name);
+  for (const name of ['closeKnowledgeSearchWaitDialog', 'cancelKnowledgeSearch', 'syncKnowledgeSearchControl', 'updateSendButtonState']) install(context, name);
   for (const name of ['sendKnowledgeSearch', 'sendPromptText', 'cancelCurrentChatGeneration']) install(context, name, true);
   return {context, state, notices, loads, paths, button};
 }
@@ -37,7 +38,7 @@ function pending() {
 test('search branches before model checks and never submits chat generation', async () => {
   const h = harness();
   await h.context.sendPromptText('quartz', {clearInput: true});
-  assert.deepEqual(h.paths, ['/chat/knowledge-search']);
+  assert.deepEqual(h.paths, ['/chat/knowledge-search/tasks']);
   assert.deepEqual(h.loads, ['s1']);
   assert.equal(h.state.isSending, false);
   assert.equal(h.context.els.promptInput.value, '');
@@ -68,7 +69,7 @@ test('loading, no matches, empty index and errors have distinct visible states',
   assert.match(broken.context.els.knowledgeSearchStatus.textContent, /Ошибка поиска/);
   assert.equal(broken.context.els.promptInput.value, 'quartz');
   assert.deepEqual(broken.loads, []);
-  assert.deepEqual(broken.paths, ['/chat/knowledge-search']);
+  assert.deepEqual(broken.paths, ['/chat/knowledge-search/tasks']);
 });
 
 for (const switchContext of ['profile', 'session', 'mode']) {
@@ -107,7 +108,7 @@ test('Stop aborts search without calling task cancellation, stale result cannot 
   assert.deepEqual(h.loads, []);
   second.resolve({status: 'matches', session_id: 's1'});
   await fresh;
-  assert.deepEqual(h.paths, ['/chat/knowledge-search', '/chat/knowledge-search']);
+  assert.deepEqual(h.paths, ['/chat/knowledge-search/tasks', '/chat/knowledge-search/tasks']);
 });
 
 test('mode toggle cancels pending search and enables normal mode', async () => {
@@ -151,7 +152,7 @@ test('new chat cancels pending search even when both sessions have no ID yet', a
 });
 
 test('first search opens its newly created session through real session-list loading', async () => {
-  const h = harness(path => path === '/chat/knowledge-search'
+  const h = harness(path => path === '/chat/knowledge-search/tasks'
     ? Promise.resolve({status: 'matches', session_id: 'created-session', user_message_id: 1})
     : Promise.resolve({sessions: [{id: 'created-session'}]}));
   h.state.currentSessionId = null;
@@ -169,7 +170,7 @@ test('first search opens its newly created session through real session-list loa
   await h.context.sendPromptText('quartz', {clearInput: true});
   assert.equal(h.state.currentSessionId, 'created-session');
   assert.deepEqual(h.loads, ['created-session']);
-  assert.deepEqual(h.paths, ['/chat/knowledge-search', '/sessions?profile_id=7']);
+  assert.deepEqual(h.paths, ['/chat/knowledge-search/tasks', '/sessions?profile_id=7']);
   assert.equal(h.state.knowledgeSearchRequest, null);
   assert.equal(h.state.isSending, false);
   assert.match(h.notices.at(-1)[0], /Фрагменты найдены/);
@@ -178,7 +179,7 @@ test('first search opens its newly created session through real session-list loa
 for (const initialSessionId of ['s1', null]) {
 test(`session-list refresh after search from ${initialSessionId ?? 'new chat'} cannot reopen old chat after a switch`, async () => {
   const deferred = pending();
-  const h = harness(path => path === '/chat/knowledge-search'
+  const h = harness(path => path === '/chat/knowledge-search/tasks'
     ? Promise.resolve({status: 'matches', session_id: 's1'}) : deferred.promise);
   h.state.currentSessionId = initialSessionId;
   h.context.STORAGE_KEYS = {activeSessionId: 'session'};
@@ -232,4 +233,17 @@ test('search checkbox and input indicator reflect mode and compact status', () =
   h.context.syncKnowledgeSearchControl();
   assert.equal(h.context.els.knowledgeSearchIndicator.hidden, true);
   assert.equal(h.context.els.knowledgeSearchToggle.checked, false);
+});
+
+test('declining long-search confirmation cancels wait and restores submitted input', async () => {
+  const h = harness();
+  h.context.waitForKnowledgeSearch = async ({onCancel}) => {
+    await onCancel();
+    const error = new Error('cancelled'); error.name = 'AbortError'; throw error;
+  };
+  await h.context.sendPromptText('synthetic original prompt', {clearInput:true});
+  assert.equal(h.context.els.promptInput.value, 'synthetic original prompt');
+  assert.equal(h.state.isSending,false);
+  assert.equal(h.state.pendingChatMessage,null);
+  assert.deepEqual(h.loads,[]);
 });

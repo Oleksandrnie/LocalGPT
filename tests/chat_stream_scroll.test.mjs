@@ -12,9 +12,9 @@ function harness() {
  requestAnimationFrame:fn=>frames.push(fn),observeMessageScrollEnd(){},normalizeMessageStatus:m=>m.status,
  assistantStatusMeta:()=>({label:'Generating',text:'Generating'}),isAssistantMessageActive:()=>true,
  visionSourceUserMessageForIndex:()=>null,formatRichMessage:text=>text,escapeHtml:text=>String(text),formatDateTime:()=>''});
- for(const name of ['renderMessages','syncMessageScrollState','scrollMessagesToBottom']) {
+ for(const name of ['chatWaitingDotsMarkup','updateChatWaitingStatus','pendingChatContextMatches','assistantMessageMatchesPending','shouldShowPendingChatWaitingDots','shouldShowAssistantWaitingDots','renderMessages','syncMessageScrollState','scrollMessagesToBottom']) {
   const start=source.indexOf(`function ${name}(`);
-  vm.runInContext(source.slice(start,source.indexOf('\n}',start)+2),context);
+  vm.runInContext(source.slice(start,source.indexOf('\n}\n',start)+2),context);
  }
  return {state,scroll,list,context,flush(){while(frames.length)frames.shift()();}};
 }
