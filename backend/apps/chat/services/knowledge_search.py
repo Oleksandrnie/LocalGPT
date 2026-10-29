@@ -4,8 +4,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import date
-from time import monotonic
-from typing import Any
+from typing import Any, Callable
 from urllib import request
 
 from fastapi import HTTPException
@@ -156,20 +155,25 @@ def _merge(groups: list[list[dict[str, Any]]], top_k: int) -> tuple[list[dict[st
     return [candidates[key] for key in selected], list(candidates.values())
 
 
-def search(profile_id: int, query: str, *, session_id: str | None, top_k: int, model_name: str = "") -> dict[str, Any]:
+def search(profile_id: int, query: str, *, session_id: str | None, top_k: int, model_name: str = "",
+           check_cancelled: Callable[[], None] = lambda: None) -> dict[str, Any]:
+    check_cancelled()
     provider = _local_provider()
     semantic = provider.descriptor.provider == "ollama"
     try:
-        indexed = rag._current_generation_chunks(profile_id, provider, session_id=session_id)
+        corpus = rag.prepare_search_corpus(profile_id, provider, session_id=session_id)
+        indexed = corpus.chunks
     except HTTPException as exc:
         if exc.status_code == 409:
             raise HTTPException(409, {"code": "knowledge_search_reindex_required",
                                      "message": "Выбранная embedding-модель не совпадает с индексом. Вручную переиндексируйте базу в «Знания»; поиск не запущен."}) from exc
         raise
     strategy = "hybrid_v2" if semantic else "lexical_v1"
+    check_cancelled()
     plan, planner, warnings = _plan(query, model_name) if indexed else (
         SearchPlan(topics=[SearchTopic(topic=query[:160])]), {"status": "not_needed", "model": None}, [],
     )
+    check_cancelled()
     if not semantic:
         warnings.append(SEMANTIC_GUIDANCE + f" Настроенная embedding-модель: {config.SETTINGS.rag_embedding_model}.")
     queries = [query]
@@ -192,24 +196,21 @@ def search(profile_id: int, query: str, *, session_id: str | None, top_k: int, m
             if existing is not None:
                 topic_query_indices[topic_index].append(existing)
     groups = []
-    deadline = monotonic() + 90
     for index, value in enumerate(queries):
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise HTTPException(504, {"code": "knowledge_search_timeout", "message": "Поиск превысил время ожидания. Сократите число тем и повторите запрос."})
-        if semantic:
-            provider.timeout_seconds = min(provider.timeout_seconds, remaining, 20)
-
+        check_cancelled()
         try:
             result = rag.search_with_diagnostics(profile_id, value, top_k=MAX_CANDIDATES_PER_QUERY,
                                                  strategy=strategy, session_id=session_id, filter_query=query,
-                                                 embedding_provider=provider, embedding_release=index == len(queries) - 1)
+                                                 embedding_provider=provider, embedding_release=index == len(queries) - 1,
+                                                 prepared_corpus=corpus)
         except HTTPException as exc:
             if semantic and exc.status_code == 503:
                 raise HTTPException(503, {"code": "knowledge_search_embedding_unavailable",
                     "message": f"Локальные embeddings {provider.descriptor.model} недоступны. Проверьте установку модели в Ollama и параметры индекса; поиск остановлен без внешнего fallback."}) from exc
             raise
+        check_cancelled()
         groups.append(result["results"])
+    check_cancelled()
     selected, candidates = _merge(groups, top_k)
     selected_candidate_ids = {item["chunk_id"] for item in selected}
     diagnostics = retrieval.evidence_diagnostics(
@@ -252,6 +253,7 @@ def search(profile_id: int, query: str, *, session_id: str | None, top_k: int, m
     from backend.apps.rag.evidence_links import attach_links
     links_requested = attach_links(evidence, candidates=candidates, query=query,
                                    profile_id=profile_id, session_id=session_id)
+    check_cancelled()
     for index, item in enumerate(evidence, 1):
         meta = item.get("provenance") or {}
         source = str(item.get("source_id") or item.get("title") or "Источник")

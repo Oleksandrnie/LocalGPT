@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -10,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app import config, db
-from backend.apps.chat import routes
+from backend.apps.chat import knowledge_search_tasks as search_tasks, routes
 from backend.apps.rag import embeddings, service as rag
 
 
@@ -32,6 +33,7 @@ class KnowledgeSearchTests(unittest.TestCase):
         app.include_router(routes.router)
         self.client = TestClient(app, raise_server_exceptions=False)
         self.addCleanup(self.client.close)
+        self.addCleanup(search_tasks.reset)
 
     def search(self, query="quartz", **kwargs):
         return self.client.post("/chat/knowledge-search", json={
@@ -243,13 +245,213 @@ class KnowledgeSearchTests(unittest.TestCase):
         self.assertIn('quartz', payload['messages'][-1]['content'])
         self.assertNotIn('PRIVATE_SYNTHETIC', str(payload))
 
-    def test_search_timeout_is_error_without_history_write(self):
+    def test_search_has_no_automatic_elapsed_deadline(self):
         from backend.apps.chat.services import knowledge_search as smart
         self.index_markdown()
-        with patch.object(smart, 'monotonic', side_effect=[0, 100]):
+        # The removed global stopwatch must not decide when retrieval stops.
+        with patch.object(smart, 'monotonic', side_effect=[0, 100], create=True) as elapsed:
             response = self.search()
-        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.status_code, 200, response.text)
+        elapsed.assert_not_called()
+        self.assertEqual(len(db.get_messages(self.session['id'])), 2)
+
+    def start_search(self, **kwargs):
+        return self.client.post('/chat/knowledge-search/tasks', json={
+            'profile_id': self.profile, 'session_id': self.session['id'], 'query': 'quartz', **kwargs,
+        })
+
+    def task_scope(self, **kwargs):
+        return {'profile_id': self.profile, 'session_id': self.session['id'], **kwargs}
+
+    def join_search(self, task_id):
+        search_tasks._TASKS[task_id]['thread'].join(timeout=3)
+        self.assertFalse(search_tasks._TASKS[task_id]['thread'].is_alive())
+
+    def test_async_search_completes_and_persists_the_existing_result_format(self):
+        self.index_markdown()
+        with patch.object(routes.knowledge_search, '_planner_completion') as planner, \
+             patch.object(rag, '_embed_texts') as embed, \
+             patch.object(routes.chat_service, 'chat_completion_result') as generate:
+            response = self.start_search()
+            self.assertEqual(response.status_code, 202, response.text)
+            task_id = response.json()['task_id']
+            self.join_search(task_id)
+        for forbidden in (planner, embed, generate):
+            forbidden.assert_not_called()
+        task = self.client.get(f'/chat/knowledge-search/tasks/{task_id}', params=self.task_scope()).json()
+        self.assertEqual(task['state'], 'completed')
+        self.assertEqual(task['result']['status'], 'matches')
+        messages = db.get_messages(self.session['id'])
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[-1]['content'], task['result']['reply'])
+        cancelled = self.client.post(f'/chat/knowledge-search/tasks/{task_id}/cancel', params=self.task_scope()).json()
+        self.assertEqual(cancelled['state'], 'completed')
+        self.assertEqual(cancelled['result'], task['result'])
+
+    def test_async_scope_is_required_for_status_and_cancel(self):
+        response = self.start_search()
+        task_id = response.json()['task_id']
+        self.join_search(task_id)
+        other_profile = db.create_profile('Synthetic Other')['id']
+        other_session = db.create_session(self.profile, 'Synthetic Other', '')['id']
+        for scope in [self.task_scope(profile_id=other_profile), self.task_scope(session_id=other_session),
+                      {'profile_id': self.profile}]:
+            with self.subTest(scope=scope):
+                self.assertEqual(self.client.get(f'/chat/knowledge-search/tasks/{task_id}', params=scope).status_code, 404)
+                self.assertEqual(self.client.post(f'/chat/knowledge-search/tasks/{task_id}/cancel', params=scope).status_code, 404)
+        with patch.object(routes.knowledge_search, 'search') as retrieve:
+            invalid = self.start_search(profile_id=other_profile)
+        self.assertEqual(invalid.status_code, 404)
+        retrieve.assert_not_called()
+
+    def test_cancel_during_planner_stops_before_retrieval_without_history(self):
+        import json
+        self.index_markdown()
+        entered, release = threading.Event(), threading.Event()
+        def planner(*args):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return json.dumps({'topics': [{'topic': 'quartz', 'variants': ['crystal']}]})
+        try:
+            with patch.object(routes.knowledge_search, '_planner_completion', side_effect=planner), \
+                 patch.object(rag, 'search_with_diagnostics') as retrieve:
+                response = self.start_search(model_name='synthetic')
+                self.assertTrue(entered.wait(3))
+                task_id = response.json()['task_id']
+                cancelled = self.client.post(f'/chat/knowledge-search/tasks/{task_id}/cancel', params=self.task_scope())
+                self.assertEqual(cancelled.json()['state'], 'cancelled')
+                release.set()
+                self.join_search(task_id)
+            retrieve.assert_not_called()
+            self.assertEqual(db.get_messages(self.session['id']), [])
+        finally:
+            release.set()
+
+    def test_cancel_during_retrieval_stops_remaining_expansions_and_late_persistence(self):
+        import json
+        self.index_markdown()
+        entered, release = threading.Event(), threading.Event()
+        def retrieve(*args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return {'results': []}
+        try:
+            with patch.object(routes.knowledge_search, '_planner_completion', return_value=json.dumps({
+                'topics': [{'topic': 'quartz', 'variants': ['crystal', 'stone']}],
+            })), patch.object(rag, 'search_with_diagnostics', side_effect=retrieve) as retrieval_call:
+                response = self.start_search(model_name='synthetic')
+                self.assertTrue(entered.wait(3))
+                task_id = response.json()['task_id']
+                self.client.post(f'/chat/knowledge-search/tasks/{task_id}/cancel', params=self.task_scope())
+                release.set()
+                self.join_search(task_id)
+            self.assertEqual(retrieval_call.call_count, 1)
+            self.assertEqual(db.get_messages(self.session['id']), [])
+            self.assertIsNone(search_tasks.get(task_id, **self.task_scope())['result'])
+        finally:
+            release.set()
+
+    def test_cancelled_native_call_keeps_capacity_until_worker_exits(self):
+        entered, release = threading.Event(), threading.Event()
+        def retrieve(*args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return {'reply': 'Synthetic late result'}
+        try:
+            with patch.object(search_tasks, 'MAX_ACTIVE_PER_PROFILE', 1), \
+                 patch.object(routes.knowledge_search, 'search', side_effect=retrieve):
+                response = self.start_search()
+                task_id = response.json()['task_id']
+                self.assertTrue(entered.wait(3))
+                self.client.post(f'/chat/knowledge-search/tasks/{task_id}/cancel', params=self.task_scope())
+                self.assertEqual(self.start_search().status_code, 429)
+                release.set()
+                self.join_search(task_id)
+                next_response = self.start_search()
+                self.assertEqual(next_response.status_code, 202)
+                self.join_search(next_response.json()['task_id'])
+            self.assertEqual(len(db.get_messages(self.session['id'])), 2)
+        finally:
+            release.set()
+
+    def test_async_errors_are_explicit_and_leave_history_untouched(self):
+        with patch.object(routes.knowledge_search, 'search', side_effect=HTTPException(503, {
+            'code': 'knowledge_search_embedding_unavailable', 'message': 'Synthetic provider failure',
+        })):
+            response = self.start_search()
+            task_id = response.json()['task_id']
+            self.join_search(task_id)
+        task = self.client.get(f'/chat/knowledge-search/tasks/{task_id}', params=self.task_scope()).json()
+        self.assertEqual(task['state'], 'failed')
+        self.assertEqual(task['error']['status_code'], 503)
+        self.assertEqual(task['error']['detail']['code'], 'knowledge_search_embedding_unavailable')
+        self.assertIsNone(task['result'])
         self.assertEqual(db.get_messages(self.session['id']), [])
+
+    def test_async_revalidates_deleted_session_before_persistence(self):
+        entered, release = threading.Event(), threading.Event()
+        def retrieve(*args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return {'reply': 'Synthetic evidence'}
+        try:
+            with patch.object(routes.knowledge_search, 'search', side_effect=retrieve):
+                response = self.start_search()
+                task_id = response.json()['task_id']
+                self.assertTrue(entered.wait(3))
+                db.delete_session(self.session['id'])
+                release.set()
+                self.join_search(task_id)
+            task = search_tasks.get(task_id, **self.task_scope())
+            self.assertEqual(task['state'], 'failed')
+            self.assertEqual(task['error']['status_code'], 404)
+            self.assertIsNone(task['result'])
+        finally:
+            release.set()
+
+    def test_async_new_session_uses_original_null_scope_and_only_creates_chat_on_success(self):
+        response = self.start_search(session_id=None)
+        task_id = response.json()['task_id']
+        self.join_search(task_id)
+        task = self.client.get(f'/chat/knowledge-search/tasks/{task_id}', params={'profile_id': self.profile}).json()
+        self.assertEqual(task['state'], 'completed')
+        self.assertIsNone(task['session_id'])
+        self.assertTrue(task['result']['session_id'])
+        self.assertNotEqual(task['result']['session_id'], self.session['id'])
+        self.assertEqual(len(db.get_messages(task['result']['session_id'])), 2)
+
+    def test_request_local_corpus_is_reused_only_with_matching_scope_and_provider(self):
+        import json
+        self.index_markdown()
+        with patch.object(rag, '_current_generation_chunks', wraps=rag._current_generation_chunks) as load, \
+             patch.object(routes.knowledge_search, '_planner_completion', return_value=json.dumps({
+                 'topics': [{'topic': 'quartz', 'variants': ['crystal', 'stone']}],
+             })):
+            self.assertEqual(self.search(model_name='synthetic').status_code, 200)
+            self.assertEqual(load.call_count, 1)
+            self.assertEqual(self.search(model_name='synthetic').status_code, 200)
+            self.assertEqual(load.call_count, 2)
+        provider = embeddings.LocalHashEmbeddingProvider()
+        corpus = rag.prepare_search_corpus(self.profile, provider, session_id=self.session['id'])
+        for overrides in [{'profile_id': self.profile + 1}, {'session_id': None}, {
+            'embedding_provider': Mock(descriptor=replace(provider.descriptor, storage_key='synthetic/other')),
+        }]:
+            kwargs = {'profile_id': self.profile, 'session_id': self.session['id'], 'embedding_provider': provider, **overrides}
+            with self.assertRaisesRegex(ValueError, 'scope_mismatch'):
+                rag.search_with_diagnostics(query='quartz', prepared_corpus=corpus, **kwargs)
+        self.assertEqual(self.start_search(prepared_corpus={'profile_id': self.profile}).status_code, 422)
+
+    def test_lexical_corpus_cache_preserves_ranking_and_original_filter(self):
+        self.index_markdown('Synthetic quartz evidence.\nSecond crystal sentence.')
+        provider = embeddings.LocalHashEmbeddingProvider()
+        corpus = rag.prepare_search_corpus(self.profile, provider, session_id=self.session['id'])
+        kwargs = {'profile_id': self.profile, 'session_id': self.session['id'], 'embedding_provider': provider,
+                  'strategy': 'lexical_v1', 'filter_query': 'quartz'}
+        for query in ['quartz', 'crystal', 'absenttermzzzz']:
+            uncached = rag.search_with_diagnostics(query=query, **kwargs)
+            cached = rag.search_with_diagnostics(query=query, prepared_corpus=corpus, **kwargs)
+            self.assertEqual(cached, uncached)
+        self.assertEqual(len(corpus.lexical_cache), len(corpus.chunks))
 
 
 if __name__ == "__main__":

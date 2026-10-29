@@ -17,6 +17,7 @@ from app.schemas import ChatDebugPromptRequest, ChatRequest, ResetRequest
 from app.services import criteria as criteria_service
 from app.services import models as model_service
 from backend.apps.chat import tasks as chat_tasks
+from backend.apps.chat import knowledge_search_tasks
 from backend.apps.chat.schemas import KnowledgeSearchRequest
 from backend.apps.chat.services import knowledge_search
 from backend.apps.chat.service import (
@@ -745,9 +746,8 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
     }
 
 
-@router.post("/chat/knowledge-search")
-def search_knowledge(req: KnowledgeSearchRequest) -> dict[str, Any]:
-    profile = _get_profile_or_404(req.profile_id)
+def _knowledge_search_scope(req: KnowledgeSearchRequest) -> tuple[str | None, dict[str, Any] | None, str]:
+    _get_profile_or_404(req.profile_id)
     session_id = (req.session_id or "").strip() or None
     session = db.get_session(session_id) if session_id else None
     if session_id and (not session or int(session.get("profile_id") or 0) != req.profile_id):
@@ -755,11 +755,14 @@ def search_knowledge(req: KnowledgeSearchRequest) -> dict[str, Any]:
     query = req.query.strip()
     if not query:
         raise HTTPException(422, "knowledge_search_query_required")
-    result = knowledge_search.search(req.profile_id, query, session_id=session_id, top_k=req.top_k,
-                                     model_name=req.model_name or str((session or {}).get("model_name") or ""))
+    return session_id, session, query
+
+
+def _persist_knowledge_search(req: KnowledgeSearchRequest, query: str, session_id: str | None,
+                              result: dict[str, Any]) -> dict[str, Any]:
     # Retrieval failures leave history untouched; revalidate ownership before
     # writing, since the user can delete a profile/chat during a long lookup.
-    _get_profile_or_404(int(profile["id"]))
+    _get_profile_or_404(req.profile_id)
     if session_id:
         session = db.get_session(session_id)
         if not session or int(session.get("profile_id") or 0) != req.profile_id:
@@ -772,6 +775,40 @@ def search_knowledge(req: KnowledgeSearchRequest) -> dict[str, Any]:
     assistant = db.add_message(session_id, "assistant", result["reply"], model="knowledge_search")
     return {**result, "profile_id": req.profile_id, "session_id": session_id,
             "user_message_id": user["id"], "assistant_message_id": assistant["id"]}
+
+
+@router.post("/chat/knowledge-search")
+def search_knowledge(req: KnowledgeSearchRequest) -> dict[str, Any]:
+    session_id, session, query = _knowledge_search_scope(req)
+    result = knowledge_search.search(req.profile_id, query, session_id=session_id, top_k=req.top_k,
+                                     model_name=req.model_name or str((session or {}).get("model_name") or ""))
+    return _persist_knowledge_search(req, query, session_id, result)
+
+
+@router.post("/chat/knowledge-search/tasks", status_code=202)
+def start_knowledge_search(req: KnowledgeSearchRequest) -> dict[str, Any]:
+    session_id, session, query = _knowledge_search_scope(req)
+    model_name = req.model_name or str((session or {}).get("model_name") or "")
+    return knowledge_search_tasks.start(
+        profile_id=req.profile_id, session_id=session_id,
+        work=lambda check: knowledge_search.search(req.profile_id, query, session_id=session_id,
+                                                  top_k=req.top_k, model_name=model_name, check_cancelled=check),
+        persist=lambda result: _persist_knowledge_search(req, query, session_id, result),
+    )
+
+
+@router.get("/chat/knowledge-search/tasks/{task_id}")
+def get_knowledge_search_task(task_id: str, profile_id: int = Query(gt=0),
+                              session_id: str | None = Query(default=None, max_length=128)) -> dict[str, Any]:
+    return knowledge_search_tasks.get(task_id, profile_id=profile_id,
+                                      session_id=(session_id or "").strip() or None)
+
+
+@router.post("/chat/knowledge-search/tasks/{task_id}/cancel")
+def cancel_knowledge_search_task(task_id: str, profile_id: int = Query(gt=0),
+                                 session_id: str | None = Query(default=None, max_length=128)) -> dict[str, Any]:
+    return knowledge_search_tasks.cancel(task_id, profile_id=profile_id,
+                                         session_id=(session_id or "").strip() or None)
 
 
 @router.post("/chat")

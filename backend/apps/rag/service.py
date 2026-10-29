@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -926,6 +927,22 @@ def _current_generation_chunks(
     return current
 
 
+@dataclass
+class SearchCorpus:
+    """Request-local indexed chunks and lexical work, bound to their origin."""
+    profile_id: int
+    session_id: str | None
+    embedding_key: str
+    chunks: list[dict[str, Any]]
+    lexical_cache: dict[int, Any] = field(default_factory=dict)
+
+
+def prepare_search_corpus(profile_id: int, provider: embeddings.EmbeddingProvider,
+                          *, session_id: str | None = None) -> SearchCorpus:
+    return SearchCorpus(profile_id, session_id, provider.descriptor.storage_key,
+                        _current_generation_chunks(profile_id, provider, session_id=session_id))
+
+
 def status(profile_id: int | None = None, *, session_id: str | None = None) -> dict[str, Any]:
     files = _iter_source_files(profile_id) if profile_id is not None else []
     if profile_id is not None:
@@ -1088,7 +1105,11 @@ def search_with_diagnostics(
     filter_query: str | None = None,
     embedding_provider: embeddings.EmbeddingProvider | None = None,
     embedding_release: bool = True,
+    prepared_corpus: SearchCorpus | None = None,
 ) -> dict[str, Any]:
+    # Internal request-local snapshot from _current_generation_chunks for this
+    # exact profile/session/provider. Never populate from API input or reuse
+    # across requests: source visibility and generation must be checked anew.
     selected_strategy = str(strategy or retrieval_strategy()).strip().lower()
     if selected_strategy == "hybrid_v1":
         selected_strategy = DEFAULT_RETRIEVAL_STRATEGY
@@ -1112,7 +1133,13 @@ def search_with_diagnostics(
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
     provider = embedding_provider or _embedding_provider()
-    raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
+    if prepared_corpus is not None and (
+        prepared_corpus.profile_id != profile_id or prepared_corpus.session_id != session_id
+        or prepared_corpus.embedding_key != provider.descriptor.storage_key
+    ):
+        raise ValueError("rag_search_corpus_scope_mismatch")
+    raw_chunks = (prepared_corpus.chunks if prepared_corpus is not None
+                  else _current_generation_chunks(profile_id, provider, session_id=session_id))
     raw_chunks = _filter_telegram_dates(raw_chunks, filter_query if filter_query is not None else cleaned_query, provider)
     if any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in raw_chunks):
         cleaned_query = _telegram_id_query(cleaned_query)
@@ -1145,6 +1172,7 @@ def search_with_diagnostics(
             }
         ) if facet_vectors else None,
         strategy=selected_strategy,
+        corpus_cache=prepared_corpus.lexical_cache if prepared_corpus is not None else None,
     )
     results = evaluated[:top_k]
     diagnostics = retrieval.evidence_diagnostics(cleaned_query, evaluated, strategy=selected_strategy)
