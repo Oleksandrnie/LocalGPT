@@ -1,3 +1,4 @@
+import { attachRuntimeDiagnostics } from './helpers/runtime_diagnostics_harness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,6 +13,7 @@ function harness() {
  requestAnimationFrame:fn=>frames.push(fn),observeMessageScrollEnd(){},normalizeMessageStatus:m=>m.status,
  assistantStatusMeta:()=>({label:'Generating',text:'Generating'}),isAssistantMessageActive:()=>true,
  visionSourceUserMessageForIndex:()=>null,formatRichMessage:text=>text,escapeHtml:text=>String(text),formatDateTime:()=>''});
+ attachRuntimeDiagnostics(context,source);
  for(const name of ['chatWaitingDotsMarkup','updateChatWaitingStatus','pendingChatContextMatches','assistantMessageMatchesPending','shouldShowPendingChatWaitingDots','shouldShowAssistantWaitingDots','renderMessages','pauseMessageAutoScroll','handleMessageScrollIntent','syncMessageScrollState','scrollMessagesToBottom']) {
   const start=source.indexOf(`function ${name}(`);
   vm.runInContext(source.slice(start,source.indexOf('\n}\n',start)+2),context);

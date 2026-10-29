@@ -1,3 +1,4 @@
+import { emitRuntimeDiagnostic } from "./runtime_diagnostics.mjs";
 import { waitForKnowledgeSearch } from "./knowledge_search_client.mjs";
 import { renderThinkingSegments } from "./thinking_switch_view.mjs";
 import { ragUploadReport, describeRagUploadError, uploadRagBatches } from "./rag_upload.mjs";
@@ -715,6 +716,30 @@ function writeStored(key, value) {
 function knowledgeSearchWaitSeconds() {
   const value = Number(readStored("localgpt.knowledgeSearchWaitSeconds", "30"));
   return Number.isInteger(value) && value >= 1 && value <= 86400 ? value : 30;
+}
+
+const runtimeDiagnosticSeen = new Set();
+function runtimeDiagnosticContext(overrides = {}) {
+  const settings = state.modelSettingsState?.effective || {};
+  const context = {profile_id: Number(state.activeProfileId) || null, session_id: state.currentSessionId,
+    model: state.selectedLlmModel, thinking: settings.ollama_think ?? "auto",
+    output_tokens: settings.output_tokens ?? settings.max_tokens, thinking_tokens: settings.thinking_tokens,
+    rag_context_enabled: activeProfileRagEnabled(), ...overrides};
+  const setup = state.embeddingSetup;
+  if (setup && Number(setup.profile_id) === Number(context.profile_id)) {
+    context.embedding_status = setup.active ? "ready" : setup.operation?.status === "running" ? "indexing" : "not_configured";
+    context.embedding_provider = setup.provider?.provider;
+    context.embedding_model = setup.model;
+  }
+  return context;
+}
+function logRuntimeDiagnostic(event, data = {}, context = null, level = "info", key = null) {
+  if (key) {
+    if (runtimeDiagnosticSeen.has(key)) return;
+    if (runtimeDiagnosticSeen.size >= 200) runtimeDiagnosticSeen.delete(runtimeDiagnosticSeen.values().next().value);
+    runtimeDiagnosticSeen.add(key);
+  }
+  emitRuntimeDiagnostic(event, context || runtimeDiagnosticContext(), data, level);
 }
 
 function escapeHtml(value) {
@@ -2321,6 +2346,7 @@ async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
   while (Date.now() - startedAt < timeoutMs) {
     const task = await request(chatTaskScopedUrl(taskId, "", taskScope));
     const taskState = String(task?.state || "");
+    if (["completed", "failed", "cancelled"].includes(taskState)) logRuntimeDiagnostic("chat.task_terminal", {task}, runtimeDiagnosticContext({profile_id: task.profile_id, session_id: task.session_id}), taskState === "failed" ? "error" : "info", `task:${taskId}:${taskState}`);
     if (taskState === "completed" || taskState === "cancelled") {
       return task;
     }
@@ -2426,6 +2452,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
       if (settled) return;
       const data = parseSsePayload(event);
       terminalEventReceived = true;
+      logRuntimeDiagnostic("chat.stream_completed", {task: {...task, ...data, state: "completed"}}, runtimeDiagnosticContext({profile_id: task.profile_id, session_id: task.session_id}), "info", `task:${taskId}:completed`);
       finishChatTypingStream(task, () => {
         updateAssistantMessageFromTask(task, {
           ...data,
@@ -2461,6 +2488,8 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
         error: data.message || "Генерация ответа завершилась ошибкой.",
       });
       const error = new Error(data.message || "Генерация ответа завершилась ошибкой.");
+      error.code = data.code || null;
+      logRuntimeDiagnostic("chat.stream_failed", {error, task: {...task, ...data, state: "failed", error_code: data.code}}, runtimeDiagnosticContext({profile_id: task.profile_id, session_id: task.session_id}), "error");
       error.chatTaskFailed = true;
       finish(() => reject(error));
     });
@@ -3815,6 +3844,13 @@ async function request(path, options = {}) {
   error.status = response.status;
   error.code = detail?.code || payload?.code || null;
   error.payload = payload;
+  if (/^\/(chat|rag|model_settings|models)(?:[/?]|$)/.test(path)) {
+    logRuntimeDiagnostic("request.failed", {error}, runtimeDiagnosticContext({
+      profile_id: Number(options.body?.profile_id || new URL(path, window.location.origin).searchParams.get("profile_id")) || Number(state.activeProfileId) || null,
+      session_id: options.body?.session_id || null,
+      model: options.body?.model_name || options.body?.model || state.selectedLlmModel,
+    }), "error");
+  }
   throw error;
 }
 
@@ -4371,6 +4407,7 @@ function renderMessages() {
       const author = role === "user" ? "Вы" : role === "assistant" ? (message.model === "knowledge_search" ? "База знаний" : "LocalGPT") : "Система";
       const blockedTransport = role === "assistant" && message.model !== "knowledge_search" && /\[(?:END_)?LOCALGPT_DATA_ENVELOPE/.test(String(message.content || ""));
       const status = blockedTransport ? "failed" : normalizeMessageStatus(message);
+      if (blockedTransport) logRuntimeDiagnostic("chat.service_format", {code: "service_format_in_answer", reasoning_present: Boolean(message.has_reasoning)}, runtimeDiagnosticContext({model: message.model, session_id: message.session_id, thinking: null, output_tokens: null, thinking_tokens: null}), "error", `envelope:${message.id}`);
       const statusMeta = role === "assistant" ? assistantStatusMeta(status) : { label: "", text: "" };
       const content = blockedTransport ? "" : String(message.content || "");
       const errorText = blockedTransport
@@ -10224,6 +10261,8 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
   const visible = () => state.knowledgeSearchRequest === operation && state.knowledgeSearchMode
     && String(state.activeProfileId) === String(operation.profileId)
     && [operation.initialSessionId, operation.sessionId].includes(state.currentSessionId);
+  const diagnosticContext = runtimeDiagnosticContext({profile_id: Number(operation.profileId), session_id: operation.initialSessionId});
+  logRuntimeDiagnostic("search.started", {}, diagnosticContext);
   state.knowledgeSearchRequest = operation;
   state.isSending = true;
   state.pendingChatMessage = {
@@ -10260,6 +10299,7 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
       },
       onMonitorStop: () => closeKnowledgeSearchWaitDialog(operation),
     });
+    logRuntimeDiagnostic(result.planner?.status === "unavailable" || result.semantic?.status !== "ready" ? "search.degraded" : "search.completed", {result}, diagnosticContext, result.planner?.status === "unavailable" || result.semantic?.status !== "ready" ? "warn" : "info");
     if (!visible()) return;
     const searchDetails = result.semantic?.status === "ready" ? "слова + семантика" : "по словам · семантика не настроена";
     const statusText = result.status === "matches" ? `Фрагменты найдены · ${searchDetails}`
@@ -10275,6 +10315,7 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
       if (result.semantic?.status === "not_configured") void offerEmbeddingSetup();
     }
   } catch (error) {
+    logRuntimeDiagnostic("search.failed", {error}, diagnosticContext, error.name === "AbortError" ? "info" : "error");
     if (!visible()) return;
     if (clearInput && els.promptInput && !els.promptInput.value.trim()) {
       els.promptInput.value = query;
@@ -10326,6 +10367,8 @@ async function sendPromptText(
 
   const profileId = state.activeProfileId;
   const sessionId = state.currentSessionId;
+  const chatDiagnosticContext = runtimeDiagnosticContext({profile_id: Number(profileId), session_id: sessionId, model: selectedModel});
+  logRuntimeDiagnostic("chat.started", {}, chatDiagnosticContext);
   const pendingMessage = {
     id: `pending-${Date.now()}`, role: "user", content: query, status: "completed", pending: true,
     profileId, sessionId, acceptedSessionId: sessionId,
@@ -10389,6 +10432,7 @@ async function sendPromptText(
     }
 
     if (String(task?.state || "") === "completed") {
+      logRuntimeDiagnostic("chat.task_terminal", {task}, chatDiagnosticContext, "info", `task:${activeTaskId}:completed`);
       return;
     }
 
@@ -10427,6 +10471,7 @@ async function sendPromptText(
       });
     }
   } catch (error) {
+    logRuntimeDiagnostic("chat.failed", {error}, chatDiagnosticContext, error.name === "AbortError" ? "info" : "error");
     pendingMessage.showWaitingDots = false;
     if (state.pendingChatMessage === pendingMessage) renderMessages();
     if (clearInput && els.promptInput && !els.promptInput.value.trim()

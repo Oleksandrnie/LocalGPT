@@ -29,3 +29,8 @@ test('failed job is distinct from no matches and stops the monitor',async()=>{
  request:async()=>({...running,state:'failed',error:{status_code:503,detail:{message:'Embedding unavailable'}}})}),{message:'Embedding unavailable',status:503});
  assert.equal(m.stopped,true);
 });
+
+test('failed search retains structured error metadata for safe diagnostic reporting', async () => {
+  const request = async () => ({task_id:'test',state:'failed',error:{status_code:502,detail:{code:'planner_failure',done_reason:'length',message:'safe failure'}}});
+  await assert.rejects(waitForKnowledgeSearch({request,body:{profile_id:2},monitorFactory:()=>({stop(){}})}), error => error.code === 'planner_failure' && error.status === 502 && error.payload.detail.done_reason === 'length');
+});

@@ -36,6 +36,8 @@ export async function waitForKnowledgeSearch({request, body, signal, onTask = ()
         const detail = task.error?.detail;
         const error = new Error(typeof detail === 'string' ? detail : detail?.message || 'Ошибка поиска в базе.');
         error.status = task.error?.status_code || 500;
+        error.code = typeof detail === 'object' && detail ? detail.code || null : null;
+        error.payload = {detail};
         throw error;
       }
       await sleep(pollMs);

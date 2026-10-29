@@ -1,3 +1,4 @@
+import { attachRuntimeDiagnostics } from './helpers/runtime_diagnostics_harness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,20 +15,23 @@ function harness(request = async () => ({status: 'matches', session_id: 's1', us
   const state = {activeProfileId: 7, currentSessionId: 's1', messages: [], chatAttachments: [],
     knowledgeSearchMode: true, knowledgeSearchRequest: null, isSending: false, installedModels: [], selectedLlmModel: ''};
   const notices = [], loads = [], paths = [];
+  let waitInterval;
   const button = {disabled: false, textContent: '', classList: {toggle() {}}, setAttribute() {}};
   const context = vm.createContext({state, AbortController, Date,
     LOCAL_CALCULATOR_MODEL_ID: 'calculator', AUTO_MODEL_ID: 'auto',
     els: {promptInput: {value: 'quartz'}, knowledgeSearchStatus: {}, sendButton: button},
     request: (path, options) => {paths.push(path); return request(path, options)},
-    waitForKnowledgeSearch: ({request, body, signal}) => request('/chat/knowledge-search/tasks', {method:'POST',body,signal}),
+    knowledgeSearchWaitSeconds: () => 7,
+    waitForKnowledgeSearch: ({request, body, signal, intervalMs}) => {waitInterval=intervalMs;return request('/chat/knowledge-search/tasks', {method:'POST',body,signal})},
     setFooter: (...args) => notices.push(args), renderMessages() {}, autoResizePrompt() {},
     renderChatAttachments() {}, renderChatModelNotice() {},
     ensureModelInstalled: () => {throw new Error('Search must not check model availability')},
     loadSessions: async ({preferredSessionId}) => {loads.push(preferredSessionId); state.currentSessionId = preferredSessionId},
   });
+  const diagnostics = attachRuntimeDiagnostics(context, source);
   for (const name of ['closeKnowledgeSearchWaitDialog', 'cancelKnowledgeSearch', 'syncKnowledgeSearchControl', 'updateSendButtonState']) install(context, name);
   for (const name of ['sendKnowledgeSearch', 'sendPromptText', 'cancelCurrentChatGeneration']) install(context, name, true);
-  return {context, state, notices, loads, paths, button};
+  return {context, state, notices, loads, paths, button, diagnostics, get waitInterval(){return waitInterval;}};
 }
 function pending() {
   let resolve, reject;
@@ -247,3 +251,14 @@ test('declining long-search confirmation cancels wait and restores submitted inp
   assert.equal(h.state.pendingChatMessage,null);
   assert.deepEqual(h.loads,[]);
 });
+
+ test('search console reports degraded planner/embedding state in original profile context',async()=>{
+  const deferred=pending(),h=harness(()=>deferred.promise);
+  const work=h.context.sendKnowledgeSearch('private synthetic text');
+  h.state.activeProfileId=9;
+  deferred.resolve({status:'matches',planner:{status:'unavailable',reason:'planner_response_incomplete'},semantic:{status:'not_configured',provider:'local_hash'},results:[]});
+  await work;
+  const diagnostic=h.diagnostics.find(d=>d.event==='search.degraded');
+  assert.equal(diagnostic.profile_id,7);assert.equal(diagnostic.planner.reason,'planner_response_incomplete');assert.equal(diagnostic.embedding.provider,'local_hash');
+  assert.equal(JSON.stringify(h.diagnostics).includes('private synthetic text'),false);assert.equal(h.waitInterval,7000);
+ });

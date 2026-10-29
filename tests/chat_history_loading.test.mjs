@@ -1,3 +1,4 @@
+import { attachRuntimeDiagnostics } from './helpers/runtime_diagnostics_harness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -21,7 +22,8 @@ function harness(request) {
     activeProfileStreamingEnabled:()=>false,AbortController,AUTO_MODEL_ID:'auto',
     isAbortError:()=>false,closeChatTaskEventSource(){},clearChatTaskReplay(){},clearChatTypingStreams(){},
   });
-  return {context,state,notices,renders};
+  const diagnostics=attachRuntimeDiagnostics(context,source);
+  return {context,state,notices,renders,diagnostics};
 }
 const messages={messages:[{id:1,role:'user',content:'synthetic request'},{id:2,role:'assistant',content:'synthetic answer'}]};
 test('auxiliary failure cannot hide persisted chat messages',async()=>{
