@@ -70,6 +70,10 @@ def _planner_completion(model: str, query: str) -> str:
         stream=False, temperature=0, max_tokens=1000, num_ctx=4096,
         keep_alive="0", num_gpu=None, think=False,
     )
+    # Structured planning requires a direct JSON answer. The general chat helper
+    # intentionally omits native think=false for Qwen3 to preserve trace parsing;
+    # here that leaves reasoning enabled and can consume the entire JSON budget.
+    payload["think"] = False
     payload["format"] = SearchPlan.model_json_schema()
     req = request.Request(
         f"{ollama_runtime.native_ollama_base_url()}/api/chat",
@@ -115,9 +119,23 @@ def _plan(query: str, model_name: str) -> tuple[SearchPlan, dict[str, Any], list
                 warnings.append("Предложенные моделью даты не применены: используйте точную дату или диапазон в запросе.")
                 plan.dates = None
         return plan, {"status": "ready", "model": model}, warnings
-    except (ValueError, ValidationError, RuntimeError, OSError, embeddings.EmbeddingError):
-        return fallback, {"status": "unavailable", "model": model}, [
-            "Локальный планировщик недоступен или вернул неверный JSON. Поиск выполнен по исходному запросу и его темам; проверьте выбранную модель в Ollama."
+    except (ValueError, ValidationError, RuntimeError, OSError, embeddings.EmbeddingError) as exc:
+        # Public diagnostics never include model output, query text or transport bodies.
+        reasons = {
+            "planner_response_incomplete": "Модель вернула незавершённый план поиска.",
+            "planner_response_shape": "Модель вернула неподдерживаемый формат ответа.",
+            "planner_response_too_large": "Ответ планировщика превысил допустимый размер.",
+            "planner_output_too_large": "План поиска превысил допустимый размер.",
+            "planner_links_not_allowed": "План поиска не прошёл проверку допустимых полей.",
+            "invalid_plan": "План поиска не соответствует схеме JSON.",
+            "timeout": "Истекло время ожидания локального планировщика.",
+            "unavailable": "Не удалось получить план от локальной модели.",
+        }
+        reason = ("invalid_plan" if isinstance(exc, ValidationError) else
+                  "timeout" if isinstance(exc, TimeoutError) else
+                  str(exc) if isinstance(exc, ValueError) and str(exc) in reasons else "unavailable")
+        return fallback, {"status": "unavailable", "model": model, "reason": reason}, [
+            reasons[reason] + " Поиск выполнен по исходному запросу и его темам."
         ]
 
 

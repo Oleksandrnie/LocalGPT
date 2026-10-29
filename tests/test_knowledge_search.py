@@ -213,6 +213,25 @@ class KnowledgeSearchTests(unittest.TestCase):
         for url in ['https://external.invalid', 'http://localhost@external.invalid', 'ftp://127.0.0.1', 'http://127.0.0.1?token=x']:
             self.assertFalse(embeddings.is_loopback_endpoint(url))
 
+    def test_structured_qwen_planner_disables_native_reasoning(self):
+        import io, json
+        from backend.apps.chat.services import knowledge_search as smart
+        response = {"message": {"content": '{"topics":[{"topic":"synthetic"}]}'}, "done": True, "done_reason": "stop"}
+        with patch.object(embeddings, "open_local_request", return_value=io.BytesIO(json.dumps(response).encode())) as transport:
+            smart._planner_completion("qwen3:4b", "synthetic query")
+        sent = json.loads(transport.call_args.args[0].data)
+        self.assertIs(sent["think"], False)
+        self.assertEqual(sent["format"], smart.SearchPlan.model_json_schema())
+
+    def test_planner_failure_reports_safe_specific_reason(self):
+        from backend.apps.chat.services import knowledge_search as smart
+        for error, reason in [(ValueError("planner_response_incomplete"), "planner_response_incomplete"),
+                              (TimeoutError("private transport text"), "timeout")]:
+            with patch.object(smart, "_planner_completion", side_effect=error):
+                _, diagnostic, warnings = smart._plan("private synthetic query", "qwen3:4b")
+            self.assertEqual(diagnostic["reason"], reason)
+            self.assertNotIn("private", str(diagnostic) + str(warnings))
+
     def test_native_planner_response_shape_and_budget_are_validated(self):
         import io
         import json
