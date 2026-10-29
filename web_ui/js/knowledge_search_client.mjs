@@ -9,7 +9,7 @@ function aborted() {
 // Starting a job is intentionally not aborted: its reply gives us the ID needed
 // to cancel a server job even if the user stops during the initial HTTP request.
 export async function waitForKnowledgeSearch({request, body, signal, onTask = () => {},
-  askContinue, onCancel, onMonitorStop = () => {}, pollMs = 1000,
+  askContinue, onCancel, onMonitorStop = () => {}, pollMs = 1000, intervalMs = 30000,
   sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
   monitorFactory = createSearchWaitMonitor}) {
   if (signal?.aborted) throw aborted();
@@ -24,7 +24,7 @@ export async function waitForKnowledgeSearch({request, body, signal, onTask = ()
     return cancelPromise;
   };
   signal?.addEventListener('abort', cancel);
-  const monitor = monitorFactory({askContinue, onCancel});
+  const monitor = monitorFactory({askContinue, onCancel, intervalMs});
   try {
     task = await request('/chat/knowledge-search/tasks', {method:'POST', body});
     onTask(task);

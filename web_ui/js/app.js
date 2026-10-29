@@ -712,6 +712,11 @@ function writeStored(key, value) {
   }
 }
 
+function knowledgeSearchWaitSeconds() {
+  const value = Number(readStored("localgpt.knowledgeSearchWaitSeconds", "30"));
+  return Number.isInteger(value) && value >= 1 && value <= 86400 ? value : 30;
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -10158,7 +10163,7 @@ function askKnowledgeSearchContinue(operation, visible) {
   if (!visible() || state.confirmResolver) return Promise.resolve(null);
   const decision = openConfirmDialog({
     eyebrow: "Поиск в базе", title: "Поиск ещё выполняется",
-    message: "Поиск занимает больше 30 секунд. Продолжить ожидание? Пока окно открыто, поиск продолжает работать.",
+    message: "Поиск занимает больше времени, чем задано в настройках. Продолжить ожидание? Пока окно открыто, поиск продолжает работать.",
     confirmLabel: "Продолжить поиск", cancelLabel: "Отменить поиск", returnFocus: els.promptInput,
   });
   const owner = state.confirmResolver;
@@ -10236,6 +10241,7 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
   updateSendButtonState();
   try {
     const result = await waitForKnowledgeSearch({
+      intervalMs: knowledgeSearchWaitSeconds() * 1000,
       request, body: { query, profile_id: operation.profileId, session_id: operation.initialSessionId,
         model_name: String(state.selectedLlmModel || "") }, signal: operation.controller.signal,
       onTask: (task) => { operation.serverTaskId = task.task_id; },
@@ -11074,6 +11080,19 @@ async function resetDatabaseFully() {
 }
 
 function bindEvents() {
+  const searchWaitInput = document.getElementById("knowledgeSearchWaitSeconds");
+  if (searchWaitInput) {
+    searchWaitInput.value = String(knowledgeSearchWaitSeconds());
+    searchWaitInput.addEventListener("change", () => {
+      if (!searchWaitInput.checkValidity() || !searchWaitInput.value) {
+        searchWaitInput.reportValidity();
+        searchWaitInput.value = String(knowledgeSearchWaitSeconds());
+        return;
+      }
+      writeStored("localgpt.knowledgeSearchWaitSeconds", searchWaitInput.value);
+    });
+  }
+
   els.knowledgeSearchToggle?.addEventListener("change", () => {
     if (state.isSending && !state.knowledgeSearchRequest) {
       setFooter("Сначала остановите текущий ответ, затем переключите режим.", "warning");
