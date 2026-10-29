@@ -59,3 +59,23 @@ test('failed task submission restores the cleared composer',async()=>{
   install(h.context,'sendPromptText');await h.context.sendPromptText('synthetic request',{clearInput:true});
   assert.equal(h.context.els.promptInput.value,'synthetic request');assert.equal(h.state.pendingChatMessage,null);
 });
+
+test('new chat and different session resume following while same-session refresh preserves pause',async()=>{
+  const h=harness(async path=>path.includes('/messages?')?messages:{attachments:[],transcripts:[]});
+  install(h.context,'openSession');
+  h.state.currentSessionId='s1';h.state.autoScrollPinned=false;
+  await h.context.openSession('s1');assert.equal(h.state.autoScrollPinned,false);
+  await h.context.openSession('s2');assert.equal(h.state.autoScrollPinned,true);
+  h.state.autoScrollPinned=false;await h.context.openSession(null);assert.equal(h.state.autoScrollPinned,true);
+  h.state.autoScrollPinned=false;await h.context.openSession(null);assert.equal(h.state.autoScrollPinned,true);
+});
+
+test('profile navigation resumes following but refreshing the same profile preserves pause',async()=>{
+  const h=harness(async()=>({}));
+  Object.assign(h.context,{applyActiveProfilePreferences(){},renderProfileOptions(){},renderProfileManagement(){},
+    loadSessions:async()=>{},loadAsrToolHistory:async()=>{},loadRagStatus:async()=>{},
+    refreshModelSettings:async()=>{},refreshAsrPipelineSettings:async()=>{}});
+  install(h.context,'setActiveProfile');
+  h.state.autoScrollPinned=false;await h.context.setActiveProfile(7);assert.equal(h.state.autoScrollPinned,false);
+  await h.context.setActiveProfile(9);assert.equal(h.state.autoScrollPinned,true);
+});

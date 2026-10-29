@@ -574,6 +574,9 @@ const state = {
   chatAttachments: [],
   isSpeaking: false,
   autoScrollPinned: true,
+  messageScrollRevision: 0,
+  messageScrollLastTop: 0,
+  messageScrollTouchY: null,
   messageScrollEndObserver: null,
   theme: "dark",
   sidebarOpen: readStored(STORAGE_KEYS.sidebarOpen, "true") !== "false",
@@ -1191,10 +1194,31 @@ function syncMobileScrollLock() {
   document.body.classList.toggle("mobile-scroll-locked", isMobileLayout() && (drawerOpen || modalOpen || toolOpen));
 }
 
-function syncMessageScrollState() {
+function pauseMessageAutoScroll() {
+  state.autoScrollPinned = false;
+  state.messageScrollRevision = (state.messageScrollRevision || 0) + 1;
+}
+
+function handleMessageScrollIntent(direction) {
+  if (direction < 0) {
+    // Capture intent before the browser scrolls or another streaming repaint runs.
+    pauseMessageAutoScroll();
+  } else if (direction > 0 && els.messageScroll) {
+    const remaining = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight;
+    // Native smooth scrolling may target an older bottom while streaming grows.
+    if (remaining <= Math.max(2, direction)) state.autoScrollPinned = true;
+  }
+}
+
+function syncMessageScrollState({ userScroll = false } = {}) {
   if (!els.messageScroll) return;
-  const remaining = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight;
-  state.autoScrollPinned = remaining <= 96;
+  const top = els.messageScroll.scrollTop;
+  const remaining = els.messageScroll.scrollHeight - top - els.messageScroll.clientHeight;
+  if (userScroll) {
+    if (top < state.messageScrollLastTop) pauseMessageAutoScroll();
+    else if (top > state.messageScrollLastTop && remaining <= 2) state.autoScrollPinned = true;
+  }
+  state.messageScrollLastTop = top;
   if (els.scrollTopButton) {
     els.scrollTopButton.hidden = remaining <= 24;
   }
@@ -1216,9 +1240,11 @@ function observeMessageScrollEnd() {
 
 function scrollMessagesToBottom({ force = false } = {}) {
   if (!els.messageScroll) return;
-  if (!force && !state.autoScrollPinned) return;
+  if (force) state.autoScrollPinned = true;
+  if (!state.autoScrollPinned) return;
+  const revision = state.messageScrollRevision || 0;
   requestAnimationFrame(() => {
-    if (!force && !state.autoScrollPinned) return;
+    if (!state.autoScrollPinned || revision !== (state.messageScrollRevision || 0)) return;
     els.messageScroll?.scrollTo({ top: els.messageScroll.scrollHeight, behavior: "instant" });
     syncMessageScrollState();
   });
@@ -2596,7 +2622,7 @@ async function cancelCurrentChatGeneration() {
     await loadSessions({ preferredSessionId: state.currentSessionId });
   }
   updateSendButtonState();
-  scrollMessagesToBottom({ force: true });
+  scrollMessagesToBottom();
   setFooter("Генерация ответа остановлена.", "warning");
 }
 
@@ -4288,6 +4314,8 @@ function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
   const scrollTop = els.messageScroll?.scrollTop || 0;
+  // A scrollbar drag can move the viewport before its scroll event is delivered.
+  syncMessageScrollState({ userScroll: true });
   const followBottom = state.autoScrollPinned;
   const pending = state.pendingChatMessage;
   const stored = state.messages || [];
@@ -4424,8 +4452,8 @@ function renderMessages() {
       behavior: "instant",
     });
   }
+  syncMessageScrollState();
   requestAnimationFrame(() => {
-    syncMessageScrollState();
     observeMessageScrollEnd();
   });
 }
@@ -9424,6 +9452,11 @@ async function openSession(sessionId) {
   const profileId = state.activeProfileId;
   const previousSessionId = state.currentSessionId;
   state.currentSessionId = sessionId || null;
+  if (!sessionId || previousSessionId !== state.currentSessionId) {
+    state.autoScrollPinned = true;
+    state.messageScrollLastTop = 0;
+    state.messageScrollRevision = (state.messageScrollRevision || 0) + 1;
+  }
   if (previousSessionId !== state.currentSessionId) {
     state.messages = [];
     state.messageAttachments = {};
@@ -9531,6 +9564,11 @@ async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
   }
   if (state.activeProfileId && state.activeProfileId !== (profileId || null) && state.chatAttachments.length) {
     await clearChatAttachments({ deleteRemote: true });
+  }
+  if (state.activeProfileId !== (profileId || null)) {
+    state.autoScrollPinned = true;
+    state.messageScrollLastTop = 0;
+    state.messageScrollRevision = (state.messageScrollRevision || 0) + 1;
   }
   state.activeProfileId = profileId || null;
   state.profileManagementMode = "edit";
@@ -10303,7 +10341,7 @@ async function sendPromptText(
       state.isSending = false;
       updateSendButtonState();
       renderChatAttachments();
-      if (shouldFollowCurrentContext) scrollMessagesToBottom({ force: true });
+      if (shouldFollowCurrentContext) scrollMessagesToBottom();
     }
   }
 }
@@ -11076,8 +11114,38 @@ function bindEvents() {
     setFooter(`Модель диктовки профиля: ${modelName}`, "success");
   });
 
+  els.messageScroll?.addEventListener("wheel", (event) => {
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? els.messageScroll.clientHeight : 1;
+    handleMessageScrollIntent(event.deltaY * unit);
+  }, { passive: true, capture: true });
+  els.messageScroll?.addEventListener("touchstart", (event) => {
+    state.messageScrollTouchY = event.touches[0]?.clientY ?? null;
+  }, { passive: true });
+  els.messageScroll?.addEventListener("touchmove", (event) => {
+    const nextY = event.touches[0]?.clientY;
+    if (nextY != null && state.messageScrollTouchY != null) {
+      handleMessageScrollIntent(state.messageScrollTouchY - nextY);
+    }
+    state.messageScrollTouchY = nextY ?? null;
+  }, { passive: true, capture: true });
+  els.messageScroll?.addEventListener("touchend", () => {
+    state.messageScrollTouchY = null;
+  }, { passive: true });
+  window.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.target?.closest?.("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
+    if (event.target !== document.body && !els.messageScroll?.contains(event.target)) return;
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
+      handleMessageScrollIntent(-1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      scrollMessagesToBottom({ force: true });
+    } else if (["ArrowDown", "PageDown", " "].includes(event.key)) {
+      handleMessageScrollIntent(event.key === "ArrowDown" ? 40 : els.messageScroll.clientHeight);
+    }
+  });
   els.messageScroll?.addEventListener("scroll", () => {
-    syncMessageScrollState();
+    syncMessageScrollState({ userScroll: true });
   });
 
   els.chatShell?.addEventListener("dragenter", (event) => {
