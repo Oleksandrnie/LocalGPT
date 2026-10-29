@@ -26,3 +26,14 @@ test('effective task settings remain distinct from UI request and omit extra set
  const d=runtimeDiagnostic('chat.failed',{thinking:'auto',output_tokens:2048},{task:{used_settings:{ollama_think:'on',output_tokens:4096,thinking_tokens:8192,provider_num_predict:12288,system_prompt:'PRIVATE_SETTING'}}});
  assert.equal(d.requested_thinking,'auto');assert.equal(d.effective_thinking,'on');assert.equal(d.native_thinking,null);assert.equal(d.configured_budgets.provider_num_predict,12288);assert.equal(d.configured_budgets.output_tokens,4096);assert.equal(JSON.stringify(d).includes('PRIVATE_SETTING'),false);
 });
+
+test('unavailable diagnostic sink cannot break the calling operation',()=>{
+ const record=emitRuntimeDiagnostic('search.completed',{profile_id:2},{},'info',{info(){throw new Error('sink unavailable')}});
+ assert.equal(record.profile_id,2);
+ assert.doesNotThrow(()=>emitRuntimeDiagnostic('chat.failed',{}, {}, 'error', {}));
+});
+
+test('completed search uses server-created session ID without reassigning original profile',()=>{
+ const d=runtimeDiagnostic('search.completed',{profile_id:2,session_id:null,task_id:'ks-original'},{result:{session_id:'created-session'}});
+ assert.equal(d.profile_id,2);assert.equal(d.session_id,'created-session');assert.equal(d.task_id,'ks-original');
+});

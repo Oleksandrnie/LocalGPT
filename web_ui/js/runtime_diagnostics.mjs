@@ -24,7 +24,7 @@ export function runtimeDiagnostic(event, context = {}, data = {}) {
   }
   return {
     schema_version: 1, timestamp: new Date().toISOString(), event: tag(event),
-    profile_id: count(context.profile_id), session_id: tag(context.session_id), task_id: tag(task.id || task.task_id || context.task_id),
+    profile_id: count(context.profile_id), session_id: tag(result.session_id || context.session_id), task_id: tag(task.id || task.task_id || context.task_id),
     model: tag(task.model_name || context.model), requested_thinking: mode(context.thinking),
     effective_thinking: mode(settings.ollama_think), native_thinking: mode(data.native_thinking), reasoning_present: typeof data.reasoning_present === 'boolean' ? data.reasoning_present : null,
     configured_budgets: {output_tokens: count(settings.output_tokens ?? context.output_tokens), thinking_tokens: count(settings.thinking_tokens ?? context.thinking_tokens), provider_num_predict: count(settings.provider_num_predict)},
@@ -39,6 +39,8 @@ export function runtimeDiagnostic(event, context = {}, data = {}) {
 }
 export function emitRuntimeDiagnostic(event, context, data, level = 'info', logger = console) {
   const record = runtimeDiagnostic(event, context, data);
-  logger[level](`[LocalGPT diagnostics] ${event}\n${JSON.stringify(record, null, 2)}`);
+  // Diagnostics are observational: an unavailable/replaced console must never
+  // turn a successful search into a failed request or interrupt stream cleanup.
+  try { logger[level](`[LocalGPT diagnostics] ${event}\n${JSON.stringify(record, null, 2)}`); } catch { /* console unavailable */ }
   return record;
 }

@@ -720,11 +720,16 @@ function knowledgeSearchWaitSeconds() {
 
 const runtimeDiagnosticSeen = new Set();
 function runtimeDiagnosticContext(overrides = {}) {
-  const settings = state.modelSettingsState?.effective || {};
-  const context = {profile_id: Number(state.activeProfileId) || null, session_id: state.currentSessionId,
-    model: state.selectedLlmModel, thinking: settings.ollama_think ?? "auto",
+  const scope = Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined));
+  const profileId = scope.profile_id ?? (Number(state.activeProfileId) || null);
+  const sameProfile = Number(profileId) === Number(state.activeProfileId);
+  const sameModel = scope.model === undefined || scope.model === state.selectedLlmModel;
+  const settings = sameProfile && sameModel ? state.modelSettingsState?.effective || {} : {};
+  const context = {profile_id: profileId, session_id: sameProfile ? state.currentSessionId : null,
+    model: sameProfile ? state.selectedLlmModel : null,
+    thinking: sameProfile && sameModel ? settings.ollama_think ?? "auto" : null,
     output_tokens: settings.output_tokens ?? settings.max_tokens, thinking_tokens: settings.thinking_tokens,
-    rag_context_enabled: activeProfileRagEnabled(), ...overrides};
+    rag_context_enabled: sameProfile ? activeProfileRagEnabled() : null, ...scope};
   const setup = state.embeddingSetup;
   if (setup && Number(setup.profile_id) === Number(context.profile_id)) {
     context.embedding_status = setup.active ? "ready" : setup.operation?.status === "running" ? "indexing" : "not_configured";
@@ -733,6 +738,7 @@ function runtimeDiagnosticContext(overrides = {}) {
   }
   return context;
 }
+
 function logRuntimeDiagnostic(event, data = {}, context = null, level = "info", key = null) {
   if (key) {
     if (runtimeDiagnosticSeen.has(key)) return;
@@ -2342,16 +2348,19 @@ function chatTaskScopedUrl(taskId, suffix = "", task = null) {
 async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
   const taskId = typeof taskOrId === "object" ? (taskOrId?.id || taskOrId?.task_id || "") : taskOrId;
   const taskScope = typeof taskOrId === "object" ? taskOrId : null;
+  const diagnosticScope = runtimeDiagnosticContext({profile_id: taskScope?.profile_id, session_id: taskScope?.session_id, model: taskScope?.model_name});
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const task = await request(chatTaskScopedUrl(taskId, "", taskScope));
     const taskState = String(task?.state || "");
-    if (["completed", "failed", "cancelled"].includes(taskState)) logRuntimeDiagnostic("chat.task_terminal", {task}, runtimeDiagnosticContext({profile_id: task.profile_id, session_id: task.session_id}), taskState === "failed" ? "error" : "info", `task:${taskId}:${taskState}`);
+    if (["completed", "failed", "error", "cancelled"].includes(taskState)) logRuntimeDiagnostic("chat.task_terminal", {task}, diagnosticScope, ["failed", "error"].includes(taskState) ? "error" : "info", `task:${taskId}:${taskState}`);
     if (taskState === "completed" || taskState === "cancelled") {
       return task;
     }
     if (taskState === "error" || taskState === "failed") {
-      throw new Error(task?.message || "Генерация ответа завершилась ошибкой.");
+      const error = new Error(task?.message || "Генерация ответа завершилась ошибкой.");
+      error.code = task?.error_code || null;
+      throw error;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
@@ -2360,6 +2369,7 @@ async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
 
 function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = null } = {}) {
   const taskId = task?.id || task?.task_id || "";
+  const diagnosticScope = runtimeDiagnosticContext({profile_id: task?.profile_id, session_id: task?.session_id, model: task?.model_name});
   if (!taskId || typeof window.EventSource !== "function") {
     return Promise.reject(new Error("SSE недоступен в этом браузере."));
   }
@@ -2452,7 +2462,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
       if (settled) return;
       const data = parseSsePayload(event);
       terminalEventReceived = true;
-      logRuntimeDiagnostic("chat.stream_completed", {task: {...task, ...data, state: "completed"}}, runtimeDiagnosticContext({profile_id: task.profile_id, session_id: task.session_id}), "info", `task:${taskId}:completed`);
+      logRuntimeDiagnostic("chat.stream_completed", {task: {...task, ...data, state: "completed"}}, diagnosticScope, "info", `task:${taskId}:completed`);
       finishChatTypingStream(task, () => {
         updateAssistantMessageFromTask(task, {
           ...data,
@@ -2489,7 +2499,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
       });
       const error = new Error(data.message || "Генерация ответа завершилась ошибкой.");
       error.code = data.code || null;
-      logRuntimeDiagnostic("chat.stream_failed", {error, task: {...task, ...data, state: "failed", error_code: data.code}}, runtimeDiagnosticContext({profile_id: task.profile_id, session_id: task.session_id}), "error");
+      logRuntimeDiagnostic("chat.stream_failed", {error, task: {...task, ...data, state: "failed", error_code: data.code}}, diagnosticScope, "error");
       error.chatTaskFailed = true;
       finish(() => reject(error));
     });
@@ -10283,7 +10293,7 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
       intervalMs: knowledgeSearchWaitSeconds() * 1000,
       request, body: { query, profile_id: operation.profileId, session_id: operation.initialSessionId,
         model_name: String(state.selectedLlmModel || "") }, signal: operation.controller.signal,
-      onTask: (task) => { operation.serverTaskId = task.task_id; },
+      onTask: (task) => { operation.serverTaskId = task.task_id; diagnosticContext.task_id = task.task_id; },
       askContinue: () => askKnowledgeSearchContinue(operation, visible),
       onCancel: async () => {
         if (!visible()) return;
