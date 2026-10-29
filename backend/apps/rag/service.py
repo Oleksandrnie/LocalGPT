@@ -1496,3 +1496,26 @@ def _telegram_hashtag_terms(query):
     labels = re.findall(r'(?<!\w)#([\w]+)', query)
     labels += re.findall(r"(?:х[эе]штег\w*|hashtag|тег\w*)\s+[«\"]?([a-zA-Z0-9_]+(?:[ \t]+[a-zA-Z0-9_]+)*)", query, re.I)
     return {re.sub(r'[^\w]|_', '', label).casefold() for label in labels}
+
+
+def telegram_search_cards(query: str, evidence: list[dict[str, Any]]) -> str | None:
+    """Render lookup candidates from included source text, without model inference."""
+    if not re.search(r"най(?:ди|ти|дите)|(?:покажи|список|ищи).*сообщен", query, re.IGNORECASE):
+        return None
+    if not evidence or any(not (item.get("provenance") or {}).get("message_id") for item in evidence):
+        return None
+    cards = [
+        "Кандидаты из поиска по Telegram. Ниже — исходные фрагменты, без пересказа. "
+        "Релевантность теме проверьте по цитате; выборка ограничена результатами поиска и не доказывает отсутствие других сообщений."
+    ]
+    for index, item in enumerate(evidence, 1):
+        meta = item["provenance"]
+        content = str(item.get("content") or "")
+        fence = "`" * max(3, max((len(m.group()) + 1 for m in re.finditer(r"`+", content)), default=3))
+        cards.append(
+            f"{index}. Источник: {item.get('source_id')}; ID: {meta['message_id']}; "
+            f"дата: {meta.get('timestamp') or 'не указана'}; автор: {meta.get('author') or 'не указан'}.\n"
+            f"{fence}text\n{content}\n{fence}"
+            + ("\nФрагмент сокращён по лимиту контекста." if item.get("truncated") else "")
+        )
+    return "\n\n".join(cards)

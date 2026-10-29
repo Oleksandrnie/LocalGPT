@@ -71,6 +71,15 @@ def protected_prompt_literals(messages: list[dict[str, Any]]) -> tuple[str, ...]
 
 
 def enforce_protected_output(messages: list[dict[str, Any]], output: str) -> None:
+    if "[LOCALGPT_DATA_ENVELOPE" in str(output or "") or "[END_LOCALGPT_DATA_ENVELOPE]" in str(output or ""):
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "model_output_transport_envelope",
+                "message": "Модель вернула служебный формат вместо ответа. Повторите запрос.",
+            },
+        )
+
     if any(literal in output for literal in protected_prompt_literals(messages)):
         raise HTTPException(
             status_code=502,
@@ -87,10 +96,7 @@ def guard_stream_events(
 ) -> Iterator[ollama_runtime.ChatStreamEvent]:
     """Hold enough output to block a protected literal before it reaches a client."""
     literals = protected_prompt_literals(messages)
-    if not literals:
-        yield from events
-        return
-    holdback = max(len(item) for item in literals) - 1
+    holdback = max([len("[END_LOCALGPT_DATA_ENVELOPE]"), *(len(item) for item in literals)]) - 1
     pending_content = ""
     pending_reasoning = ""
     for event in events:
@@ -370,7 +376,7 @@ def build_messages(
     if history:
         messages.extend(
             {
-                "role": str(item.get("role") or "user"),
+                "role": "user",
                 "content": data_envelope(
                     "chat_history",
                     str(item.get("content") or ""),

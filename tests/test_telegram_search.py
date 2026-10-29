@@ -66,6 +66,16 @@ class RagIntegrationTests(unittest.TestCase):
         self.service.delete_file(self.profile, 'messages.html')
         self.assertFalse(self.db.list_rag_chunks(self.profile))
 
+    def test_search_cards_use_indexed_source(self):
+        self.service.ingest_sources(self.profile)
+        query = 'Найди сообщения Hello world'
+        result = self.service.search_with_diagnostics(self.profile, query)
+        snapshot = self.service.build_context_snapshot(result['results'])
+        answer = self.service.telegram_search_cards(query, snapshot['evidence_manifest'])
+        self.assertIn('message1', answer)
+        self.assertIn('2026-01-01T10:20:30', answer)
+        self.assertIn('Hello\nworld', answer)
+
     def test_date_bounds_and_long_messages(self):
         from backend.apps.telegram_search.parser import date_bounds, rag_message_chunks
         self.assertEqual(date_bounds('за июль 2026'), ('2026-07-01', '2026-07-31'))

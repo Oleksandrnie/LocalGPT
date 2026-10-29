@@ -735,7 +735,10 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "recent_user_queries": history_user_queries,
         "prompt_warnings": transcript_warnings,
         "calc_result": calc_result,
-        "source_quote": rag_service.exact_telegram_quote(int(profile_id), user_query)
+        "source_quote": (
+            rag_service.exact_telegram_quote(int(profile_id), user_query)
+            or rag_service.telegram_search_cards(user_query, rag_evidence_manifest)
+        )
         if rag_enabled and not has_image_attachments else None,
     }
 

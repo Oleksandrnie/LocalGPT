@@ -79,7 +79,7 @@ def split_query_facets(query: str) -> list[dict[str, Any]]:
     if not compact:
         return []
     raw_parts = re.split(
-        r"(?:\n+|[;?]+|\s+(?:и|and)\s+(?=(?:как|где|какие|какими|какой|что|how|where|what|which)\b))",
+        r"(?:\n+|[;?]+|,\s+(?=[A-Za-zА-Яа-яЁё#])|\s+(?:и|and)\s+(?=(?:как|где|какие|какими|какой|что|how|where|what|which)\b))",
         compact,
         flags=re.IGNORECASE,
     )

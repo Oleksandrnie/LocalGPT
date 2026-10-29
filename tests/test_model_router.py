@@ -288,7 +288,7 @@ class ModelRouterTestCase(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(chunks, ["при", "вет"])
+        self.assertEqual("".join(chunks), "привет")
         native_chat.assert_called_once_with(
             "qwen2.5:7b-instruct",
             messages=messages,
