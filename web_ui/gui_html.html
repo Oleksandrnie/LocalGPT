@@ -192,6 +192,14 @@
                 aria-label="Перейти к последнему сообщению" title="Перейти к последнему сообщению">↓</button>
 
             <form class="composer" id="composerForm">
+                <div class="knowledge-search-control">
+                    <button class="button button--ghost knowledge-search-toggle" id="knowledgeSearchToggle"
+                        type="button" aria-pressed="false" aria-describedby="knowledgeSearchHelp">Поиск в базе</button>
+                    <button class="knowledge-search-info" type="button" aria-label="Как работает поиск в базе"
+                        aria-describedby="knowledgeSearchHelp">?</button>
+                    <span class="knowledge-search-help" id="knowledgeSearchHelp" role="tooltip">Ищет исходные фрагменты в индексированной базе текущего профиля. Возвращает цитаты и источники без ответа LLM. Локальный поиск по словам; выдача ограничена и не гарантирует полноту.</span>
+                    <span class="knowledge-search-status" id="knowledgeSearchStatus" role="status" aria-live="polite"></span>
+                </div>
                 <div class="composer-attachments" id="composerAttachments" role="list"
                     aria-label="Изображения к сообщению" aria-live="polite" hidden></div>
                 <div class="composer__tools">

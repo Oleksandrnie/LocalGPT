@@ -2597,6 +2597,58 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     scrollbar-width: thin;
 }
 
+.knowledge-search-control {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    flex-wrap: wrap;
+}
+
+.knowledge-search-toggle[aria-pressed="true"] {
+    color: var(--color-text, #fff);
+    background: rgba(37, 99, 235, 0.18);
+    border: 2px solid #568ef7;
+}
+
+.knowledge-search-info {
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 50%;
+}
+
+.knowledge-search-status {
+    font-size: 12px;
+    color: var(--color-text-muted, #94a3b8);
+}
+
+.knowledge-search-help {
+    visibility: hidden;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 30;
+    max-width: min(420px, calc(100vw - 48px));
+    padding: 12px;
+    border: 1px solid #568ef7;
+    border-radius: 8px;
+    background: #172338;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.knowledge-search-control:hover .knowledge-search-help,
+.knowledge-search-control:focus-within .knowledge-search-help {
+    visibility: visible;
+}
+
+@media (pointer: coarse) {
+    .knowledge-search-info, .knowledge-search-toggle { min-height: 44px; }
+    .knowledge-search-info { min-width: 44px; }
+}
+
 .composer-attachments[hidden] {
     display: none;
 }

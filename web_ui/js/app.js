@@ -214,6 +214,8 @@ const els = {
   messageScrollEnd: document.getElementById("messageScrollEnd"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
+  knowledgeSearchToggle: document.getElementById("knowledgeSearchToggle"),
+  knowledgeSearchStatus: document.getElementById("knowledgeSearchStatus"),
   composerAttachments: document.getElementById("composerAttachments"),
   promptInput: document.getElementById("promptInput"),
   voiceRecordButton: document.getElementById("voiceRecordButton"),
@@ -520,6 +522,8 @@ const state = {
   asrHistoryContextMenuTranscriptId: null,
   messages: [],
   pendingChatMessage: null,
+  knowledgeSearchMode: false,
+  knowledgeSearchRequest: null,
   messageAttachments: {},
   visionRagSourceMessageId: null,
   visionRagExportKind: null,
@@ -2534,6 +2538,10 @@ async function recoverActiveChatTaskFromMessages() {
 }
 
 async function cancelCurrentChatGeneration() {
+  if (state.knowledgeSearchRequest) {
+    cancelKnowledgeSearch();
+    return;
+  }
   const controller = state.chatTaskStartController;
   const taskId = state.chatTaskId;
 
@@ -2937,6 +2945,17 @@ function updateSendButtonState() {
   const hasText = Boolean((els.promptInput?.value || "").trim());
   const hasReadyAttachments = state.chatAttachments.some((item) => item.status === "ready" && item.server?.id);
   const hasBlockedAttachments = state.chatAttachments.some((item) => item.status !== "ready");
+  if (state.knowledgeSearchMode) {
+    if (els.promptInput) {
+      els.promptInput.disabled = false;
+      els.promptInput.placeholder = "Найдите слова, дату или ID в базе знаний…";
+    }
+    els.sendButton.disabled = !state.isSending && (!hasText || state.chatAttachments.length > 0);
+    els.sendButton.textContent = state.isSending ? "Стоп" : "Найти";
+    els.sendButton.classList.toggle("send-button--stopping", state.isSending);
+    els.sendButton.setAttribute("aria-label", state.isSending ? "Остановить поиск" : "Найти в базе знаний");
+    return;
+  }
   const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
   const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
   const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
@@ -2968,7 +2987,7 @@ function renderChatModelNotice() {
     selectedModel === AUTO_MODEL_ID || selectedModel === LOCAL_CALCULATOR_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
   );
   const missing = !hasInstalledChatModel || !selectedModel || (Boolean(selectedModel) && !selectedInstalled);
-  els.chatModelNotice.hidden = !missing;
+  els.chatModelNotice.hidden = state.knowledgeSearchMode || !missing;
   if (missing) {
     const title = els.chatModelNotice.querySelector("strong");
     const text = els.chatModelNotice.querySelector("span");
@@ -4172,8 +4191,8 @@ function renderMessages() {
   els.messageList.innerHTML = items
     .map((message, index) => {
       const role = message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "system";
-      const author = role === "user" ? "Вы" : role === "assistant" ? "LocalGPT" : "Система";
-      const blockedTransport = role === "assistant" && /\[(?:END_)?LOCALGPT_DATA_ENVELOPE/.test(String(message.content || ""));
+      const author = role === "user" ? "Вы" : role === "assistant" ? (message.model === "knowledge_search" ? "База знаний" : "LocalGPT") : "Система";
+      const blockedTransport = role === "assistant" && message.model !== "knowledge_search" && /\[(?:END_)?LOCALGPT_DATA_ENVELOPE/.test(String(message.content || ""));
       const status = blockedTransport ? "failed" : normalizeMessageStatus(message);
       const statusMeta = role === "assistant" ? assistantStatusMeta(status) : { label: "", text: "" };
       const content = blockedTransport ? "" : String(message.content || "");
@@ -9249,6 +9268,9 @@ async function refreshAsrPipelineSettings({ silent = false } = {}) {
 }
 
 async function openSession(sessionId) {
+  if (state.knowledgeSearchRequest && state.knowledgeSearchRequest.sessionId !== (sessionId || null)) {
+    cancelKnowledgeSearch({ silent: true });
+  }
   if (state.currentSessionId !== (sessionId || null) && state.chatAttachments.length) {
     await clearChatAttachments({ deleteRemote: true });
   }
@@ -9327,11 +9349,12 @@ async function openSession(sessionId) {
   }
 }
 
-async function loadSessions({ preferredSessionId = null } = {}) {
+async function loadSessions({ preferredSessionId = null, isCurrent = null } = {}) {
   if (!state.activeProfileId) return;
   const profileId = state.activeProfileId;
   try {
     const data = await request(`/sessions?profile_id=${encodeURIComponent(profileId)}`);
+    if (isCurrent && !isCurrent()) return;
     if (String(state.activeProfileId) !== String(profileId)) return;
     state.sessions = Array.isArray(data?.sessions) ? data.sessions : [];
     renderSessionList();
@@ -9350,11 +9373,15 @@ async function loadSessions({ preferredSessionId = null } = {}) {
       await openSession(state.sessions[0]?.id || null);
     }
   } catch (error) {
+    if (isCurrent && !isCurrent()) return;
     setFooter(`Не удалось загрузить список диалогов: ${error.message || error}`, "error");
   }
 }
 
 async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
+  if (state.knowledgeSearchRequest && String(state.activeProfileId) !== String(profileId)) {
+    cancelKnowledgeSearch({ silent: true });
+  }
   if (state.activeProfileId && state.activeProfileId !== (profileId || null) && state.chatAttachments.length) {
     await clearChatAttachments({ deleteRemote: true });
   }
@@ -9830,10 +9857,111 @@ async function ensureModelInstalled(modelName) {
   return false;
 }
 
+function cancelKnowledgeSearch({ silent = false } = {}) {
+  const operation = state.knowledgeSearchRequest;
+  if (!operation) return;
+  state.knowledgeSearchRequest = null;
+  operation.controller.abort();
+  state.pendingChatMessage = null;
+  state.isSending = false;
+  if (!silent && operation.clearInput && els.promptInput && !els.promptInput.value.trim()) {
+    els.promptInput.value = operation.query;
+    autoResizePrompt();
+  }
+  if (els.knowledgeSearchStatus) {
+    els.knowledgeSearchStatus.textContent = state.knowledgeSearchMode ? "Активен поиск · без LLM" : "";
+  }
+  renderMessages();
+  updateSendButtonState();
+  if (!silent) setFooter("Поиск остановлен. Уже сохранённые результаты останутся в исходном чате.", "warning");
+}
+
+async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds = [] } = {}) {
+  if (state.isSending) {
+    await cancelCurrentChatGeneration();
+    return;
+  }
+  const query = String(rawQuery || "").trim();
+  if (!query) return;
+  if (!state.activeProfileId) {
+    setFooter("Сначала выберите профиль.", "warning");
+    return;
+  }
+  if (attachmentIds.length || state.chatAttachments.length) {
+    setFooter("Поиск принимает текст. Уберите изображения из поля ввода или отключите поиск.", "warning");
+    return;
+  }
+  if (query.length > 4000) {
+    setFooter("Запрос поиска ограничен 4000 символами. Сократите запрос.", "warning");
+    return;
+  }
+  const operation = {
+    profileId: state.activeProfileId, sessionId: state.currentSessionId,
+    initialSessionId: state.currentSessionId,
+    controller: new AbortController(), query, clearInput,
+  };
+  const visible = () => state.knowledgeSearchRequest === operation && state.knowledgeSearchMode
+    && String(state.activeProfileId) === String(operation.profileId)
+    && [operation.initialSessionId, operation.sessionId].includes(state.currentSessionId);
+  state.knowledgeSearchRequest = operation;
+  state.isSending = true;
+  state.pendingChatMessage = {
+    id: `knowledge-pending-${Date.now()}`, role: "user", content: query, pending: true,
+    status: "completed", profileId: operation.profileId, sessionId: operation.sessionId,
+    acceptedSessionId: operation.sessionId,
+  };
+  if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = "Ищу в базе…";
+  renderMessages();
+  if (clearInput && els.promptInput) {
+    els.promptInput.value = "";
+    autoResizePrompt();
+  }
+  updateSendButtonState();
+  try {
+    const result = await request("/chat/knowledge-search", {
+      method: "POST", signal: operation.controller.signal,
+      body: { query, profile_id: operation.profileId, session_id: operation.sessionId,
+        model_name: String(state.selectedLlmModel || "") },
+    });
+    if (!visible()) return;
+    const statusText = result.status === "matches" ? "Фрагменты найдены · без LLM"
+      : result.status === "empty_index" ? "Индекс пуст · добавьте и проиндексируйте источники"
+      : "Совпадений не найдено";
+    if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = statusText;
+    operation.sessionId = result.session_id;
+    state.pendingChatMessage.persistedId = result.user_message_id;
+    state.pendingChatMessage.acceptedSessionId = result.session_id;
+    await loadSessions({ preferredSessionId: result.session_id, isCurrent: visible });
+    if (visible()) setFooter(statusText, result.status === "matches" ? "success" : "warning");
+  } catch (error) {
+    if (!visible()) return;
+    if (clearInput && els.promptInput && !els.promptInput.value.trim()) {
+      els.promptInput.value = query;
+      autoResizePrompt();
+    }
+    if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = "Ошибка поиска · повторите запрос";
+    setFooter(`Ошибка поиска в базе: ${error.message || error}`, "error");
+  } finally {
+    // A cancelled/old request must never clear a newer request or repaint a
+    // different profile, chat or composer mode.
+    if (state.knowledgeSearchRequest === operation) {
+      state.knowledgeSearchRequest = null;
+      state.pendingChatMessage = null;
+      state.isSending = false;
+      renderMessages();
+      updateSendButtonState();
+    }
+  }
+}
+
 async function sendPromptText(
   rawQuery,
   { clearInput = false, attachmentIds = [], consumeComposerAttachments = false } = {},
 ) {
+  if (state.knowledgeSearchMode) {
+    await sendKnowledgeSearch(rawQuery, { clearInput, attachmentIds });
+    return;
+  }
   const normalizedAttachmentIds = Array.from(new Set(
     (Array.isArray(attachmentIds) ? attachmentIds : []).map((item) => String(item || "").trim()).filter(Boolean),
   ));
@@ -10597,10 +10725,27 @@ async function resetDatabaseFully() {
 }
 
 function bindEvents() {
+  els.knowledgeSearchToggle?.addEventListener("click", () => {
+    if (state.isSending && !state.knowledgeSearchRequest) {
+      setFooter("Сначала остановите текущий ответ, затем переключите режим.", "warning");
+      return;
+    }
+    cancelKnowledgeSearch({ silent: true });
+    state.knowledgeSearchMode = !state.knowledgeSearchMode;
+    els.knowledgeSearchToggle.setAttribute("aria-pressed", String(state.knowledgeSearchMode));
+    els.knowledgeSearchStatus.textContent = state.knowledgeSearchMode
+      ? "Активен поиск · без LLM" : "";
+    if (state.knowledgeSearchMode && state.chatAttachments.length) {
+      setFooter("Поиск принимает текст. Уберите изображения из поля ввода или отключите поиск.", "warning");
+    }
+    updateSendButtonState();
+    renderChatModelNotice();
+  });
   els.toggleSidebarButton?.addEventListener("click", () => toggleMobileSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());
   els.sidebarCollapseButton?.addEventListener("click", () => toggleSidebarCollapse());
   els.newChatButton?.addEventListener("click", async () => {
+    cancelKnowledgeSearch({ silent: true });
     state.currentSessionId = null;
     writeStored(STORAGE_KEYS.activeSessionId, "");
     await openSession(null);

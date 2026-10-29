@@ -17,6 +17,8 @@ from app.schemas import ChatDebugPromptRequest, ChatRequest, ResetRequest
 from app.services import criteria as criteria_service
 from app.services import models as model_service
 from backend.apps.chat import tasks as chat_tasks
+from backend.apps.chat.schemas import KnowledgeSearchRequest
+from backend.apps.chat.services import knowledge_search
 from backend.apps.chat.service import (
     ChatService,
     assess_rag_answer,
@@ -741,6 +743,34 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         )
         if rag_enabled and not has_image_attachments else None,
     }
+
+
+@router.post("/chat/knowledge-search")
+def search_knowledge(req: KnowledgeSearchRequest) -> dict[str, Any]:
+    profile = _get_profile_or_404(req.profile_id)
+    session_id = (req.session_id or "").strip() or None
+    session = db.get_session(session_id) if session_id else None
+    if session_id and (not session or int(session.get("profile_id") or 0) != req.profile_id):
+        raise HTTPException(404, "session_not_found")
+    query = req.query.strip()
+    if not query:
+        raise HTTPException(422, "knowledge_search_query_required")
+    result = knowledge_search.search(req.profile_id, query, session_id=session_id, top_k=req.top_k)
+    # Retrieval failures leave history untouched; revalidate ownership before
+    # writing, since the user can delete a profile/chat during a long lookup.
+    _get_profile_or_404(int(profile["id"]))
+    if session_id:
+        session = db.get_session(session_id)
+        if not session or int(session.get("profile_id") or 0) != req.profile_id:
+            raise HTTPException(404, "session_not_found")
+    else:
+        session = db.create_session(req.profile_id, title=session_title_hint(None, query),
+                                    model_name=req.model_name, role=CHAT_ROLE)
+        session_id = session["id"]
+    user = db.add_message(session_id, "user", query)
+    assistant = db.add_message(session_id, "assistant", result["reply"], model="knowledge_search")
+    return {**result, "profile_id": req.profile_id, "session_id": session_id,
+            "user_message_id": user["id"], "assistant_message_id": assistant["id"]}
 
 
 @router.post("/chat")
