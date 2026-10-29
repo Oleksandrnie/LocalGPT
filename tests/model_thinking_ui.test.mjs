@@ -40,7 +40,7 @@ test("boolean metadata retains legacy on/off choices and a real auto/default", (
 });
 
 function element() {
-  return { dataset: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; } };
+  return { dataset: {}, attributes: {}, classList: { toggle(name, enabled) { this[name] = enabled; } }, setAttribute(name, value) { this.attributes[name] = value; } };
 }
 
 function harness({ installed = [{ name: "custom:latest", thinking: levels }], catalog = [], selected = "custom:latest", showRouter = false } = {}) {
@@ -116,13 +116,14 @@ test("unsupported models hide controls; Auto visibility remains profile-controll
   }
 });
 
-test("quick picker offers named level menus and retains Qwen-style boolean switches", () => {
+test("desktop and mobile model pickers only select models", () => {
   const { context, els } = harness({ installed: [{ name: "custom:latest", thinking: levels }, { name: "qwen3:8b", thinking: { values: [true, false] } }, { name: "unknown" }] });
   context.renderQuickThinkingControl("medium");
   context.renderQuickModelPicker();
-  assert.match(els.quickModelMenu.innerHTML, /data-quick-thinking-open="custom:latest"/);
-  assert.match(els.quickModelMenu.innerHTML, /data-quick-thinking-toggle data-quick-thinking-model="qwen3:8b"/);
-  assert.doesNotMatch(els.quickModelMenu.innerHTML, /data-quick-thinking-(?:open|model)="unknown"/);
+  assert.doesNotMatch(els.quickModelMenu.innerHTML, /data-quick-thinking|type="checkbox"/);
+  for (const name of ["custom:latest", "qwen3:8b", "unknown"]) {
+    assert.ok(els.quickModelMenu.innerHTML.includes(`data-quick-model="${name}"`));
+  }
   assert.equal(els.quickModelMenu.innerHTML, els.quickModelMobileMenu.innerHTML);
 });
 
@@ -144,4 +145,15 @@ test("settings select uses AppSelect, labels mode separately from trace, and sav
   assert.match(css, /#ollamaThinkField\[hidden\]\s*\{\s*display: none/);
   assert.match(source, /thinkingSelection\(els\.ollamaThinkSelect\?\.value, getModelThinkingMetadata\(modelName\)\)/);
   assert.doesNotMatch(source, /THINKING_MODEL_PATTERNS/);
+});
+
+test("header buttons show explicit modes and Auto has no enabled appearance", () => {
+  const { context, els } = harness({ installed: [{ name: "qwen3:8b", thinking: { values: [true, false], default: true } }], selected: "qwen3:8b" });
+  for (const [mode, label] of [["auto", "Auto"], ["on", "On"], ["off", "Off"]]) {
+    context.renderQuickThinkingControl(mode);
+    assert.equal(els.quickThinkingButton.textContent, `Thinking: ${label}`);
+    assert.equal(els.quickThinkingMobileButton.textContent, `Thinking: ${label}`);
+    assert.equal(els.quickThinkingControl.classList["thinking-mode-control--enabled"], mode === "on");
+    assert.match(els.quickThinkingMenu.innerHTML, new RegExp(`data-thinking-mode="${mode}"[^>]*aria-checked="true"`));
+  }
 });

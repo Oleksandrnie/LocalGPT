@@ -1668,17 +1668,8 @@ function renderQuickModelPicker() {
     els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
   }
 
-  const thinkingValue = thinkingSelection(
-    els.quickThinkingControl?.dataset.thinkingMode ?? state.modelSettingsState?.effective?.ollama_think,
-    getModelThinkingMetadata(selectedName),
-  );
   const menuHtml = items.map((item) => {
     const active = item.name === selectedName;
-    const thinkingSupported = shouldShowThinkingToggleForModel(item.name);
-    const metadata = getModelThinkingMetadata(item.name);
-    const namedLevels = hasNamedThinkingLevels(metadata);
-    const itemThinkingOn = active && thinkingValue !== "off" && (thinkingValue !== "auto" || metadata?.default !== false);
-    const itemThinkingValue = active ? thinkingValue : "auto";
     return `
       <div class="quick-model-picker__item-shell${active ? " quick-model-picker__item-shell--active" : ""}">
         <button
@@ -1690,14 +1681,6 @@ function renderQuickModelPicker() {
         >
           <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
         </button>
-        ${thinkingSupported && (namedLevels || !metadata.values.includes(false) || !metadata.values.includes(true)) ? `
-          <button type="button" role="menuitem" class="button button--ghost quick-model-picker__thinking-level" data-quick-thinking-open="${escapeHtml(item.name)}" aria-haspopup="menu" aria-label="Thinking — уровень для ${escapeHtml(item.name)}: ${escapeHtml(itemThinkingValue)}">${escapeHtml(itemThinkingValue)}</button>
-        ` : thinkingSupported ? `
-          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking — режим рассуждения">
-            <input type="checkbox" aria-label="Thinking для ${escapeHtml(item.name)}" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
-            <span class="apple-switch__track" aria-hidden="true"></span>
-          </label>
-        ` : ""}
       </div>
     `;
   }).join("");
@@ -4907,10 +4890,12 @@ function renderQuickThinkingControl(rawValue = null) {
 
   els.quickThinkingControl.dataset.thinkingMode = visibleValue;
   els.quickThinkingButton.disabled = disabled;
-  els.quickThinkingButton.textContent = `Thinking: ${visibleValue}`;
+  const displayValue = ({ auto: "Auto", on: "On", off: "Off" })[visibleValue] || visibleValue;
+  const buttonLabel = `Thinking: ${displayValue}`;
+  els.quickThinkingButton.textContent = buttonLabel;
   els.quickThinkingButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   els.quickThinkingControl.hidden = !shouldShowThinkingToggleForModel(modelName);
-  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue !== "off");
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue !== "off" && visibleValue !== "auto");
   els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
   els.quickThinkingControl.title = hint;
 
@@ -4920,6 +4905,7 @@ function renderQuickThinkingControl(rawValue = null) {
     els.quickThinkingMobileControl.title = hint;
   }
   if (els.quickThinkingMobileButton) {
+    els.quickThinkingMobileButton.textContent = buttonLabel;
     els.quickThinkingMobileButton.disabled = disabled;
     els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   }
@@ -11061,18 +11047,6 @@ function bindEvents() {
   });
 
   const handleQuickModelMenuClick = async (event) => {
-    const thinkingButton = event.target instanceof Element ? event.target.closest("[data-quick-thinking-open]") : null;
-    if (thinkingButton) {
-      event.stopPropagation();
-      const modelName = thinkingButton.dataset.quickThinkingOpen || "";
-      const source = event.currentTarget === els.quickModelMobileMenu ? "mobile" : "desktop";
-      closeQuickModelMenu();
-      if (state.selectedLlmModel !== modelName) await applySelectedLlmModel(modelName);
-      toggleQuickThinkingMenu(true, source);
-      const menu = source === "mobile" ? els.quickThinkingMobileMenu : els.quickThinkingMenu;
-      menu?.querySelector("[aria-checked='true']")?.focus();
-      return;
-    }
     if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
       return;
     }
@@ -11083,30 +11057,8 @@ function bindEvents() {
     closeQuickModelMenu();
     await applySelectedLlmModel(modelName);
   };
-  const handleQuickModelMenuChange = async (event) => {
-    const input = event.target instanceof Element ? event.target.closest("[data-quick-thinking-toggle]") : null;
-    if (!(input instanceof HTMLInputElement)) return;
-    const modelName = String(input.dataset.quickThinkingModel || "").trim();
-    if (!modelName) return;
-    if (state.selectedLlmModel !== modelName) {
-      await applySelectedLlmModel(modelName, { closeMenu: false });
-    }
-    const nextMode = input.checked ? "on" : "off";
-    if (els.quickThinkingControl) {
-      els.quickThinkingControl.dataset.thinkingMode = nextMode;
-    }
-    if (els.quickThinkingMobileControl) {
-      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
-    }
-    renderQuickThinkingControl(nextMode);
-    renderQuickModelPicker();
-    await saveQuickThinkingModeFlow();
-    renderQuickModelPicker();
-  };
   els.quickModelMenu?.addEventListener("click", handleQuickModelMenuClick);
   els.quickModelMobileMenu?.addEventListener("click", handleQuickModelMenuClick);
-  els.quickModelMenu?.addEventListener("change", handleQuickModelMenuChange);
-  els.quickModelMobileMenu?.addEventListener("change", handleQuickModelMenuChange);
 
   els.quickModelSelect?.addEventListener("change", async () => {
     await applySelectedLlmModel(els.quickModelSelect.value || "");

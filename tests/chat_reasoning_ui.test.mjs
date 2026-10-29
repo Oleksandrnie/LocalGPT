@@ -37,8 +37,6 @@ test("quick Thinking control is visible for declared thinking-capable models", (
   assert.match(javascript, /buildModelSettingsPayload\(\{ ollama_think: nextMode \}\)/);
   assert.match(javascript, /quickThinkingMenu\?\.addEventListener\("click", handleQuickThinkingMenuClick\)/);
   assert.match(javascript, /quickThinkingMobileMenu\?\.addEventListener\("click", handleQuickThinkingMenuClick\)/);
-  assert.match(javascript, /quickModelMenu\?\.addEventListener\("change", handleQuickModelMenuChange\)/);
-  assert.match(javascript, /quickModelMobileMenu\?\.addEventListener\("change", handleQuickModelMenuChange\)/);
   assert.match(javascript, /quickThinkingMobileControl\.dataset\.thinkingMode = nextMode/);
 });
 
