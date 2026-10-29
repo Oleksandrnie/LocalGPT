@@ -8,9 +8,25 @@ function escapeHtml(value) {
 }
 
 function formatInlineRichText(value) {
-  return escapeHtml(value)
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, "<strong>$1</strong>");
+  const plain = (text) => escapeHtml(text).replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, "<strong>$1</strong>");
+  const pattern = /`([^`\n]+)`|\[([^\]\n]{1,200})\]\((https:\/\/[^\s)]+|\/rag\/evidence\/[1-9]\d*\?[^\s)]+)\)/g;
+  let result = "", cursor = 0;
+  for (const match of String(value).matchAll(pattern)) {
+    result += plain(value.slice(cursor, match.index));
+    if (match[1] !== undefined) {
+      result += `<code>${escapeHtml(match[1])}</code>`;
+    } else {
+      let safe = false;
+      try {
+        const url = new URL(match[3], "http://local.invalid");
+        safe = !url.username && !url.password && !/[\\\u0000-\u0020]/.test(match[3])
+          && (url.protocol === "https:" || (url.origin === "http://local.invalid" && /^\/rag\/evidence\/[1-9]\d*\?/.test(match[3])));
+      } catch { /* Malformed source URLs remain inert text. */ }
+      result += safe ? `<a href="${escapeHtml(match[3])}" target="_blank" rel="noopener noreferrer">${escapeHtml(match[2])}</a>` : plain(match[0]);
+    }
+    cursor = match.index + match[0].length;
+  }
+  return result + plain(value.slice(cursor));
 }
 
 function formatCodeLanguageLabel(value) {
@@ -29,6 +45,7 @@ export function formatRichMessage(value, options = {}) {
   let listType = null;
   let inCodeBlock = false;
   let codeBlockLanguage = "";
+  let codeBlockFenceLength = 3;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -70,7 +87,7 @@ export function formatRichMessage(value, options = {}) {
     const trimmed = rawLine.trim();
 
     if (inCodeBlock) {
-      if (trimmed.startsWith("```")) {
+      if (/^`{3,}\s*$/.test(trimmed) && trimmed.trim().length >= codeBlockFenceLength) {
         flushCodeBlock();
         inCodeBlock = false;
       } else {
@@ -84,7 +101,8 @@ export function formatRichMessage(value, options = {}) {
       closeList();
       inCodeBlock = true;
       codeLines.length = 0;
-      codeBlockLanguage = trimmed.slice(3).trim();
+      codeBlockFenceLength = trimmed.match(/^`+/)[0].length;
+      codeBlockLanguage = trimmed.slice(codeBlockFenceLength).trim();
       continue;
     }
 

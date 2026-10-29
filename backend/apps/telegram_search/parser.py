@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 
+from backend.apps.telegram_search.links import telegram_permalink
+
 
 class TelegramParseError(ValueError):
     def __init__(self, code, message):
@@ -110,7 +112,12 @@ def _parse_tree(tree, inherited_author=None, ordinal_offset=0):
         forward = node.find('forwarded_from')
         reply = node.find('reply_to')
         links = [n.attrs['href'] for n in node.walk() if n.tag == 'a' and n.attrs.get('href')]
-        messages.append(dict(ordinal=ordinal, message_id=node.attrs.get('id'), timestamp=timestamp,
+        # Only an explicit own date permalink establishes the message's address.
+        # Links in text/forwards/replies can point to unrelated messages.
+        own_urls = {telegram_permalink(n.attrs.get('href')) for n in [date, *date.walk()]} if date else set()
+        own_urls.discard(None)
+        message_url = next(iter(own_urls)) if len(own_urls) == 1 else None
+        messages.append(dict(message_url=message_url, ordinal=ordinal, message_id=node.attrs.get('id'), timestamp=timestamp,
             raw_date=raw_date, author=author, text=body.text().strip() if body else '',
             forwarded_from=forward.text().strip() if forward else '',
             reply=reply.text().strip() if reply else '', links=links,
@@ -224,6 +231,8 @@ def rag_message_chunks(parsed, splitter):
         if m['service']:
             continue
         meta = {k: m[k] for k in ('message_id', 'ordinal', 'timestamp', 'raw_date', 'author')}
+        if m.get('message_url'):
+            meta['message_url'] = m['message_url']
         meta['format'] = 'telegram_html'
         meta['hashtags'] = re.findall(r'(?<!\w)#[\w]+', m['text'])
         header = (f"Telegram chat: {parsed['title']}\nMessage ID: {m['message_id'] or 'unknown'}\n"
