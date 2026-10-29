@@ -2059,7 +2059,8 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     min-height: 0;
     overflow: auto;
     padding: 18px 24px 16px;
-    scroll-behavior: smooth;
+    scroll-behavior: auto;
+    overflow-anchor: none;
     mask-image: linear-gradient(to bottom, transparent 0, #000 34px, #000 calc(100% - 4px));
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 34px, #000 calc(100% - 4px));
 }

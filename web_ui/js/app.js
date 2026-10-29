@@ -1209,7 +1209,8 @@ function scrollMessagesToBottom({ force = false } = {}) {
   if (!els.messageScroll) return;
   if (!force && !state.autoScrollPinned) return;
   requestAnimationFrame(() => {
-    els.messageScroll?.scrollTo({ top: els.messageScroll.scrollHeight, behavior: "smooth" });
+    if (!force && !state.autoScrollPinned) return;
+    els.messageScroll?.scrollTo({ top: els.messageScroll.scrollHeight, behavior: "instant" });
     syncMessageScrollState();
   });
 }
@@ -2255,9 +2256,6 @@ function updateAssistantMessageFromTask(task, updates = {}) {
       isActiveReasoning ? "warning" : "success",
     );
   }
-  if (state.autoScrollPinned) {
-    scrollMessagesToBottom({ force: true });
-  }
 }
 
 function chatTaskScopedUrl(taskId, suffix = "", task = null) {
@@ -2464,7 +2462,7 @@ async function refreshCurrentSessionMessages({ sessionId = state.currentSessionI
   state.messages = Array.isArray(data?.messages) ? data.messages : [];
   renderMessages();
   if (scroll) {
-    scrollMessagesToBottom({ force: true });
+    scrollMessagesToBottom();
   }
   return true;
 }
@@ -4161,6 +4159,8 @@ async function saveVisionContextToRag() {
 function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
+  const scrollTop = els.messageScroll?.scrollTop || 0;
+  const followBottom = state.autoScrollPinned;
   const pending = state.pendingChatMessage;
   const stored = state.messages || [];
   const pendingVisible = pending && String(pending.profileId) === String(state.activeProfileId)
@@ -4173,10 +4173,13 @@ function renderMessages() {
     .map((message, index) => {
       const role = message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "system";
       const author = role === "user" ? "Вы" : role === "assistant" ? "LocalGPT" : "Система";
-      const status = normalizeMessageStatus(message);
+      const blockedTransport = role === "assistant" && /\[(?:END_)?LOCALGPT_DATA_ENVELOPE/.test(String(message.content || ""));
+      const status = blockedTransport ? "failed" : normalizeMessageStatus(message);
       const statusMeta = role === "assistant" ? assistantStatusMeta(status) : { label: "", text: "" };
-      const content = String(message.content || "");
-      const errorText = String(message.error || "").trim();
+      const content = blockedTransport ? "" : String(message.content || "");
+      const errorText = blockedTransport
+        ? "Модель вернула служебный формат вместо ответа. Повторите запрос."
+        : String(message.error || "").trim();
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
       const canCopy = !message.pending && hasContent && (role === "user" || role === "assistant");
@@ -4252,6 +4255,12 @@ function renderMessages() {
       `;
     })
     .join("");
+  if (els.messageScroll) {
+    els.messageScroll.scrollTo({
+      top: followBottom ? els.messageScroll.scrollHeight : scrollTop,
+      behavior: "instant",
+    });
+  }
   requestAnimationFrame(() => {
     syncMessageScrollState();
     observeMessageScrollEnd();
@@ -9307,7 +9316,7 @@ async function openSession(sessionId) {
     }
     renderMessages();
     renderTranscriptStrip();
-    scrollMessagesToBottom({ force: true });
+    scrollMessagesToBottom({ force: previousSessionId !== sessionId });
     void recoverActiveChatTaskFromMessages();
   } catch (error) {
     if (state.currentSessionId === sessionId && String(state.activeProfileId) === String(profileId)) {
