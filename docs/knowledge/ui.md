@@ -148,7 +148,7 @@ Settings → System содержит компактные соседние де�
 
 ### Адаптивный переключатель Thinking и загрузка истории
 
-Quick Thinking использует отдельный Auto и сегменты по объявленным runtime-значениям: два для boolean-моделей или, например, три для low/medium/high. Индикатор сдвигается между положениями; точный регистр и число named values сохраняются. ArrowLeft/ArrowRight меняют выбранный сегмент, обычное меню сохраняет управление Up/Down/Home/End. Предусмотрены focus state, reduced motion, размер touch target44px и ограничение popup границами viewport. Сегментный выбор не перекрывается success toast; ошибки сохранения продолжают показываться.
+Quick Thinking использует единый сегментный ряд: Auto / On / Off для boolean-моделей или Auto плюс все объявленные именованные уровни, например low/medium/high. Auto — полноценная первая позиция индикатора; поддерживаемые runtime-значения и их регистр не изменяются. Индикатор сдвигается между положениями; точный регистр и число named values сохраняются. ArrowLeft/ArrowRight меняют выбранный сегмент, обычное меню сохраняет управление Up/Down/Home/End. Предусмотрены focus state, reduced motion, размер touch target44px и ограничение popup границами viewport. Сегментный выбор не перекрывается success toast; ошибки сохранения продолжают показываться.
 
 История запрашивается независимо от необязательных вложений/транскриптов. Сбой вспомогательного endpoint не скрывает успешно полученные сообщения. Запоздалые ответы другого session/profile не изменяют активную историю. При подготовке chat task UI сразу показывает временное сообщение пользователя; после подтверждения оно заменяется серверной записью без дубля. При ошибке отправки очищенный composer восстанавливается. Загрузка истории при старте не ждёт необязательных ASR/TTS/storage сервисов. Временное сообщение до принятия backend не считается сохранённой записью; данные уже принятого запроса остаются в SQLite.
 
@@ -182,3 +182,8 @@ Completion, cancellation and same-session refresh preserve the reading position.
 ### Guided semantic setup
 
 The Knowledge panel contains an embedding-model setup card with metadata availability, download progress/cancel, refresh, activation and lexical rollback. Installation is offered once on startup or after an unconfigured search warning, with a Later choice. Activation explains that only the selected profile is reindexed, sources stay local and the old index remains active until success. Profile/session changes cannot apply late setup responses to another screen. The .env instructions are replaced by UI actions; model-install readiness is distinct from LLM planner JSON availability.
+
+
+### User message compositing
+
+User message cards no longer apply backdrop-filter blur inside the masked scrolling container. Their purple gradient, shadow, theme colors and the scroll fade remain. This avoids the blur/mask compositing combination implicated by a reported transient vertical tint split. The exact hardware artifact was not reproduced in headless Chrome; validation covered computed styles and synthetic screenshots in dark/light themes at multiple scroll positions and mobile width. Assistant card styling remains unchanged.
