@@ -350,6 +350,12 @@ const els = {
   ragIngestButton: document.getElementById("ragIngestButton"),
   ragReindexButton: document.getElementById("ragReindexButton"),
   ragRefreshButton: document.getElementById("ragRefreshButton"),
+  embeddingSetupAction: document.getElementById("embeddingSetupAction"),
+  embeddingSetupDetails: document.getElementById("embeddingSetupDetails"),
+  embeddingSetupProgress: document.getElementById("embeddingSetupProgress"),
+  embeddingSetupRefresh: document.getElementById("embeddingSetupRefresh"),
+  embeddingSetupCancel: document.getElementById("embeddingSetupCancel"),
+  embeddingSetupLexical: document.getElementById("embeddingSetupLexical"),
   ragEmbeddingCard: document.getElementById("ragEmbeddingCard"),
   ragEmbeddingState: document.getElementById("ragEmbeddingState"),
   ragEmbeddingDetails: document.getElementById("ragEmbeddingDetails"),
@@ -8847,6 +8853,106 @@ function renderRagPanel() {
   }
 }
 
+function renderEmbeddingSetup() {
+  const setup = state.embeddingSetup;
+  if (!els.embeddingSetupAction) return;
+  const current = setup && Number(setup.profile_id) === Number(state.activeProfileId);
+  const download = current ? setup.download : null;
+  const downloading = ["pending", "running"].includes(download?.state);
+  const indexing = current && ["queued", "running"].includes(setup?.operation?.status);
+  if (els.embeddingSetupCancel) els.embeddingSetupCancel.hidden = !downloading;
+  els.embeddingSetupAction.disabled = !current || state.embeddingSetupBusy || downloading || indexing || setup.active;
+  els.embeddingSetupAction.textContent = !current ? "Проверить модель" : state.embeddingSetupBusy ? "Настройка…" : downloading ? "Модель загружается…" : indexing ? "Строится индекс…"
+    : setup.active ? "Семантический поиск включён" : setup.installed ? "Включить семантический поиск" : `Установить ${setup.model}`;
+  if (els.embeddingSetupDetails) els.embeddingSetupDetails.textContent = !current ? "Проверьте доступность локального Ollama."
+    : setup.operation?.status === "failed" ? "Переиндексация не завершена. Прежний индекс сохранён; проверьте модель и повторите настройку."
+    : download?.state === "error" ? `Не удалось скачать ${setup.model}: ${download.message || "проверьте соединение и повторите"}`
+    : download?.state === "canceled" && !setup.installed ? "Загрузка остановлена. Можно установить модель повторно."
+    : indexing ? "Создаётся новый индекс. До завершения используется прежний; другие профили не меняются."
+    : downloading ? `${setup.model}: ${download.message || "загрузка весов"}`
+    : setup.active ? `Активна локальная модель ${setup.provider.model}. Настройка сохранена для текущего профиля.`
+    : setup.installed ? `${setup.model} установлена. Следующий шаг — локальная переиндексация текущего профиля.`
+    : `${setup.model} отсутствует. Загрузите веса в Ollama, затем включите семантический индекс. Источники не отправляются во внешние сервисы.`;
+  if (els.embeddingSetupProgress) {
+    els.embeddingSetupProgress.hidden = !downloading && !indexing;
+    const total = downloading ? download.total : setup?.operation?.total_chunks;
+    const done = downloading ? download.completed : setup?.operation?.processed_chunks;
+    if (Number(total) > 0) els.embeddingSetupProgress.value = Math.round(Number(done || 0) / Number(total) * 100);
+    else els.embeddingSetupProgress.removeAttribute("value");
+  }
+  if (els.embeddingSetupLexical) els.embeddingSetupLexical.hidden = !current || !(setup.configured || setup.active);
+}
+
+async function loadEmbeddingSetup({ notify = false } = {}) {
+  const profileId = state.activeProfileId;
+  if (!profileId) return null;
+  window.clearTimeout(state.embeddingSetupTimer);
+  try {
+    const setup = await request(`/rag/embedding-setup?profile_id=${encodeURIComponent(profileId)}`);
+    if (Number(state.activeProfileId) !== Number(profileId)) return null;
+    state.embeddingSetup = setup;
+    renderEmbeddingSetup();
+    if (["pending", "running"].includes(setup.download?.state) || ["queued", "running"].includes(setup.operation?.status)) {
+      state.embeddingSetupTimer = window.setTimeout(() => void loadEmbeddingSetup(), 1500);
+    } else if (setup.active && state.ragStatus?.embedding?.provider !== "ollama") {
+      void loadRagStatus({ silent: true });
+    }
+    return setup;
+  } catch (error) {
+    if (Number(state.activeProfileId) === Number(profileId)) {
+      state.embeddingSetup = null;
+      renderEmbeddingSetup();
+      if (els.embeddingSetupDetails) els.embeddingSetupDetails.textContent = `Не удалось проверить модель: ${error.message || error}`;
+      if (notify) setFooter("Не удалось проверить локальную embedding-модель.", "error");
+    }
+    return null;
+  }
+}
+
+async function runEmbeddingSetup({ skipDownloadConfirm = false } = {}) {
+  const profileId = state.activeProfileId;
+  const setup = await loadEmbeddingSetup({ notify: true });
+  if (!setup || Number(state.activeProfileId) !== Number(profileId) || setup.active) return;
+  const action = setup.installed ? "activate" : "install";
+  const approved = action === "install" && skipDownloadConfirm ? true : await openConfirmDialog({
+    eyebrow: "Семантический поиск", title: action === "install" ? "Установить embedding-модель?" : "Включить семантический поиск?",
+    message: action === "install" ? `Ollama скачает веса ${setup.model} из реестра. Это не отправляет ваши документы в интернет. После загрузки индекс включается отдельным действием.`
+      : `Будет построен индекс ${setup.model} только для текущего профиля. Данные обрабатывает локальный Ollama. Прежний поиск работает до успешного завершения; остальные профили не меняются.`,
+    confirmLabel: action === "install" ? "Установить" : "Построить индекс", returnFocus: els.embeddingSetupAction,
+  });
+  if (!approved || Number(state.activeProfileId) !== Number(profileId)) return;
+  state.embeddingSetupBusy = true; renderEmbeddingSetup();
+  try {
+    const result = await request(`/rag/embedding-setup/${action}?profile_id=${encodeURIComponent(profileId)}`, {method: "POST", body: {}});
+    if (Number(state.activeProfileId) !== Number(profileId)) return;
+    if (action === "activate") void pollRagReindexTask(result.task_id, profileId);
+    await loadEmbeddingSetup();
+  } catch (error) {
+    if (Number(state.activeProfileId) === Number(profileId)) setFooter(`Настройка семантического поиска: ${error.message || error}`, "error");
+  } finally {
+    state.embeddingSetupBusy = false;
+    if (Number(state.activeProfileId) === Number(profileId)) renderEmbeddingSetup();
+  }
+}
+
+async function offerEmbeddingSetup() {
+  const setup = await loadEmbeddingSetup();
+  if (!setup || setup.active || state.isSending || state.confirmResolver || (els.promptInput?.value || "").trim()) return;
+  const profileId = state.activeProfileId;
+  const key = `localgpt-semantic-setup:${profileId}:${setup.model}`;
+  if (readStored(key)) return;
+  writeStored(key, "offered");
+  const approved = await openConfirmDialog({
+    eyebrow: "Настройка поиска", title: setup.installed ? "Включить поиск по смыслу?" : "Установить модель для поиска по смыслу?",
+    message: setup.installed ? "Локальная embedding-модель уже установлена. Откройте «Знания», чтобы построить индекс текущего профиля."
+      : `Для семантического поиска нужна ${setup.model}. Можно скачать веса через Ollama; ваши источники останутся локально. Поиск по словам доступен и без установки.`,
+    confirmLabel: setup.installed ? "Открыть настройку" : "Установить", cancelLabel: "Позже", returnFocus: els.promptInput,
+  });
+  if (!approved || Number(state.activeProfileId) !== Number(profileId)) return;
+  await openRagPanel();
+  if (!setup.installed) await runEmbeddingSetup({ skipDownloadConfirm: true });
+}
+
 async function loadRagStatus({ silent = false, resumeReindex = true } = {}) {
   try {
     const query = state.activeProfileId
@@ -8854,6 +8960,7 @@ async function loadRagStatus({ silent = false, resumeReindex = true } = {}) {
       : "";
     state.ragStatus = await request(`/rag/status${query}`);
     renderRagPanel();
+    void loadEmbeddingSetup();
     const operation = state.ragStatus?.embedding_generation?.operation;
     if (
       resumeReindex
@@ -10159,7 +10266,10 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
     state.pendingChatMessage.persistedId = result.user_message_id;
     state.pendingChatMessage.acceptedSessionId = result.session_id;
     await loadSessions({ preferredSessionId: result.session_id, isCurrent: visible });
-    if (visible()) setFooter(statusText, result.status === "matches" ? "success" : "warning");
+    if (visible()) {
+      setFooter(statusText, result.status === "matches" ? "success" : "warning");
+      if (result.semantic?.status === "not_configured") void offerEmbeddingSetup();
+    }
   } catch (error) {
     if (!visible()) return;
     if (clearInput && els.promptInput && !els.promptInput.value.trim()) {
@@ -10986,6 +11096,24 @@ function bindEvents() {
   els.knowledgeSearchIndicator?.addEventListener("click", () => {
     openRagQuickMenu();
     window.setTimeout(() => els.knowledgeSearchToggle?.focus(), 0);
+  });
+  els.embeddingSetupAction?.addEventListener("click", () => void runEmbeddingSetup());
+  els.embeddingSetupRefresh?.addEventListener("click", () => void loadEmbeddingSetup({ notify: true }));
+  els.embeddingSetupCancel?.addEventListener("click", async () => {
+    const taskId = state.embeddingSetup?.download?.task_id;
+    if (!taskId) return;
+    try {
+      await request(`/models/pull/${encodeURIComponent(taskId)}/cancel`, {method:"POST", body:{}});
+      await loadEmbeddingSetup();
+    } catch { setFooter("Не удалось отменить загрузку модели.", "error"); }
+  });
+  els.embeddingSetupLexical?.addEventListener("click", async () => {
+    const profileId = state.activeProfileId;
+    if (!profileId) return;
+    try {
+      await request(`/rag/embedding-setup/lexical?profile_id=${encodeURIComponent(profileId)}`, {method:"POST", body:{}});
+      if (Number(state.activeProfileId) === Number(profileId)) await loadRagStatus();
+    } catch (error) { setFooter(`Не удалось переключить индекс: ${error.message || error}`, "error"); }
   });
   els.toggleSidebarButton?.addEventListener("click", () => toggleMobileSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());
@@ -12339,6 +12467,7 @@ async function bootstrap() {
   await loadHealth();
   // History must not wait for optional voice/ASR/storage services.
   await Promise.allSettled([loadModels(), loadProfiles()]);
+  void offerEmbeddingSetup();
   await loadWhisperModels({ silent: true });
   await loadStoragePaths();
   await loadTtsSettings({ silent: true });

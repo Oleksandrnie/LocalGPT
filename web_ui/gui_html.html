@@ -1326,6 +1326,17 @@
                         </div>
                         <p class="subtle" id="ragEmbeddingDetails">Параметры generation появятся после выбора профиля.</p>
                         <progress id="ragReindexProgress" max="100" value="0" hidden></progress>
+                        <section class="info-card" aria-labelledby="embeddingSetupTitle">
+                            <strong id="embeddingSetupTitle">Настроить семантический поиск</strong>
+                            <p class="subtle" id="embeddingSetupDetails" role="status" aria-live="polite">Проверяем локальную модель…</p>
+                            <progress id="embeddingSetupProgress" max="100" value="0" hidden></progress>
+                            <div class="button-row">
+                                <button class="button button--primary" id="embeddingSetupAction" type="button" disabled>Проверка…</button>
+                                <button class="button button--ghost" id="embeddingSetupRefresh" type="button">Проверить модель</button>
+                                <button class="button button--ghost" id="embeddingSetupCancel" type="button" hidden>Отменить загрузку</button>
+                                <button class="button button--ghost" id="embeddingSetupLexical" type="button" hidden>Вернуться к поиску по словам</button>
+                            </div>
+                        </section>
                     </div>
 
                     <label class="field field--checkbox">
@@ -1347,7 +1358,7 @@
 
                     <p class="inline-status" id="ragStatusText">Добавляйте Markdown или HTML-выгрузки Telegram и индексируйте их для активного профиля.</p>
                     <p class="subtle">Переиндексация запускается только вручную и может временно загрузить локальную embedding-модель.</p>
-                    <p class="subtle">local_hash — поиск по словам. Для семантического поиска нужна установленная локальная Ollama embedding-модель: задайте RAG_EMBEDDING_PROVIDER=ollama, RAG_EMBEDDING_MODEL, RAG_EMBEDDING_VERSION и RAG_EMBEDDING_DIMENSIONS в .env, перезапустите backend и вручную переиндексируйте базу. Смена модели сама по себе не меняет существующий индекс.</p>
+                    <p class="subtle">Embedding-модель устанавливается через Ollama. Настройка выше не требует редактирования .env: веса загружаются отдельно, затем строится семантический индекс только текущего профиля. Файлы и предыдущий индекс сохраняются.</p>
                     <div id="ragUploadReport" class="inline-status" role="status" aria-live="polite" style="white-space: pre-wrap; overflow-wrap: anywhere" hidden></div>
                     <div class="rag-file-list" id="ragFileList"></div>
                 </section>
