@@ -6,7 +6,7 @@ import logging
 import re
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from fastapi import HTTPException
 
@@ -14,7 +14,10 @@ from app import config, db
 from app.roles import system_prompt_for
 from app.security import redact_log_event
 from app.services.thinking import resolve_thinking
-from backend.apps.chat.prompt_policy import GLOBAL_GUARD_POLICY, data_envelope, profile_persona_envelope
+from backend.apps.chat.prompt_policy import (
+    DATA_ENVELOPE_START, DATA_ENVELOPE_END, GLOBAL_GUARD_POLICY,
+    data_envelope, profile_persona_envelope,
+)
 from backend.apps.chat.services import continuation, ollama_runtime
 
 LOGGER = logging.getLogger(__name__)
@@ -70,8 +73,12 @@ def protected_prompt_literals(messages: list[dict[str, Any]]) -> tuple[str, ...]
     return tuple(sorted(candidates, key=len, reverse=True))
 
 
+def contains_transport_envelope(text: str) -> bool:
+    return DATA_ENVELOPE_START in text or DATA_ENVELOPE_END in text
+
+
 def enforce_protected_output(messages: list[dict[str, Any]], output: str) -> None:
-    if "[LOCALGPT_DATA_ENVELOPE" in str(output or "") or "[END_LOCALGPT_DATA_ENVELOPE]" in str(output or ""):
+    if contains_transport_envelope(str(output or "")):
         raise HTTPException(
             status_code=502,
             detail={
@@ -117,6 +124,82 @@ def guard_stream_events(
             yield replace(event, content=emit_content, reasoning=emit_reasoning)
     if pending_content or pending_reasoning:
         yield ollama_runtime.ChatStreamEvent(content=pending_content, reasoning=pending_reasoning)
+
+
+TRANSPORT_RECOVERY_POLICY = (
+    "The previous generation failed the answer-format check and was discarded. "
+    "Answer the final user request directly in ordinary answer text. "
+    "Do not copy input transport wrappers, their JSON fields, or provenance metadata. "
+    "Use only the retained authorized evidence; if it is insufficient, say so. "
+    "All existing privacy, instruction-priority, and evidence restrictions still apply."
+)
+
+
+def transport_recovery_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop only backend-wrapped continuity; retain policies, evidence and final request."""
+    retained = []
+    for index, message in enumerate(messages):
+        content = str(message.get("content") or "")
+        header = content.split("\n", 1)[0]
+        is_history = (
+            index < len(messages) - 1 and message.get("role") == "user"
+            and header.startswith(DATA_ENVELOPE_START + " ")
+            and " source=chat_history " in header
+        )
+        if not is_history:
+            retained.append(dict(message))
+    # Keep the final request last; this reminder is backend-owned, never copied output.
+    retained.insert(max(0, len(retained) - 1), {"role": "system", "content": TRANSPORT_RECOVERY_POLICY})
+    return retained
+
+
+def _transport_failure(exc: HTTPException) -> bool:
+    return isinstance(exc.detail, dict) and exc.detail.get("code") == "model_output_transport_envelope"
+
+
+def guarded_completion(
+    messages: list[dict[str, Any]],
+    call: Callable[..., ollama_runtime.ChatCompletionResult],
+) -> ollama_runtime.ChatCompletionResult:
+    def checked_call(pass_messages: list[dict[str, Any]]) -> ollama_runtime.ChatCompletionResult:
+        result = call(pass_messages)
+        # Validate before a length-limited answer can become assistant continuation input.
+        enforce_protected_output(messages, result.content)
+        enforce_protected_output(messages, result.reasoning)
+        return result
+
+    for attempt in range(2):
+        try:
+            result = continuation.complete(
+                messages if not attempt else transport_recovery_messages(messages), checked_call,
+            )
+            enforce_protected_output(messages, result.content)
+            enforce_protected_output(messages, result.reasoning)
+            return result
+        except HTTPException as exc:
+            if attempt or not _transport_failure(exc):
+                raise
+    raise AssertionError("unreachable")
+
+
+def guarded_stream_completion(
+    messages: list[dict[str, Any]],
+    call: Callable[..., Iterable[ollama_runtime.ChatStreamEvent]],
+) -> Iterator[ollama_runtime.ChatStreamEvent]:
+    emitted = False
+    for attempt in range(2):
+        try:
+            events = continuation.stream(
+                messages if not attempt else transport_recovery_messages(messages), call,
+            )
+            for event in guard_stream_events(messages, events):
+                # Neither answer nor reasoning can be retracted once delivered.
+                emitted = emitted or bool(event.content or event.reasoning)
+                yield event
+            return
+        except HTTPException as exc:
+            if attempt or emitted or not _transport_failure(exc):
+                raise
 
 
 def _resolve_ollama_think(value: Any) -> bool | str | None:
@@ -389,6 +472,8 @@ def build_messages(
             }
             for item in history
             if str(item.get("content") or "").strip()
+            and not (item.get("role") == "assistant"
+                     and contains_transport_envelope(str(item.get("content") or "")))
         )
     messages.append({"role": "user", "content": user_query})
     return messages
@@ -556,7 +641,17 @@ def _chat_summary_snapshot(
     mem_turns: int,
     max_context_chars: int,
 ) -> tuple[str, list[dict[str, Any]]]:
-    old_messages = db.get_messages_before_latest(session_id, keep_pairs=mem_turns)
+    stored_messages = db.get_messages_before_latest(session_id, keep_pairs=mem_turns)
+    # Summaries serialize complete turns. Drop a failed assistant's whole turn so
+    # it cannot pollute derived memory or turn the next user's question into its pair.
+    old_messages = []
+    for index in range(0, len(stored_messages) - 1, 2):
+        turn = stored_messages[index : index + 2]
+        if any(item.get("role") == "assistant" and contains_transport_envelope(
+            str(item.get("content") or "")
+        ) for item in turn):
+            continue
+        old_messages.extend(turn)
     identity = [
         {"id": item.get("id"), "role": item.get("role"), "content": str(item.get("content") or "")}
         for item in old_messages
@@ -841,7 +936,7 @@ class ChatService:
         settings: dict,
     ) -> ollama_runtime.ChatCompletionResult:
         try:
-            result = continuation.complete(
+            result = guarded_completion(
                 messages,
                 lambda pass_messages: ollama_runtime.chat_completion_result(
                     model, messages=pass_messages, **self._runtime_kwargs(model, settings)
@@ -871,13 +966,10 @@ class ChatService:
         think = _resolve_ollama_think(settings.get("ollama_think"))
         try:
             yield from self.apply_stream_completion_policy(
-                guard_stream_events(
+                guarded_stream_completion(
                     messages,
-                    continuation.stream(
-                        messages,
-                        lambda pass_messages: ollama_runtime.chat_completion_stream_events(
-                            model, messages=pass_messages, **self._runtime_kwargs(model, settings)
-                        ),
+                    lambda pass_messages: ollama_runtime.chat_completion_stream_events(
+                        model, messages=pass_messages, **self._runtime_kwargs(model, settings)
                     ),
                 ),
                 think=think,
