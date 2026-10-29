@@ -159,6 +159,8 @@ Quick Thinking использует отдельный Auto и сегменты 
 
 Если в сохранённом или поступающем assistant-ответе обнаружен LOCALGPT_DATA_ENVELOPE, вместо содержимого показывается ошибка служебного формата с возможностью повторить запрос. Копирование и экспорт этого ответа недоступны; сама запись в базе не переписывается. Backend отдельно блокирует такой формат в новых генерациях. После frontend-изменений страницу необходимо обновить; перезапуск backend не заменяет загрузку нового JavaScript браузером.
 
-### Knowledge-only composer mode
+### Smart search controls
 
-The `Поиск в базе` button shows an explicit pressed state, changes Send to Find, and enables lexical source lookup without requiring a chat model. Its help popup supports hover, keyboard focus and a touch-focusable info button. Results use the author label `База знаний` and preserve literal evidence snippets; quoted transport markers in deterministic evidence are not treated as generated transport output. Loading, empty index, no matches and failure are distinct. Pending responses and session-list refreshes cannot reopen an old chat after a profile/session/mode switch.
+The right-click RAG menu contains independent switches for RAG context and knowledge search. A compact question mark offers hover/focus help. The former large composer button/status is removed; status remains in an aria-live region and in the input indicator tooltip. Only when search is active, a small search indicator appears to the right of the dictation microphone; clicking it opens the RAG menu. Input padding and mobile hit targets prevent icon/text overlap.
+
+The UI labels the path as plan, search, then citations. It reports when semantic embeddings or the local planner are unavailable instead of claiming a full smart search. Results use the author label `База знаний`; requested links are clickable, safe HTTPS or scoped local evidence links, while URLs inside quoted source code remain inert. Available search does not require a loaded answer-generation model; the selected local chat model improves planning when installed. The existing cancellation/session race guards remain in force.
