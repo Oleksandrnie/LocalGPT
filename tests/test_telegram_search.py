@@ -211,3 +211,21 @@ class RagIntegrationTests(unittest.TestCase):
         result = self.service.search(self.profile, '#BuildNotes сообщения про alpha_tool, какой стек и дата')
         self.assertTrue(result)
         self.assertTrue(all(m['metadata']['message_id']=='message1' for m in result))
+
+    def test_private_html_diagnostics_use_codes_without_payload(self):
+        from backend.apps.telegram_search.parser import TelegramParseError
+        from io import BytesIO
+        from fastapi import UploadFile
+        for raw, code in [
+            (b'<html>synthetic private marker</html>', 'telegram_history_not_found'),
+            (b'\xff', 'telegram_encoding_error'),
+            (b'<div class="history"></div>', 'telegram_header_not_found'),
+        ]:
+            with self.assertRaises(TelegramParseError) as error:
+                parse(raw)
+            self.assertEqual(error.exception.code, code)
+            self.assertNotIn('synthetic private marker', str(error.exception))
+            result = self.service.save_uploaded_files(self.profile, [UploadFile(filename='synthetic.html', file=BytesIO(raw))])
+            self.assertEqual(result['errors'][0]['code'], code)
+            self.assertFalse(result['saved'])
+            self.assertNotIn('synthetic private marker', str(result['errors']))

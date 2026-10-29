@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 
 
+class TelegramParseError(ValueError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass
 class Node:
     tag: str = ''
@@ -65,8 +71,10 @@ class Tree(HTMLParser):
 def _parse_tree(tree, inherited_author=None, ordinal_offset=0):
     history = tree.root.find('history')
     header = tree.root.find('page_header')
-    if not history or not header:
-        raise ValueError('Не распознана HTML-выгрузка Telegram Desktop')
+    if not history:
+        raise TelegramParseError('telegram_history_not_found', 'В HTML не найдена история Telegram')
+    if not header:
+        raise TelegramParseError('telegram_header_not_found', 'В HTML не найден заголовок Telegram')
     title_node = header.find('name') or header.find('text')
     title = title_node.text().strip() if title_node else header.text().strip()
     messages, warnings, author = [], [], inherited_author
@@ -108,10 +116,10 @@ def _parse_tree(tree, inherited_author=None, ordinal_offset=0):
             reply=reply.text().strip() if reply else '', links=links,
             media=bool(node.find('media_wrap')), service=service))
     if not messages:
-        raise ValueError('В истории не найдено сообщений')
+        raise TelegramParseError('telegram_messages_not_found', 'В истории не найдено сообщений')
     ids = [m['message_id'] for m in messages if m['message_id']]
     if len(ids) != len(set(ids)):
-        raise ValueError('Повторяющиеся ID внутри страницы экспорта')
+        raise TelegramParseError('telegram_duplicate_message_ids', 'Повторяющиеся ID внутри страницы экспорта')
     return dict(title=title, messages=messages, warnings=warnings, sha256='')
 
 
@@ -154,16 +162,20 @@ def parse_stream(stream):
         tree.feed(decoder.decode(b'', final=True))
         tree.close()
     except UnicodeDecodeError as exc:
-        raise ValueError('Ожидается UTF-8 HTML') from exc
+        raise TelegramParseError('telegram_encoding_error', 'Ожидается UTF-8 HTML') from exc
     history = tree.root.find('history')
     header = tree.root.find('page_header')
-    if not history or not header or not tree.messages:
-        raise ValueError('Не распознана HTML-выгрузка Telegram Desktop')
+    if not history:
+        raise TelegramParseError('telegram_history_not_found', 'В HTML не найдена история Telegram')
+    if not header:
+        raise TelegramParseError('telegram_header_not_found', 'В HTML не найден заголовок Telegram')
     if any(isinstance(n, Node) and n.has('message') for n in history.children):
-        raise ValueError('Незакрытый блок сообщения в HTML')
+        raise TelegramParseError('telegram_incomplete_message', 'Незакрытый блок сообщения в HTML')
+    if not tree.messages:
+        raise TelegramParseError('telegram_messages_not_found', 'В истории не найдено сообщений')
     ids = [m['message_id'] for m in tree.messages if m['message_id']]
     if len(ids) != len(set(ids)):
-        raise ValueError('Повторяющиеся ID внутри страницы экспорта')
+        raise TelegramParseError('telegram_duplicate_message_ids', 'Повторяющиеся ID внутри страницы экспорта')
     title = header.find('name') or header.find('text')
     return dict(title=(title or header).text().strip(), messages=tree.messages,
                 warnings=tree.warnings, sha256=digest.hexdigest())

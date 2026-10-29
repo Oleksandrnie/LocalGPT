@@ -1,3 +1,4 @@
+import { ragUploadReport, describeRagUploadError } from "./rag_upload.mjs";
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 import { parseOllamaInstallInput } from "./ollama_install.mjs";
 import { buildSelectableChatModels } from "./chat_model_catalog.mjs";
@@ -339,6 +340,7 @@ const els = {
   ragEnabledToggle: document.getElementById("ragEnabledToggle"),
   ragAddFilesButton: document.getElementById("ragAddFilesButton"),
   ragFileInput: document.getElementById("ragFileInput"),
+  ragUploadReport: document.getElementById("ragUploadReport"),
   ragIngestButton: document.getElementById("ragIngestButton"),
   ragReindexButton: document.getElementById("ragReindexButton"),
   ragRefreshButton: document.getElementById("ragRefreshButton"),
@@ -613,6 +615,7 @@ const state = {
   ttsHistoryCollapsed: readStored(STORAGE_KEYS.ttsHistoryCollapsed, "1") === "1",
   ragStatus: null,
   ragBusy: false,
+  ragUploadReport: null,
   ragReindexPolling: false,
   pluginsState: {
     plugins: [],
@@ -8529,6 +8532,12 @@ function renderRagEmbeddingGeneration(status) {
 }
 
 function renderRagPanel() {
+  if (els.ragUploadReport) {
+    const report = state.ragUploadReport;
+    const visible = report && String(report.profileId) === String(state.activeProfileId);
+    els.ragUploadReport.hidden = !visible;
+    setInlineStatus(els.ragUploadReport, visible ? report.details : "", visible ? report.tone : "neutral");
+  }
   const status = state.ragStatus || {};
   const reindexActive = renderRagEmbeddingGeneration(status);
   renderRagButton();
@@ -8777,25 +8786,41 @@ async function uploadRagFiles(files) {
     setFooter("Сначала выберите профиль для RAG.", "warning");
     return;
   }
+  const profileId = state.activeProfileId;
+  state.ragUploadReport = null;
   const formData = new FormData();
   selectedFiles.forEach((file) => formData.append("files", file));
   state.ragBusy = true;
   renderRagPanel();
   try {
-    const result = await request(`/rag/files?profile_id=${encodeURIComponent(state.activeProfileId)}`, {
+    const result = await request(`/rag/files?profile_id=${encodeURIComponent(profileId)}`, {
       method: "POST",
       body: formData,
     });
-    state.ragStatus = result?.status || state.ragStatus;
-    await loadRagStatus({ silent: true });
-    const savedCount = Array.isArray(result?.saved) ? result.saved.length : 0;
-    const errorCount = Array.isArray(result?.errors) ? result.errors.length : 0;
-    setFooter(
-      `RAG: добавлено файлов ${savedCount}${errorCount ? `, ошибок ${errorCount}` : ""}. Теперь можно индексировать.`,
-      errorCount ? "warning" : "success",
-    );
+    const report = ragUploadReport(result);
+    for (const failure of Array.isArray(result?.errors) ? result.errors : []) {
+      console.error("[RAG upload] Файл отклонён", {
+        code: failure.code || failure.error || "unknown_upload_error",
+        reason: failure.message || failure.error || "Неизвестная ошибка загрузки",
+      });
+    }
+    state.ragUploadReport = { ...report, profileId };
+    if (String(state.activeProfileId) === String(profileId)) {
+      state.ragStatus = result?.status || state.ragStatus;
+      await loadRagStatus({ silent: true });
+      setFooter(report.summary, report.tone);
+    }
   } catch (error) {
-    setFooter(`Не удалось добавить RAG-файлы: ${error.message || error}`, "error");
+    console.error("[RAG upload] Ошибка запроса", {
+      code: error.code || "rag_upload_request_failed",
+      reason: error.message || "Неизвестная ошибка запроса",
+      status: error.status || null,
+    });
+    const details = describeRagUploadError({ code: error.code || error.message, message: error.message });
+    state.ragUploadReport = { profileId, details, tone: "error" };
+    if (String(state.activeProfileId) === String(profileId)) {
+      setFooter(`Не удалось добавить RAG-файлы: ${error.message || error}`, "error");
+    }
   } finally {
     state.ragBusy = false;
     renderRagPanel();

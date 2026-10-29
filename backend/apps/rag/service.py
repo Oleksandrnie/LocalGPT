@@ -1302,6 +1302,7 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
     for upload in files:
         original_name = Path(upload.filename or "").name
         if not original_name:
+            errors.append({"file": "", "error": "file_name_missing", "code": "file_name_missing"})
             continue
         suffix = Path(original_name).suffix.lower()
         if suffix not in SUPPORTED_SUFFIXES:
@@ -1314,7 +1315,8 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
             try:
                 telegram.parse_stream(upload.file)
             except (ValueError, RecursionError) as exc:
-                errors.append({"file": original_name, "error": str(exc)})
+                code = getattr(exc, "code", "telegram_html_nesting_error" if isinstance(exc, RecursionError) else "invalid_telegram_html")
+                errors.append({"file": original_name, "error": str(exc), "message": str(exc), "code": code})
                 continue
             size = upload.file.tell()
             upload.file.seek(0)
