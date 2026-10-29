@@ -432,6 +432,8 @@ def _apply_router_settings(prepared: dict, decision: model_router.RouterDecision
 
 
 def _apply_auto_router(prepared: dict) -> dict:
+    if prepared.get("source_quote") is not None:
+        return prepared
     selected_model = str(prepared.get("target_model") or "").strip()
     if selected_model == model_router.LOCAL_CALCULATOR_TARGET:
         calc = local_calculator.try_calculate_text(str(prepared.get("user_query") or ""), force=True)
@@ -575,6 +577,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         session_id = session["id"]
 
     model_name = session["model_name"] if session else normalize_model_name(req.model or req.model_name)
+    rag_service.protect_telegram_profile(int(profile_id))
     target_model = _require_chat_model_selected(normalize_model_name(model_name, fallback=config.SETTINGS.model))
     profile = _get_profile_or_404(int(profile_id))
     profile_preferences = profile.get("preferences") or {}
@@ -615,7 +618,6 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         for item in history
         if item.get("role") == "user" and str(item.get("content") or "").strip()
     ][-3:]
-    rag_service.protect_telegram_profile(int(profile_id))
     if rag_enabled:
         rag_top_k = int(effective_settings.get("rag_top_k") or 5)
         rag_max_chars = int(effective_settings.get("rag_max_context_chars") or 6000)
@@ -733,6 +735,8 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "recent_user_queries": history_user_queries,
         "prompt_warnings": transcript_warnings,
         "calc_result": calc_result,
+        "source_quote": rag_service.exact_telegram_quote(int(profile_id), user_query)
+        if rag_enabled and not has_image_attachments else None,
     }
 
 
@@ -782,7 +786,7 @@ def chat(req: ChatRequest):
         target_model = prepared["target_model"]
         active_criteria = prepared["active_criteria"]
         effective_settings = prepared["effective_settings"]
-        calc_result = prepared["calc_result"]
+        calc_result = prepared.get("source_quote") or prepared["calc_result"]
         messages = prepared["messages"]
         prompt_warnings = prepared.get("prompt_warnings") or []
         router_notice = prepared.get("router_notice")
@@ -987,7 +991,7 @@ def start_chat_task(req: ChatRequest):
 
     target_model = prepared["target_model"]
     effective_settings = prepared["effective_settings"]
-    calc_result = prepared["calc_result"]
+    calc_result = prepared.get("source_quote") or prepared["calc_result"]
     messages = prepared["messages"]
     router_notice = prepared.get("router_notice")
     effective_settings = {**effective_settings, "streaming_enabled": stream_requested}

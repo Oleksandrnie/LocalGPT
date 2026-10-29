@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from html.parser import HTMLParser
 
 
@@ -62,26 +62,18 @@ class Tree(HTMLParser):
         self.stack[-1].children.append(data)
 
 
-def parse(content: bytes):
-    if len(content) > 50 * 1024 * 1024:
-        raise ValueError('HTML превышает лимит 50 MiB на файл')
-    try:
-        text = content.decode('utf-8-sig')
-    except UnicodeDecodeError as exc:
-        raise ValueError('Ожидается UTF-8 HTML') from exc
-    tree = Tree()
-    tree.feed(text)
+def _parse_tree(tree, inherited_author=None, ordinal_offset=0):
     history = tree.root.find('history')
     header = tree.root.find('page_header')
     if not history or not header:
         raise ValueError('Не распознана HTML-выгрузка Telegram Desktop')
     title_node = header.find('name') or header.find('text')
     title = title_node.text().strip() if title_node else header.text().strip()
-    messages, warnings, author = [], [], None
+    messages, warnings, author = [], [], inherited_author
     for node in history.children:
         if not isinstance(node, Node) or not node.has('message'):
             continue
-        ordinal = len(messages)
+        ordinal = len(messages) + ordinal_offset
         service = node.has('service')
         sender = node.find('from_name')
         if service or not node.has('joined'):
@@ -120,7 +112,66 @@ def parse(content: bytes):
     ids = [m['message_id'] for m in messages if m['message_id']]
     if len(ids) != len(set(ids)):
         raise ValueError('Повторяющиеся ID внутри страницы экспорта')
-    return dict(title=title, messages=messages, warnings=warnings, sha256=hashlib.sha256(content).hexdigest())
+    return dict(title=title, messages=messages, warnings=warnings, sha256='')
+
+
+
+class MessageStream(Tree):
+    """Discard parsed message markup immediately; retain only normalized records."""
+    def __init__(self):
+        super().__init__()
+        self.messages = []
+        self.warnings = []
+        self.author = None
+
+    def handle_endtag(self, tag):
+        closing = None
+        for i in range(len(self.stack)-1, 0, -1):
+            if self.stack[i].tag == tag:
+                if self.stack[i].has('message') and self.stack[i-1].has('history'):
+                    closing = self.stack[i-1]
+                break
+        super().handle_endtag(tag)
+        if closing is not None:
+            parsed = _parse_tree(self, self.author, len(self.messages))
+            message = parsed['messages'][0]
+            message['ordinal'] = len(self.messages)
+            self.messages.append(message)
+            self.warnings.extend(parsed['warnings'])
+            self.author = message['author']
+            closing.children.clear()
+
+
+def parse_stream(stream):
+    import codecs
+    decoder = codecs.getincrementaldecoder('utf-8-sig')('strict')
+    tree = MessageStream()
+    digest = hashlib.sha256()
+    try:
+        while block := stream.read(64 * 1024):
+            digest.update(block)
+            tree.feed(decoder.decode(block))
+        tree.feed(decoder.decode(b'', final=True))
+        tree.close()
+    except UnicodeDecodeError as exc:
+        raise ValueError('Ожидается UTF-8 HTML') from exc
+    history = tree.root.find('history')
+    header = tree.root.find('page_header')
+    if not history or not header or not tree.messages:
+        raise ValueError('Не распознана HTML-выгрузка Telegram Desktop')
+    if any(isinstance(n, Node) and n.has('message') for n in history.children):
+        raise ValueError('Незакрытый блок сообщения в HTML')
+    ids = [m['message_id'] for m in tree.messages if m['message_id']]
+    if len(ids) != len(set(ids)):
+        raise ValueError('Повторяющиеся ID внутри страницы экспорта')
+    title = header.find('name') or header.find('text')
+    return dict(title=(title or header).text().strip(), messages=tree.messages,
+                warnings=tree.warnings, sha256=digest.hexdigest())
+
+
+def parse(content: bytes):
+    from io import BytesIO
+    return parse_stream(BytesIO(content))
 
 
 def bundle(files):
@@ -162,6 +213,7 @@ def rag_message_chunks(parsed, splitter):
             continue
         meta = {k: m[k] for k in ('message_id', 'ordinal', 'timestamp', 'raw_date', 'author')}
         meta['format'] = 'telegram_html'
+        meta['hashtags'] = re.findall(r'(?<!\w)#[\w]+', m['text'])
         header = (f"Telegram chat: {parsed['title']}\nMessage ID: {m['message_id'] or 'unknown'}\n"
                   f"Date: {m['timestamp'] or 'unknown'} (export time)\nOriginal date: {m['raw_date'] or 'unknown'}\n"
                   f"Author: {m['author'] or 'unknown'}\n")
@@ -186,6 +238,25 @@ def date_bounds(query):
                 values = [datetime.strptime(d, '%Y-%m-%d' if '-' in d else '%d.%m.%Y').date().isoformat() for d in dates]
             except ValueError as exc:
                 raise ValueError('Некорректная дата в запросе') from exc
+            if len(values) == 1:
+                # A date after an explicit boundary word denotes an open interval.
+                prefix = line[:re.search(re.escape(dates[0]), line).start()].casefold().strip()
+                day = datetime.fromisoformat(values[0]).date()
+                try:
+                    if re.search(r'не раньше\s*$', prefix):
+                        return values[0], '9999-12-31'
+                    if re.search(r'не позже\s*$', prefix):
+                        return '0001-01-01', values[0]
+                    if re.search(r'(?:после|позже)\s*$', prefix):
+                        return (day + timedelta(days=1)).isoformat(), '9999-12-31'
+                    if re.search(r'(?:раньше)\s*$', prefix):
+                        return '0001-01-01', (day - timedelta(days=1)).isoformat()
+                except OverflowError as exc:
+                    raise ValueError('Дата за пределами поддерживаемого диапазона') from exc
+                if re.search(r'(?:^|\s)(?:с|начиная с|не ранее)\s*$', prefix):
+                    return values[0], '9999-12-31'
+                if re.search(r'(?:^|\s)(?:до|по|не позднее)\s*$', prefix):
+                    return '0001-01-01', values[0]
             return min(values), max(values)
         months = 'январ феврал март апрел ма июн июл август сентябр октябр ноябр декабр'.split()
         match = re.search(r'\b('+'|'.join(months)+r')\w*\s+(\d{4})\b', line.casefold())

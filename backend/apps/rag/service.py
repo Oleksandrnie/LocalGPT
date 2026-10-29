@@ -19,6 +19,7 @@ CHAT_CONTEXT_SOURCE_TYPE = "chat_context"
 EMBEDDING_MODEL = "local-hash-v1"
 RETRIEVAL_STRATEGY_SETTING = "rag_retrieval_strategy"
 DEFAULT_RETRIEVAL_STRATEGY = "hybrid_v2"
+TELEGRAM_PARSER_VERSION = "telegram-html-v3"
 SUPPORTED_SUFFIXES = {".md", ".html"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_FILES = 12
@@ -738,6 +739,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             current
             and current_meta.get("size") == metadata["size"]
             and current_meta.get("mtime") == metadata["mtime"]
+            and (path.suffix.lower() != '.html' or current_meta.get('parser_version') == TELEGRAM_PARSER_VERSION)
         )
         if unchanged_source and current_meta.get("embedding_model") != embedding_model:
             reindex_required += 1
@@ -754,11 +756,12 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
         try:
             chunk_metadata = []
             if path.suffix.lower() == '.html':
-                parsed = telegram.parse(_read_text_file(path).encode('utf-8'))
+                with path.open('rb') as html_stream:
+                    parsed = telegram.parse_stream(html_stream)
                 pairs = telegram.rag_message_chunks(parsed, _chunk_text)
                 chunks = [text for text, _ in pairs]
                 chunk_metadata = [meta for _, meta in pairs]
-                metadata.update(format='telegram_html', chat_title=parsed['title'],
+                metadata.update(format='telegram_html', parser_version=TELEGRAM_PARSER_VERSION, chat_title=parsed['title'],
                                 parser_warnings=parsed['warnings'], message_count=len(parsed['messages']))
             else:
                 chunks = _chunk_text(_read_text_file(path))
@@ -892,6 +895,7 @@ def _source_sync_summary(
             not document
             or metadata.get("size") != stat.st_size
             or metadata.get("mtime") != stat.st_mtime
+            or (path.suffix.lower() == '.html' and metadata.get('parser_version') != TELEGRAM_PARSER_VERSION)
         ):
             pending += 1
     return {
@@ -1006,6 +1010,8 @@ def _legacy_search(
     provider = _embedding_provider()
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
     raw_chunks = _filter_telegram_dates(raw_chunks, cleaned_query, provider)
+    if any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in raw_chunks):
+        cleaned_query = _telegram_id_query(cleaned_query)
     if not raw_chunks:
         return []
     query_vector = _embed_texts(provider, [cleaned_query])[0]
@@ -1105,6 +1111,8 @@ def search_with_diagnostics(
     provider = _embedding_provider()
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
     raw_chunks = _filter_telegram_dates(raw_chunks, cleaned_query, provider)
+    if any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in raw_chunks):
+        cleaned_query = _telegram_id_query(cleaned_query)
     if not raw_chunks:
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
@@ -1289,7 +1297,7 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
     target_dir = source_dir(profile_id)
     saved: list[str] = []
     errors: list[dict[str, str]] = []
-    pending: list[tuple[str, Path, bytes]] = []
+    pending: list[tuple[str, Path, Any, int]] = []
     total_bytes = 0
     for upload in files:
         original_name = Path(upload.filename or "").name
@@ -1301,30 +1309,44 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
             continue
         safe_name = _slug(Path(original_name).stem) + suffix
         target = target_dir / safe_name
-        data = upload.file.read(MAX_FILE_BYTES + 1)
-        if len(data) > MAX_FILE_BYTES:
-            errors.append({"file": original_name, "error": "file_too_large"})
-            continue
-        total_bytes += len(data)
-        if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail={"code": "rag_upload_total_bytes_exceeded", "max_bytes": MAX_UPLOAD_TOTAL_BYTES},
-            )
         if suffix == '.html':
             require_telegram_local(_embedding_provider())
             try:
-                telegram.parse(data)
+                telegram.parse_stream(upload.file)
             except (ValueError, RecursionError) as exc:
                 errors.append({"file": original_name, "error": str(exc)})
                 continue
-        pending.append((original_name, target, data))
-    for original_name, target, data in pending:
+            size = upload.file.tell()
+            upload.file.seek(0)
+            data = upload.file
+        else:
+            data = upload.file.read(MAX_FILE_BYTES + 1)
+            size = len(data)
+            if size > MAX_FILE_BYTES:
+                errors.append({"file": original_name, "error": "file_too_large"})
+                continue
+            total_bytes += size
+            if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
+                raise HTTPException(413, detail={"code": "rag_upload_total_bytes_exceeded", "max_bytes": MAX_UPLOAD_TOTAL_BYTES})
+        pending.append((original_name, target, data, size))
+    for original_name, target, data, size in pending:
+        from tempfile import NamedTemporaryFile
+        temporary_path = None
         try:
-            target.write_bytes(data)
+            # Atomic publication keeps an existing source intact on write failure.
+            with NamedTemporaryFile(dir=target_dir, prefix='.upload-', delete=False) as output:
+                temporary_path = Path(output.name)
+                if isinstance(data, bytes):
+                    output.write(data)
+                else:
+                    shutil.copyfileobj(data, output, length=64 * 1024)
+            temporary_path.replace(target)
         except OSError:
             errors.append({"file": original_name, "error": "file_write_failed"})
             continue
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         saved.append(_relative_source_id(target, profile_id))
     return {
         "profile_id": profile_id,
@@ -1332,7 +1354,7 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
         "source_scope": "active_profile",
         "saved": saved,
         "errors": errors,
-        "uploaded_bytes": sum(len(data) for _, _, data in pending),
+        "uploaded_bytes": sum(size for _, _, _, size in pending),
         "status": status(profile_id),
     }
 
@@ -1388,11 +1410,87 @@ def _filter_telegram_dates(chunks, query, provider):
     if not any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in chunks):
         return chunks
     require_telegram_local(provider)
+    current = query.splitlines()[0] if query.splitlines() else query
+    ids = re.findall(r"\bmessage(\d+)\b|(?:\bid|сообщени\w*)\s*[:#№]?\s*(\d+)(?![\d.-])\b", current, re.I)
+    sources = {str(m.get('source_id') or '') for m in chunks}
+    named_sources = {source for source in sources if source and re.search(r'(?<![\w.-])' + re.escape(source) + r'(?![\w.-])', current, re.I)}
+    if named_sources:
+        chunks = [m for m in chunks if m.get('source_id') in named_sources]
+    tags = _telegram_hashtag_terms(query)
+    if tags:
+        chunks = [m for m in chunks if tags.intersection({re.sub(r'[^\w]|_', '', t).casefold()
+                  for t in ((m.get('chunk_metadata') or {}).get('hashtags')
+                            or re.findall(r'(?<!\w)#[\w]+', str(m.get('content') or '')))})]
+    if tags:
+        # In a tagged lookup, "про <technical term>" is an explicit literal constraint.
+        # Match across all parts of a message, then retain its complete evidence pool.
+        words = re.findall(r'\bпро\s+([a-zA-Z][a-zA-Z0-9_.+-]*)', current, re.I)
+        key = lambda m: (m.get('source_id'), (m.get('chunk_metadata') or {}).get('message_id'))
+        for word in words:
+            pattern = re.compile(r'(?<!\w)' + re.escape(word) + r'(?!\w)', re.I)
+            matching = {key(m) for m in chunks if pattern.search(str(m.get('content') or ''))}
+            chunks = [m for m in chunks if key(m) in matching]
+    if ids:
+        targets = {'message' + (left or right) for left, right in ids}
+        chunks = [m for m in chunks if (m.get('chunk_metadata') or {}).get('message_id') in targets]
     try:
-        bounds = telegram.date_bounds(query)
+        bounds = telegram.date_bounds(current if ids else query)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     if not bounds:
         return chunks
     return [m for m in chunks if (m.get('document_metadata') or {}).get('format') != 'telegram_html'
             or bounds[0] <= str((m.get('chunk_metadata') or {}).get('timestamp') or '')[:10] <= bounds[1]]
+
+
+def _telegram_id_query(query):
+    current = query.splitlines()[0] if query.splitlines() else query
+    ids = re.findall(r"\bmessage(\d+)\b|(?:\bid|сообщени\w*)\s*[:#№]?\s*(\d+)(?![\d.-])\b", current, re.I)
+    aliases = ['message'+(a or b) for a, b in ids] + sorted(_telegram_hashtag_terms(query))
+    return query + ('\n' + ' '.join(aliases) if aliases else '')
+
+
+def exact_telegram_quote(profile_id: int, query: str) -> str | None:
+    """Return an explicitly requested verbatim source without LLM rewriting/top-k loss."""
+    if not re.search(r'дослов|полный\s+текст|процитир|verbatim', query, re.I):
+        return None
+    ids = re.findall(r'\bmessage(\d+)\b|(?:\bid|сообщени\w*)\s*[:#№]?\s*(\d+)(?![\d.-])\b', query, re.I)
+    if not ids:
+        return None
+    targets = {'message' + (a or b) for a, b in ids}
+    documents = [d for d in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)
+                 if (d.get('metadata') or {}).get('format') == 'telegram_html']
+    if not documents:
+        return None
+    require_telegram_local(_embedding_provider())
+    try:
+        bounds = telegram.date_bounds(query)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    named = [d for d in documents if re.search(r'(?<![\w.-])' + re.escape(d['source_id']) + r'(?![\w.-])', query, re.I)]
+    if named:
+        documents = named
+    replies = []
+    for document in documents:
+        path = _resolve_source_file(profile_id, document['source_id'])
+        if not path.is_file():
+            continue
+        with path.open('rb') as stream:
+            data = telegram.parse_stream(stream)
+        for message in data['messages']:
+            if message['service'] or message['message_id'] not in targets:
+                continue
+            if bounds and not (bounds[0] <= str(message['timestamp'] or '')[:10] <= bounds[1]):
+                continue
+            text = message['text'] or '[Сообщение не содержит текста]'
+            fence = '`' * max(3, max((len(v) + 1 for v in re.findall(r'`+', text)), default=3))
+            replies.append(f"Источник: {document['source_id']} · ID: {message['message_id']}\n"
+                           f"Дата: {message['raw_date'] or 'не указана'} · Автор: {message['author'] or 'не указан'}\n\n"
+                           f"{fence}text\n{text}\n{fence}")
+    return '\n\n'.join(replies) if replies else 'Сообщение с указанным ID в выбранных Telegram-источниках не найдено.'
+
+
+def _telegram_hashtag_terms(query):
+    labels = re.findall(r'(?<!\w)#([\w]+)', query)
+    labels += re.findall(r"(?:х[эе]штег\w*|hashtag|тег\w*)\s+[«\"]?([a-zA-Z0-9_]+(?:[ \t]+[a-zA-Z0-9_]+)*)", query, re.I)
+    return {re.sub(r'[^\w]|_', '', label).casefold() for label in labels}
