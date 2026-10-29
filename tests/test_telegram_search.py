@@ -229,3 +229,24 @@ class RagIntegrationTests(unittest.TestCase):
             self.assertEqual(result['errors'][0]['code'], code)
             self.assertFalse(result['saved'])
             self.assertNotIn('synthetic private marker', str(result['errors']))
+
+    def test_34_synthetic_html_uploads_totaling_69_mib(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from backend.apps.rag.routes import router
+        size = (69 * 1024 * 1024 + 33) // 34
+        raw = HTML + b'<!--' + b'x' * (size - len(HTML) - 7) + b'-->'
+        app = FastAPI()
+        app.include_router(router)
+        saved = []
+        with TestClient(app) as client:
+            # The UI byte budget sends these files in batches of 9,9,9,7.
+            for start in range(0, 34, 9):
+                files = [('files', (f'synthetic-{i}.html', raw, 'text/html'))
+                         for i in range(start, min(34, start + 9))]
+                response = client.post('/rag/files', params={'profile_id':self.profile}, files=files)
+                self.assertEqual(response.status_code, 200)
+                self.assertFalse(response.json()['errors'])
+                saved.extend(response.json()['saved'])
+        self.assertEqual(len(set(saved)), 34)
+        self.assertTrue(all((self.path.parent/name).stat().st_size == size for name in saved))

@@ -1,4 +1,4 @@
-import { ragUploadReport, describeRagUploadError } from "./rag_upload.mjs";
+import { ragUploadReport, describeRagUploadError, uploadRagBatches } from "./rag_upload.mjs";
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 import { parseOllamaInstallInput } from "./ollama_install.mjs";
 import { buildSelectableChatModels } from "./chat_model_catalog.mjs";
@@ -8788,22 +8788,33 @@ async function uploadRagFiles(files) {
   }
   const profileId = state.activeProfileId;
   state.ragUploadReport = null;
-  const formData = new FormData();
-  selectedFiles.forEach((file) => formData.append("files", file));
   state.ragBusy = true;
   renderRagPanel();
   try {
-    const result = await request(`/rag/files?profile_id=${encodeURIComponent(profileId)}`, {
-      method: "POST",
-      body: formData,
-    });
-    const report = ragUploadReport(result);
-    for (const failure of Array.isArray(result?.errors) ? result.errors : []) {
-      console.error("[RAG upload] Файл отклонён", {
+    const result = await uploadRagBatches(selectedFiles, async (batch) => {
+      const formData = new FormData();
+      batch.forEach((file) => formData.append("files", file));
+      return request(`/rag/files?profile_id=${encodeURIComponent(profileId)}`, {
+        method: "POST", body: formData,
+      });
+    }, {
+      onProgress: (progress) => {
+        state.ragUploadReport = {
+          profileId, tone: "neutral",
+          details: `RAG: обработано ${progress.processed}/${progress.total}, добавлено ${progress.saved.length}, ошибок ${progress.errors.length}.`,
+        };
+        renderRagPanel();
+      },
+      onFileError: (failure) => console.error("[RAG upload] Файл отклонён", {
         code: failure.code || failure.error || "unknown_upload_error",
         reason: failure.message || failure.error || "Неизвестная ошибка загрузки",
-      });
-    }
+      }),
+      onBatchError: (error) => console.error("[RAG upload] Ошибка запроса", {
+        code: error.code || "rag_upload_request_failed",
+        reason: error.message || "Неизвестная ошибка запроса", status: error.status || null,
+      }),
+    });
+    const report = ragUploadReport(result);
     state.ragUploadReport = { ...report, profileId };
     if (String(state.activeProfileId) === String(profileId)) {
       state.ragStatus = result?.status || state.ragStatus;
