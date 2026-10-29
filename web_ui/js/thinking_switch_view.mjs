@@ -9,9 +9,8 @@ function escapeHtml(value) {
 
 /**
  * Render the mutually exclusive thinking choices as a sliding segmented switch.
- * `options` is an ordered list of { value, label } entries; pass only explicit
- * runtime choices here so Auto can remain its own menu item. Values are escaped
- * for markup but otherwise preserved exactly for the controller to read back.
+ * `options` is an ordered list of { value, label, title? } entries including Auto.
+ * Values are escaped for markup and preserved exactly for the controller.
  */
 export function renderThinkingSegments(options, selectedValue, disabled = false) {
   const segments = Array.isArray(options)
@@ -25,8 +24,9 @@ export function renderThinkingSegments(options, selectedValue, disabled = false)
     const value = escapeHtml(option.value);
     const label = escapeHtml(option.label ?? option.value);
     const selected = index === selectedIndex;
-    return `<button class="thinking-segments__option" type="button" role="radio" data-thinking-segment="${value}" data-thinking-mode="${value}" ${disabled ? "disabled" : ""} aria-checked="${selected}" tabindex="${selected || (selectedIndex < 0 && index === 0) ? "0" : "-1"}">${label}</button>`;
+    const title = escapeHtml(option.title ?? option.label ?? option.value);
+    return `<button class="thinking-segments__option" type="button" role="radio" title="${title}" data-thinking-segment="${value}" data-thinking-mode="${value}" ${disabled ? "disabled" : ""} aria-checked="${selected}" tabindex="${selected || (selectedIndex < 0 && index === 0) ? "0" : "-1"}">${label}</button>`;
   }).join("");
 
-  return `<div class="thinking-segments" role="radiogroup" aria-label="Thinking level" style="--thinking-segment-count:${segments.length};--thinking-selected-index:${Math.max(0, selectedIndex)};--thinking-has-selection:${selectedIndex >= 0 ? 1 : 0}">${items}</div>`;
+  return `<div class="thinking-segments" role="radiogroup" aria-label="Thinking mode" style="--thinking-segment-count:${segments.length};--thinking-selected-index:${Math.max(0, selectedIndex)};--thinking-has-selection:${selectedIndex >= 0 ? 1 : 0}">${items}</div>`;
 }

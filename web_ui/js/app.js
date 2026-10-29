@@ -5126,26 +5126,24 @@ function renderQuickThinkingControl(rawValue = null) {
   }
 
   [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
-    const explicit = options.filter((option) => option.value !== "auto");
-    const key = JSON.stringify(explicit);
+    const choices = options.map((option) => ({
+      ...option, title: option.label,
+      label: ({auto: "Auto", on: "On", off: "Off"})[option.value] || option.label,
+    }));
+    const key = JSON.stringify(choices);
     const existing = menu.querySelector?.(".thinking-segments");
     if (!existing || menu.dataset.optionsKey !== key) {
-      const auto = options.find((option) => option.value === "auto");
-      menu.innerHTML = (auto ? `<button type="button" role="menuitemradio" data-thinking-mode="auto" aria-checked="${visibleValue === "auto"}" class="${visibleValue === "auto" ? "thinking-mode-menu__item--active" : ""}" ${disabled ? "disabled" : ""}>${escapeHtml(auto.label)}</button>` : "")
-        + renderThinkingSegments(explicit, visibleValue, disabled);
+      menu.innerHTML = renderThinkingSegments(choices, visibleValue, disabled);
       menu.dataset.optionsKey = key;
     } else {
-      const index = explicit.findIndex((option) => option.value === visibleValue);
+      const index = choices.findIndex((option) => option.value === visibleValue);
       existing.style.setProperty("--thinking-selected-index", Math.max(0, index));
       existing.style.setProperty("--thinking-has-selection", index >= 0 ? 1 : 0);
       menu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
         const selected = button.dataset.thinkingMode === visibleValue;
         button.disabled = disabled;
         button.setAttribute("aria-checked", String(selected));
-        button.classList.toggle("thinking-mode-menu__item--active", selected && !button.hasAttribute("data-thinking-segment"));
-        if (button.hasAttribute("data-thinking-segment")) {
-          button.tabIndex = selected || (index < 0 && button.dataset.thinkingMode === explicit[0]?.value) ? 0 : -1;
-        }
+        button.tabIndex = selected || (index < 0 && button.dataset.thinkingMode === choices[0]?.value) ? 0 : -1;
       });
     }
   });

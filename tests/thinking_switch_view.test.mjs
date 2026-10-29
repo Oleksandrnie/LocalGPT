@@ -22,3 +22,10 @@ test('binary controls and arbitrary names remain exact and safely escaped',()=>{
  assert.match(renderThinkingSegments([{value:'X"<',label:'<script>'}],'X"<'),/X&amp;|X&quot;&lt;/);
  assert.doesNotMatch(renderThinkingSegments([{value:'x',label:'<script>'}],'x'),/<script>/);
 });
+test('Auto is a real first position beside both boolean runtime choices',()=>{
+ const html=renderThinkingSegments([{value:'auto',label:'Auto'},{value:'on',label:'On'},{value:'off',label:'Off'}],'auto');
+ assert.equal((html.match(/role="radio"/g)||[]).length,3);
+ assert.equal((html.match(/aria-checked="true"/g)||[]).length,1);
+ assert.match(html,/data-thinking-mode="auto"[^>]*aria-checked="true"/);
+ assert.match(html,/--thinking-segment-count:3;--thinking-selected-index:0;--thinking-has-selection:1/);
+});

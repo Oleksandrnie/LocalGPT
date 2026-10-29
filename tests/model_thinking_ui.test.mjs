@@ -157,3 +157,28 @@ test("header buttons show explicit modes and Auto has no enabled appearance", ()
     assert.match(els.quickThinkingMenu.innerHTML, new RegExp(`data-thinking-mode="${mode}"[^>]*aria-checked="true"`));
   }
 });
+
+test('one segmented control exposes Auto plus every declared boolean or named value',()=>{
+ for(const [metadata,values] of [[{values:[true,false]},['auto','on','off']],
+   [{values:['low','medium','high']},['auto','low','medium','high']]]) {
+  const h=harness({installed:[{name:'custom:latest',thinking:metadata}]});
+  for(const mode of values){
+   h.context.renderQuickThinkingControl(mode);
+   const markup=h.els.quickThinkingMenu.innerHTML;
+   assert.equal((markup.match(/role="radio"/g)||[]).length,values.length);
+   assert.equal((markup.match(/aria-checked="true"/g)||[]).length,1);
+   assert.match(markup,new RegExp(`data-thinking-mode="${mode}"[^>]*aria-checked="true"`));
+   assert.equal(h.els.quickThinkingMenu.innerHTML,h.els.quickThinkingMobileMenu.innerHTML);
+  }
+ }
+});
+
+test('boolean saves preserve Auto, forced On and forced Off without resetting budgets',async()=>{
+ const h=harness({installed:[{name:'custom:latest',thinking:{values:[true,false]}}]});
+ for(const mode of ['auto','on','off']){
+  h.els.quickThinkingControl.dataset.thinkingMode=mode;
+  await h.context.saveQuickThinkingModeFlow();
+  assert.equal(h.calls.at(-1).body.ollama_think,mode);
+  assert.equal(h.calls.at(-1).body.thinking_tokens,8192);
+ }
+});
