@@ -24,7 +24,7 @@ function harness(request = async () => ({status: 'matches', session_id: 's1', us
     ensureModelInstalled: () => {throw new Error('Search must not check model availability')},
     loadSessions: async ({preferredSessionId}) => {loads.push(preferredSessionId); state.currentSessionId = preferredSessionId},
   });
-  for (const name of ['cancelKnowledgeSearch', 'updateSendButtonState']) install(context, name);
+  for (const name of ['cancelKnowledgeSearch', 'syncKnowledgeSearchControl', 'updateSendButtonState']) install(context, name);
   for (const name of ['sendKnowledgeSearch', 'sendPromptText', 'cancelCurrentChatGeneration']) install(context, name, true);
   return {context, state, notices, loads, paths, button};
 }
@@ -56,7 +56,7 @@ test('loading, no matches, empty index and errors have distinct visible states',
   const h = harness(() => deferred.promise);
   const send = h.context.sendPromptText('quartz');
   assert.equal(h.state.isSending, true);
-  assert.equal(h.context.els.knowledgeSearchStatus.textContent, 'Ищу в базе…');
+  assert.equal(h.context.els.knowledgeSearchStatus.textContent, 'Планирую запрос и ищу в базе…');
   deferred.resolve({status: 'no_matches', session_id: 's1'});
   await send;
   assert.equal(h.context.els.knowledgeSearchStatus.textContent, 'Совпадений не найдено');
@@ -114,11 +114,12 @@ test('mode toggle cancels pending search and enables normal mode', async () => {
   const deferred = pending();
   const h = harness(() => deferred.promise);
   let toggle;
-  h.context.els.knowledgeSearchToggle = {addEventListener: (_type, callback) => {toggle = callback}, setAttribute() {}};
-  const start = source.indexOf('  els.knowledgeSearchToggle?.addEventListener("click", () => {');
+  h.context.els.knowledgeSearchToggle = {checked: false, addEventListener: (_type, callback) => {toggle = callback}, setAttribute() {}};
+  const start = source.indexOf('  els.knowledgeSearchToggle?.addEventListener("change", () => {');
   const end = source.indexOf('\n  });', start) + '\n  });'.length;
   vm.runInContext(source.slice(start, end), h.context);
   const old = h.context.sendPromptText('quartz');
+  h.context.els.knowledgeSearchToggle.checked = false;
   toggle();
   assert.equal(h.state.knowledgeSearchMode, false);
   assert.equal(h.state.knowledgeSearchRequest, null);
@@ -206,12 +207,29 @@ test('images are explicitly rejected and long query is rejected without sending'
   assert.deepEqual(h.paths, []);
 });
 
-test('mode help is keyboard and touch accessible and mode is explicitly pressed', () => {
+test('RAG menu search switch has accessible help and compact input indicator', () => {
   const html = fs.readFileSync(new URL('../web_ui/gui_html.html', import.meta.url), 'utf8');
   const css = fs.readFileSync(new URL('../web_ui/css/style.css', import.meta.url), 'utf8');
-  assert.match(html, /id="knowledgeSearchToggle"[\s\S]*?aria-pressed="false" aria-describedby="knowledgeSearchHelp"/);
+  assert.match(html, /id="knowledgeSearchToggle" type="checkbox" aria-describedby="knowledgeSearchHelp"/);
+  assert.match(html, /id="knowledgeSearchIndicator"/);
+  assert.doesNotMatch(html, /class="knowledge-search-control"/);
   assert.match(html, /class="knowledge-search-info" type="button"/);
-  assert.match(css, /\.knowledge-search-control:hover \.knowledge-search-help/);
-  assert.match(css, /\.knowledge-search-control:focus-within \.knowledge-search-help/);
-  assert.match(css, /@media \(pointer: coarse\)/);
+  assert.match(css, /\.knowledge-search-menu-row:hover \.knowledge-search-help/);
+  assert.match(css, /\.knowledge-search-menu-row:focus-within \.knowledge-search-help/);
+  assert.match(css, /\.knowledge-search-indicator\[hidden\]/);
+});
+
+test('search checkbox and input indicator reflect mode and compact status', () => {
+  const h = harness();
+  h.context.els.knowledgeSearchToggle = {};
+  h.context.els.knowledgeSearchIndicator = {setAttribute(name, value) {this[name] = value;}};
+  h.context.els.knowledgeSearchStatus.textContent = 'Found candidates';
+  h.context.syncKnowledgeSearchControl();
+  assert.equal(h.context.els.knowledgeSearchToggle.checked, true);
+  assert.equal(h.context.els.knowledgeSearchIndicator.hidden, false);
+  assert.match(h.context.els.knowledgeSearchIndicator.title, /Found candidates/);
+  h.state.knowledgeSearchMode = false;
+  h.context.syncKnowledgeSearchControl();
+  assert.equal(h.context.els.knowledgeSearchIndicator.hidden, true);
+  assert.equal(h.context.els.knowledgeSearchToggle.checked, false);
 });

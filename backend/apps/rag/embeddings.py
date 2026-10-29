@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import math
 import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib import error, request
+from urllib.parse import urlsplit
 
 from app import config
 
@@ -21,6 +23,30 @@ class EmbeddingConfigurationError(EmbeddingError):
 
 class EmbeddingProviderError(EmbeddingError):
     pass
+
+
+def is_loopback_endpoint(value: str) -> bool:
+    try:
+        parsed = urlsplit(str(value or ""))
+        if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            return False
+        host = parsed.hostname or ""
+        return host.lower() == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+class _RejectRedirects(request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise EmbeddingProviderError("local_endpoint_redirect_rejected")
+
+
+def open_local_request(req: request.Request, *, timeout: float):
+    """Keep local inference off proxies and reject redirects before resending data."""
+    if not is_loopback_endpoint(req.full_url):
+        raise EmbeddingConfigurationError("local_endpoint_required")
+    opener = request.build_opener(request.ProxyHandler({}), _RejectRedirects())
+    return opener.open(req, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -91,6 +117,7 @@ class OllamaEmbeddingProvider:
         self.base_url = _ollama_base_url(base_url)
         self.timeout_seconds = timeout_seconds
         self.warm_keep_alive = warm_keep_alive.strip() or "2m"
+        self.local_only = False
         self.descriptor = EmbeddingDescriptor(
             provider="ollama",
             model=model.strip(),
@@ -117,7 +144,8 @@ class OllamaEmbeddingProvider:
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+            transport = open_local_request if self.local_only else request.urlopen
+            with transport(req, timeout=self.timeout_seconds) as response:
                 parsed = json.loads(response.read().decode("utf-8"))
         except (error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             raise EmbeddingProviderError(f"ollama_embedding_request_failed:{exc}") from exc

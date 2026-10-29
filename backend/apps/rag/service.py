@@ -1085,6 +1085,9 @@ def search_with_diagnostics(
     top_k: int = 5,
     strategy: str | None = None,
     session_id: str | None = None,
+    filter_query: str | None = None,
+    embedding_provider: embeddings.EmbeddingProvider | None = None,
+    embedding_release: bool = True,
 ) -> dict[str, Any]:
     selected_strategy = str(strategy or retrieval_strategy()).strip().lower()
     if selected_strategy == "hybrid_v1":
@@ -1108,9 +1111,9 @@ def search_with_diagnostics(
     if not cleaned_query or top_k <= 0:
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
-    provider = _embedding_provider()
+    provider = embedding_provider or _embedding_provider()
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
-    raw_chunks = _filter_telegram_dates(raw_chunks, cleaned_query, provider)
+    raw_chunks = _filter_telegram_dates(raw_chunks, filter_query if filter_query is not None else cleaned_query, provider)
     if any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in raw_chunks):
         cleaned_query = _telegram_id_query(cleaned_query)
     if not raw_chunks:
@@ -1124,7 +1127,7 @@ def search_with_diagnostics(
     )
     if semantic_enabled:
         facets = retrieval.split_query_facets(cleaned_query)
-        vectors = _embed_texts(provider, [cleaned_query, *[str(item["query"]) for item in facets]])
+        vectors = _embed_texts(provider, [cleaned_query, *[str(item["query"]) for item in facets]], release=embedding_release)
         query_vector = vectors[0]
         facet_vectors = {
             facet["facet_id"]: vector
@@ -1394,12 +1397,14 @@ def migrate_legacy_root_files(profile_id: int) -> dict[str, Any]:
 
 
 def require_telegram_local(provider=None):
-    from urllib.parse import urlsplit
-    host = urlsplit(config.SETTINGS.base_url).hostname
-    if host not in {'localhost', '127.0.0.1', '::1'}:
+    if not embeddings.is_loopback_endpoint(config.SETTINGS.base_url):
         raise HTTPException(409, 'telegram_requires_local_model_endpoint')
-    if provider is not None and provider.descriptor.provider != 'local_hash':
-        raise HTTPException(409, 'telegram_requires_local_hash_embeddings')
+    if provider is None or provider.descriptor.provider == 'local_hash':
+        return
+    if isinstance(provider, embeddings.OllamaEmbeddingProvider) and embeddings.is_loopback_endpoint(provider.base_url):
+        provider.local_only = True
+        return
+    raise HTTPException(409, 'telegram_requires_verified_local_embeddings')
 
 
 def protect_telegram_profile(profile_id):

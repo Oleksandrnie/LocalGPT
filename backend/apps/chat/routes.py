@@ -755,7 +755,8 @@ def search_knowledge(req: KnowledgeSearchRequest) -> dict[str, Any]:
     query = req.query.strip()
     if not query:
         raise HTTPException(422, "knowledge_search_query_required")
-    result = knowledge_search.search(req.profile_id, query, session_id=session_id, top_k=req.top_k)
+    result = knowledge_search.search(req.profile_id, query, session_id=session_id, top_k=req.top_k,
+                                     model_name=req.model_name or str((session or {}).get("model_name") or ""))
     # Retrieval failures leave history untouched; revalidate ownership before
     # writing, since the user can delete a profile/chat during a long lookup.
     _get_profile_or_404(int(profile["id"]))

@@ -215,6 +215,7 @@ const els = {
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
   knowledgeSearchToggle: document.getElementById("knowledgeSearchToggle"),
+  knowledgeSearchIndicator: document.getElementById("knowledgeSearchIndicator"),
   knowledgeSearchStatus: document.getElementById("knowledgeSearchStatus"),
   composerAttachments: document.getElementById("composerAttachments"),
   promptInput: document.getElementById("promptInput"),
@@ -2940,7 +2941,22 @@ function autoResizePrompt() {
   els.promptInput.style.height = `${nextHeight}px`;
 }
 
+function syncKnowledgeSearchControl() {
+  if (els.knowledgeSearchToggle) {
+    els.knowledgeSearchToggle.checked = Boolean(state.knowledgeSearchMode);
+    els.knowledgeSearchToggle.disabled = !state.activeProfileId || (state.isSending && !state.knowledgeSearchRequest);
+  }
+  const status = els.knowledgeSearchStatus?.textContent || "План → поиск → цитаты";
+  if (els.knowledgeSearchIndicator) {
+    els.knowledgeSearchIndicator.hidden = !state.knowledgeSearchMode;
+    els.knowledgeSearchIndicator.title = `Поиск по базе включён. ${status}`;
+    els.knowledgeSearchIndicator.setAttribute("aria-label", `Поиск по базе включён. ${status}. Открыть настройки поиска`);
+  }
+  els.promptInput?.closest?.(".composer__input-wrap")?.classList.toggle("composer__input-wrap--knowledge-search", Boolean(state.knowledgeSearchMode));
+}
+
 function updateSendButtonState() {
+  syncKnowledgeSearchControl();
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
   const hasReadyAttachments = state.chatAttachments.some((item) => item.status === "ready" && item.server?.id);
@@ -8507,6 +8523,7 @@ function positionRagQuickMenu(clientX, clientY) {
 }
 
 function renderRagQuickMenu() {
+  syncKnowledgeSearchControl();
   renderRagButton();
   if (!els.ragQuickEnabledToggle) return;
   els.ragQuickEnabledToggle.disabled = !state.activeProfileId;
@@ -8547,6 +8564,7 @@ function renderRagEmbeddingGeneration(status) {
     unknown: "Статус неизвестен",
   };
   const descriptor = status?.embedding || operation?.embedding || {};
+  const lexicalOnly = descriptor.provider === "local_hash";
   const provider = [descriptor.provider, descriptor.model, descriptor.version]
     .map((value) => String(value || "").trim())
     .filter(Boolean)
@@ -8575,10 +8593,11 @@ function renderRagEmbeddingGeneration(status) {
     els.ragEmbeddingCard.dataset.state = stateName;
   }
   if (els.ragEmbeddingState) {
-    els.ragEmbeddingState.textContent = labels[stateName] || labels.unknown;
+    els.ragEmbeddingState.textContent = stateName === "ready" && lexicalOnly
+      ? "Лексический индекс готов" : (labels[stateName] || labels.unknown);
   }
   if (els.ragEmbeddingDetails) {
-    els.ragEmbeddingDetails.textContent = details;
+    els.ragEmbeddingDetails.textContent = details + (lexicalOnly ? " • семантические embeddings не настроены" : "");
   }
   if (els.ragReindexProgress) {
     els.ragReindexProgress.hidden = !operationActive;
@@ -9869,7 +9888,7 @@ function cancelKnowledgeSearch({ silent = false } = {}) {
     autoResizePrompt();
   }
   if (els.knowledgeSearchStatus) {
-    els.knowledgeSearchStatus.textContent = state.knowledgeSearchMode ? "Активен поиск · без LLM" : "";
+    els.knowledgeSearchStatus.textContent = state.knowledgeSearchMode ? "План → поиск → цитаты" : "";
   }
   renderMessages();
   updateSendButtonState();
@@ -9910,7 +9929,7 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
     status: "completed", profileId: operation.profileId, sessionId: operation.sessionId,
     acceptedSessionId: operation.sessionId,
   };
-  if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = "Ищу в базе…";
+  if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = "Планирую запрос и ищу в базе…";
   renderMessages();
   if (clearInput && els.promptInput) {
     els.promptInput.value = "";
@@ -9924,7 +9943,8 @@ async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds
         model_name: String(state.selectedLlmModel || "") },
     });
     if (!visible()) return;
-    const statusText = result.status === "matches" ? "Фрагменты найдены · без LLM"
+    const searchDetails = result.semantic?.status === "ready" ? "слова + семантика" : "по словам · семантика не настроена";
+    const statusText = result.status === "matches" ? `Фрагменты найдены · ${searchDetails}`
       : result.status === "empty_index" ? "Индекс пуст · добавьте и проиндексируйте источники"
       : "Совпадений не найдено";
     if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = statusText;
@@ -10725,21 +10745,26 @@ async function resetDatabaseFully() {
 }
 
 function bindEvents() {
-  els.knowledgeSearchToggle?.addEventListener("click", () => {
+  els.knowledgeSearchToggle?.addEventListener("change", () => {
     if (state.isSending && !state.knowledgeSearchRequest) {
       setFooter("Сначала остановите текущий ответ, затем переключите режим.", "warning");
+      syncKnowledgeSearchControl();
       return;
     }
+    const nextMode = Boolean(els.knowledgeSearchToggle.checked);
     cancelKnowledgeSearch({ silent: true });
-    state.knowledgeSearchMode = !state.knowledgeSearchMode;
-    els.knowledgeSearchToggle.setAttribute("aria-pressed", String(state.knowledgeSearchMode));
+    state.knowledgeSearchMode = nextMode;
     els.knowledgeSearchStatus.textContent = state.knowledgeSearchMode
-      ? "Активен поиск · без LLM" : "";
+      ? "План → поиск → цитаты" : "";
     if (state.knowledgeSearchMode && state.chatAttachments.length) {
       setFooter("Поиск принимает текст. Уберите изображения из поля ввода или отключите поиск.", "warning");
     }
     updateSendButtonState();
     renderChatModelNotice();
+  });
+  els.knowledgeSearchIndicator?.addEventListener("click", () => {
+    openRagQuickMenu();
+    window.setTimeout(() => els.knowledgeSearchToggle?.focus(), 0);
   });
   els.toggleSidebarButton?.addEventListener("click", () => toggleMobileSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());

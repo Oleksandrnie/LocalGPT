@@ -2597,56 +2597,72 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     scrollbar-width: thin;
 }
 
-.knowledge-search-control {
-    grid-column: 1 / -1;
+.knowledge-search-menu-row {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 8px;
-    position: relative;
-    flex-wrap: wrap;
+    gap: 2px;
+    min-height: 44px;
 }
 
-.knowledge-search-toggle[aria-pressed="true"] {
-    color: var(--color-text, #fff);
-    background: rgba(37, 99, 235, 0.18);
-    border: 2px solid #568ef7;
+.knowledge-search-menu-toggle {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.knowledge-search-menu-toggle input[type="checkbox"] {
+    flex: 0 0 var(--switch-width);
+    width: var(--switch-width);
+    height: var(--switch-height);
 }
 
 .knowledge-search-info {
-    min-width: 32px;
-    min-height: 32px;
-    border-radius: 50%;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    color: var(--text-muted);
+    font-weight: 700;
 }
 
-.knowledge-search-status {
-    font-size: 12px;
-    color: var(--color-text-muted, #94a3b8);
+.knowledge-search-info:hover,
+.knowledge-search-info:focus-visible {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
 }
 
 .knowledge-search-help {
     visibility: hidden;
     position: absolute;
-    bottom: calc(100% + 8px);
-    left: 0;
-    z-index: 30;
-    max-width: min(420px, calc(100vw - 48px));
-    padding: 12px;
-    border: 1px solid #568ef7;
-    border-radius: 8px;
-    background: #172338;
-    color: #fff;
-    font-size: 13px;
+    right: 0;
+    bottom: calc(100% + 6px);
+    z-index: var(--z-tooltip);
+    width: min(360px, calc(100vw - 32px));
+    padding: 12px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: var(--bg-elevated);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    font-size: 12px;
     line-height: 1.5;
 }
 
-.knowledge-search-control:hover .knowledge-search-help,
-.knowledge-search-control:focus-within .knowledge-search-help {
+.knowledge-search-menu-row:hover .knowledge-search-help,
+.knowledge-search-menu-row:focus-within .knowledge-search-help {
     visibility: visible;
 }
 
-@media (pointer: coarse) {
-    .knowledge-search-info, .knowledge-search-toggle { min-height: 44px; }
-    .knowledge-search-info { min-width: 44px; }
+.knowledge-search-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 .composer-attachments[hidden] {
@@ -2840,6 +2856,10 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     text-align: left;
 }
 
+.composer__input-wrap--knowledge-search textarea {
+    padding-right: 96px;
+}
+
 .composer textarea::placeholder {
     color: var(--text-soft);
     text-align: left;
@@ -2859,6 +2879,45 @@ body.theme-light .settings-icon-button .settings-slider-knob {
     color: var(--text-muted);
     transform: translateY(-50%);
     transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.composer__input-wrap--knowledge-search .input-mic-button {
+    right: 48px;
+}
+
+.knowledge-search-indicator {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    background: rgba(124, 92, 255, 0.16);
+    color: var(--accent-primary);
+    transform: translateY(-50%);
+    transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.knowledge-search-indicator[hidden] {
+    display: none;
+}
+
+.knowledge-search-indicator:hover,
+.knowledge-search-indicator:focus-visible {
+    background: rgba(124, 92, 255, 0.25);
+    color: var(--accent-hover);
+}
+
+.knowledge-search-indicator svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
 }
 
 .input-mic-button:hover {
@@ -6884,6 +6943,23 @@ body.theme-light .tool-window__resize::before {
 
     .input-mic-button {
         right: 0;
+        background: transparent;
+    }
+
+    .composer__input-wrap--knowledge-search textarea {
+        padding-right: 102px;
+    }
+
+    .composer__input-wrap--knowledge-search .input-mic-button {
+        right: 48px;
+    }
+
+    .knowledge-search-indicator {
+        right: 0;
+        width: var(--mobile-touch-target);
+        height: var(--mobile-touch-target);
+        min-width: var(--mobile-touch-target);
+        min-height: var(--mobile-touch-target);
         background: transparent;
     }
 

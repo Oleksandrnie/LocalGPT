@@ -192,14 +192,6 @@
                 aria-label="Перейти к последнему сообщению" title="Перейти к последнему сообщению">↓</button>
 
             <form class="composer" id="composerForm">
-                <div class="knowledge-search-control">
-                    <button class="button button--ghost knowledge-search-toggle" id="knowledgeSearchToggle"
-                        type="button" aria-pressed="false" aria-describedby="knowledgeSearchHelp">Поиск в базе</button>
-                    <button class="knowledge-search-info" type="button" aria-label="Как работает поиск в базе"
-                        aria-describedby="knowledgeSearchHelp">?</button>
-                    <span class="knowledge-search-help" id="knowledgeSearchHelp" role="tooltip">Ищет исходные фрагменты в индексированной базе текущего профиля. Возвращает цитаты и источники без ответа LLM. Локальный поиск по словам; выдача ограничена и не гарантирует полноту.</span>
-                    <span class="knowledge-search-status" id="knowledgeSearchStatus" role="status" aria-live="polite"></span>
-                </div>
                 <div class="composer-attachments" id="composerAttachments" role="list"
                     aria-label="Изображения к сообщению" aria-live="polite" hidden></div>
                 <div class="composer__tools">
@@ -229,6 +221,15 @@
                             <path
                                 d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V7a3.75 3.75 0 0 0-7.5 0v4.5A3.75 3.75 0 0 0 12 15.25Zm6.25-3.75a.75.75 0 0 0-1.5 0 4.75 4.75 0 1 1-9.5 0 .75.75 0 0 0-1.5 0 6.26 6.26 0 0 0 5.5 6.21V20H9.5a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-1.75v-2.29a6.26 6.26 0 0 0 5.5-6.21Z">
                             </path>
+                        </svg>
+                    </button>
+                    <button class="knowledge-search-indicator" id="knowledgeSearchIndicator" type="button"
+                        aria-label="Поиск по базе включён. Открыть настройки RAG" title="Поиск по базе включён"
+                        aria-haspopup="menu" aria-controls="ragQuickMenu" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="10.8" cy="10.8" r="6.3"></circle>
+                            <path d="m15.4 15.4 4.2 4.2"></path>
+                            <path d="M8.2 10.8h5.2M10.8 8.2v5.2"></path>
                         </svg>
                     </button>
                     <div class="voice-model-menu" id="voiceModelMenu" hidden role="menu"
@@ -1345,6 +1346,7 @@
 
                     <p class="inline-status" id="ragStatusText">Добавляйте Markdown или HTML-выгрузки Telegram и индексируйте их для активного профиля.</p>
                     <p class="subtle">Переиндексация запускается только вручную и может временно загрузить локальную embedding-модель.</p>
+                    <p class="subtle">local_hash — поиск по словам. Для семантического поиска нужна установленная локальная Ollama embedding-модель: задайте RAG_EMBEDDING_PROVIDER=ollama, RAG_EMBEDDING_MODEL, RAG_EMBEDDING_VERSION и RAG_EMBEDDING_DIMENSIONS в .env, перезапустите backend и вручную переиндексируйте базу. Смена модели сама по себе не меняет существующий индекс.</p>
                     <div id="ragUploadReport" class="inline-status" role="status" aria-live="polite" style="white-space: pre-wrap; overflow-wrap: anywhere" hidden></div>
                     <div class="rag-file-list" id="ragFileList"></div>
                 </section>
@@ -1358,7 +1360,17 @@
             <input id="ragQuickEnabledToggle" type="checkbox" />
             <span>Подмешивать RAG-контекст</span>
         </label>
+        <div class="knowledge-search-menu-row">
+            <label class="rag-quick-menu__item knowledge-search-menu-toggle">
+                <input id="knowledgeSearchToggle" type="checkbox" aria-describedby="knowledgeSearchHelp" />
+                <span>Поиск по базе</span>
+            </label>
+            <button class="knowledge-search-info" type="button" aria-label="Как работает поиск по базе"
+                aria-describedby="knowledgeSearchHelp">?</button>
+            <span class="knowledge-search-help" id="knowledgeSearchHelp" role="tooltip">Локальная выбранная модель составляет план поиска. Ищем по словам и семантически, если embeddings настроены. В ответе — дословные цитаты из найденных источников с ID.</span>
+        </div>
     </div>
+    <span class="knowledge-search-status" id="knowledgeSearchStatus" role="status" aria-live="polite"></span>
 
     <div class="modal-backdrop" id="confirmBackdrop" hidden>
         <section class="settings-panel settings-panel--confirm" role="dialog" aria-modal="true"

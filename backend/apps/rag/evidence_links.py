@@ -33,7 +33,7 @@ def attach_links(evidence: list[dict], *, candidates: list[dict], query: str,
         if not candidate:
             continue
         # These candidates must already have passed profile/session-scoped retrieval.
-        chunk_meta = candidate.get('chunk_metadata') or {}
+        chunk_meta = candidate.get('chunk_metadata') or candidate.get('metadata') or {}
         direct = telegram_permalink(chunk_meta.get('message_url'))
         if direct:
             item['links'].append({'label': 'Открыть сообщение в Telegram', 'url': direct, 'kind': 'telegram'})
