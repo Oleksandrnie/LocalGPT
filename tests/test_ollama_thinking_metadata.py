@@ -36,6 +36,48 @@ class OllamaThinkingMetadataTests(unittest.TestCase):
         self.assertNotIn("thinking", model_service._show_json_details({"capabilities": ["thinking"]}))
         self.assertNotIn("thinking", model_service._show_plain_details("Capabilities\n  thinking\n"))
 
+    def test_native_capability_and_boolean_template_expose_on_off_without_raw_template(self):
+        payload = {
+            "capabilities": ["completion", "thinking"],
+            "template": "{{ if and .IsThinkSet (not .Think) }}disabled{{ else }}enabled{{ end }}",
+        }
+        details = model_service._show_json_details(payload)
+        self.assertEqual(details["thinking"], {"values": [True, False], "default": None})
+        self.assertNotIn("template", details)
+        self.assertTrue(details["capabilities_confirmed"])
+
+    def test_qwen3_architecture_accepts_older_is_think_set_template(self):
+        payload = {
+            "capabilities": ["completion", "thinking"],
+            "model_info": {"general.architecture": "qwen3"},
+            "template": "{{ if not .IsThinkSet }}{{ .Thinking }}{{ end }}",
+        }
+        self.assertEqual(model_service._show_json_details(payload)["thinking"],
+                         {"values": [True, False], "default": None})
+        payload["model_info"] = {"general.architecture": "unknown"}
+        self.assertNotIn("thinking", model_service._show_json_details(payload))
+
+    def test_capability_alone_or_template_alone_cannot_invent_control(self):
+        for payload in [
+            {"capabilities": ["thinking"]},
+            {"capabilities": ["thinking"], "template": "{{ .Thinking }}"},
+            {"template": "{{ if .IsThinkSet }}{{ .Think }}{{ end }}"},
+            {"capabilities": ["completion"], "template": "{{ .IsThinkSet }}{{ .Think }}"},
+        ]:
+            with self.subTest(payload=payload):
+                self.assertNotIn("thinking", model_service._show_json_details(payload))
+
+    def test_explicit_provider_control_wins_over_native_template_evidence(self):
+        for raw, expected in [
+            ({"values": [False], "default": False}, {"values": [False], "default": False}),
+            ({"values": ["low", "high"], "default": "low"}, {"values": ["low", "high"], "default": "low"}),
+            (None, None),
+            ({"values": []}, None),
+        ]:
+            with self.subTest(raw=raw):
+                payload = {"capabilities": ["thinking"], "template": "{{ .IsThinkSet }}{{ .Think }}", "thinking": raw}
+                self.assertEqual(model_service._show_json_details(payload).get("thinking"), expected)
+
     def test_default_must_be_a_declared_typed_value(self):
         for default in (None, 0, 1, "high", {}, "/secret/path"):
             with self.subTest(default=default):
@@ -72,6 +114,26 @@ class OllamaThinkingMetadataTests(unittest.TestCase):
             patch.object(model_service.subprocess, "run", return_value=completed),
         ):
             self.assertEqual(model_service._show_model_details("custom")["thinking"]["values"], [False])
+
+    def test_inventory_propagates_native_boolean_template_metadata_to_custom_models(self):
+        listing = json.dumps({"name": "renamed-hybrid:latest"})
+        native = {"capabilities": ["completion", "thinking"],
+                  "template": "{{ if .IsThinkSet }}{{ if .Think }}on{{ else }}off{{ end }}{{ end }}"}
+        with (
+            patch.object(model_service.config, "MODEL_CATALOG", []),
+            patch.object(model_service.config, "VISION_MODEL_CATALOG", []),
+            patch.object(model_service.config, "UTILITY_MODEL_CATALOG", []),
+            patch.object(model_service.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=listing)),
+            patch.object(model_service, "urlopen", return_value=io.BytesIO(json.dumps(native).encode())),
+            patch.object(model_service, "_list_active_models", return_value=[]),
+            patch.object(model_service, "_pull_statuses", return_value=[]),
+            patch.object(model_service, "_inspect_storage_manifests", return_value=({}, {})),
+            patch.object(model_service, "_list_partial_blobs", return_value=[]),
+        ):
+            result = model_service.list_models()
+        self.assertEqual(result["installed"][0]["thinking"], {"values": [True, False], "default": None})
+        self.assertFalse(result["installed"][0]["configured"])
+        self.assertNotIn("template", result["installed"][0]["details"])
 
     def test_inventory_propagates_custom_and_catalog_metadata_without_raw_fields(self):
         catalog_model = "catalog:latest"

@@ -77,7 +77,7 @@ test("reasoning controls cover focus, themes, and mobile sizing", () => {
 });
 
 test("user and completed assistant messages share an editable Chat to RAG dialog", () => {
-  assert.match(javascript, /const canExportChat = hasContent && \(role === "user" \|\| \(role === "assistant" && status === "completed"\)\)/);
+  assert.match(javascript, /const canExportChat = !message.pending && hasContent && \(role === "user" \|\| \(role === "assistant" && status === "completed"\)\)/);
   assert.match(javascript, /data-chat-rag-index=/);
   assert.match(javascript, /openChatRagDialog\(chatRagButton\.dataset\.chatRagIndex, chatRagButton\)/);
   assert.match(javascript, /isChatExport \? "\/rag\/chat-contexts" : "\/rag\/vision-contexts"/);
@@ -86,7 +86,7 @@ test("user and completed assistant messages share an editable Chat to RAG dialog
 });
 
 test("user and assistant Copy share the raw message clipboard path", () => {
-  assert.match(javascript, /const canCopy = hasContent && \(role === "user" \|\| role === "assistant"\)/);
+  assert.match(javascript, /const canCopy = !message.pending && hasContent && \(role === "user" \|\| role === "assistant"\)/);
   assert.match(javascript, /data-copy-index="\$\{index\}"/);
   assert.match(javascript, /const message = Number\.isFinite\(index\) \? state\.messages\[index\] : null;[\s\S]*await copyText\(message\?\.content \|\| ""\)/);
   assert.match(javascript, /setFooter\("Сообщение скопировано\.", "success"\)/);

@@ -1,3 +1,4 @@
+import { renderThinkingSegments } from "./thinking_switch_view.mjs";
 import { ragUploadReport, describeRagUploadError, uploadRagBatches } from "./rag_upload.mjs";
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 import { parseOllamaInstallInput } from "./ollama_install.mjs";
@@ -518,6 +519,7 @@ const state = {
   sessionContextMenuSessionId: null,
   asrHistoryContextMenuTranscriptId: null,
   messages: [],
+  pendingChatMessage: null,
   messageAttachments: {},
   visionRagSourceMessageId: null,
   visionRagExportKind: null,
@@ -1610,6 +1612,16 @@ function closeQuickThinkingMenu() {
   });
 }
 
+function syncThinkingMenuBounds(menu) {
+  if (!menu || menu.hidden) return;
+  menu.style.transform = "";
+  const rect = menu.getBoundingClientRect();
+  const left = (window.visualViewport?.offsetLeft || 0) + 12;
+  const right = left + (window.visualViewport?.width || window.innerWidth) - 24;
+  const shift = rect.left < left ? left - rect.left : rect.right > right ? right - rect.right : 0;
+  menu.style.transform = `translateX(${Math.round(shift)}px)`;
+}
+
 function toggleQuickThinkingMenu(forceState, source = "desktop") {
   const target = source === "mobile"
     ? { menu: els.quickThinkingMobileMenu, button: els.quickThinkingMobileButton }
@@ -1622,7 +1634,11 @@ function toggleQuickThinkingMenu(forceState, source = "desktop") {
   closeQuickThinkingMenu();
   target.menu.hidden = !nextState;
   target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
-  if (nextState) target.menu.querySelector("[aria-checked='true']")?.focus();
+  if (nextState) {
+    target.menu.querySelector("[aria-checked='true']")?.focus();
+    syncThinkingMenuBounds(target.menu);
+    requestAnimationFrame(() => syncThinkingMenuBounds(target.menu));
+  }
 }
 
 function renderQuickModelPicker() {
@@ -2456,9 +2472,10 @@ function taskFromAssistantMessage(message) {
 
 async function refreshCurrentSessionMessages({ sessionId = state.currentSessionId, scroll = false } = {}) {
   const targetSessionId = String(sessionId || "").trim();
+  const profileId = state.activeProfileId;
   if (!targetSessionId) return false;
-  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`);
-  if (String(state.currentSessionId || "") !== targetSessionId) {
+  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages?profile_id=${encodeURIComponent(profileId)}`);
+  if (String(state.currentSessionId || "") !== targetSessionId || String(state.activeProfileId) !== String(profileId)) {
     return false;
   }
   state.messages = Array.isArray(data?.messages) ? data.messages : [];
@@ -4152,7 +4169,12 @@ async function saveVisionContextToRag() {
 function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
-  const items = state.messages || [];
+  const pending = state.pendingChatMessage;
+  const stored = state.messages || [];
+  const pendingVisible = pending && String(pending.profileId) === String(state.activeProfileId)
+    && [pending.sessionId, pending.acceptedSessionId].includes(state.currentSessionId)
+    && !stored.some((message) => pending.persistedId && String(message.id) === String(pending.persistedId));
+  const items = pendingVisible ? [...stored, pending] : stored;
   state.renderedCodeBlocks = [];
   els.emptyState.hidden = items.length > 0;
   els.messageList.innerHTML = items
@@ -4165,13 +4187,13 @@ function renderMessages() {
       const errorText = String(message.error || "").trim();
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
-      const canCopy = hasContent && (role === "user" || role === "assistant");
+      const canCopy = !message.pending && hasContent && (role === "user" || role === "assistant");
       const hasReasoning = role === "assistant" && Boolean(message.has_reasoning);
       const canExportVision = role === "assistant"
         && status === "completed"
         && hasContent
         && Boolean(visionSourceUserMessageForIndex(index));
-      const canExportChat = hasContent && (role === "user" || (role === "assistant" && status === "completed"));
+      const canExportChat = !message.pending && hasContent && (role === "user" || (role === "assistant" && status === "completed"));
       const body = (() => {
         if (role !== "assistant") return formatRichMessage(content);
         if (status === "failed") {
@@ -4903,7 +4925,28 @@ function renderQuickThinkingControl(rawValue = null) {
   }
 
   [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
-    menu.innerHTML = options.map((option) => `<button type="button" role="menuitemradio" data-thinking-mode="${escapeHtml(option.value)}" class="${option.value === visibleValue ? "thinking-mode-menu__item--active" : ""}" aria-checked="${option.value === visibleValue}" ${disabled ? "disabled" : ""}>${escapeHtml(option.label)}</button>`).join("");
+    const explicit = options.filter((option) => option.value !== "auto");
+    const key = JSON.stringify(explicit);
+    const existing = menu.querySelector?.(".thinking-segments");
+    if (!existing || menu.dataset.optionsKey !== key) {
+      const auto = options.find((option) => option.value === "auto");
+      menu.innerHTML = (auto ? `<button type="button" role="menuitemradio" data-thinking-mode="auto" aria-checked="${visibleValue === "auto"}" class="${visibleValue === "auto" ? "thinking-mode-menu__item--active" : ""}" ${disabled ? "disabled" : ""}>${escapeHtml(auto.label)}</button>` : "")
+        + renderThinkingSegments(explicit, visibleValue, disabled);
+      menu.dataset.optionsKey = key;
+    } else {
+      const index = explicit.findIndex((option) => option.value === visibleValue);
+      existing.style.setProperty("--thinking-selected-index", Math.max(0, index));
+      existing.style.setProperty("--thinking-has-selection", index >= 0 ? 1 : 0);
+      menu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
+        const selected = button.dataset.thinkingMode === visibleValue;
+        button.disabled = disabled;
+        button.setAttribute("aria-checked", String(selected));
+        button.classList.toggle("thinking-mode-menu__item--active", selected && !button.hasAttribute("data-thinking-segment"));
+        if (button.hasAttribute("data-thinking-segment")) {
+          button.tabIndex = selected || (index < 0 && button.dataset.thinkingMode === explicit[0]?.value) ? 0 : -1;
+        }
+      });
+    }
   });
 
   if (els.ollamaThinkField) els.ollamaThinkField.hidden = !supported;
@@ -9205,7 +9248,15 @@ async function openSession(sessionId) {
   if (state.currentSessionId !== (sessionId || null) && state.chatAttachments.length) {
     await clearChatAttachments({ deleteRemote: true });
   }
+  const profileId = state.activeProfileId;
+  const previousSessionId = state.currentSessionId;
   state.currentSessionId = sessionId || null;
+  if (previousSessionId !== state.currentSessionId) {
+    state.messages = [];
+    state.messageAttachments = {};
+    state.latestTranscript = null;
+    renderMessages();
+  }
   writeStored(STORAGE_KEYS.activeSessionId, state.currentSessionId || "");
 
   if (!sessionId) {
@@ -9232,28 +9283,41 @@ async function openSession(sessionId) {
   applyCurrentSessionMeta();
 
   try {
-    const [messagesData, transcriptsData, attachmentsData] = await Promise.all([
-      request(`/sessions/${encodeURIComponent(sessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`),
-      request(`/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
-      request(`/chat/attachments?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
+    const [messagesResult, transcriptsResult, attachmentsResult] = await Promise.allSettled([
+      request(`/sessions/${encodeURIComponent(sessionId)}/messages?profile_id=${encodeURIComponent(profileId)}`),
+      request(`/transcripts?profile_id=${encodeURIComponent(profileId)}&session_id=${encodeURIComponent(sessionId)}`),
+      request(`/chat/attachments?profile_id=${encodeURIComponent(profileId)}&session_id=${encodeURIComponent(sessionId)}`),
     ]);
 
+    if (state.currentSessionId !== sessionId || String(state.activeProfileId) !== String(profileId)) return;
+    if (messagesResult.status === "rejected") throw messagesResult.reason;
+    const messagesData = messagesResult.value;
     state.messages = Array.isArray(messagesData?.messages) ? messagesData.messages : [];
-    state.messageAttachments = (Array.isArray(attachmentsData?.attachments) ? attachmentsData.attachments : [])
-      .reduce((groups, attachment) => {
-        const key = String(attachment?.message_id ?? "");
-        if (!key) return groups;
-        groups[key] = [...(groups[key] || []), attachment];
-        return groups;
-      }, {});
-    const transcripts = Array.isArray(transcriptsData?.transcripts) ? transcriptsData.transcripts : [];
-    state.latestTranscript = transcripts[0] || null;
+    if (attachmentsResult.status === "fulfilled") {
+      const attachmentsData = attachmentsResult.value;
+      state.messageAttachments = (Array.isArray(attachmentsData?.attachments) ? attachmentsData.attachments : [])
+        .reduce((groups, attachment) => {
+          const key = String(attachment?.message_id ?? "");
+          if (!key) return groups;
+          groups[key] = [...(groups[key] || []), attachment];
+          return groups;
+        }, {});
+    }
+    if (transcriptsResult.status === "fulfilled") {
+      const transcripts = transcriptsResult.value?.transcripts;
+      state.latestTranscript = Array.isArray(transcripts) ? transcripts[0] || null : null;
+    }
+    if (attachmentsResult.status === "rejected" || transcriptsResult.status === "rejected") {
+      setFooter("Сообщения загружены; часть вложений или транскриптов временно недоступна.", "warning");
+    }
     renderMessages();
     renderTranscriptStrip();
     scrollMessagesToBottom({ force: true });
     void recoverActiveChatTaskFromMessages();
   } catch (error) {
-    setFooter(`Не удалось загрузить чат: ${error.message || error}`, "error");
+    if (state.currentSessionId === sessionId && String(state.activeProfileId) === String(profileId)) {
+      setFooter(`Не удалось загрузить чат: ${error.message || error}`, "error");
+    }
   } finally {
     closeSidebar();
   }
@@ -9261,8 +9325,10 @@ async function openSession(sessionId) {
 
 async function loadSessions({ preferredSessionId = null } = {}) {
   if (!state.activeProfileId) return;
+  const profileId = state.activeProfileId;
   try {
-    const data = await request(`/sessions?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+    const data = await request(`/sessions?profile_id=${encodeURIComponent(profileId)}`);
+    if (String(state.activeProfileId) !== String(profileId)) return;
     state.sessions = Array.isArray(data?.sessions) ? data.sessions : [];
     renderSessionList();
 
@@ -9474,7 +9540,7 @@ async function saveShowRouterThinkingToggleFlow() {
   );
 }
 
-async function saveQuickThinkingModeFlow() {
+async function saveQuickThinkingModeFlow({ notify = true } = {}) {
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
   if (!state.activeProfileId || !modelName || !modelSupportsThinking(modelName)) {
     renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
@@ -9488,7 +9554,7 @@ async function saveQuickThinkingModeFlow() {
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
-    setFooter(`Thinking: ${nextMode} для текущей модели.`, "success");
+    if (notify) setFooter(`Thinking: ${nextMode} для текущей модели.`, "success");
   } catch (error) {
     renderModelSettings();
     setFooter(`Не удалось сохранить Thinking: ${error.message || error}`, "error");
@@ -9785,6 +9851,13 @@ async function sendPromptText(
     return;
   }
 
+  const profileId = state.activeProfileId;
+  const sessionId = state.currentSessionId;
+  state.pendingChatMessage = {
+    id: `pending-${Date.now()}`, role: "user", content: query, status: "completed", pending: true,
+    profileId, sessionId, acceptedSessionId: sessionId,
+  };
+  renderMessages();
   state.isSending = true;
   state.chatTaskId = null;
   const controller = new AbortController();
@@ -9798,10 +9871,12 @@ async function sendPromptText(
   }
 
   let activeTaskId = "";
+  const contextVisible = () => String(state.activeProfileId) === String(profileId)
+    && [sessionId, state.pendingChatMessage?.acceptedSessionId].includes(state.currentSessionId);
   try {
     const payload = {
       query,
-      profile_id: state.activeProfileId,
+      profile_id: profileId,
       model: selectedModel,
       model_name: selectedModel,
       stream: activeProfileStreamingEnabled(),
@@ -9810,9 +9885,7 @@ async function sendPromptText(
       payload.attachment_ids = normalizedAttachmentIds;
     }
 
-    if (state.currentSessionId) {
-      payload.session_id = state.currentSessionId;
-    }
+    if (sessionId) payload.session_id = sessionId;
 
     const task = await request("/chat/tasks", { method: "POST", body: payload, signal: controller.signal });
     if (consumeComposerAttachments && normalizedAttachmentIds.length) {
@@ -9821,11 +9894,17 @@ async function sendPromptText(
     activeTaskId = task?.id || task?.task_id || "";
     state.chatTaskStartController = null;
     state.chatTaskId = task?.id || null;
-    const nextSessionId = task?.session_id || state.currentSessionId;
-    state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
-    writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
+    const nextSessionId = task?.session_id || sessionId;
+    if (state.pendingChatMessage) {
+      state.pendingChatMessage.persistedId = task?.user_message_id;
+      state.pendingChatMessage.acceptedSessionId = nextSessionId;
+    }
+    if (contextVisible()) {
+      state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
+      writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
+    }
 
-    if (nextSessionId) {
+    if (nextSessionId && contextVisible()) {
       await loadSessions({ preferredSessionId: nextSessionId });
     }
 
@@ -9851,7 +9930,7 @@ async function sendPromptText(
     state.chatTaskId = null;
 
     if (String(completedTask?.state || "") === "cancelled") {
-      if (nextSessionId) {
+      if (nextSessionId && contextVisible()) {
         await loadSessions({
           preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
         });
@@ -9860,21 +9939,28 @@ async function sendPromptText(
       return;
     }
 
-    if (nextSessionId) {
+    if (nextSessionId && contextVisible()) {
       await loadSessions({
         preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
       });
     }
   } catch (error) {
+    if (clearInput && els.promptInput && !els.promptInput.value.trim()
+        && contextVisible()) {
+      els.promptInput.value = query;
+      autoResizePrompt();
+    }
     if (isAbortError(error)) {
       setFooter("Генерация ответа остановлена.", "warning");
       return;
     }
-    if (state.currentSessionId) {
+    if (state.currentSessionId && contextVisible()) {
       await loadSessions({ preferredSessionId: state.currentSessionId });
     }
     setFooter(`Ошибка чата: ${error.message || error}`, "error");
   } finally {
+    state.pendingChatMessage = null;
+    renderMessages();
     state.chatTaskId = null;
     state.chatTaskStartController = null;
     closeChatTaskEventSource();
@@ -10912,27 +10998,31 @@ function bindEvents() {
     const nextMode = thinkingSelection(button.dataset.thinkingMode, getModelThinkingMetadata(modelName));
     if (!els.quickThinkingControl) return;
     const trigger = event.currentTarget === els.quickThinkingMobileMenu ? els.quickThinkingMobileButton : els.quickThinkingButton;
-    closeQuickThinkingMenu();
-    trigger?.focus();
+    if (!button.hasAttribute("data-thinking-segment")) {
+      closeQuickThinkingMenu();
+      trigger?.focus();
+    }
     els.quickThinkingControl.dataset.thinkingMode = nextMode;
     if (els.quickThinkingMobileControl) {
       els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
     }
     renderQuickThinkingControl(nextMode);
-    await saveQuickThinkingModeFlow();
+    await saveQuickThinkingModeFlow({ notify: !button.hasAttribute("data-thinking-segment") });
   };
   els.quickThinkingMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   els.quickThinkingMobileMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
     menu.addEventListener("keydown", (event) => {
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-      const buttons = Array.from(menu.querySelectorAll("[data-thinking-mode]:not(:disabled)"));
+      if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const horizontal = ["ArrowLeft", "ArrowRight"].includes(event.key);
+      const buttons = Array.from(menu.querySelectorAll(horizontal ? "[data-thinking-segment]:not(:disabled)" : "[data-thinking-mode]:not(:disabled)"));
       if (!buttons.length) return;
       event.preventDefault();
       const current = buttons.indexOf(document.activeElement);
       const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
-        : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+        : (current + (["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1) + buttons.length) % buttons.length;
       buttons[next].focus();
+      if (horizontal) buttons[next].click();
     });
   });
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
@@ -11861,12 +11951,12 @@ async function bootstrap() {
   updateSendButtonState();
   bindEvents();
   await loadHealth();
-  await loadModels();
+  // History must not wait for optional voice/ASR/storage services.
+  await Promise.allSettled([loadModels(), loadProfiles()]);
   await loadWhisperModels({ silent: true });
   await loadStoragePaths();
   await loadTtsSettings({ silent: true });
   await loadTtsLibrary({ silent: true });
-  await loadProfiles();
   renderMessages();
   renderTranscriptStrip();
   renderContextSummary();

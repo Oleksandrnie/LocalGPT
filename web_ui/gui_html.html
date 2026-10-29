@@ -58,7 +58,9 @@
                                 <button class="thinking-mode-control__button" id="quickThinkingButton" type="button"
                                     aria-label="Режим thinking текущей LLM" aria-haspopup="menu"
                                     aria-expanded="false">Thinking</button>
-                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden></div>
+                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden>
+                                    <div id="quickThinkingSegments" hidden></div>
+                                </div>
                             </div>
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
@@ -118,7 +120,9 @@
                             </svg>
                         </button>
                         <div class="thinking-mode-menu thinking-mode-menu--mobile" id="quickThinkingMobileMenu"
-                            role="menu" hidden></div>
+                            role="menu" hidden>
+                            <div id="quickThinkingMobileSegments" hidden></div>
+                        </div>
                     </div>
                     <button class="button button--ghost topbar-icon-button rag-status-button" id="openRagButton"
                         type="button" aria-pressed="false" aria-label="Открыть RAG, выключен"

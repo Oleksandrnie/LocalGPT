@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
+import { renderThinkingSegments } from "../web_ui/js/thinking_switch_view.mjs";
 import { thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels } from "../web_ui/js/model_thinking.mjs";
 
 const source = await readFile(new URL("../web_ui/js/app.js", import.meta.url), "utf8");
@@ -50,7 +51,7 @@ function harness({ installed = [{ name: "custom:latest", thinking: levels }], ca
   const state = { installedModels: installed, activeProfileId: 1, selectedLlmModel: selected, modelSettingsState: { overrides: { output_tokens: 1024, thinking_tokens: 8192 } } };
   const calls = [];
   const context = vm.createContext({
-    state, els, calls, thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels,
+    state, els, calls, renderThinkingSegments, thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels,
     AUTO_MODEL_ID: "__auto_router__",
     MODEL_SETTINGS_OVERRIDE_KEYS: ["ollama_think", "output_tokens", "thinking_tokens"],
     getModelId: (item) => item?.id || item?.name,
