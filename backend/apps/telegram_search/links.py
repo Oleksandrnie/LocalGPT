@@ -20,5 +20,3 @@ def telegram_permalink(value: object) -> str | None:
     if parsed.path.split('/')[1].lower() in {'share', 'joinchat', 'addstickers', 'addemoji', 'proxy', 'socks', 'login', 'oauth', 'boost', 'invoice', 'contact', 'giftcode', 'addlist', 'addtheme', 'addstyle', 'setlanguage', 'confirmphone', 'resolve', 'web', 'call'}:
         return None
     return urlunsplit(('https', 't.me', parsed.path, '', ''))
-
-
