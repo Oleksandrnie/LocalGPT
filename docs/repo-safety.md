@@ -26,3 +26,5 @@ python scripts/setup_repo_safety.py gate --when commit
 ```
 
 Перед push hook автоматически проверит добавленные пути, Gitleaks по диапазону `origin/dev..HEAD` и AI Repo Safety push gate. При отсутствии Python-модуля или сканера операция остановится. Никогда не обходите это через `--no-verify`.
+
+Для TruffleHog hook передаёт в AI Repo Safety тот же target branch, который используется для path- и Gitleaks-проверки. Это не даёт внутреннему выбору `origin/main` просканировать постороннюю старую историю, если PR направляется в `dev`.

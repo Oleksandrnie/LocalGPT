@@ -64,4 +64,31 @@ fi
 BASE=${LOCALGPT_SAFETY_BASE:-origin/dev}
 "$PYTHON" scripts/check_commit_data.py --range "$BASE" || exit $?
 gitleaks git . --log-opts="$BASE..HEAD" --redact || exit $?
-exec "$PYTHON" -m ai_repo_safety gate --when push --target "$ROOT"
+
+# AI Repo Safety resolves TruffleHog's lower bound from the current branch's
+# upstream, then falls back to origin/main before origin/dev. For a new branch
+# or a repo whose main is older than dev, that can scan already-published
+# history and stop on unrelated legacy findings. Supply a temporary upstream
+# pointing at the configured target so the gate scans the same proposed range.
+case "$BASE" in
+  refs/remotes/*/*) BASE_REF=${BASE#refs/remotes/} ;;
+  */*) BASE_REF=$BASE ;;
+  *) echo "[repo-safety] target must be a remote branch such as origin/dev: $BASE" >&2; exit 2 ;;
+esac
+BASE_REMOTE=${BASE_REF%%/*}
+BASE_BRANCH=${BASE_REF#*/}
+CURRENT_BRANCH=$(git branch --show-current)
+if [ -z "$CURRENT_BRANCH" ]; then
+  echo "[repo-safety] cannot determine current branch; refusing push gate" >&2
+  exit 2
+fi
+if [ -n "${GIT_CONFIG_COUNT:-}" ]; then
+  echo "[repo-safety] GIT_CONFIG_COUNT is already set; cannot safely select target base" >&2
+  exit 2
+fi
+GIT_CONFIG_COUNT=2 \
+GIT_CONFIG_KEY_0="branch.${CURRENT_BRANCH}.remote" \
+GIT_CONFIG_VALUE_0="$BASE_REMOTE" \
+GIT_CONFIG_KEY_1="branch.${CURRENT_BRANCH}.merge" \
+GIT_CONFIG_VALUE_1="refs/heads/${BASE_BRANCH}" \
+  exec "$PYTHON" -m ai_repo_safety gate --when push --target "$ROOT"
