@@ -32,6 +32,13 @@ Do not create or switch to a separate branch for every task. Create or switch br
 
 Apply these routes to execution only. A direct user choice for a task takes precedence. When delegating, select the requested model and effort explicitly if the runtime supports it; report the effective executor only when runtime metadata exposes it. Do not start an independent audit automatically unless the user asks for it.
 
+## Parallel work and agents
+
+- For a request with multiple independent workstreams, delegate them to separate agents and run them in parallel when the runtime supports it. Prefer clear boundaries such as backend, frontend, tests, or disjoint file groups.
+- Before parallel edits, assign ownership so agents do not modify the same files. If workstreams are tightly coupled or share files, keep implementation under one coordinating agent and delegate only independent research or review.
+- The coordinating agent integrates the results, resolves conflicts, checks the combined diff, and runs the relevant validation before reporting completion.
+- Do not create agents for small, bounded tasks where coordination would cost more than the parallel work saves. Respect the model routes above and any explicit user choice.
+
 Only `.gitkeep` files may be proposed under `rag_sources/` or `app/data/`. Do not commit Telegram exports, user documents, databases, attachments, generated profile data, credentials, or other runtime files. Test fixtures must be synthetic and must not be copied from a user's real export.
 
 If any candidate file, filename, or added content appears to contain personal data, a real export, database/runtime data, credentials, or non-synthetic test material—or if its status is uncertain—stop. Do not commit, push, create a PR, or update an existing PR until the user decides how to handle it. Report only the relevant paths and ask the user; do not print suspected personal contents. Remove or replace approved data locally before rerunning the complete checks.
