@@ -1286,7 +1286,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
         self.assertEqual(results[0]["source_id"], "company.kb.pricing.md")
         self.assertIn("9 990 ₽", results[0]["content"])
 
-    def test_rag_ingest_accepts_only_markdown_and_removes_legacy_json_index(self):
+    def test_rag_ingest_supported_formats_and_removes_legacy_json_index(self):
         source_dir = rag_service.ensure_profile_source_dir(self.profile_id)
         md_path = source_dir / "plain.md"
         md_path.write_text("Первичная заметка.", encoding="utf-8")
@@ -1304,7 +1304,7 @@ class LocalGPTPipelineMemoryTestCase(unittest.TestCase):
 
         ingest = rag_service.ingest_sources(self.profile_id, force=True)
 
-        self.assertEqual(rag_service.SUPPORTED_SUFFIXES, {".md"})
+        self.assertEqual(rag_service.SUPPORTED_SUFFIXES, {".md", ".html"})
         self.assertEqual(ingest["scanned"], 1)
         self.assertEqual(ingest["indexed"], 1)
         self.assertEqual(ingest["removed_stale"], 1)

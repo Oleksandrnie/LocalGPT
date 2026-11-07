@@ -12,7 +12,7 @@ rag_sources/
 
 Profile directories создаются приложением по мере необходимости. RAG-файлы являются runtime data и не должны попадать в Git.
 
-Поддерживается только `.md`. Path resolution запрещает выход из profile source directory.
+Поддерживаются `.md` и Telegram Desktop `.html` (произвольные веб-страницы не принимаются). Path resolution запрещает выход из profile source directory.
 
 ## Ingestion
 
@@ -20,7 +20,7 @@ Profile directories создаются приложением по мере не
 
 1. создаёт/находит directory профиля;
 2. сканирует поддерживаемые файлы;
-3. читает и нормализует Markdown;
+3. читает Markdown либо разбирает сообщения Telegram HTML;
 4. создаёт chunks;
 5. считает embeddings;
 6. синхронизирует `source_documents`, `document_chunks`, `document_embeddings`;
@@ -53,7 +53,7 @@ Semantic provider передаёт `truncate=false`, валидирует чис
 
 Переключение `RAG_EMBEDDING_PROVIDER`/model/version/dimensions не конвертирует индекс автоматически: search возвращает `rag_embedding_reindex_required`, пока все доступные chunks не получат выбранное generation. Переиндексация сначала полностью рассчитывает новое поколение и только затем атомарно публикует его; если source chunks изменились во время расчёта, публикация отклоняется с `rag_embedding_source_changed`, а прежнее generation остаётся целым. Сохранённые generations позволяют выполнить rollback возвратом прежней конфигурации без повторного чтения corpus.
 
-`GET /rag/status` сообщает configured descriptor, `total_chunks`, `indexed_chunks`, `missing_chunks`, `pending_sources` и metadata доступных generations. Состояния имеют чёткий порядок: invalid provider configuration → `configuration_error`; новые/изменённые Markdown sources → `ingest_required`; отсутствующее configured generation → `reindex_required`; совпадающий source/index → `ready`. Absolute paths и raw exception text наружу не передаются.
+`GET /rag/status` сообщает configured descriptor, `total_chunks`, `indexed_chunks`, `missing_chunks`, `pending_sources` и metadata доступных generations. Состояния имеют чёткий порядок: invalid provider configuration → `configuration_error`; новые/изменённые Markdown/Telegram sources → `ingest_required`; отсутствующее configured generation → `reindex_required`; совпадающий source/index → `ready`. Absolute paths и raw exception text наружу не передаются.
 
 Semantic reindex запускается только явно через `POST /rag/reindex`; UI перед запуском показывает модель, объём chunks и предупреждение о локальной нагрузке. На весь backend допускается одна background operation, прогресс читается через profile-owned `GET /rag/reindex/{task_id}`. Task state process-local, поэтому после рестарта незавершённая operation исчезает, а UI повторно получает канонический generation state из SQLite. Это не silent download/reindex: установка модели и обычный ingest sources остаются отдельными действиями.
 
@@ -99,7 +99,7 @@ HTTP search ограничивает query 16 000 символами и `top_k` 
 
 Retrieval имеет два независимых ownership scope:
 
-- Markdown files из `rag_sources/profile-<id>/` являются явно profile-wide;
+- Markdown/Telegram files из `rag_sources/profile-<id>/` являются явно profile-wide;
 - `chat_context`, `vision_context` и `asr_context` сохраняют `profile_id + session_id` и доступны только исходной session.
 
 Запрос без `session_id` возвращает только profile-wide sources. Derived row с отсутствующим/неоднозначным legacy `session_id` сохраняется в SQLite, но исключается из chat retrieval вместо неявного расширения scope. Promotion derived content в profile-wide RAG не реализован; для общего знания пользователь создаёт/редактирует обычный Markdown source отдельно.
@@ -135,7 +135,7 @@ SQLite:
 - `document_chunks` — text и position;
 - `document_embeddings` — vector JSON/model id.
 
-Session deletion удаляет принадлежащие ей derived documents/chunks/embeddings, но не profile-wide Markdown и не соседние sessions. Profile deletion/reset удаляет profile source directory и все дочерние DB records. Git не является хранилищем пользовательского RAG.
+Session deletion удаляет принадлежащие ей derived documents/chunks/embeddings, но не profile-wide Markdown/Telegram sources и не соседние sessions. Profile deletion/reset удаляет profile source directory и все дочерние DB records. Git не является хранилищем пользовательского RAG.
 
 ## Reindexing
 
@@ -177,3 +177,84 @@ Session deletion удаляет принадлежащие ей derived document
 - сравнение source metadata с profile directory.
 
 Команды: [TESTING.md](../TESTING.md).
+
+
+## Telegram HTML через обычный RAG
+
+В активном профиле откройте RAG → «Добавить файлы», выберите `messages.html` (и нужные `messages2.html` и т. д.), нажмите «Индексировать файлы» и включите RAG для чата. Обычные сообщения становятся отдельными фрагментами с датой, автором, ID и названием чата; служебные события не индексируются. Длинные сообщения разбиваются с повторением provenance в каждой части. Исходный экспорт не изменяется; загруженная копия хранится в профильном `rag_sources`, как Markdown.
+
+Примеры последовательных запросов в одном чате:
+
+1. «Найди сообщения, где обсуждали оркестрацию агентов».
+2. «За какие даты эти сообщения? Укажи ID и авторов».
+3. «Оставь за июль 2026» или «Только с 11.07.2026 по 15.07.2026».
+4. «Уточни по ключевым словам: делегирование, задачи».
+
+Поддержаны строгие фильтры ISO-даты, `DD.MM.YYYY`, диапазона из двух дат и русского месяца с годом. Текущая дата в уточнении имеет приоритет перед историей. Время остаётся временем экспорта; исходный timestamp с UTC offset сохраняется, если он есть. Даты без года не превращаются в строгий фильтр. Поиск остальных источников RAG продолжает работать по прежним правилам.
+
+Для Telegram требуется локальный endpoint chat-модели и local_hash либо конкретный проверенный loopback Ollama embedding provider. Внешний endpoint или неподдерживаемый embedding provider блокируется, включая переиндексацию. Для локальных запросов отключены proxy и redirects. Переключение на внешний chat-provider блокируется для профиля с проиндексированным Telegram. Это защита данного pipeline; существующие LAN-настройки и отсутствие шифрования SQLite остаются свойствами LocalGPT.
+
+Хешевые embeddings не обеспечивают семантический поиск синонимов. Ответ использует текущие top_k и context budget, поэтому полный аудит каждого сообщения не гарантируется. Проверяйте приведённые ID/даты по исходному экспорту. Media-файлы не распознаются, ресурсы и ссылки из HTML не загружаются.
+
+Для Markdown действуют прежние лимиты: 5 MiB на файл и 20 MiB на upload. Для Telegram HTML фиксированного ограничения байтов нет: upload читается потоком, разметка обработанных сообщений освобождается, проверенный файл публикуется атомарно. Через «Добавить файлы» можно выбрать больше 12 файлов за один раз: UI последовательно отправляет партии максимум по 12 файлов и примерно 20 MiB на HTTP-запрос. Один HTML больше 20 MiB отправляется отдельно; фиксированного ограничения размера HTML нет. Backend сохраняет лимит 12 файлов на отдельный запрос. Реальная ёмкость ограничена RAM/диском: нормализованный текст, chunks и векторы всё ещё требуют ресурсов при индексировании и поиске. Удаление файла из RAG очищает его индекс. Содержимое экспорта нельзя переносить в Git; тесты используют искусственные сообщения.
+
+
+Уточнения поиска:
+
+- `после`/`позже` и `раньше` задают исключительные границы; `с`/`не раньше` и `до`/`по`/`не позже` включают указанную дату.
+- Явный `message123` или «ID: 123» ограничивает Telegram-результаты этим ID. Если указано имя HTML-файла, поиск ограничивается указанным источником; ID в разных чатах могут совпадать.
+- `#BuildNotes`, `#build_notes` и «хэштег Build Notes» нормализуются для поиска одного тега. Это форматная нормализация, без новой семантической модели. В запросе с тегом формулировка «про <латинский технический термин>» дополнительно требует буквального наличия этого термина в сообщении (например, `#BuildNotes сообщения про alpha_tool`).
+- Для гарантированного дословного текста запросите «Приведи полный текст message123 из messages.html дословно». Приложение извлекает исходное сообщение напрямую и сохраняет ответ в обычном чате, обходя перефразирование LLM и лимит top_k. Если требуется объяснить содержание или выделить факты, работает обычный RAG/LLM-ответ; его полнота зависит от контекстного бюджета.
+
+Версия Telegram-парсера хранится в metadata; смена версии требует повторного ingest даже при неизменных размере/mtime файла. Индекс SQLite по chunk/model устраняет многократное сканирование embeddings при большом архиве.
+
+
+## Ошибка добавления файла
+
+При отказе загрузки окно RAG сохраняет причину и код; DevTools → Console показывает запись `[RAG upload]` с `code`/`reason` (и HTTP status для ошибки запроса). Console не получает содержимое файла, имя, FormData или raw payload. Ошибки отдельного файла могут прийти в успешном HTTP 200; они также выводятся в Console. Если не добавлено ни одного файла, интерфейс не предлагает индексировать.
+
+Для HTML различаются отсутствующие история/заголовок/сообщения Telegram, незакрытый блок, повторяющиеся ID и неподходящая UTF-8 кодировка. Расширение `.html` само по себе не подтверждает формат Telegram Export. Для диагностики частного файла достаточно передать код ошибки; чтение файла облачным агентом не требуется.
+
+
+Пакетная загрузка показывает общий прогресс по обработанным/добавленным файлам и ошибкам. Ошибка отдельного HTML не мешает добавлению остальных файлов. При ошибке HTTP/сети загрузка следующих партий останавливается; интерфейс показывает число файлов, для которых загрузка не подтверждена, и сохраняет результаты предыдущих партий. Автоматического повторения запроса после неопределённого сетевого сбоя нет. После завершения загрузки индексирование запускается обычной кнопкой.
+
+`rag_upload_file_count_exceeded` относится к количеству файлов в одном HTTP-запросе и устраняется пакетами в обновлённом UI. `telegram_messages_not_found` — отдельный отказ конкретного HTML, в котором парсер не распознал завершённые сообщения; пакетная загрузка не отменяет эту проверку.
+
+
+### Выдача найденных Telegram-сообщений
+
+Явные запросы «найди/найти/найдите» и «покажи/список/ищи … сообщения» при наличии только Telegram evidence в выбранном контексте возвращают исходные фрагменты напрямую, без генерации пересказа моделью. Каждая карточка содержит источник, ID, исходную дату, автора и цитату; сокращение контекста отмечается. Это кандидаты из ограниченной RAG-выборки, а не подтверждение релевантности каждого результата или полноты поиска по всему корпусу. Остальные аналитические запросы продолжают использовать модель. Перечисленные через запятую темы разделяются на facets, чтобы оценивать их покрытие отдельно.
+
+История сохраняет L4-envelope и original_role в provenance, но передаётся как user-data, чтобы не обучать модель формату ответа через assistant-role примеры. Служебные DATA_ENVELOPE-маркеры в сгенерированном ответе отклоняются с `model_output_transport_envelope`, включая маркер, разбитый между streaming chunks. В таком случае показывается ошибка вместо технической обёртки; содержимое обёртки не считается корректным ответом автоматически.
+
+### Smart knowledge search
+
+The RAG context menu has a separate search switch. `POST /chat/knowledge-search` uses the selected local chat model only to produce a bounded JSON retrieval plan (up to4 topics, keywords, OR variants and date hints). It receives the current query only: no corpus, profile persona or chat history. Malformed/unavailable planning falls back to original query facets with an explicit warning. Original source/ID/date/tag constraints stay authoritative; planner dates are ignored unless they exactly agree with deterministic parsing of the user's text.
+
+Up to13 original/expanded queries retrieve at most20 candidates each. Results are merged with topic coverage, deduplicated and capped by top_k (default8, max20). Concrete loopback Ollama embeddings enable hybrid_v2 lexical+semantic ranking. local_hash remains a clearly labelled lexical fallback, never a semantic success. Query text is limited to4000 characters and evidence to16000 characters including metadata. Planning has a30s transport timeout and bounded response size; embedding requests retain their configured transport timeout. There is no overall job deadline. Request-local corpus/tokens/counts are reused across expansions with profile/session/provider identity checks; no corpus cache crosses requests. Embedding keep-alive avoids unloading after every expansion.
+
+Profile/session ownership is checked before retrieval and persistence. Excerpts come from the scoped index, not model prose; source/chunk locators and Telegram ID/date/author are preserved. Successes are saved with model=knowledge_search. Empty index, no matches, failed embeddings, stale generation and timeout are distinct. External model/embedding endpoints are rejected before inference. Local inference bypasses proxies and rejects redirects. Images remain unsupported in this mode. Client cancellation does not roll back server work that already completed; stale responses cannot reopen a different chat.
+
+Semantic activation is explicit through Knowledge -> semantic setup: install the configured Ollama model, then build the selected profile index. No .env edit or backend restart is needed. The old active provider remains selected until successful reindex and model-digest verification; hash vectors are not reused as semantic vectors. Manual environment configuration remains a default for profiles without a UI override.
+
+Links are opt-in through the original query (for example, ask to add links); planner output cannot enable links. Direct Telegram links require an explicit valid permalink attached to the message's own date element in the HTML. No username/peer is guessed from a title, messageN, forwarded links or message text. Otherwise a requested local link opens `/rag/evidence/{chunk_id}`: an ownership-checked, escaped indexed copy, with no arbitrary path serving or source HTML execution. Missing Telegram provenance is stated explicitly. The standard format is documented at https://core.telegram.org/api/links#message-links; the application does not verify access rights online. Existing indexes without permalink metadata need source re-ingestion to gain that metadata; embedding-only reindex does not reparse HTML.
+
+Transport-format failures in normal generation are checked before continuation can reuse output. Invalid assistant history and summary turns are excluded from future context; records in the database are not rewritten. A single retry drops history wrappers while retaining current authorized evidence, system/profile instructions and original privacy controls. Streaming retries only before either answer text or reasoning has reached the client. A repeated format failure remains an explicit error, not an unpacked historical answer. Actual model compliance is not guaranteed.
+
+
+### Long-running search jobs and cancellation
+
+The browser starts `POST /chat/knowledge-search/tasks`, then polls `GET /chat/knowledge-search/tasks/{task_id}`. Status/cancel are scoped by profile_id and the original nullable session_id. Successful results contain the final chat/session and are persisted once. The synchronous endpoint remains available, but the UI no longer depends on one long HTTP response. The former90s automatic cancellation is removed.
+
+A frontend monitor asks whether to continue after30seconds. Search/polling continue while the confirmation is open. Continuing schedules the next reminder30seconds later; no overlapping reminders are created. Declining cancels the job and restores the submitted query when the input is empty. Completion dismisses only its own confirmation; unrelated dialogs and replaced confirmations are not interpreted as cancellation. Mode/profile/chat changes cancel the old operation and ignore stale replies.
+
+`POST /chat/knowledge-search/tasks/{task_id}/cancel` cooperatively cancels before/after planning and between expansions. Cancellation and persistence share a lock: when cancellation wins, later worker results cannot be saved. If completion wins, the already-saved result remains available. A native provider call already in progress finishes or reaches its transport timeout before the worker exits; it cannot be forcibly interrupted. Cancelled workers count toward capacity until they exit. Jobs are bounded (4 globally,2 per profile), retained in memory (up to64 terminal results,15minutes after completion), and do not survive a backend restart. Missing tasks produce an explicit error rather than endless polling. No automatic repeated planner generations are introduced by the wait confirmations.
+
+
+### Installing embeddings from the application
+
+`GET /rag/embedding-setup?profile_id=N` checks only local model metadata, active generation coverage and download/reindex state. `POST .../install` reuses the existing Ollama model-pull manager; weights are not a Python requirements package. The configured model name is server-owned and validated, defaulting to embeddinggemma:latest. Downloads are shared Ollama weights, but semantic activation is profile-specific.
+
+`POST .../activate` requires installed weights and a synthetic embedding compatibility probe, then starts the existing background reindex with a candidate provider. A success callback rechecks profile ownership/existence and model digest before storing `rag_embedding_profile:N` in app_settings. This override is read by all scoped RAG/chat paths; other profiles retain their default provider. The descriptor version includes the installed digest. Reindex/probe failure leaves the old provider selected and old generations intact. Readiness requires installed matching weights and complete vectors, not merely provider=ollama. `POST .../lexical` can return to a retained hash generation and refuses the change if that generation is incomplete or a reindex is running.
+
+The card provides install/progress/cancel and a separate confirmed Build index action. On first opening after startup, or on an unconfigured search result, an offer is made once per browser/profile/model; it does not interrupt typing, active generation or another confirmation. Downloading weights requires confirmation; private source indexing requires a separate confirmation. Failed download/probe/index states remain actionable. Raw source content is not sent to external endpoints. Install/configuration steps were tested synthetically; no live download or private reindex was triggered during implementation.

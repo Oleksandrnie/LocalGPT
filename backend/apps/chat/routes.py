@@ -17,6 +17,9 @@ from app.schemas import ChatDebugPromptRequest, ChatRequest, ResetRequest
 from app.services import criteria as criteria_service
 from app.services import models as model_service
 from backend.apps.chat import tasks as chat_tasks
+from backend.apps.chat import knowledge_search_tasks
+from backend.apps.chat.schemas import KnowledgeSearchRequest
+from backend.apps.chat.services import knowledge_search
 from backend.apps.chat.service import (
     ChatService,
     assess_rag_answer,
@@ -96,6 +99,7 @@ def compose_rag_query(user_query: str, history_user_queries: list[str], *, histo
     # unrelated earlier questions dilute an explicit current topic.
     if len(parts) == 1 and recent_history and (
         len(current_terms) <= 3 or RAG_REFERENTIAL_QUERY_RE.search(current)
+        or re.search(r"(?:за какие даты|за (?:январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)|ключев\w* слова|\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}\.\d{4})", current, re.I)
     ):
         parts.append(recent_history[0][0])
     return "\n".join(parts)
@@ -431,6 +435,8 @@ def _apply_router_settings(prepared: dict, decision: model_router.RouterDecision
 
 
 def _apply_auto_router(prepared: dict) -> dict:
+    if prepared.get("source_quote") is not None:
+        return prepared
     selected_model = str(prepared.get("target_model") or "").strip()
     if selected_model == model_router.LOCAL_CALCULATOR_TARGET:
         calc = local_calculator.try_calculate_text(str(prepared.get("user_query") or ""), force=True)
@@ -574,6 +580,7 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         session_id = session["id"]
 
     model_name = session["model_name"] if session else normalize_model_name(req.model or req.model_name)
+    rag_service.protect_telegram_profile(int(profile_id))
     target_model = _require_chat_model_selected(normalize_model_name(model_name, fallback=config.SETTINGS.model))
     profile = _get_profile_or_404(int(profile_id))
     profile_preferences = profile.get("preferences") or {}
@@ -731,7 +738,77 @@ def _prepare_chat_request(req: ChatRequest) -> dict:
         "recent_user_queries": history_user_queries,
         "prompt_warnings": transcript_warnings,
         "calc_result": calc_result,
+        "source_quote": (
+            rag_service.exact_telegram_quote(int(profile_id), user_query)
+            or rag_service.telegram_search_cards(user_query, rag_evidence_manifest)
+        )
+        if rag_enabled and not has_image_attachments else None,
     }
+
+
+def _knowledge_search_scope(req: KnowledgeSearchRequest) -> tuple[str | None, dict[str, Any] | None, str]:
+    _get_profile_or_404(req.profile_id)
+    session_id = (req.session_id or "").strip() or None
+    session = db.get_session(session_id) if session_id else None
+    if session_id and (not session or int(session.get("profile_id") or 0) != req.profile_id):
+        raise HTTPException(404, "session_not_found")
+    query = req.query.strip()
+    if not query:
+        raise HTTPException(422, "knowledge_search_query_required")
+    return session_id, session, query
+
+
+def _persist_knowledge_search(req: KnowledgeSearchRequest, query: str, session_id: str | None,
+                              result: dict[str, Any]) -> dict[str, Any]:
+    # Retrieval failures leave history untouched; revalidate ownership before
+    # writing, since the user can delete a profile/chat during a long lookup.
+    _get_profile_or_404(req.profile_id)
+    if session_id:
+        session = db.get_session(session_id)
+        if not session or int(session.get("profile_id") or 0) != req.profile_id:
+            raise HTTPException(404, "session_not_found")
+    else:
+        session = db.create_session(req.profile_id, title=session_title_hint(None, query),
+                                    model_name=req.model_name, role=CHAT_ROLE)
+        session_id = session["id"]
+    user = db.add_message(session_id, "user", query)
+    assistant = db.add_message(session_id, "assistant", result["reply"], model="knowledge_search")
+    return {**result, "profile_id": req.profile_id, "session_id": session_id,
+            "user_message_id": user["id"], "assistant_message_id": assistant["id"]}
+
+
+@router.post("/chat/knowledge-search")
+def search_knowledge(req: KnowledgeSearchRequest) -> dict[str, Any]:
+    session_id, session, query = _knowledge_search_scope(req)
+    result = knowledge_search.search(req.profile_id, query, session_id=session_id, top_k=req.top_k,
+                                     model_name=req.model_name or str((session or {}).get("model_name") or ""))
+    return _persist_knowledge_search(req, query, session_id, result)
+
+
+@router.post("/chat/knowledge-search/tasks", status_code=202)
+def start_knowledge_search(req: KnowledgeSearchRequest) -> dict[str, Any]:
+    session_id, session, query = _knowledge_search_scope(req)
+    model_name = req.model_name or str((session or {}).get("model_name") or "")
+    return knowledge_search_tasks.start(
+        profile_id=req.profile_id, session_id=session_id,
+        work=lambda check: knowledge_search.search(req.profile_id, query, session_id=session_id,
+                                                  top_k=req.top_k, model_name=model_name, check_cancelled=check),
+        persist=lambda result: _persist_knowledge_search(req, query, session_id, result),
+    )
+
+
+@router.get("/chat/knowledge-search/tasks/{task_id}")
+def get_knowledge_search_task(task_id: str, profile_id: int = Query(gt=0),
+                              session_id: str | None = Query(default=None, max_length=128)) -> dict[str, Any]:
+    return knowledge_search_tasks.get(task_id, profile_id=profile_id,
+                                      session_id=(session_id or "").strip() or None)
+
+
+@router.post("/chat/knowledge-search/tasks/{task_id}/cancel")
+def cancel_knowledge_search_task(task_id: str, profile_id: int = Query(gt=0),
+                                 session_id: str | None = Query(default=None, max_length=128)) -> dict[str, Any]:
+    return knowledge_search_tasks.cancel(task_id, profile_id=profile_id,
+                                         session_id=(session_id or "").strip() or None)
 
 
 @router.post("/chat")
@@ -780,7 +857,7 @@ def chat(req: ChatRequest):
         target_model = prepared["target_model"]
         active_criteria = prepared["active_criteria"]
         effective_settings = prepared["effective_settings"]
-        calc_result = prepared["calc_result"]
+        calc_result = prepared.get("source_quote") or prepared["calc_result"]
         messages = prepared["messages"]
         prompt_warnings = prepared.get("prompt_warnings") or []
         router_notice = prepared.get("router_notice")
@@ -985,7 +1062,7 @@ def start_chat_task(req: ChatRequest):
 
     target_model = prepared["target_model"]
     effective_settings = prepared["effective_settings"]
-    calc_result = prepared["calc_result"]
+    calc_result = prepared.get("source_quote") or prepared["calc_result"]
     messages = prepared["messages"]
     router_notice = prepared.get("router_notice")
     effective_settings = {**effective_settings, "streaming_enabled": stream_requested}

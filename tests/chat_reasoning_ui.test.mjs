@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const html = await readFile(new URL("../web_ui/gui_html.html", import.meta.url), "utf8");
 const javascript = await readFile(new URL("../web_ui/js/app.js", import.meta.url), "utf8");
@@ -37,8 +38,6 @@ test("quick Thinking control is visible for declared thinking-capable models", (
   assert.match(javascript, /buildModelSettingsPayload\(\{ ollama_think: nextMode \}\)/);
   assert.match(javascript, /quickThinkingMenu\?\.addEventListener\("click", handleQuickThinkingMenuClick\)/);
   assert.match(javascript, /quickThinkingMobileMenu\?\.addEventListener\("click", handleQuickThinkingMenuClick\)/);
-  assert.match(javascript, /quickModelMenu\?\.addEventListener\("change", handleQuickModelMenuChange\)/);
-  assert.match(javascript, /quickModelMobileMenu\?\.addEventListener\("change", handleQuickModelMenuChange\)/);
   assert.match(javascript, /quickThinkingMobileControl\.dataset\.thinkingMode = nextMode/);
 });
 
@@ -77,7 +76,7 @@ test("reasoning controls cover focus, themes, and mobile sizing", () => {
 });
 
 test("user and completed assistant messages share an editable Chat to RAG dialog", () => {
-  assert.match(javascript, /const canExportChat = hasContent && \(role === "user" \|\| \(role === "assistant" && status === "completed"\)\)/);
+  assert.match(javascript, /const canExportChat = !message.pending && hasContent && \(role === "user" \|\| \(role === "assistant" && status === "completed"\)\)/);
   assert.match(javascript, /data-chat-rag-index=/);
   assert.match(javascript, /openChatRagDialog\(chatRagButton\.dataset\.chatRagIndex, chatRagButton\)/);
   assert.match(javascript, /isChatExport \? "\/rag\/chat-contexts" : "\/rag\/vision-contexts"/);
@@ -86,9 +85,40 @@ test("user and completed assistant messages share an editable Chat to RAG dialog
 });
 
 test("user and assistant Copy share the raw message clipboard path", () => {
-  assert.match(javascript, /const canCopy = hasContent && \(role === "user" \|\| role === "assistant"\)/);
+  assert.match(javascript, /const canCopy = !message.pending && hasContent && \(role === "user" \|\| role === "assistant"\)/);
   assert.match(javascript, /data-copy-index="\$\{index\}"/);
-  assert.match(javascript, /const message = Number\.isFinite\(index\) \? state\.messages\[index\] : null;[\s\S]*await copyText\(message\?\.content \|\| ""\)/);
-  assert.match(javascript, /setFooter\("Сообщение скопировано\.", "success"\)/);
+  assert.match(javascript, /const message = Number\.isFinite\(index\) \? state\.messages\[index\] : null;/);
+  assert.match(javascript, /await copyChatMessage\(message\)/);
+  assert.match(javascript, /function showToast\([\s\S]*dedupe = true/);
   assert.match(javascript, /data-chat-rag-index=/);
+});
+
+test("message copy repeats its success toast and reports clipboard failure", async () => {
+  const source = javascript.match(/async function copyChatMessage\(message\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(source, "copyChatMessage helper should exist");
+
+  const copied = [];
+  const toasts = [];
+  let failClipboard = false;
+  const copyChatMessage = runInNewContext(`(${source})`, {
+    copyText: async (value) => {
+      if (failClipboard) throw new Error("clipboard unavailable");
+      copied.push(value);
+    },
+    showToast: (...args) => toasts.push(args),
+  });
+
+  await copyChatMessage({ content: "synthetic user text" });
+  await copyChatMessage({ content: "synthetic assistant text" });
+  assert.deepEqual(copied, ["synthetic user text", "synthetic assistant text"]);
+  assert.equal(toasts.length, 2);
+  assert.deepEqual(toasts.map(([, , options]) => ({ title: options.title, dedupe: options.dedupe })), [
+    { title: "Скопировано", dedupe: false },
+    { title: "Скопировано", dedupe: false },
+  ]);
+
+  failClipboard = true;
+  await copyChatMessage({ content: "synthetic failed copy" });
+  assert.equal(toasts.length, 3);
+  assert.deepEqual([toasts[2][0], toasts[2][1], toasts[2][2].title], ["Не удалось скопировать сообщение.", "error", "Ошибка"]);
 });

@@ -81,7 +81,7 @@ Settings tab `Vision` не смешан с обычной chat library. Он п�
 
 После завершённого анализа действие Vision → RAG открывает dialog с редактируемым title/text. Export выполняется только после подтверждения пользователя и не переносит image binary.
 
-Settings → Chat / LLM показывает отдельные `Output tokens`, `Thinking tokens` и динамический `Thinking — режим / уровень`. Последний строится только по фактическому Ollama metadata выбранной установленной модели: named levels показываются без переименования, boolean-only модели сохраняют ON/OFF, `Auto` использует Ollama default, а отсутствующая/явно unsupported metadata не порождает выдуманный control. Кастомные installed Ollama-модели используют ту же схему. Desktop/mobile header menu синхронизируется с Settings; в quick model picker named-level модели открывают общий selector, а boolean-only модели сохраняют switch. Сохранение thinking choice не сбрасывает output/thinking budget overrides. Для Auto-router остаётся отдельная profile preference. Выбор reasoning effort не меняет видимость trace: её можно просматривать отдельно у ответа через `>_`.
+Settings → Chat / LLM показывает отдельные `Output tokens`, `Thinking tokens` и динамический `Thinking — режим / уровень`. Последний строится только по фактическому Ollama metadata выбранной установленной модели: named levels показываются без переименования, boolean-only модели сохраняют ON/OFF, `Auto` использует Ollama default, а отсутствующая/явно unsupported metadata не порождает выдуманный control. Кастомные installed Ollama-модели используют ту же схему. Desktop/mobile header menu синхронизируется с Settings; quick model picker используется только для выбора модели. Управление размышлением находится в кнопке Thinking рядом с моделью: она показывает Auto / On / Off или точное имя уровня и на desktop, и на mobile. Auto использует настройку модели по умолчанию и не получает подсветку включённого режима. Сохранение thinking choice не сбрасывает output/thinking budget overrides. Для Auto-router остаётся отдельная profile preference. Выбор reasoning effort не меняет видимость trace: её можно просматривать отдельно у ответа через `>_`.
 
 Там же `История чата, пар сообщений` задаёт profile default 6 в диапазоне 0–100. Один turn — завершённая пара `user + assistant` только текущего chat; `0` отключает short history. Setting сохраняется в profile preferences и применяется ко всем chat-моделям, но не смешивает sessions.
 
@@ -144,3 +144,58 @@ Settings → System содержит компактные соседние де�
 - Attachment remove target и Vision tab controls проверяются с клавиатуры, в обеих темах и на mobile viewport.
 
 Матрица проверок: [TESTING.md](../TESTING.md).
+
+
+### Адаптивный переключатель Thinking и загрузка истории
+
+Quick Thinking использует единый сегментный ряд: Auto / On / Off для boolean-моделей или Auto плюс все объявленные именованные уровни, например low/medium/high. Auto — полноценная первая позиция индикатора; поддерживаемые runtime-значения и их регистр не изменяются. Индикатор сдвигается между положениями; точный регистр и число named values сохраняются. ArrowLeft/ArrowRight меняют выбранный сегмент, обычное меню сохраняет управление Up/Down/Home/End. Предусмотрены focus state, reduced motion, размер touch target44px и ограничение popup границами viewport. Сегментный выбор не перекрывается success toast; ошибки сохранения продолжают показываться.
+
+История запрашивается независимо от необязательных вложений/транскриптов. Сбой вспомогательного endpoint не скрывает успешно полученные сообщения. Запоздалые ответы другого session/profile не изменяют активную историю. При подготовке chat task UI сразу показывает временное сообщение пользователя; после подтверждения оно заменяется серверной записью без дубля. При ошибке отправки очищенный composer восстанавливается. Загрузка истории при старте не ждёт необязательных ASR/TTS/storage сервисов. Временное сообщение до принятия backend не считается сохранённой записью; данные уже принятого запроса остаются в SQLite.
+
+
+### Прокрутка во время генерации
+
+Перерисовка сообщений сохраняет scrollTop, если пользователь читает выше конца чата. При закреплении у низа список следует за увеличением ответа без smooth-анимации на каждом токене; кнопка перехода вниз включает следование снова. Отложенная автоматическая прокрутка повторно проверяет закрепление перед выполнением. Обновление уже открытой сессии и завершение восстановленной задачи не должны принудительно возвращать читателя вниз. Browser scroll anchoring для контейнера отключён, позицию сохраняет приложение.
+
+Если в сохранённом или поступающем assistant-ответе обнаружен LOCALGPT_DATA_ENVELOPE, вместо содержимого показывается ошибка служебного формата с возможностью повторить запрос. Копирование и экспорт этого ответа недоступны; сама запись в базе не переписывается. Backend отдельно блокирует такой формат в новых генерациях. После frontend-изменений страницу необходимо обновить; перезапуск backend не заменяет загрузку нового JavaScript браузером.
+
+### Smart search controls
+
+The right-click RAG menu contains independent switches for RAG context and knowledge search. A compact question mark offers hover/focus help. The former large composer button/status is removed; status remains in an aria-live region and in the input indicator tooltip. Only when search is active, a small search indicator appears to the right of the dictation microphone; clicking it opens the RAG menu. Input padding and mobile hit targets prevent icon/text overlap.
+
+The UI labels the path as plan, search, then citations. It reports when semantic embeddings or the local planner are unavailable instead of claiming a full smart search. Results use the author label `База знаний`; requested links are clickable, safe HTTPS or scoped local evidence links, while URLs inside quoted source code remain inert. Available search does not require a loaded answer-generation model; the selected local chat model improves planning when installed. The existing cancellation/session race guards remain in force.
+
+
+### Waiting dots and long-search confirmation
+
+Three CSS-animated dots appear immediately after submission, before a slow start request returns. The temporary assistant row is render-only: it is never placed into stored messages, copied or exported. When the exact assistant/task placeholder appears, the dots move into that card without duplication. Actual answer content, available reasoning, completion, failure or cancellation hide the dots; On/Off/Auto settings alone do not decide visibility. Existing reasoning access remains available through the answer button. Recovery uses the same indicator. The scope includes profile, chat and request mode, so old answers or stale operations cannot suppress/reveal another request's loader.
+
+A stable screen-reader status announces the operation once; the animated dots are aria-hidden and respect reduced motion. The renderer preserves the existing reading position and bottom-follow behavior. Search mode shows the same waiting indicator while planning/retrieval run, plus a Continue/Cancel dialog after30seconds. Background progress remains independent of the dialog, and the dialog is closed automatically on completion. Client start obtains the task ID even after an early cancellation so the server job can still be cancelled.
+
+### Manual scroll intent during streaming
+
+Upward wheel/touch/keyboard input pauses following before the native scroll event, including small movements within the former96px proximity threshold. Repaint/programmatic events no longer infer following from proximity alone. Scrollbar movement is detected before DOM replacement; only actual bottom position or a deliberate downward input reaching the end resumes following. Queued jumps carry a revision token so upward input can invalidate them. End and the latest-message button intentionally jump to the current growing end.
+
+Completion, cancellation and same-session refresh preserve the reading position. Navigating to a different session/profile or a new empty chat resets following, so a paused old chat does not affect the next conversation. No backend behavior or stored message content changes.
+
+
+### Guided semantic setup
+
+The Knowledge panel contains an embedding-model setup card with metadata availability, download progress/cancel, refresh, activation and lexical rollback. Installation is offered once on startup or after an unconfigured search warning, with a Later choice. Activation explains that only the selected profile is reindexed, sources stay local and the old index remains active until success. Profile/session changes cannot apply late setup responses to another screen. The .env instructions are replaced by UI actions; model-install readiness is distinct from LLM planner JSON availability.
+
+
+### User message compositing
+
+User message cards no longer apply backdrop-filter blur inside the masked scrolling container. Their purple gradient, shadow, theme colors and the scroll fade remain. This avoids the blur/mask compositing combination implicated by a reported transient vertical tint split. The exact hardware artifact was not reproduced in headless Chrome; validation covered computed styles and synthetic screenshots in dark/light themes at multiple scroll positions and mobile width. Assistant card styling remains unchanged.
+
+В «Система» доступен тайм-аут ожидания поиска в базе: целое число секунд от1 до86400, по умолчанию30. Сохраняется автоматически в localStorage браузера и применяется при следующем поиске. Это интервал подтверждения продолжения, а не автоматической отмены: открытое окно не останавливает поиск.
+
+Для структурированного планировщика поиска native think=false применяется независимо от режима Thinking обычного чата. Требуется полный JSON по схеме; незавершённый ответ не принимается. Диагностика planner.reason различает incomplete, invalid_plan и timeout без публикации запроса или сырого ответа. Установка embedding-модели сама по себе не включает существующий профиль: требуется успешная переиндексация, после которой профиль атомарно переключается на семантический индекс.
+
+
+DevTools Console logs structured JSON snapshots with prefix `[LocalGPT diagnostics]`: search start/completion/degraded/failure, HTTP errors for chat/RAG/models, terminal chat tasks, stream failures and blocked service-format replies. Fields include profile/session/task IDs, model, requested versus reported effective Thinking, configured output/thinking/combined provider budgets, available completion reason/count, planner status/reason, embedding provider/model/status and retrieval limits. Unreported values are null: Auto is not evidence of actual reasoning, and a combined token limit is not split into invented thinking/output usage. Known server budget failures are classified as before-final-answer or incomplete-answer. HTTP payloads, prompts, message bodies, evidence quotes, raw exception messages and hidden reasoning are never serialized. Service-format warnings are deduplicated with a bounded in-memory set. Snapshots are console-only and not saved to localStorage or sent to telemetry. Refresh the page to load the diagnostics; backend restart is not needed.
+
+
+Diagnostic review: operation metadata is captured before asynchronous poll/SSE waits. A task from another profile/model cannot inherit the currently visible model budgets or RAG preferences; unknown fields remain null. Reported task settings remain distinct from requested UI settings. Search logs include server-created session and task IDs. A failing console sink cannot alter chat/search outcomes.
+
+Auto planner selection uses bounded loopback Ollama /api/tags and /api/show metadata: prefer the installed dedicated router when it supports completion, otherwise select the smallest installed completion-capable model. Embedding-only and unknown-capability models are excluded; no model is downloaded automatically. A timeout wrapped in urllib.error.URLError is classified as timeout. Remaining planner limitation: its direct-JSON thinking policy and30-second/1000-token budget are fixed, independently of the configurable frontend confirmation interval. Separate planner model/reasoning/budget controls remain future work; the current native Off workaround does not change ordinary chat Thinking. Preserve source-only answer validation when changing these policies.

@@ -1,3 +1,7 @@
+import { emitRuntimeDiagnostic } from "./runtime_diagnostics.mjs";
+import { waitForKnowledgeSearch } from "./knowledge_search_client.mjs";
+import { renderThinkingSegments } from "./thinking_switch_view.mjs";
+import { ragUploadReport, describeRagUploadError, uploadRagBatches } from "./rag_upload.mjs";
 import { formatRichMessage as formatMarkdownMessage } from "./markdown.mjs";
 import { parseOllamaInstallInput } from "./ollama_install.mjs";
 import { buildSelectableChatModels } from "./chat_model_catalog.mjs";
@@ -209,9 +213,13 @@ const els = {
   chatModelNotice: document.getElementById("chatModelNotice"),
   chatModelNoticeSettingsButton: document.getElementById("chatModelNoticeSettingsButton"),
   messageList: document.getElementById("messageList"),
+  chatWaitingStatus: document.getElementById("chatWaitingStatus"),
   messageScrollEnd: document.getElementById("messageScrollEnd"),
   emptyState: document.getElementById("emptyState"),
   composerForm: document.getElementById("composerForm"),
+  knowledgeSearchToggle: document.getElementById("knowledgeSearchToggle"),
+  knowledgeSearchIndicator: document.getElementById("knowledgeSearchIndicator"),
+  knowledgeSearchStatus: document.getElementById("knowledgeSearchStatus"),
   composerAttachments: document.getElementById("composerAttachments"),
   promptInput: document.getElementById("promptInput"),
   voiceRecordButton: document.getElementById("voiceRecordButton"),
@@ -339,9 +347,16 @@ const els = {
   ragEnabledToggle: document.getElementById("ragEnabledToggle"),
   ragAddFilesButton: document.getElementById("ragAddFilesButton"),
   ragFileInput: document.getElementById("ragFileInput"),
+  ragUploadReport: document.getElementById("ragUploadReport"),
   ragIngestButton: document.getElementById("ragIngestButton"),
   ragReindexButton: document.getElementById("ragReindexButton"),
   ragRefreshButton: document.getElementById("ragRefreshButton"),
+  embeddingSetupAction: document.getElementById("embeddingSetupAction"),
+  embeddingSetupDetails: document.getElementById("embeddingSetupDetails"),
+  embeddingSetupProgress: document.getElementById("embeddingSetupProgress"),
+  embeddingSetupRefresh: document.getElementById("embeddingSetupRefresh"),
+  embeddingSetupCancel: document.getElementById("embeddingSetupCancel"),
+  embeddingSetupLexical: document.getElementById("embeddingSetupLexical"),
   ragEmbeddingCard: document.getElementById("ragEmbeddingCard"),
   ragEmbeddingState: document.getElementById("ragEmbeddingState"),
   ragEmbeddingDetails: document.getElementById("ragEmbeddingDetails"),
@@ -516,6 +531,9 @@ const state = {
   sessionContextMenuSessionId: null,
   asrHistoryContextMenuTranscriptId: null,
   messages: [],
+  pendingChatMessage: null,
+  knowledgeSearchMode: false,
+  knowledgeSearchRequest: null,
   messageAttachments: {},
   visionRagSourceMessageId: null,
   visionRagExportKind: null,
@@ -545,6 +563,8 @@ const state = {
   ttsHealthy: false,
   defaultModel: "",
   isSending: false,
+  isCancellingChatTask: false,
+  chatWaitingStatusOperationId: null,
   isTranscribing: false,
   isRecordingVoice: false,
   isVoiceTranscribing: false,
@@ -561,6 +581,9 @@ const state = {
   chatAttachments: [],
   isSpeaking: false,
   autoScrollPinned: true,
+  messageScrollRevision: 0,
+  messageScrollLastTop: 0,
+  messageScrollTouchY: null,
   messageScrollEndObserver: null,
   theme: "dark",
   sidebarOpen: readStored(STORAGE_KEYS.sidebarOpen, "true") !== "false",
@@ -613,6 +636,7 @@ const state = {
   ttsHistoryCollapsed: readStored(STORAGE_KEYS.ttsHistoryCollapsed, "1") === "1",
   ragStatus: null,
   ragBusy: false,
+  ragUploadReport: null,
   ragReindexPolling: false,
   pluginsState: {
     plugins: [],
@@ -687,6 +711,41 @@ function writeStored(key, value) {
   } catch {
     // ignore storage failures
   }
+}
+
+function knowledgeSearchWaitSeconds() {
+  const value = Number(readStored("localgpt.knowledgeSearchWaitSeconds", "30"));
+  return Number.isInteger(value) && value >= 1 && value <= 86400 ? value : 30;
+}
+
+const runtimeDiagnosticSeen = new Set();
+function runtimeDiagnosticContext(overrides = {}) {
+  const scope = Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined));
+  const profileId = scope.profile_id ?? (Number(state.activeProfileId) || null);
+  const sameProfile = Number(profileId) === Number(state.activeProfileId);
+  const sameModel = scope.model === undefined || scope.model === state.selectedLlmModel;
+  const settings = sameProfile && sameModel ? state.modelSettingsState?.effective || {} : {};
+  const context = {profile_id: profileId, session_id: sameProfile ? state.currentSessionId : null,
+    model: sameProfile ? state.selectedLlmModel : null,
+    thinking: sameProfile && sameModel ? settings.ollama_think ?? "auto" : null,
+    output_tokens: settings.output_tokens ?? settings.max_tokens, thinking_tokens: settings.thinking_tokens,
+    rag_context_enabled: sameProfile ? activeProfileRagEnabled() : null, ...scope};
+  const setup = state.embeddingSetup;
+  if (setup && Number(setup.profile_id) === Number(context.profile_id)) {
+    context.embedding_status = setup.active ? "ready" : setup.operation?.status === "running" ? "indexing" : "not_configured";
+    context.embedding_provider = setup.provider?.provider;
+    context.embedding_model = setup.model;
+  }
+  return context;
+}
+
+function logRuntimeDiagnostic(event, data = {}, context = null, level = "info", key = null) {
+  if (key) {
+    if (runtimeDiagnosticSeen.has(key)) return;
+    if (runtimeDiagnosticSeen.size >= 200) runtimeDiagnosticSeen.delete(runtimeDiagnosticSeen.values().next().value);
+    runtimeDiagnosticSeen.add(key);
+  }
+  emitRuntimeDiagnostic(event, context || runtimeDiagnosticContext(), data, level);
 }
 
 function escapeHtml(value) {
@@ -1177,10 +1236,31 @@ function syncMobileScrollLock() {
   document.body.classList.toggle("mobile-scroll-locked", isMobileLayout() && (drawerOpen || modalOpen || toolOpen));
 }
 
-function syncMessageScrollState() {
+function pauseMessageAutoScroll() {
+  state.autoScrollPinned = false;
+  state.messageScrollRevision = (state.messageScrollRevision || 0) + 1;
+}
+
+function handleMessageScrollIntent(direction) {
+  if (direction < 0) {
+    // Capture intent before the browser scrolls or another streaming repaint runs.
+    pauseMessageAutoScroll();
+  } else if (direction > 0 && els.messageScroll) {
+    const remaining = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight;
+    // Native smooth scrolling may target an older bottom while streaming grows.
+    if (remaining <= Math.max(2, direction)) state.autoScrollPinned = true;
+  }
+}
+
+function syncMessageScrollState({ userScroll = false } = {}) {
   if (!els.messageScroll) return;
-  const remaining = els.messageScroll.scrollHeight - els.messageScroll.scrollTop - els.messageScroll.clientHeight;
-  state.autoScrollPinned = remaining <= 96;
+  const top = els.messageScroll.scrollTop;
+  const remaining = els.messageScroll.scrollHeight - top - els.messageScroll.clientHeight;
+  if (userScroll) {
+    if (top < state.messageScrollLastTop) pauseMessageAutoScroll();
+    else if (top > state.messageScrollLastTop && remaining <= 2) state.autoScrollPinned = true;
+  }
+  state.messageScrollLastTop = top;
   if (els.scrollTopButton) {
     els.scrollTopButton.hidden = remaining <= 24;
   }
@@ -1202,9 +1282,12 @@ function observeMessageScrollEnd() {
 
 function scrollMessagesToBottom({ force = false } = {}) {
   if (!els.messageScroll) return;
-  if (!force && !state.autoScrollPinned) return;
+  if (force) state.autoScrollPinned = true;
+  if (!state.autoScrollPinned) return;
+  const revision = state.messageScrollRevision || 0;
   requestAnimationFrame(() => {
-    els.messageScroll?.scrollTo({ top: els.messageScroll.scrollHeight, behavior: "smooth" });
+    if (!state.autoScrollPinned || revision !== (state.messageScrollRevision || 0)) return;
+    els.messageScroll?.scrollTo({ top: els.messageScroll.scrollHeight, behavior: "instant" });
     syncMessageScrollState();
   });
 }
@@ -1607,6 +1690,16 @@ function closeQuickThinkingMenu() {
   });
 }
 
+function syncThinkingMenuBounds(menu) {
+  if (!menu || menu.hidden) return;
+  menu.style.transform = "";
+  const rect = menu.getBoundingClientRect();
+  const left = (window.visualViewport?.offsetLeft || 0) + 12;
+  const right = left + (window.visualViewport?.width || window.innerWidth) - 24;
+  const shift = rect.left < left ? left - rect.left : rect.right > right ? right - rect.right : 0;
+  menu.style.transform = `translateX(${Math.round(shift)}px)`;
+}
+
 function toggleQuickThinkingMenu(forceState, source = "desktop") {
   const target = source === "mobile"
     ? { menu: els.quickThinkingMobileMenu, button: els.quickThinkingMobileButton }
@@ -1619,7 +1712,11 @@ function toggleQuickThinkingMenu(forceState, source = "desktop") {
   closeQuickThinkingMenu();
   target.menu.hidden = !nextState;
   target.button.setAttribute("aria-expanded", nextState ? "true" : "false");
-  if (nextState) target.menu.querySelector("[aria-checked='true']")?.focus();
+  if (nextState) {
+    target.menu.querySelector("[aria-checked='true']")?.focus();
+    syncThinkingMenuBounds(target.menu);
+    requestAnimationFrame(() => syncThinkingMenuBounds(target.menu));
+  }
 }
 
 function renderQuickModelPicker() {
@@ -1649,17 +1746,8 @@ function renderQuickModelPicker() {
     els.quickModelMeta.textContent = selectedItem ? describeChatModelItem(selectedItem) : "Загрузите модель в настройках";
   }
 
-  const thinkingValue = thinkingSelection(
-    els.quickThinkingControl?.dataset.thinkingMode ?? state.modelSettingsState?.effective?.ollama_think,
-    getModelThinkingMetadata(selectedName),
-  );
   const menuHtml = items.map((item) => {
     const active = item.name === selectedName;
-    const thinkingSupported = shouldShowThinkingToggleForModel(item.name);
-    const metadata = getModelThinkingMetadata(item.name);
-    const namedLevels = hasNamedThinkingLevels(metadata);
-    const itemThinkingOn = active && thinkingValue !== "off" && (thinkingValue !== "auto" || metadata?.default !== false);
-    const itemThinkingValue = active ? thinkingValue : "auto";
     return `
       <div class="quick-model-picker__item-shell${active ? " quick-model-picker__item-shell--active" : ""}">
         <button
@@ -1671,14 +1759,6 @@ function renderQuickModelPicker() {
         >
           <span class="quick-model-picker__item-name">${escapeHtml(item.title || item.name)}</span>
         </button>
-        ${thinkingSupported && (namedLevels || !metadata.values.includes(false) || !metadata.values.includes(true)) ? `
-          <button type="button" role="menuitem" class="button button--ghost quick-model-picker__thinking-level" data-quick-thinking-open="${escapeHtml(item.name)}" aria-haspopup="menu" aria-label="Thinking — уровень для ${escapeHtml(item.name)}: ${escapeHtml(itemThinkingValue)}">${escapeHtml(itemThinkingValue)}</button>
-        ` : thinkingSupported ? `
-          <label class="apple-switch quick-model-picker__thinking-toggle" title="Thinking — режим рассуждения">
-            <input type="checkbox" aria-label="Thinking для ${escapeHtml(item.name)}" data-quick-thinking-toggle data-quick-thinking-model="${escapeHtml(item.name)}" ${itemThinkingOn ? "checked" : ""} />
-            <span class="apple-switch__track" aria-hidden="true"></span>
-          </label>
-        ` : ""}
       </div>
     `;
   }).join("");
@@ -2253,9 +2333,6 @@ function updateAssistantMessageFromTask(task, updates = {}) {
       isActiveReasoning ? "warning" : "success",
     );
   }
-  if (state.autoScrollPinned) {
-    scrollMessagesToBottom({ force: true });
-  }
 }
 
 function chatTaskScopedUrl(taskId, suffix = "", task = null) {
@@ -2271,15 +2348,19 @@ function chatTaskScopedUrl(taskId, suffix = "", task = null) {
 async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
   const taskId = typeof taskOrId === "object" ? (taskOrId?.id || taskOrId?.task_id || "") : taskOrId;
   const taskScope = typeof taskOrId === "object" ? taskOrId : null;
+  const diagnosticScope = runtimeDiagnosticContext({profile_id: taskScope?.profile_id, session_id: taskScope?.session_id, model: taskScope?.model_name});
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const task = await request(chatTaskScopedUrl(taskId, "", taskScope));
     const taskState = String(task?.state || "");
+    if (["completed", "failed", "error", "cancelled"].includes(taskState)) logRuntimeDiagnostic("chat.task_terminal", {task}, diagnosticScope, ["failed", "error"].includes(taskState) ? "error" : "info", `task:${taskId}:${taskState}`);
     if (taskState === "completed" || taskState === "cancelled") {
       return task;
     }
     if (taskState === "error" || taskState === "failed") {
-      throw new Error(task?.message || "Генерация ответа завершилась ошибкой.");
+      const error = new Error(task?.message || "Генерация ответа завершилась ошибкой.");
+      error.code = task?.error_code || null;
+      throw error;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 700));
   }
@@ -2288,6 +2369,7 @@ async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
 
 function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = null } = {}) {
   const taskId = task?.id || task?.task_id || "";
+  const diagnosticScope = runtimeDiagnosticContext({profile_id: task?.profile_id, session_id: task?.session_id, model: task?.model_name});
   if (!taskId || typeof window.EventSource !== "function") {
     return Promise.reject(new Error("SSE недоступен в этом браузере."));
   }
@@ -2380,6 +2462,7 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
       if (settled) return;
       const data = parseSsePayload(event);
       terminalEventReceived = true;
+      logRuntimeDiagnostic("chat.stream_completed", {task: {...task, ...data, state: "completed"}}, diagnosticScope, "info", `task:${taskId}:completed`);
       finishChatTypingStream(task, () => {
         updateAssistantMessageFromTask(task, {
           ...data,
@@ -2415,6 +2498,8 @@ function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = n
         error: data.message || "Генерация ответа завершилась ошибкой.",
       });
       const error = new Error(data.message || "Генерация ответа завершилась ошибкой.");
+      error.code = data.code || null;
+      logRuntimeDiagnostic("chat.stream_failed", {error, task: {...task, ...data, state: "failed", error_code: data.code}}, diagnosticScope, "error");
       error.chatTaskFailed = true;
       finish(() => reject(error));
     });
@@ -2453,15 +2538,16 @@ function taskFromAssistantMessage(message) {
 
 async function refreshCurrentSessionMessages({ sessionId = state.currentSessionId, scroll = false } = {}) {
   const targetSessionId = String(sessionId || "").trim();
+  const profileId = state.activeProfileId;
   if (!targetSessionId) return false;
-  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`);
-  if (String(state.currentSessionId || "") !== targetSessionId) {
+  const data = await request(`/sessions/${encodeURIComponent(targetSessionId)}/messages?profile_id=${encodeURIComponent(profileId)}`);
+  if (String(state.currentSessionId || "") !== targetSessionId || String(state.activeProfileId) !== String(profileId)) {
     return false;
   }
   state.messages = Array.isArray(data?.messages) ? data.messages : [];
   renderMessages();
   if (scroll) {
-    scrollMessagesToBottom({ force: true });
+    scrollMessagesToBottom();
   }
   return true;
 }
@@ -2477,6 +2563,7 @@ async function recoverActiveChatTaskFromMessages() {
   let task = fallbackTask;
   state.chatTaskId = taskId;
   state.isSending = true;
+  renderMessages();
   updateSendButtonState();
 
   try {
@@ -2527,12 +2614,17 @@ async function recoverActiveChatTaskFromMessages() {
       closeChatTaskEventSource();
       clearChatTaskReplay(taskId);
       clearChatTypingStreams(taskId);
+      renderMessages();
       updateSendButtonState();
     }
   }
 }
 
 async function cancelCurrentChatGeneration() {
+  if (state.knowledgeSearchRequest) {
+    cancelKnowledgeSearch();
+    return;
+  }
   const controller = state.chatTaskStartController;
   const taskId = state.chatTaskId;
 
@@ -2540,6 +2632,11 @@ async function cancelCurrentChatGeneration() {
     return;
   }
 
+  const pendingBeforeCancel = state.pendingChatMessage;
+  const wasWaiting = pendingBeforeCancel?.showWaitingDots;
+  state.isCancellingChatTask = true;
+  if (pendingBeforeCancel) pendingBeforeCancel.showWaitingDots = false;
+  renderMessages();
   setFooter("Останавливаю генерацию ответа…", "warning");
 
   if (controller) {
@@ -2554,6 +2651,9 @@ async function cancelCurrentChatGeneration() {
       });
     } catch (error) {
       if ((error?.status || 0) !== 404) {
+        state.isCancellingChatTask = false;
+        if (state.pendingChatMessage === pendingBeforeCancel && pendingBeforeCancel) pendingBeforeCancel.showWaitingDots = wasWaiting;
+        renderMessages();
         setFooter(`Не удалось остановить генерацию: ${error.message || error}`, "error");
         return;
       }
@@ -2565,12 +2665,14 @@ async function cancelCurrentChatGeneration() {
   closeChatTaskEventSource();
   clearChatTaskReplay();
   clearChatTypingStreams(taskId, { flush: true });
+  state.isCancellingChatTask = false;
   state.isSending = false;
+  renderMessages();
   if (state.currentSessionId) {
     await loadSessions({ preferredSessionId: state.currentSessionId });
   }
   updateSendButtonState();
-  scrollMessagesToBottom({ force: true });
+  scrollMessagesToBottom();
   setFooter("Генерация ответа остановлена.", "warning");
 }
 
@@ -2931,11 +3033,37 @@ function autoResizePrompt() {
   els.promptInput.style.height = `${nextHeight}px`;
 }
 
+function syncKnowledgeSearchControl() {
+  if (els.knowledgeSearchToggle) {
+    els.knowledgeSearchToggle.checked = Boolean(state.knowledgeSearchMode);
+    els.knowledgeSearchToggle.disabled = !state.activeProfileId || (state.isSending && !state.knowledgeSearchRequest);
+  }
+  const status = els.knowledgeSearchStatus?.textContent || "План → поиск → цитаты";
+  if (els.knowledgeSearchIndicator) {
+    els.knowledgeSearchIndicator.hidden = !state.knowledgeSearchMode;
+    els.knowledgeSearchIndicator.title = `Поиск по базе включён. ${status}`;
+    els.knowledgeSearchIndicator.setAttribute("aria-label", `Поиск по базе включён. ${status}. Открыть настройки поиска`);
+  }
+  els.promptInput?.closest?.(".composer__input-wrap")?.classList.toggle("composer__input-wrap--knowledge-search", Boolean(state.knowledgeSearchMode));
+}
+
 function updateSendButtonState() {
+  syncKnowledgeSearchControl();
   if (!els.sendButton) return;
   const hasText = Boolean((els.promptInput?.value || "").trim());
   const hasReadyAttachments = state.chatAttachments.some((item) => item.status === "ready" && item.server?.id);
   const hasBlockedAttachments = state.chatAttachments.some((item) => item.status !== "ready");
+  if (state.knowledgeSearchMode) {
+    if (els.promptInput) {
+      els.promptInput.disabled = false;
+      els.promptInput.placeholder = "Найдите слова, дату или ID в базе знаний…";
+    }
+    els.sendButton.disabled = !state.isSending && (!hasText || state.chatAttachments.length > 0);
+    els.sendButton.textContent = state.isSending ? "Стоп" : "Найти";
+    els.sendButton.classList.toggle("send-button--stopping", state.isSending);
+    els.sendButton.setAttribute("aria-label", state.isSending ? "Остановить поиск" : "Найти в базе знаний");
+    return;
+  }
   const selectedModel = String(state.selectedLlmModel || els.llmModelSelect?.value || "").trim();
   const selectedIsLocalCalculator = selectedModel === LOCAL_CALCULATOR_MODEL_ID;
   const hasInstalledChatModel = state.installedModels.length > 0 || selectedIsLocalCalculator;
@@ -2967,7 +3095,7 @@ function renderChatModelNotice() {
     selectedModel === AUTO_MODEL_ID || selectedModel === LOCAL_CALCULATOR_MODEL_ID || state.installedModels.some((item) => item.name === selectedModel)
   );
   const missing = !hasInstalledChatModel || !selectedModel || (Boolean(selectedModel) && !selectedInstalled);
-  els.chatModelNotice.hidden = !missing;
+  els.chatModelNotice.hidden = state.knowledgeSearchMode || !missing;
   if (missing) {
     const title = els.chatModelNotice.querySelector("strong");
     const text = els.chatModelNotice.querySelector("span");
@@ -3024,6 +3152,15 @@ function setInlineStatus(element, message = "", tone = "neutral") {
   }
 }
 
+async function copyChatMessage(message) {
+  try {
+    await copyText(message?.content || "");
+    showToast("Сообщение скопировано", "success", { title: "Скопировано", dedupe: false });
+  } catch {
+    showToast("Не удалось скопировать сообщение.", "error", { title: "Ошибка" });
+  }
+}
+
 function closeToast() {
   if (state.toastTimer) {
     window.clearTimeout(state.toastTimer);
@@ -3032,11 +3169,11 @@ function closeToast() {
   els.toastStack?.querySelectorAll(".toast").forEach((toast) => toast.remove());
 }
 
-function showToast(message = "", tone = "info", { title = "Уведомление", duration = 2800 } = {}) {
+function showToast(message = "", tone = "info", { title = "Уведомление", duration = 2800, dedupe = true } = {}) {
   if (!els.toastStack || !message) return;
   const dedupeKey = `${tone}:${title}:${message}`;
   const now = Date.now();
-  if (state.lastToastKey === dedupeKey && now - state.lastToastAt < 8000) return;
+  if (dedupe && state.lastToastKey === dedupeKey && now - state.lastToastAt < 8000) return;
   state.lastToastKey = dedupeKey;
   state.lastToastAt = now;
   const toast = document.createElement("div");
@@ -3717,6 +3854,13 @@ async function request(path, options = {}) {
   error.status = response.status;
   error.code = detail?.code || payload?.code || null;
   error.payload = payload;
+  if (/^\/(chat|rag|model_settings|models)(?:[/?]|$)/.test(path)) {
+    logRuntimeDiagnostic("request.failed", {error}, runtimeDiagnosticContext({
+      profile_id: Number(options.body?.profile_id || new URL(path, window.location.origin).searchParams.get("profile_id")) || Number(state.activeProfileId) || null,
+      session_id: options.body?.session_id || null,
+      model: options.body?.model_name || options.body?.model || state.selectedLlmModel,
+    }), "error");
+  }
   throw error;
 }
 
@@ -4146,29 +4290,151 @@ async function saveVisionContextToRag() {
   }
 }
 
+function chatWaitingDotsMarkup() {
+  return `<span class="message-waiting-dots" aria-hidden="true">
+    <span class="message-waiting-dots__dot" aria-hidden="true"></span>
+    <span class="message-waiting-dots__dot" aria-hidden="true"></span>
+    <span class="message-waiting-dots__dot" aria-hidden="true"></span>
+  </span>`;
+}
+
+function updateChatWaitingStatus(operationId, label = "") {
+  const nextId = String(operationId || "");
+  if (!nextId) {
+    if (state.chatWaitingStatusOperationId) {
+      if (els.chatWaitingStatus) els.chatWaitingStatus.textContent = "";
+      state.chatWaitingStatusOperationId = null;
+    }
+    return;
+  }
+  if (state.chatWaitingStatusOperationId === nextId) return;
+  state.chatWaitingStatusOperationId = nextId;
+  if (els.chatWaitingStatus) els.chatWaitingStatus.textContent = label;
+}
+
+function pendingChatContextMatches(pending, { profileId, sessionId, knowledgeSearchMode }) {
+  if (!pending || String(pending.profileId ?? "") !== String(profileId ?? "")) return false;
+  const sessions = [pending.sessionId, pending.acceptedSessionId].map((value) => String(value ?? ""));
+  if (!sessions.includes(String(sessionId ?? ""))) return false;
+  return Boolean(pending.knowledgeSearchMode) === Boolean(knowledgeSearchMode);
+}
+
+function assistantMessageMatchesPending(message, pending, sessionId = state.currentSessionId) {
+  if (message?.role !== "assistant" || !pending) return false;
+  if (String(message.session_id ?? sessionId ?? "") !== String(sessionId ?? "")) return false;
+  const taskId = String(pending.taskId || "");
+  const assistantMessageId = String(pending.assistantMessageId || "");
+  return Boolean(
+    (taskId && String(message.task_id || "") === taskId)
+    || (assistantMessageId && String(message.id || "") === assistantMessageId),
+  );
+}
+
+function shouldShowPendingChatWaitingDots({
+  pending = state.pendingChatMessage,
+  messages = state.messages,
+  isSending = state.isSending,
+  profileId = state.activeProfileId,
+  sessionId = state.currentSessionId,
+  knowledgeSearchMode = state.knowledgeSearchMode,
+} = {}) {
+  if (!pending?.showWaitingDots || !isSending) return false;
+  if (!pendingChatContextMatches(pending, { profileId, sessionId, knowledgeSearchMode })) return false;
+  return !(messages || []).some((message) => assistantMessageMatchesPending(message, pending, sessionId));
+}
+
+function shouldShowAssistantWaitingDots(message, {
+  pending = state.pendingChatMessage,
+  chatTaskId = state.chatTaskId,
+  isSending = state.isSending,
+  profileId = state.activeProfileId,
+  sessionId = state.currentSessionId,
+  knowledgeSearchMode = state.knowledgeSearchMode,
+  isCancelling = state.isCancellingChatTask,
+} = {}) {
+  if (message?.role !== "assistant" || !isSending || isCancelling || !isAssistantMessageActive(message)) return false;
+  if (String(message.session_id ?? sessionId ?? "") !== String(sessionId ?? "")) return false;
+  if (String(message.content || "").trim() || message.has_reasoning || String(message.live_reasoning || "").trim()) {
+    return false;
+  }
+  const pendingIsCurrent = pendingChatContextMatches(pending, { profileId, sessionId, knowledgeSearchMode });
+  if (pending && !pendingIsCurrent) return false;
+  if (pendingIsCurrent && !pending.showWaitingDots) return false;
+  const taskId = String(message.task_id || "");
+  const currentTaskMatches = Boolean(chatTaskId && taskId && String(chatTaskId) === taskId);
+  const pendingMatches = pendingIsCurrent && pending.showWaitingDots
+    && assistantMessageMatchesPending(message, pending, sessionId);
+  return currentTaskMatches || pendingMatches;
+}
+
 function renderMessages() {
   if (!els.messageList || !els.emptyState) return;
 
-  const items = state.messages || [];
+  const scrollTop = els.messageScroll?.scrollTop || 0;
+  // A scrollbar drag can move the viewport before its scroll event is delivered.
+  syncMessageScrollState({ userScroll: true });
+  const followBottom = state.autoScrollPinned;
+  const pending = state.pendingChatMessage;
+  const stored = state.messages || [];
+  const pendingVisible = pending && String(pending.profileId) === String(state.activeProfileId)
+    && [pending.sessionId, pending.acceptedSessionId].includes(state.currentSessionId)
+    && !stored.some((message) => pending.persistedId && String(message.id) === String(pending.persistedId));
+  const items = pendingVisible ? [...stored, pending] : stored;
+  const pendingWaitingDotsVisible = shouldShowPendingChatWaitingDots();
+  const waitingAssistant = stored.find((message) => shouldShowAssistantWaitingDots(message)) || null;
+  const waitingPendingForStatus = pendingWaitingDotsVisible
+    ? pending
+    : (waitingAssistant && pendingChatContextMatches(pending, {
+      profileId: state.activeProfileId,
+      sessionId: state.currentSessionId,
+      knowledgeSearchMode: state.knowledgeSearchMode,
+    }) && assistantMessageMatchesPending(waitingAssistant, pending) ? pending : null);
+  const waitingStatusId = waitingPendingForStatus?.id
+    ? `pending:${waitingPendingForStatus.id}`
+    : waitingAssistant ? `task:${waitingAssistant.task_id || waitingAssistant.id}` : "";
+  const waitingStatusLabel = waitingPendingForStatus?.knowledgeSearchMode || waitingAssistant?.model === "knowledge_search"
+    ? "Ищу в базе знаний"
+    : "Готовлю ответ";
+  updateChatWaitingStatus(waitingStatusId, waitingStatusLabel);
+  const waitingSearch = Boolean(pending?.knowledgeSearchMode);
+  const pendingWaitingMarkup = pendingWaitingDotsVisible ? `
+    <div class="message-row message-row--assistant message-row--waiting message-row--pending-waiting">
+      <article class="message-card">
+        <div class="message-card__top">
+          <span class="message-card__author-group">
+            <span class="message-card__author">${waitingSearch ? "База знаний" : "LocalGPT"}</span>
+          </span>
+        </div>
+        <div class="message-card__body">${chatWaitingDotsMarkup()}</div>
+      </article>
+    </div>
+  ` : "";
   state.renderedCodeBlocks = [];
   els.emptyState.hidden = items.length > 0;
   els.messageList.innerHTML = items
     .map((message, index) => {
       const role = message.role === "user" ? "user" : message.role === "assistant" ? "assistant" : "system";
-      const author = role === "user" ? "Вы" : role === "assistant" ? "LocalGPT" : "Система";
-      const status = normalizeMessageStatus(message);
+      const author = role === "user" ? "Вы" : role === "assistant" ? (message.model === "knowledge_search" ? "База знаний" : "LocalGPT") : "Система";
+      const blockedTransport = role === "assistant" && message.model !== "knowledge_search" && /\[(?:END_)?LOCALGPT_DATA_ENVELOPE/.test(String(message.content || ""));
+      const status = blockedTransport ? "failed" : normalizeMessageStatus(message);
+      if (blockedTransport) logRuntimeDiagnostic("chat.service_format", {code: "service_format_in_answer", reasoning_present: Boolean(message.has_reasoning)}, runtimeDiagnosticContext({model: message.model, session_id: message.session_id, thinking: null, output_tokens: null, thinking_tokens: null}), "error", `envelope:${message.id}`);
       const statusMeta = role === "assistant" ? assistantStatusMeta(status) : { label: "", text: "" };
-      const content = String(message.content || "");
-      const errorText = String(message.error || "").trim();
+      const content = blockedTransport ? "" : String(message.content || "");
+      const errorText = blockedTransport
+        ? "Модель вернула служебный формат вместо ответа. Повторите запрос."
+        : String(message.error || "").trim();
       const hasContent = Boolean(content.trim());
       const isActive = isAssistantMessageActive(message);
-      const canCopy = hasContent && (role === "user" || role === "assistant");
-      const hasReasoning = role === "assistant" && Boolean(message.has_reasoning);
+      const canCopy = !message.pending && hasContent && (role === "user" || role === "assistant");
+      const hasReasoning = role === "assistant"
+        && Boolean(message.has_reasoning || String(message.live_reasoning || "").trim());
+      const showAssistantWaitingDots = !blockedTransport && shouldShowAssistantWaitingDots(message);
+      const waitingDotsMarkup = chatWaitingDotsMarkup();
       const canExportVision = role === "assistant"
         && status === "completed"
         && hasContent
         && Boolean(visionSourceUserMessageForIndex(index));
-      const canExportChat = hasContent && (role === "user" || (role === "assistant" && status === "completed"));
+      const canExportChat = !message.pending && hasContent && (role === "user" || (role === "assistant" && status === "completed"));
       const body = (() => {
         if (role !== "assistant") return formatRichMessage(content);
         if (status === "failed") {
@@ -4182,6 +4448,9 @@ function renderMessages() {
             hasContent ? formatRichMessage(content) : "",
             `<p class="message-status-text">${escapeHtml(statusMeta.text)}</p>`,
           ].filter(Boolean).join("");
+        }
+        if (showAssistantWaitingDots) {
+          return waitingDotsMarkup;
         }
         if (!hasContent && status === "generating") {
           return `<p class="message-status-text">${escapeHtml(statusMeta.text)}</p>`;
@@ -4208,7 +4477,7 @@ function renderMessages() {
           </div>`
         : "";
       return `
-        <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}` : ""}">
+        <div class="message-row message-row--${role} ${role === "assistant" ? `message-row--status-${escapeHtml(status)}${showAssistantWaitingDots ? " message-row--waiting" : ""}` : ""}">
           <article class="message-card">
             <div class="message-card__top">
               <span class="message-card__author-group">
@@ -4234,9 +4503,15 @@ function renderMessages() {
         </div>
       `;
     })
-    .join("");
+    .join("") + pendingWaitingMarkup;
+  if (els.messageScroll) {
+    els.messageScroll.scrollTo({
+      top: followBottom ? els.messageScroll.scrollHeight : scrollTop,
+      behavior: "instant",
+    });
+  }
+  syncMessageScrollState();
   requestAnimationFrame(() => {
-    syncMessageScrollState();
     observeMessageScrollEnd();
   });
 }
@@ -4882,10 +5157,12 @@ function renderQuickThinkingControl(rawValue = null) {
 
   els.quickThinkingControl.dataset.thinkingMode = visibleValue;
   els.quickThinkingButton.disabled = disabled;
-  els.quickThinkingButton.textContent = `Thinking: ${visibleValue}`;
+  const displayValue = ({ auto: "Auto", on: "On", off: "Off" })[visibleValue] || visibleValue;
+  const buttonLabel = `Thinking: ${displayValue}`;
+  els.quickThinkingButton.textContent = buttonLabel;
   els.quickThinkingButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   els.quickThinkingControl.hidden = !shouldShowThinkingToggleForModel(modelName);
-  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue !== "off");
+  els.quickThinkingControl.classList.toggle("thinking-mode-control--enabled", supported && visibleValue !== "off" && visibleValue !== "auto");
   els.quickThinkingControl.classList.toggle("thinking-mode-control--disabled", !supported);
   els.quickThinkingControl.title = hint;
 
@@ -4895,12 +5172,32 @@ function renderQuickThinkingControl(rawValue = null) {
     els.quickThinkingMobileControl.title = hint;
   }
   if (els.quickThinkingMobileButton) {
+    els.quickThinkingMobileButton.textContent = buttonLabel;
     els.quickThinkingMobileButton.disabled = disabled;
     els.quickThinkingMobileButton.setAttribute("aria-label", `Thinking — режим / уровень: ${label}`);
   }
 
   [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
-    menu.innerHTML = options.map((option) => `<button type="button" role="menuitemradio" data-thinking-mode="${escapeHtml(option.value)}" class="${option.value === visibleValue ? "thinking-mode-menu__item--active" : ""}" aria-checked="${option.value === visibleValue}" ${disabled ? "disabled" : ""}>${escapeHtml(option.label)}</button>`).join("");
+    const choices = options.map((option) => ({
+      ...option, title: option.label,
+      label: ({auto: "Auto", on: "On", off: "Off"})[option.value] || option.label,
+    }));
+    const key = JSON.stringify(choices);
+    const existing = menu.querySelector?.(".thinking-segments");
+    if (!existing || menu.dataset.optionsKey !== key) {
+      menu.innerHTML = renderThinkingSegments(choices, visibleValue, disabled);
+      menu.dataset.optionsKey = key;
+    } else {
+      const index = choices.findIndex((option) => option.value === visibleValue);
+      existing.style.setProperty("--thinking-selected-index", Math.max(0, index));
+      existing.style.setProperty("--thinking-has-selection", index >= 0 ? 1 : 0);
+      menu.querySelectorAll("[data-thinking-mode]").forEach((button) => {
+        const selected = button.dataset.thinkingMode === visibleValue;
+        button.disabled = disabled;
+        button.setAttribute("aria-checked", String(selected));
+        button.tabIndex = selected || (index < 0 && button.dataset.thinkingMode === choices[0]?.value) ? 0 : -1;
+      });
+    }
   });
 
   if (els.ollamaThinkField) els.ollamaThinkField.hidden = !supported;
@@ -8438,6 +8735,7 @@ function positionRagQuickMenu(clientX, clientY) {
 }
 
 function renderRagQuickMenu() {
+  syncKnowledgeSearchControl();
   renderRagButton();
   if (!els.ragQuickEnabledToggle) return;
   els.ragQuickEnabledToggle.disabled = !state.activeProfileId;
@@ -8478,6 +8776,7 @@ function renderRagEmbeddingGeneration(status) {
     unknown: "Статус неизвестен",
   };
   const descriptor = status?.embedding || operation?.embedding || {};
+  const lexicalOnly = descriptor.provider === "local_hash";
   const provider = [descriptor.provider, descriptor.model, descriptor.version]
     .map((value) => String(value || "").trim())
     .filter(Boolean)
@@ -8506,10 +8805,11 @@ function renderRagEmbeddingGeneration(status) {
     els.ragEmbeddingCard.dataset.state = stateName;
   }
   if (els.ragEmbeddingState) {
-    els.ragEmbeddingState.textContent = labels[stateName] || labels.unknown;
+    els.ragEmbeddingState.textContent = stateName === "ready" && lexicalOnly
+      ? "Лексический индекс готов" : (labels[stateName] || labels.unknown);
   }
   if (els.ragEmbeddingDetails) {
-    els.ragEmbeddingDetails.textContent = details;
+    els.ragEmbeddingDetails.textContent = details + (lexicalOnly ? " • семантические embeddings не настроены" : "");
   }
   if (els.ragReindexProgress) {
     els.ragReindexProgress.hidden = !operationActive;
@@ -8529,6 +8829,12 @@ function renderRagEmbeddingGeneration(status) {
 }
 
 function renderRagPanel() {
+  if (els.ragUploadReport) {
+    const report = state.ragUploadReport;
+    const visible = report && String(report.profileId) === String(state.activeProfileId);
+    els.ragUploadReport.hidden = !visible;
+    setInlineStatus(els.ragUploadReport, visible ? report.details : "", visible ? report.tone : "neutral");
+  }
   const status = state.ragStatus || {};
   const reindexActive = renderRagEmbeddingGeneration(status);
   renderRagButton();
@@ -8597,6 +8903,106 @@ function renderRagPanel() {
   }
 }
 
+function renderEmbeddingSetup() {
+  const setup = state.embeddingSetup;
+  if (!els.embeddingSetupAction) return;
+  const current = setup && Number(setup.profile_id) === Number(state.activeProfileId);
+  const download = current ? setup.download : null;
+  const downloading = ["pending", "running"].includes(download?.state);
+  const indexing = current && ["queued", "running"].includes(setup?.operation?.status);
+  if (els.embeddingSetupCancel) els.embeddingSetupCancel.hidden = !downloading;
+  els.embeddingSetupAction.disabled = !current || state.embeddingSetupBusy || downloading || indexing || setup.active;
+  els.embeddingSetupAction.textContent = !current ? "Проверить модель" : state.embeddingSetupBusy ? "Настройка…" : downloading ? "Модель загружается…" : indexing ? "Строится индекс…"
+    : setup.active ? "Семантический поиск включён" : setup.installed ? "Включить семантический поиск" : `Установить ${setup.model}`;
+  if (els.embeddingSetupDetails) els.embeddingSetupDetails.textContent = !current ? "Проверьте доступность локального Ollama."
+    : setup.operation?.status === "failed" ? "Переиндексация не завершена. Прежний индекс сохранён; проверьте модель и повторите настройку."
+    : download?.state === "error" ? `Не удалось скачать ${setup.model}: ${download.message || "проверьте соединение и повторите"}`
+    : download?.state === "canceled" && !setup.installed ? "Загрузка остановлена. Можно установить модель повторно."
+    : indexing ? "Создаётся новый индекс. До завершения используется прежний; другие профили не меняются."
+    : downloading ? `${setup.model}: ${download.message || "загрузка весов"}`
+    : setup.active ? `Активна локальная модель ${setup.provider.model}. Настройка сохранена для текущего профиля.`
+    : setup.installed ? `${setup.model} установлена. Следующий шаг — локальная переиндексация текущего профиля.`
+    : `${setup.model} отсутствует. Загрузите веса в Ollama, затем включите семантический индекс. Источники не отправляются во внешние сервисы.`;
+  if (els.embeddingSetupProgress) {
+    els.embeddingSetupProgress.hidden = !downloading && !indexing;
+    const total = downloading ? download.total : setup?.operation?.total_chunks;
+    const done = downloading ? download.completed : setup?.operation?.processed_chunks;
+    if (Number(total) > 0) els.embeddingSetupProgress.value = Math.round(Number(done || 0) / Number(total) * 100);
+    else els.embeddingSetupProgress.removeAttribute("value");
+  }
+  if (els.embeddingSetupLexical) els.embeddingSetupLexical.hidden = !current || !(setup.configured || setup.active);
+}
+
+async function loadEmbeddingSetup({ notify = false } = {}) {
+  const profileId = state.activeProfileId;
+  if (!profileId) return null;
+  window.clearTimeout(state.embeddingSetupTimer);
+  try {
+    const setup = await request(`/rag/embedding-setup?profile_id=${encodeURIComponent(profileId)}`);
+    if (Number(state.activeProfileId) !== Number(profileId)) return null;
+    state.embeddingSetup = setup;
+    renderEmbeddingSetup();
+    if (["pending", "running"].includes(setup.download?.state) || ["queued", "running"].includes(setup.operation?.status)) {
+      state.embeddingSetupTimer = window.setTimeout(() => void loadEmbeddingSetup(), 1500);
+    } else if (setup.active && state.ragStatus?.embedding?.provider !== "ollama") {
+      void loadRagStatus({ silent: true });
+    }
+    return setup;
+  } catch (error) {
+    if (Number(state.activeProfileId) === Number(profileId)) {
+      state.embeddingSetup = null;
+      renderEmbeddingSetup();
+      if (els.embeddingSetupDetails) els.embeddingSetupDetails.textContent = `Не удалось проверить модель: ${error.message || error}`;
+      if (notify) setFooter("Не удалось проверить локальную embedding-модель.", "error");
+    }
+    return null;
+  }
+}
+
+async function runEmbeddingSetup({ skipDownloadConfirm = false } = {}) {
+  const profileId = state.activeProfileId;
+  const setup = await loadEmbeddingSetup({ notify: true });
+  if (!setup || Number(state.activeProfileId) !== Number(profileId) || setup.active) return;
+  const action = setup.installed ? "activate" : "install";
+  const approved = action === "install" && skipDownloadConfirm ? true : await openConfirmDialog({
+    eyebrow: "Семантический поиск", title: action === "install" ? "Установить embedding-модель?" : "Включить семантический поиск?",
+    message: action === "install" ? `Ollama скачает веса ${setup.model} из реестра. Это не отправляет ваши документы в интернет. После загрузки индекс включается отдельным действием.`
+      : `Будет построен индекс ${setup.model} только для текущего профиля. Данные обрабатывает локальный Ollama. Прежний поиск работает до успешного завершения; остальные профили не меняются.`,
+    confirmLabel: action === "install" ? "Установить" : "Построить индекс", returnFocus: els.embeddingSetupAction,
+  });
+  if (!approved || Number(state.activeProfileId) !== Number(profileId)) return;
+  state.embeddingSetupBusy = true; renderEmbeddingSetup();
+  try {
+    const result = await request(`/rag/embedding-setup/${action}?profile_id=${encodeURIComponent(profileId)}`, {method: "POST", body: {}});
+    if (Number(state.activeProfileId) !== Number(profileId)) return;
+    if (action === "activate") void pollRagReindexTask(result.task_id, profileId);
+    await loadEmbeddingSetup();
+  } catch (error) {
+    if (Number(state.activeProfileId) === Number(profileId)) setFooter(`Настройка семантического поиска: ${error.message || error}`, "error");
+  } finally {
+    state.embeddingSetupBusy = false;
+    if (Number(state.activeProfileId) === Number(profileId)) renderEmbeddingSetup();
+  }
+}
+
+async function offerEmbeddingSetup() {
+  const setup = await loadEmbeddingSetup();
+  if (!setup || setup.active || state.isSending || state.confirmResolver || (els.promptInput?.value || "").trim()) return;
+  const profileId = state.activeProfileId;
+  const key = `localgpt-semantic-setup:${profileId}:${setup.model}`;
+  if (readStored(key)) return;
+  writeStored(key, "offered");
+  const approved = await openConfirmDialog({
+    eyebrow: "Настройка поиска", title: setup.installed ? "Включить поиск по смыслу?" : "Установить модель для поиска по смыслу?",
+    message: setup.installed ? "Локальная embedding-модель уже установлена. Откройте «Знания», чтобы построить индекс текущего профиля."
+      : `Для семантического поиска нужна ${setup.model}. Можно скачать веса через Ollama; ваши источники останутся локально. Поиск по словам доступен и без установки.`,
+    confirmLabel: setup.installed ? "Открыть настройку" : "Установить", cancelLabel: "Позже", returnFocus: els.promptInput,
+  });
+  if (!approved || Number(state.activeProfileId) !== Number(profileId)) return;
+  await openRagPanel();
+  if (!setup.installed) await runEmbeddingSetup({ skipDownloadConfirm: true });
+}
+
 async function loadRagStatus({ silent = false, resumeReindex = true } = {}) {
   try {
     const query = state.activeProfileId
@@ -8604,6 +9010,7 @@ async function loadRagStatus({ silent = false, resumeReindex = true } = {}) {
       : "";
     state.ragStatus = await request(`/rag/status${query}`);
     renderRagPanel();
+    void loadEmbeddingSetup();
     const operation = state.ragStatus?.embedding_generation?.operation;
     if (
       resumeReindex
@@ -8777,25 +9184,52 @@ async function uploadRagFiles(files) {
     setFooter("Сначала выберите профиль для RAG.", "warning");
     return;
   }
-  const formData = new FormData();
-  selectedFiles.forEach((file) => formData.append("files", file));
+  const profileId = state.activeProfileId;
+  state.ragUploadReport = null;
   state.ragBusy = true;
   renderRagPanel();
   try {
-    const result = await request(`/rag/files?profile_id=${encodeURIComponent(state.activeProfileId)}`, {
-      method: "POST",
-      body: formData,
+    const result = await uploadRagBatches(selectedFiles, async (batch) => {
+      const formData = new FormData();
+      batch.forEach((file) => formData.append("files", file));
+      return request(`/rag/files?profile_id=${encodeURIComponent(profileId)}`, {
+        method: "POST", body: formData,
+      });
+    }, {
+      onProgress: (progress) => {
+        state.ragUploadReport = {
+          profileId, tone: "neutral",
+          details: `RAG: обработано ${progress.processed}/${progress.total}, добавлено ${progress.saved.length}, ошибок ${progress.errors.length}.`,
+        };
+        renderRagPanel();
+      },
+      onFileError: (failure) => console.error("[RAG upload] Файл отклонён", {
+        code: failure.code || failure.error || "unknown_upload_error",
+        reason: failure.message || failure.error || "Неизвестная ошибка загрузки",
+      }),
+      onBatchError: (error) => console.error("[RAG upload] Ошибка запроса", {
+        code: error.code || "rag_upload_request_failed",
+        reason: error.message || "Неизвестная ошибка запроса", status: error.status || null,
+      }),
     });
-    state.ragStatus = result?.status || state.ragStatus;
-    await loadRagStatus({ silent: true });
-    const savedCount = Array.isArray(result?.saved) ? result.saved.length : 0;
-    const errorCount = Array.isArray(result?.errors) ? result.errors.length : 0;
-    setFooter(
-      `RAG: добавлено файлов ${savedCount}${errorCount ? `, ошибок ${errorCount}` : ""}. Теперь можно индексировать.`,
-      errorCount ? "warning" : "success",
-    );
+    const report = ragUploadReport(result);
+    state.ragUploadReport = { ...report, profileId };
+    if (String(state.activeProfileId) === String(profileId)) {
+      state.ragStatus = result?.status || state.ragStatus;
+      await loadRagStatus({ silent: true });
+      setFooter(report.summary, report.tone);
+    }
   } catch (error) {
-    setFooter(`Не удалось добавить RAG-файлы: ${error.message || error}`, "error");
+    console.error("[RAG upload] Ошибка запроса", {
+      code: error.code || "rag_upload_request_failed",
+      reason: error.message || "Неизвестная ошибка запроса",
+      status: error.status || null,
+    });
+    const details = describeRagUploadError({ code: error.code || error.message, message: error.message });
+    state.ragUploadReport = { profileId, details, tone: "error" };
+    if (String(state.activeProfileId) === String(profileId)) {
+      setFooter(`Не удалось добавить RAG-файлы: ${error.message || error}`, "error");
+    }
   } finally {
     state.ragBusy = false;
     renderRagPanel();
@@ -9166,10 +9600,26 @@ async function refreshAsrPipelineSettings({ silent = false } = {}) {
 }
 
 async function openSession(sessionId) {
+  if (state.knowledgeSearchRequest && state.knowledgeSearchRequest.sessionId !== (sessionId || null)) {
+    cancelKnowledgeSearch({ silent: true });
+  }
   if (state.currentSessionId !== (sessionId || null) && state.chatAttachments.length) {
     await clearChatAttachments({ deleteRemote: true });
   }
+  const profileId = state.activeProfileId;
+  const previousSessionId = state.currentSessionId;
   state.currentSessionId = sessionId || null;
+  if (!sessionId || previousSessionId !== state.currentSessionId) {
+    state.autoScrollPinned = true;
+    state.messageScrollLastTop = 0;
+    state.messageScrollRevision = (state.messageScrollRevision || 0) + 1;
+  }
+  if (previousSessionId !== state.currentSessionId) {
+    state.messages = [];
+    state.messageAttachments = {};
+    state.latestTranscript = null;
+    renderMessages();
+  }
   writeStored(STORAGE_KEYS.activeSessionId, state.currentSessionId || "");
 
   if (!sessionId) {
@@ -9196,37 +9646,53 @@ async function openSession(sessionId) {
   applyCurrentSessionMeta();
 
   try {
-    const [messagesData, transcriptsData, attachmentsData] = await Promise.all([
-      request(`/sessions/${encodeURIComponent(sessionId)}/messages?profile_id=${encodeURIComponent(state.activeProfileId)}`),
-      request(`/transcripts?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
-      request(`/chat/attachments?profile_id=${encodeURIComponent(state.activeProfileId)}&session_id=${encodeURIComponent(sessionId)}`),
+    const [messagesResult, transcriptsResult, attachmentsResult] = await Promise.allSettled([
+      request(`/sessions/${encodeURIComponent(sessionId)}/messages?profile_id=${encodeURIComponent(profileId)}`),
+      request(`/transcripts?profile_id=${encodeURIComponent(profileId)}&session_id=${encodeURIComponent(sessionId)}`),
+      request(`/chat/attachments?profile_id=${encodeURIComponent(profileId)}&session_id=${encodeURIComponent(sessionId)}`),
     ]);
 
+    if (state.currentSessionId !== sessionId || String(state.activeProfileId) !== String(profileId)) return;
+    if (messagesResult.status === "rejected") throw messagesResult.reason;
+    const messagesData = messagesResult.value;
     state.messages = Array.isArray(messagesData?.messages) ? messagesData.messages : [];
-    state.messageAttachments = (Array.isArray(attachmentsData?.attachments) ? attachmentsData.attachments : [])
-      .reduce((groups, attachment) => {
-        const key = String(attachment?.message_id ?? "");
-        if (!key) return groups;
-        groups[key] = [...(groups[key] || []), attachment];
-        return groups;
-      }, {});
-    const transcripts = Array.isArray(transcriptsData?.transcripts) ? transcriptsData.transcripts : [];
-    state.latestTranscript = transcripts[0] || null;
+    if (attachmentsResult.status === "fulfilled") {
+      const attachmentsData = attachmentsResult.value;
+      state.messageAttachments = (Array.isArray(attachmentsData?.attachments) ? attachmentsData.attachments : [])
+        .reduce((groups, attachment) => {
+          const key = String(attachment?.message_id ?? "");
+          if (!key) return groups;
+          groups[key] = [...(groups[key] || []), attachment];
+          return groups;
+        }, {});
+    }
+    if (transcriptsResult.status === "fulfilled") {
+      const transcripts = transcriptsResult.value?.transcripts;
+      state.latestTranscript = Array.isArray(transcripts) ? transcripts[0] || null : null;
+    }
+    if (attachmentsResult.status === "rejected" || transcriptsResult.status === "rejected") {
+      setFooter("Сообщения загружены; часть вложений или транскриптов временно недоступна.", "warning");
+    }
     renderMessages();
     renderTranscriptStrip();
-    scrollMessagesToBottom({ force: true });
+    scrollMessagesToBottom({ force: previousSessionId !== sessionId });
     void recoverActiveChatTaskFromMessages();
   } catch (error) {
-    setFooter(`Не удалось загрузить чат: ${error.message || error}`, "error");
+    if (state.currentSessionId === sessionId && String(state.activeProfileId) === String(profileId)) {
+      setFooter(`Не удалось загрузить чат: ${error.message || error}`, "error");
+    }
   } finally {
     closeSidebar();
   }
 }
 
-async function loadSessions({ preferredSessionId = null } = {}) {
+async function loadSessions({ preferredSessionId = null, isCurrent = null } = {}) {
   if (!state.activeProfileId) return;
+  const profileId = state.activeProfileId;
   try {
-    const data = await request(`/sessions?profile_id=${encodeURIComponent(state.activeProfileId)}`);
+    const data = await request(`/sessions?profile_id=${encodeURIComponent(profileId)}`);
+    if (isCurrent && !isCurrent()) return;
+    if (String(state.activeProfileId) !== String(profileId)) return;
     state.sessions = Array.isArray(data?.sessions) ? data.sessions : [];
     renderSessionList();
 
@@ -9244,13 +9710,22 @@ async function loadSessions({ preferredSessionId = null } = {}) {
       await openSession(state.sessions[0]?.id || null);
     }
   } catch (error) {
+    if (isCurrent && !isCurrent()) return;
     setFooter(`Не удалось загрузить список диалогов: ${error.message || error}`, "error");
   }
 }
 
 async function setActiveProfile(profileId, { preferredSessionId = null } = {}) {
+  if (state.knowledgeSearchRequest && String(state.activeProfileId) !== String(profileId)) {
+    cancelKnowledgeSearch({ silent: true });
+  }
   if (state.activeProfileId && state.activeProfileId !== (profileId || null) && state.chatAttachments.length) {
     await clearChatAttachments({ deleteRemote: true });
+  }
+  if (state.activeProfileId !== (profileId || null)) {
+    state.autoScrollPinned = true;
+    state.messageScrollLastTop = 0;
+    state.messageScrollRevision = (state.messageScrollRevision || 0) + 1;
   }
   state.activeProfileId = profileId || null;
   state.profileManagementMode = "edit";
@@ -9438,7 +9913,7 @@ async function saveShowRouterThinkingToggleFlow() {
   );
 }
 
-async function saveQuickThinkingModeFlow() {
+async function saveQuickThinkingModeFlow({ notify = true } = {}) {
   const modelName = state.selectedLlmModel || els.llmModelSelect?.value || "";
   if (!state.activeProfileId || !modelName || !modelSupportsThinking(modelName)) {
     renderQuickThinkingControl(state.modelSettingsState?.effective?.ollama_think);
@@ -9452,7 +9927,7 @@ async function saveQuickThinkingModeFlow() {
     });
     state.modelSettingsState = data || state.modelSettingsState;
     renderModelSettings();
-    setFooter(`Thinking: ${nextMode} для текущей модели.`, "success");
+    if (notify) setFooter(`Thinking: ${nextMode} для текущей модели.`, "success");
   } catch (error) {
     renderModelSettings();
     setFooter(`Не удалось сохранить Thinking: ${error.message || error}`, "error");
@@ -9724,10 +10199,161 @@ async function ensureModelInstalled(modelName) {
   return false;
 }
 
+function closeKnowledgeSearchWaitDialog(operation) {
+  if (operation?.waitDialogResolver && state.confirmResolver === operation.waitDialogResolver) {
+    resolveConfirmDialog(true);
+  }
+  if (operation) operation.waitDialogResolver = null;
+}
+
+function askKnowledgeSearchContinue(operation, visible) {
+  if (!visible() || state.confirmResolver) return Promise.resolve(null);
+  const decision = openConfirmDialog({
+    eyebrow: "Поиск в базе", title: "Поиск ещё выполняется",
+    message: "Поиск занимает больше времени, чем задано в настройках. Продолжить ожидание? Пока окно открыто, поиск продолжает работать.",
+    confirmLabel: "Продолжить поиск", cancelLabel: "Отменить поиск", returnFocus: els.promptInput,
+  });
+  const owner = state.confirmResolver;
+  operation.waitDialogResolver = owner;
+  return decision.then((answer) => {
+    // Opening another application dialog dismisses the old one with false.
+    // That replacement is not an explicit request to cancel this search.
+    return state.confirmResolver && state.confirmResolver !== owner ? null : answer;
+  }).finally(() => {
+    if (operation.waitDialogResolver === owner) operation.waitDialogResolver = null;
+  });
+}
+
+function cancelKnowledgeSearch({ silent = false } = {}) {
+  const operation = state.knowledgeSearchRequest;
+  if (!operation) return;
+  state.knowledgeSearchRequest = null;
+  closeKnowledgeSearchWaitDialog(operation);
+  operation.controller.abort();
+  state.pendingChatMessage = null;
+  state.isSending = false;
+  if (!silent && operation.clearInput && els.promptInput && !els.promptInput.value.trim()) {
+    els.promptInput.value = operation.query;
+    autoResizePrompt();
+  }
+  if (els.knowledgeSearchStatus) {
+    els.knowledgeSearchStatus.textContent = state.knowledgeSearchMode ? "План → поиск → цитаты" : "";
+  }
+  renderMessages();
+  updateSendButtonState();
+  if (!silent) setFooter("Поиск остановлен. Уже сохранённые результаты останутся в исходном чате.", "warning");
+}
+
+async function sendKnowledgeSearch(rawQuery, { clearInput = false, attachmentIds = [] } = {}) {
+  if (state.isSending) {
+    await cancelCurrentChatGeneration();
+    return;
+  }
+  const query = String(rawQuery || "").trim();
+  if (!query) return;
+  if (!state.activeProfileId) {
+    setFooter("Сначала выберите профиль.", "warning");
+    return;
+  }
+  if (attachmentIds.length || state.chatAttachments.length) {
+    setFooter("Поиск принимает текст. Уберите изображения из поля ввода или отключите поиск.", "warning");
+    return;
+  }
+  if (query.length > 4000) {
+    setFooter("Запрос поиска ограничен 4000 символами. Сократите запрос.", "warning");
+    return;
+  }
+  const operation = {
+    profileId: state.activeProfileId, sessionId: state.currentSessionId,
+    initialSessionId: state.currentSessionId,
+    controller: new AbortController(), query, clearInput,
+  };
+  const visible = () => state.knowledgeSearchRequest === operation && state.knowledgeSearchMode
+    && String(state.activeProfileId) === String(operation.profileId)
+    && [operation.initialSessionId, operation.sessionId].includes(state.currentSessionId);
+  const diagnosticContext = runtimeDiagnosticContext({profile_id: Number(operation.profileId), session_id: operation.initialSessionId});
+  logRuntimeDiagnostic("search.started", {}, diagnosticContext);
+  state.knowledgeSearchRequest = operation;
+  state.isSending = true;
+  state.pendingChatMessage = {
+    id: `knowledge-pending-${Date.now()}`, role: "user", content: query, pending: true,
+    status: "completed", profileId: operation.profileId, sessionId: operation.sessionId,
+    acceptedSessionId: operation.sessionId,
+    knowledgeSearchMode: true, showWaitingDots: true,
+  };
+  if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = "Планирую запрос и ищу в базе…";
+  renderMessages();
+  if (clearInput && els.promptInput) {
+    els.promptInput.value = "";
+    autoResizePrompt();
+  }
+  updateSendButtonState();
+  try {
+    const result = await waitForKnowledgeSearch({
+      intervalMs: knowledgeSearchWaitSeconds() * 1000,
+      request, body: { query, profile_id: operation.profileId, session_id: operation.initialSessionId,
+        model_name: String(state.selectedLlmModel || "") }, signal: operation.controller.signal,
+      onTask: (task) => { operation.serverTaskId = task.task_id; diagnosticContext.task_id = task.task_id; },
+      askContinue: () => askKnowledgeSearchContinue(operation, visible),
+      onCancel: async () => {
+        if (!visible()) return;
+        if (operation.serverTaskId) {
+          const params = new URLSearchParams({profile_id: String(operation.profileId)});
+          if (operation.initialSessionId) params.set("session_id", operation.initialSessionId);
+          try {
+            const snapshot = await request(`/chat/knowledge-search/tasks/${encodeURIComponent(operation.serverTaskId)}/cancel?${params}`, {method: "POST", body: {}, signal: AbortSignal.timeout(5000)});
+            if (snapshot.state === "completed") return;
+          } catch { /* Local cancellation still releases the UI if the server is unavailable. */ }
+        }
+        if (visible()) cancelKnowledgeSearch();
+      },
+      onMonitorStop: () => closeKnowledgeSearchWaitDialog(operation),
+    });
+    logRuntimeDiagnostic(result.planner?.status === "unavailable" || result.semantic?.status !== "ready" ? "search.degraded" : "search.completed", {result}, diagnosticContext, result.planner?.status === "unavailable" || result.semantic?.status !== "ready" ? "warn" : "info");
+    if (!visible()) return;
+    const searchDetails = result.semantic?.status === "ready" ? "слова + семантика" : "по словам · семантика не настроена";
+    const statusText = result.status === "matches" ? `Фрагменты найдены · ${searchDetails}`
+      : result.status === "empty_index" ? "Индекс пуст · добавьте и проиндексируйте источники"
+      : "Совпадений не найдено";
+    if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = statusText;
+    operation.sessionId = result.session_id;
+    state.pendingChatMessage.persistedId = result.user_message_id;
+    state.pendingChatMessage.acceptedSessionId = result.session_id;
+    await loadSessions({ preferredSessionId: result.session_id, isCurrent: visible });
+    if (visible()) {
+      setFooter(statusText, result.status === "matches" ? "success" : "warning");
+      if (result.semantic?.status === "not_configured") void offerEmbeddingSetup();
+    }
+  } catch (error) {
+    logRuntimeDiagnostic("search.failed", {error}, diagnosticContext, error.name === "AbortError" ? "info" : "error");
+    if (!visible()) return;
+    if (clearInput && els.promptInput && !els.promptInput.value.trim()) {
+      els.promptInput.value = query;
+      autoResizePrompt();
+    }
+    if (els.knowledgeSearchStatus) els.knowledgeSearchStatus.textContent = "Ошибка поиска · повторите запрос";
+    setFooter(`Ошибка поиска в базе: ${error.message || error}`, "error");
+  } finally {
+    // A cancelled/old request must never clear a newer request or repaint a
+    // different profile, chat or composer mode.
+    if (state.knowledgeSearchRequest === operation) {
+      state.knowledgeSearchRequest = null;
+      state.pendingChatMessage = null;
+      state.isSending = false;
+      renderMessages();
+      updateSendButtonState();
+    }
+  }
+}
+
 async function sendPromptText(
   rawQuery,
   { clearInput = false, attachmentIds = [], consumeComposerAttachments = false } = {},
 ) {
+  if (state.knowledgeSearchMode) {
+    await sendKnowledgeSearch(rawQuery, { clearInput, attachmentIds });
+    return;
+  }
   const normalizedAttachmentIds = Array.from(new Set(
     (Array.isArray(attachmentIds) ? attachmentIds : []).map((item) => String(item || "").trim()).filter(Boolean),
   ));
@@ -9749,11 +10375,22 @@ async function sendPromptText(
     return;
   }
 
+  const profileId = state.activeProfileId;
+  const sessionId = state.currentSessionId;
+  const chatDiagnosticContext = runtimeDiagnosticContext({profile_id: Number(profileId), session_id: sessionId, model: selectedModel});
+  logRuntimeDiagnostic("chat.started", {}, chatDiagnosticContext);
+  const pendingMessage = {
+    id: `pending-${Date.now()}`, role: "user", content: query, status: "completed", pending: true,
+    profileId, sessionId, acceptedSessionId: sessionId,
+    knowledgeSearchMode: false, showWaitingDots: true,
+  };
+  state.pendingChatMessage = pendingMessage;
   state.isSending = true;
   state.chatTaskId = null;
   const controller = new AbortController();
   state.chatTaskStartController = controller;
   updateSendButtonState();
+  renderMessages();
   renderChatAttachments();
   if (clearInput && els.promptInput) {
     els.promptInput.value = "";
@@ -9762,10 +10399,14 @@ async function sendPromptText(
   }
 
   let activeTaskId = "";
+  const contextVisible = () => String(state.activeProfileId) === String(profileId)
+    && [sessionId, pendingMessage.acceptedSessionId].includes(state.currentSessionId)
+    && !state.knowledgeSearchMode
+    && state.pendingChatMessage === pendingMessage;
   try {
     const payload = {
       query,
-      profile_id: state.activeProfileId,
+      profile_id: profileId,
       model: selectedModel,
       model_name: selectedModel,
       stream: activeProfileStreamingEnabled(),
@@ -9774,26 +10415,34 @@ async function sendPromptText(
       payload.attachment_ids = normalizedAttachmentIds;
     }
 
-    if (state.currentSessionId) {
-      payload.session_id = state.currentSessionId;
-    }
+    if (sessionId) payload.session_id = sessionId;
 
     const task = await request("/chat/tasks", { method: "POST", body: payload, signal: controller.signal });
+    if (controller.signal.aborted || !contextVisible()) return;
     if (consumeComposerAttachments && normalizedAttachmentIds.length) {
       await clearChatAttachments({ deleteRemote: false });
     }
     activeTaskId = task?.id || task?.task_id || "";
     state.chatTaskStartController = null;
-    state.chatTaskId = task?.id || null;
-    const nextSessionId = task?.session_id || state.currentSessionId;
-    state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
-    writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
+    state.chatTaskId = activeTaskId || null;
+    const nextSessionId = task?.session_id || sessionId;
+    if (state.pendingChatMessage === pendingMessage) {
+      pendingMessage.persistedId = task?.user_message_id;
+      pendingMessage.acceptedSessionId = nextSessionId;
+      pendingMessage.taskId = task?.id || task?.task_id || "";
+      pendingMessage.assistantMessageId = task?.assistant_message_id || "";
+    }
+    if (contextVisible()) {
+      state.selectedLlmModel = selectedModel === AUTO_MODEL_ID ? AUTO_MODEL_ID : (task?.model_name || selectedModel);
+      writeStored(STORAGE_KEYS.llmModel, state.selectedLlmModel || "");
+    }
 
-    if (nextSessionId) {
+    if (nextSessionId && contextVisible()) {
       await loadSessions({ preferredSessionId: nextSessionId });
     }
 
     if (String(task?.state || "") === "completed") {
+      logRuntimeDiagnostic("chat.task_terminal", {task}, chatDiagnosticContext, "info", `task:${activeTaskId}:completed`);
       return;
     }
 
@@ -9815,7 +10464,9 @@ async function sendPromptText(
     state.chatTaskId = null;
 
     if (String(completedTask?.state || "") === "cancelled") {
-      if (nextSessionId) {
+      pendingMessage.showWaitingDots = false;
+      renderMessages();
+      if (nextSessionId && contextVisible()) {
         await loadSessions({
           preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
         });
@@ -9824,30 +10475,43 @@ async function sendPromptText(
       return;
     }
 
-    if (nextSessionId) {
+    if (nextSessionId && contextVisible()) {
       await loadSessions({
         preferredSessionId: String(state.currentSessionId || "") === String(nextSessionId) ? nextSessionId : null,
       });
     }
   } catch (error) {
+    logRuntimeDiagnostic("chat.failed", {error}, chatDiagnosticContext, error.name === "AbortError" ? "info" : "error");
+    pendingMessage.showWaitingDots = false;
+    if (state.pendingChatMessage === pendingMessage) renderMessages();
+    if (clearInput && els.promptInput && !els.promptInput.value.trim()
+        && contextVisible()) {
+      els.promptInput.value = query;
+      autoResizePrompt();
+    }
     if (isAbortError(error)) {
       setFooter("Генерация ответа остановлена.", "warning");
       return;
     }
-    if (state.currentSessionId) {
+    if (state.currentSessionId && contextVisible()) {
       await loadSessions({ preferredSessionId: state.currentSessionId });
     }
     setFooter(`Ошибка чата: ${error.message || error}`, "error");
   } finally {
-    state.chatTaskId = null;
-    state.chatTaskStartController = null;
-    closeChatTaskEventSource();
-    clearChatTaskReplay();
-    clearChatTypingStreams(activeTaskId);
-    state.isSending = false;
-    updateSendButtonState();
-    renderChatAttachments();
-    scrollMessagesToBottom({ force: true });
+    if (state.pendingChatMessage === pendingMessage) {
+      const shouldFollowCurrentContext = contextVisible();
+      state.pendingChatMessage = null;
+      renderMessages();
+      state.chatTaskId = null;
+      state.chatTaskStartController = null;
+      closeChatTaskEventSource();
+      clearChatTaskReplay();
+      clearChatTypingStreams(activeTaskId);
+      state.isSending = false;
+      updateSendButtonState();
+      renderChatAttachments();
+      if (shouldFollowCurrentContext) scrollMessagesToBottom();
+    }
   }
 }
 
@@ -10471,10 +11135,63 @@ async function resetDatabaseFully() {
 }
 
 function bindEvents() {
+  const searchWaitInput = document.getElementById("knowledgeSearchWaitSeconds");
+  if (searchWaitInput) {
+    searchWaitInput.value = String(knowledgeSearchWaitSeconds());
+    searchWaitInput.addEventListener("change", () => {
+      if (!searchWaitInput.checkValidity() || !searchWaitInput.value) {
+        searchWaitInput.reportValidity();
+        searchWaitInput.value = String(knowledgeSearchWaitSeconds());
+        return;
+      }
+      writeStored("localgpt.knowledgeSearchWaitSeconds", searchWaitInput.value);
+    });
+  }
+
+  els.knowledgeSearchToggle?.addEventListener("change", () => {
+    if (state.isSending && !state.knowledgeSearchRequest) {
+      setFooter("Сначала остановите текущий ответ, затем переключите режим.", "warning");
+      syncKnowledgeSearchControl();
+      return;
+    }
+    const nextMode = Boolean(els.knowledgeSearchToggle.checked);
+    cancelKnowledgeSearch({ silent: true });
+    state.knowledgeSearchMode = nextMode;
+    els.knowledgeSearchStatus.textContent = state.knowledgeSearchMode
+      ? "План → поиск → цитаты" : "";
+    if (state.knowledgeSearchMode && state.chatAttachments.length) {
+      setFooter("Поиск принимает текст. Уберите изображения из поля ввода или отключите поиск.", "warning");
+    }
+    updateSendButtonState();
+    renderChatModelNotice();
+  });
+  els.knowledgeSearchIndicator?.addEventListener("click", () => {
+    openRagQuickMenu();
+    window.setTimeout(() => els.knowledgeSearchToggle?.focus(), 0);
+  });
+  els.embeddingSetupAction?.addEventListener("click", () => void runEmbeddingSetup());
+  els.embeddingSetupRefresh?.addEventListener("click", () => void loadEmbeddingSetup({ notify: true }));
+  els.embeddingSetupCancel?.addEventListener("click", async () => {
+    const taskId = state.embeddingSetup?.download?.task_id;
+    if (!taskId) return;
+    try {
+      await request(`/models/pull/${encodeURIComponent(taskId)}/cancel`, {method:"POST", body:{}});
+      await loadEmbeddingSetup();
+    } catch { setFooter("Не удалось отменить загрузку модели.", "error"); }
+  });
+  els.embeddingSetupLexical?.addEventListener("click", async () => {
+    const profileId = state.activeProfileId;
+    if (!profileId) return;
+    try {
+      await request(`/rag/embedding-setup/lexical?profile_id=${encodeURIComponent(profileId)}`, {method:"POST", body:{}});
+      if (Number(state.activeProfileId) === Number(profileId)) await loadRagStatus();
+    } catch (error) { setFooter(`Не удалось переключить индекс: ${error.message || error}`, "error"); }
+  });
   els.toggleSidebarButton?.addEventListener("click", () => toggleMobileSidebar());
   els.sidebarBackdrop?.addEventListener("click", () => closeSidebar());
   els.sidebarCollapseButton?.addEventListener("click", () => toggleSidebarCollapse());
   els.newChatButton?.addEventListener("click", async () => {
+    cancelKnowledgeSearch({ silent: true });
     state.currentSessionId = null;
     writeStored(STORAGE_KEYS.activeSessionId, "");
     await openSession(null);
@@ -10597,8 +11314,38 @@ function bindEvents() {
     setFooter(`Модель диктовки профиля: ${modelName}`, "success");
   });
 
+  els.messageScroll?.addEventListener("wheel", (event) => {
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? els.messageScroll.clientHeight : 1;
+    handleMessageScrollIntent(event.deltaY * unit);
+  }, { passive: true, capture: true });
+  els.messageScroll?.addEventListener("touchstart", (event) => {
+    state.messageScrollTouchY = event.touches[0]?.clientY ?? null;
+  }, { passive: true });
+  els.messageScroll?.addEventListener("touchmove", (event) => {
+    const nextY = event.touches[0]?.clientY;
+    if (nextY != null && state.messageScrollTouchY != null) {
+      handleMessageScrollIntent(state.messageScrollTouchY - nextY);
+    }
+    state.messageScrollTouchY = nextY ?? null;
+  }, { passive: true, capture: true });
+  els.messageScroll?.addEventListener("touchend", () => {
+    state.messageScrollTouchY = null;
+  }, { passive: true });
+  window.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.target?.closest?.("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
+    if (event.target !== document.body && !els.messageScroll?.contains(event.target)) return;
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
+      handleMessageScrollIntent(-1);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      scrollMessagesToBottom({ force: true });
+    } else if (["ArrowDown", "PageDown", " "].includes(event.key)) {
+      handleMessageScrollIntent(event.key === "ArrowDown" ? 40 : els.messageScroll.clientHeight);
+    }
+  });
   els.messageScroll?.addEventListener("scroll", () => {
-    syncMessageScrollState();
+    syncMessageScrollState({ userScroll: true });
   });
 
   els.chatShell?.addEventListener("dragenter", (event) => {
@@ -10710,14 +11457,9 @@ function bindEvents() {
 
     const copyButton = event.target.closest("[data-copy-index]");
     if (!copyButton) return;
-    try {
-      const index = Number(copyButton.dataset.copyIndex);
-      const message = Number.isFinite(index) ? state.messages[index] : null;
-      await copyText(message?.content || "");
-      setFooter("Сообщение скопировано.", "success");
-    } catch {
-      setFooter("Не удалось скопировать сообщение.", "error");
-    }
+    const index = Number(copyButton.dataset.copyIndex);
+    const message = Number.isFinite(index) ? state.messages[index] : null;
+    await copyChatMessage(message);
   });
 
   const openRagQuickFromPointer = (event) => {
@@ -10876,27 +11618,31 @@ function bindEvents() {
     const nextMode = thinkingSelection(button.dataset.thinkingMode, getModelThinkingMetadata(modelName));
     if (!els.quickThinkingControl) return;
     const trigger = event.currentTarget === els.quickThinkingMobileMenu ? els.quickThinkingMobileButton : els.quickThinkingButton;
-    closeQuickThinkingMenu();
-    trigger?.focus();
+    if (!button.hasAttribute("data-thinking-segment")) {
+      closeQuickThinkingMenu();
+      trigger?.focus();
+    }
     els.quickThinkingControl.dataset.thinkingMode = nextMode;
     if (els.quickThinkingMobileControl) {
       els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
     }
     renderQuickThinkingControl(nextMode);
-    await saveQuickThinkingModeFlow();
+    await saveQuickThinkingModeFlow({ notify: !button.hasAttribute("data-thinking-segment") });
   };
   els.quickThinkingMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   els.quickThinkingMobileMenu?.addEventListener("click", handleQuickThinkingMenuClick);
   [els.quickThinkingMenu, els.quickThinkingMobileMenu].filter(Boolean).forEach((menu) => {
     menu.addEventListener("keydown", (event) => {
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-      const buttons = Array.from(menu.querySelectorAll("[data-thinking-mode]:not(:disabled)"));
+      if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const horizontal = ["ArrowLeft", "ArrowRight"].includes(event.key);
+      const buttons = Array.from(menu.querySelectorAll(horizontal ? "[data-thinking-segment]:not(:disabled)" : "[data-thinking-mode]:not(:disabled)"));
       if (!buttons.length) return;
       event.preventDefault();
       const current = buttons.indexOf(document.activeElement);
       const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
-        : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+        : (current + (["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1) + buttons.length) % buttons.length;
       buttons[next].focus();
+      if (horizontal) buttons[next].click();
     });
   });
   els.saveAsrPipelineSettingsButton?.addEventListener("click", async () => saveAsrPipelineSettingsFlow());
@@ -10935,18 +11681,6 @@ function bindEvents() {
   });
 
   const handleQuickModelMenuClick = async (event) => {
-    const thinkingButton = event.target instanceof Element ? event.target.closest("[data-quick-thinking-open]") : null;
-    if (thinkingButton) {
-      event.stopPropagation();
-      const modelName = thinkingButton.dataset.quickThinkingOpen || "";
-      const source = event.currentTarget === els.quickModelMobileMenu ? "mobile" : "desktop";
-      closeQuickModelMenu();
-      if (state.selectedLlmModel !== modelName) await applySelectedLlmModel(modelName);
-      toggleQuickThinkingMenu(true, source);
-      const menu = source === "mobile" ? els.quickThinkingMobileMenu : els.quickThinkingMenu;
-      menu?.querySelector("[aria-checked='true']")?.focus();
-      return;
-    }
     if (event.target instanceof Element && event.target.closest("[data-model-help]")) {
       return;
     }
@@ -10957,30 +11691,8 @@ function bindEvents() {
     closeQuickModelMenu();
     await applySelectedLlmModel(modelName);
   };
-  const handleQuickModelMenuChange = async (event) => {
-    const input = event.target instanceof Element ? event.target.closest("[data-quick-thinking-toggle]") : null;
-    if (!(input instanceof HTMLInputElement)) return;
-    const modelName = String(input.dataset.quickThinkingModel || "").trim();
-    if (!modelName) return;
-    if (state.selectedLlmModel !== modelName) {
-      await applySelectedLlmModel(modelName, { closeMenu: false });
-    }
-    const nextMode = input.checked ? "on" : "off";
-    if (els.quickThinkingControl) {
-      els.quickThinkingControl.dataset.thinkingMode = nextMode;
-    }
-    if (els.quickThinkingMobileControl) {
-      els.quickThinkingMobileControl.dataset.thinkingMode = nextMode;
-    }
-    renderQuickThinkingControl(nextMode);
-    renderQuickModelPicker();
-    await saveQuickThinkingModeFlow();
-    renderQuickModelPicker();
-  };
   els.quickModelMenu?.addEventListener("click", handleQuickModelMenuClick);
   els.quickModelMobileMenu?.addEventListener("click", handleQuickModelMenuClick);
-  els.quickModelMenu?.addEventListener("change", handleQuickModelMenuChange);
-  els.quickModelMobileMenu?.addEventListener("change", handleQuickModelMenuChange);
 
   els.quickModelSelect?.addEventListener("change", async () => {
     await applySelectedLlmModel(els.quickModelSelect.value || "");
@@ -11825,12 +12537,13 @@ async function bootstrap() {
   updateSendButtonState();
   bindEvents();
   await loadHealth();
-  await loadModels();
+  // History must not wait for optional voice/ASR/storage services.
+  await Promise.allSettled([loadModels(), loadProfiles()]);
+  void offerEmbeddingSetup();
   await loadWhisperModels({ silent: true });
   await loadStoragePaths();
   await loadTtsSettings({ silent: true });
   await loadTtsLibrary({ silent: true });
-  await loadProfiles();
   renderMessages();
   renderTranscriptStrip();
   renderContextSummary();

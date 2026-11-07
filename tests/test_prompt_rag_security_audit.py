@@ -359,6 +359,10 @@ class PromptRagSecurityAuditTestCase(unittest.TestCase):
         self.assertIn("trust_class=L2", profile_message["content"])
         self.assertIn("literal_content_disclosure=forbidden", profile_message["content"])
         guard_index = next(idx for idx, item in enumerate(messages) if item["content"] == GLOBAL_GUARD_POLICY)
+        for item in messages:
+            if "source=chat_history" in item["content"]:
+                self.assertEqual(item["role"], "user")
+        self.assertTrue(any('"original_role":"assistant"' in item["content"] for item in messages))
         first_history_index = next(idx for idx, item in enumerate(messages) if "source=chat_history" in item["content"])
         self.assertLess(guard_index, first_history_index)
         self.assertEqual(messages[-1], {"role": "user", "content": "current task"})

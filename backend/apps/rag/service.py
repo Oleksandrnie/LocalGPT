@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from dataclasses import replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,6 +12,7 @@ from fastapi import HTTPException, UploadFile
 
 from app import config, db
 from backend.apps.rag import embeddings, retrieval
+from backend.apps.telegram_search import parser as telegram
 
 SOURCE_TYPE = "manual_file"
 ASR_CONTEXT_SOURCE_TYPE = "asr_context"
@@ -18,7 +21,8 @@ CHAT_CONTEXT_SOURCE_TYPE = "chat_context"
 EMBEDDING_MODEL = "local-hash-v1"
 RETRIEVAL_STRATEGY_SETTING = "rag_retrieval_strategy"
 DEFAULT_RETRIEVAL_STRATEGY = "hybrid_v2"
-SUPPORTED_SUFFIXES = {".md"}
+TELEGRAM_PARSER_VERSION = "telegram-html-v3"
+SUPPORTED_SUFFIXES = {".md", ".html"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_FILES = 12
 MAX_UPLOAD_TOTAL_BYTES = 20 * 1024 * 1024
@@ -109,7 +113,7 @@ def _iter_source_files(profile_id: int) -> list[Path]:
 def _read_text_file(path: Path) -> str:
     if path.stat().st_size > MAX_FILE_BYTES:
         raise ValueError("file_too_large")
-    return path.read_text(encoding="utf-8", errors="replace")
+    return path.read_text(encoding="utf-8", errors="strict" if path.suffix.lower() == ".html" else "replace")
 
 
 def _extract_sections(text: str) -> list[dict[str, Any]]:
@@ -312,11 +316,19 @@ def embed_text(text: str) -> list[float]:
     return _embed_texts(provider, [text])[0]
 
 
-def _embedding_provider() -> embeddings.EmbeddingProvider:
+def _embedding_provider(profile_id: int | None = None) -> embeddings.EmbeddingProvider:
     try:
+        raw = db.get_app_setting(f"rag_embedding_profile:{profile_id}") if profile_id is not None else None
+        if raw:
+            override = json.loads(raw)
+            selected = replace(config.SETTINGS, rag_embedding_provider=override["provider"],
+                               rag_embedding_model=override.get("model", config.SETTINGS.rag_embedding_model),
+                               rag_embedding_version=override.get("version", config.SETTINGS.rag_embedding_version),
+                               rag_embedding_dimensions=override.get("dimensions", config.SETTINGS.rag_embedding_dimensions))
+            return embeddings.provider_from_settings(selected)
         return embeddings.provider_from_settings()
-    except embeddings.EmbeddingError as exc:
-        raise HTTPException(status_code=503, detail=f"rag_embedding_configuration_error:{exc}") from exc
+    except (embeddings.EmbeddingError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=503, detail="rag_embedding_configuration_error") from exc
 
 
 def _embed_texts(
@@ -375,7 +387,7 @@ def _index_text_document(
     if not chunks:
         raise HTTPException(status_code=422, detail="rag_context_empty")
 
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     vectors = _embed_texts(provider, chunks)
     descriptor = _descriptor_metadata(provider)
 
@@ -700,7 +712,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
 
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     embedding_model = provider.descriptor.storage_key
     descriptor = _descriptor_metadata(provider)
     existing = _existing_documents(profile_id)
@@ -712,7 +724,10 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     reindex_required = 0
     seen_source_ids: set[str] = set()
 
-    for path in _iter_source_files(profile_id):
+    paths = _iter_source_files(profile_id)
+    if any(p.suffix.lower() == '.html' for p in paths):
+        require_telegram_local(provider)
+    for path in paths:
         scanned += 1
         source_id = _relative_source_id(path, profile_id)
         seen_source_ids.add(source_id)
@@ -734,6 +749,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             current
             and current_meta.get("size") == metadata["size"]
             and current_meta.get("mtime") == metadata["mtime"]
+            and (path.suffix.lower() != '.html' or current_meta.get('parser_version') == TELEGRAM_PARSER_VERSION)
         )
         if unchanged_source and current_meta.get("embedding_model") != embedding_model:
             reindex_required += 1
@@ -748,8 +764,17 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
             continue
 
         try:
-            text = _read_text_file(path)
-            chunks = _chunk_text(text)
+            chunk_metadata = []
+            if path.suffix.lower() == '.html':
+                with path.open('rb') as html_stream:
+                    parsed = telegram.parse_stream(html_stream)
+                pairs = telegram.rag_message_chunks(parsed, _chunk_text)
+                chunks = [text for text, _ in pairs]
+                chunk_metadata = [meta for _, meta in pairs]
+                metadata.update(format='telegram_html', parser_version=TELEGRAM_PARSER_VERSION, chat_title=parsed['title'],
+                                parser_warnings=parsed['warnings'], message_count=len(parsed['messages']))
+            else:
+                chunks = _chunk_text(_read_text_file(path))
             if not chunks:
                 skipped += 1
                 continue
@@ -777,7 +802,7 @@ def ingest_sources(profile_id: int, *, force: bool = False) -> dict[str, Any]:
                 session_id=None,
                 chunk_index=idx,
                 content=chunk,
-                metadata={"path": source_id, "chunk_index": idx},
+                metadata={"path": source_id, "chunk_index": idx, **(chunk_metadata[idx] if chunk_metadata else {})},
             )
             db.create_document_embedding(
                 chunk_id=chunk_id,
@@ -821,11 +846,15 @@ def reindex_embeddings(
 ) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
-    selected = provider or _embedding_provider()
+    selected = provider or _embedding_provider(profile_id)
     chunks = db.list_document_chunks(profile_id)
     total_chunks = len(chunks)
     batch_size = max(1, int(config.SETTINGS.rag_embedding_batch_size))
     rows: list[dict[str, Any]] = []
+    protect_telegram_profile(profile_id)
+    if any((d.get('metadata') or {}).get('format') == 'telegram_html'
+           for d in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)):
+        require_telegram_local(selected)
     descriptor = _descriptor_metadata(selected)
     if progress_callback:
         progress_callback(0, total_chunks)
@@ -876,6 +905,7 @@ def _source_sync_summary(
             not document
             or metadata.get("size") != stat.st_size
             or metadata.get("mtime") != stat.st_mtime
+            or (path.suffix.lower() == '.html' and metadata.get('parser_version') != TELEGRAM_PARSER_VERSION)
         ):
             pending += 1
     return {
@@ -906,6 +936,22 @@ def _current_generation_chunks(
     return current
 
 
+@dataclass
+class SearchCorpus:
+    """Request-local indexed chunks and lexical work, bound to their origin."""
+    profile_id: int
+    session_id: str | None
+    embedding_key: str
+    chunks: list[dict[str, Any]]
+    lexical_cache: dict[int, Any] = field(default_factory=dict)
+
+
+def prepare_search_corpus(profile_id: int, provider: embeddings.EmbeddingProvider,
+                          *, session_id: str | None = None) -> SearchCorpus:
+    return SearchCorpus(profile_id, session_id, provider.descriptor.storage_key,
+                        _current_generation_chunks(profile_id, provider, session_id=session_id))
+
+
 def status(profile_id: int | None = None, *, session_id: str | None = None) -> dict[str, Any]:
     files = _iter_source_files(profile_id) if profile_id is not None else []
     if profile_id is not None:
@@ -922,7 +968,7 @@ def status(profile_id: int | None = None, *, session_id: str | None = None) -> d
     provider: embeddings.EmbeddingProvider | None = None
     configuration_error: str | None = None
     try:
-        provider = _embedding_provider()
+        provider = _embedding_provider(profile_id)
     except HTTPException:
         configuration_error = "rag_embedding_configuration_error"
     embedding_model = provider.descriptor.storage_key if provider else None
@@ -987,8 +1033,11 @@ def _legacy_search(
     cleaned_query = (query or "").strip()
     if not cleaned_query or top_k <= 0:
         return []
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
+    raw_chunks = _filter_telegram_dates(raw_chunks, cleaned_query, provider)
+    if any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in raw_chunks):
+        cleaned_query = _telegram_id_query(cleaned_query)
     if not raw_chunks:
         return []
     query_vector = _embed_texts(provider, [cleaned_query])[0]
@@ -1062,7 +1111,14 @@ def search_with_diagnostics(
     top_k: int = 5,
     strategy: str | None = None,
     session_id: str | None = None,
+    filter_query: str | None = None,
+    embedding_provider: embeddings.EmbeddingProvider | None = None,
+    embedding_release: bool = True,
+    prepared_corpus: SearchCorpus | None = None,
 ) -> dict[str, Any]:
+    # Internal request-local snapshot from _current_generation_chunks for this
+    # exact profile/session/provider. Never populate from API input or reuse
+    # across requests: source visibility and generation must be checked anew.
     selected_strategy = str(strategy or retrieval_strategy()).strip().lower()
     if selected_strategy == "hybrid_v1":
         selected_strategy = DEFAULT_RETRIEVAL_STRATEGY
@@ -1085,8 +1141,17 @@ def search_with_diagnostics(
     if not cleaned_query or top_k <= 0:
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
-    provider = _embedding_provider()
-    raw_chunks = _current_generation_chunks(profile_id, provider, session_id=session_id)
+    provider = embedding_provider or _embedding_provider(profile_id)
+    if prepared_corpus is not None and (
+        prepared_corpus.profile_id != profile_id or prepared_corpus.session_id != session_id
+        or prepared_corpus.embedding_key != provider.descriptor.storage_key
+    ):
+        raise ValueError("rag_search_corpus_scope_mismatch")
+    raw_chunks = (prepared_corpus.chunks if prepared_corpus is not None
+                  else _current_generation_chunks(profile_id, provider, session_id=session_id))
+    raw_chunks = _filter_telegram_dates(raw_chunks, filter_query if filter_query is not None else cleaned_query, provider)
+    if any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in raw_chunks):
+        cleaned_query = _telegram_id_query(cleaned_query)
     if not raw_chunks:
         diagnostics = retrieval.evidence_diagnostics(cleaned_query, [], strategy=selected_strategy)
         return {"strategy": selected_strategy, "results": [], "diagnostics": diagnostics}
@@ -1098,7 +1163,7 @@ def search_with_diagnostics(
     )
     if semantic_enabled:
         facets = retrieval.split_query_facets(cleaned_query)
-        vectors = _embed_texts(provider, [cleaned_query, *[str(item["query"]) for item in facets]])
+        vectors = _embed_texts(provider, [cleaned_query, *[str(item["query"]) for item in facets]], release=embedding_release)
         query_vector = vectors[0]
         facet_vectors = {
             facet["facet_id"]: vector
@@ -1116,6 +1181,7 @@ def search_with_diagnostics(
             }
         ) if facet_vectors else None,
         strategy=selected_strategy,
+        corpus_cache=prepared_corpus.lexical_cache if prepared_corpus is not None else None,
     )
     results = evaluated[:top_k]
     diagnostics = retrieval.evidence_diagnostics(cleaned_query, evaluated, strategy=selected_strategy)
@@ -1145,7 +1211,7 @@ def search(
 def audit_corpus(profile_id: int) -> dict[str, Any]:
     if not db.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="profile_not_found")
-    provider = _embedding_provider()
+    provider = _embedding_provider(profile_id)
     chunks = _current_generation_chunks(profile_id, provider)
     return {"profile_id": profile_id, **retrieval.corpus_audit(chunks)}
 
@@ -1271,11 +1337,12 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
     target_dir = source_dir(profile_id)
     saved: list[str] = []
     errors: list[dict[str, str]] = []
-    pending: list[tuple[str, Path, bytes]] = []
+    pending: list[tuple[str, Path, Any, int]] = []
     total_bytes = 0
     for upload in files:
         original_name = Path(upload.filename or "").name
         if not original_name:
+            errors.append({"file": "", "error": "file_name_missing", "code": "file_name_missing"})
             continue
         suffix = Path(original_name).suffix.lower()
         if suffix not in SUPPORTED_SUFFIXES:
@@ -1283,23 +1350,45 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
             continue
         safe_name = _slug(Path(original_name).stem) + suffix
         target = target_dir / safe_name
-        data = upload.file.read(MAX_FILE_BYTES + 1)
-        if len(data) > MAX_FILE_BYTES:
-            errors.append({"file": original_name, "error": "file_too_large"})
-            continue
-        total_bytes += len(data)
-        if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail={"code": "rag_upload_total_bytes_exceeded", "max_bytes": MAX_UPLOAD_TOTAL_BYTES},
-            )
-        pending.append((original_name, target, data))
-    for original_name, target, data in pending:
+        if suffix == '.html':
+            require_telegram_local(_embedding_provider(profile_id))
+            try:
+                telegram.parse_stream(upload.file)
+            except (ValueError, RecursionError) as exc:
+                code = getattr(exc, "code", "telegram_html_nesting_error" if isinstance(exc, RecursionError) else "invalid_telegram_html")
+                errors.append({"file": original_name, "error": str(exc), "message": str(exc), "code": code})
+                continue
+            size = upload.file.tell()
+            upload.file.seek(0)
+            data = upload.file
+        else:
+            data = upload.file.read(MAX_FILE_BYTES + 1)
+            size = len(data)
+            if size > MAX_FILE_BYTES:
+                errors.append({"file": original_name, "error": "file_too_large"})
+                continue
+            total_bytes += size
+            if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
+                raise HTTPException(413, detail={"code": "rag_upload_total_bytes_exceeded", "max_bytes": MAX_UPLOAD_TOTAL_BYTES})
+        pending.append((original_name, target, data, size))
+    for original_name, target, data, size in pending:
+        from tempfile import NamedTemporaryFile
+        temporary_path = None
         try:
-            target.write_bytes(data)
+            # Atomic publication keeps an existing source intact on write failure.
+            with NamedTemporaryFile(dir=target_dir, prefix='.upload-', delete=False) as output:
+                temporary_path = Path(output.name)
+                if isinstance(data, bytes):
+                    output.write(data)
+                else:
+                    shutil.copyfileobj(data, output, length=64 * 1024)
+            temporary_path.replace(target)
         except OSError:
             errors.append({"file": original_name, "error": "file_write_failed"})
             continue
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         saved.append(_relative_source_id(target, profile_id))
     return {
         "profile_id": profile_id,
@@ -1307,7 +1396,7 @@ def save_uploaded_files(profile_id: int, files: list[UploadFile]) -> dict[str, A
         "source_scope": "active_profile",
         "saved": saved,
         "errors": errors,
-        "uploaded_bytes": sum(len(data) for _, _, data in pending),
+        "uploaded_bytes": sum(size for _, _, _, size in pending),
         "status": status(profile_id),
     }
 
@@ -1342,3 +1431,133 @@ def migrate_legacy_root_files(profile_id: int) -> dict[str, Any]:
         shutil.move(str(path), str(target))
         moved.append(_relative_source_id(target, profile_id))
     return {"moved": moved, "status": status(profile_id)}
+
+
+def require_telegram_local(provider=None):
+    if not embeddings.is_loopback_endpoint(config.SETTINGS.base_url):
+        raise HTTPException(409, 'telegram_requires_local_model_endpoint')
+    if provider is None or provider.descriptor.provider == 'local_hash':
+        return
+    if isinstance(provider, embeddings.OllamaEmbeddingProvider) and embeddings.is_loopback_endpoint(provider.base_url):
+        provider.local_only = True
+        return
+    raise HTTPException(409, 'telegram_requires_verified_local_embeddings')
+
+
+def protect_telegram_profile(profile_id):
+    if any((d.get('metadata') or {}).get('format') == 'telegram_html'
+           for d in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)):
+        require_telegram_local(_embedding_provider(profile_id))
+
+
+def _filter_telegram_dates(chunks, query, provider):
+    if not any((m.get('document_metadata') or {}).get('format') == 'telegram_html' for m in chunks):
+        return chunks
+    require_telegram_local(provider)
+    current = query.splitlines()[0] if query.splitlines() else query
+    ids = re.findall(r"\bmessage(\d+)\b|(?:\bid|сообщени\w*)\s*[:#№]?\s*(\d+)(?![\d.-])\b", current, re.I)
+    sources = {str(m.get('source_id') or '') for m in chunks}
+    named_sources = {source for source in sources if source and re.search(r'(?<![\w.-])' + re.escape(source) + r'(?![\w.-])', current, re.I)}
+    if named_sources:
+        chunks = [m for m in chunks if m.get('source_id') in named_sources]
+    tags = _telegram_hashtag_terms(query)
+    if tags:
+        chunks = [m for m in chunks if tags.intersection({re.sub(r'[^\w]|_', '', t).casefold()
+                  for t in ((m.get('chunk_metadata') or {}).get('hashtags')
+                            or re.findall(r'(?<!\w)#[\w]+', str(m.get('content') or '')))})]
+    if tags:
+        # In a tagged lookup, "про <technical term>" is an explicit literal constraint.
+        # Match across all parts of a message, then retain its complete evidence pool.
+        words = re.findall(r'\bпро\s+([a-zA-Z][a-zA-Z0-9_.+-]*)', current, re.I)
+        key = lambda m: (m.get('source_id'), (m.get('chunk_metadata') or {}).get('message_id'))
+        for word in words:
+            pattern = re.compile(r'(?<!\w)' + re.escape(word) + r'(?!\w)', re.I)
+            matching = {key(m) for m in chunks if pattern.search(str(m.get('content') or ''))}
+            chunks = [m for m in chunks if key(m) in matching]
+    if ids:
+        targets = {'message' + (left or right) for left, right in ids}
+        chunks = [m for m in chunks if (m.get('chunk_metadata') or {}).get('message_id') in targets]
+    try:
+        bounds = telegram.date_bounds(current if ids else query)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not bounds:
+        return chunks
+    return [m for m in chunks if (m.get('document_metadata') or {}).get('format') != 'telegram_html'
+            or bounds[0] <= str((m.get('chunk_metadata') or {}).get('timestamp') or '')[:10] <= bounds[1]]
+
+
+def _telegram_id_query(query):
+    current = query.splitlines()[0] if query.splitlines() else query
+    ids = re.findall(r"\bmessage(\d+)\b|(?:\bid|сообщени\w*)\s*[:#№]?\s*(\d+)(?![\d.-])\b", current, re.I)
+    aliases = ['message'+(a or b) for a, b in ids] + sorted(_telegram_hashtag_terms(query))
+    return query + ('\n' + ' '.join(aliases) if aliases else '')
+
+
+def exact_telegram_quote(profile_id: int, query: str) -> str | None:
+    """Return an explicitly requested verbatim source without LLM rewriting/top-k loss."""
+    if not re.search(r'дослов|полный\s+текст|процитир|verbatim', query, re.I):
+        return None
+    ids = re.findall(r'\bmessage(\d+)\b|(?:\bid|сообщени\w*)\s*[:#№]?\s*(\d+)(?![\d.-])\b', query, re.I)
+    if not ids:
+        return None
+    targets = {'message' + (a or b) for a, b in ids}
+    documents = [d for d in db.list_source_documents(profile_id=profile_id, source_type=SOURCE_TYPE)
+                 if (d.get('metadata') or {}).get('format') == 'telegram_html']
+    if not documents:
+        return None
+    require_telegram_local(_embedding_provider(profile_id))
+    try:
+        bounds = telegram.date_bounds(query)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    named = [d for d in documents if re.search(r'(?<![\w.-])' + re.escape(d['source_id']) + r'(?![\w.-])', query, re.I)]
+    if named:
+        documents = named
+    replies = []
+    for document in documents:
+        path = _resolve_source_file(profile_id, document['source_id'])
+        if not path.is_file():
+            continue
+        with path.open('rb') as stream:
+            data = telegram.parse_stream(stream)
+        for message in data['messages']:
+            if message['service'] or message['message_id'] not in targets:
+                continue
+            if bounds and not (bounds[0] <= str(message['timestamp'] or '')[:10] <= bounds[1]):
+                continue
+            text = message['text'] or '[Сообщение не содержит текста]'
+            fence = '`' * max(3, max((len(v) + 1 for v in re.findall(r'`+', text)), default=3))
+            replies.append(f"Источник: {document['source_id']} · ID: {message['message_id']}\n"
+                           f"Дата: {message['raw_date'] or 'не указана'} · Автор: {message['author'] or 'не указан'}\n\n"
+                           f"{fence}text\n{text}\n{fence}")
+    return '\n\n'.join(replies) if replies else 'Сообщение с указанным ID в выбранных Telegram-источниках не найдено.'
+
+
+def _telegram_hashtag_terms(query):
+    labels = re.findall(r'(?<!\w)#([\w]+)', query)
+    labels += re.findall(r"(?:х[эе]штег\w*|hashtag|тег\w*)\s+[«\"]?([a-zA-Z0-9_]+(?:[ \t]+[a-zA-Z0-9_]+)*)", query, re.I)
+    return {re.sub(r'[^\w]|_', '', label).casefold() for label in labels}
+
+
+def telegram_search_cards(query: str, evidence: list[dict[str, Any]]) -> str | None:
+    """Render lookup candidates from included source text, without model inference."""
+    if not re.search(r"най(?:ди|ти|дите)|(?:покажи|список|ищи).*сообщен", query, re.IGNORECASE):
+        return None
+    if not evidence or any(not (item.get("provenance") or {}).get("message_id") for item in evidence):
+        return None
+    cards = [
+        "Кандидаты из поиска по Telegram. Ниже — исходные фрагменты, без пересказа. "
+        "Релевантность теме проверьте по цитате; выборка ограничена результатами поиска и не доказывает отсутствие других сообщений."
+    ]
+    for index, item in enumerate(evidence, 1):
+        meta = item["provenance"]
+        content = str(item.get("content") or "")
+        fence = "`" * max(3, max((len(m.group()) + 1 for m in re.finditer(r"`+", content)), default=3))
+        cards.append(
+            f"{index}. Источник: {item.get('source_id')}; ID: {meta['message_id']}; "
+            f"дата: {meta.get('timestamp') or 'не указана'}; автор: {meta.get('author') or 'не указан'}.\n"
+            f"{fence}text\n{content}\n{fence}"
+            + ("\nФрагмент сокращён по лимиту контекста." if item.get("truncated") else "")
+        )
+    return "\n\n".join(cards)

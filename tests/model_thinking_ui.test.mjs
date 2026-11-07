@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
+import { renderThinkingSegments } from "../web_ui/js/thinking_switch_view.mjs";
 import { thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels } from "../web_ui/js/model_thinking.mjs";
 
 const source = await readFile(new URL("../web_ui/js/app.js", import.meta.url), "utf8");
@@ -39,7 +40,7 @@ test("boolean metadata retains legacy on/off choices and a real auto/default", (
 });
 
 function element() {
-  return { dataset: {}, attributes: {}, classList: { toggle() {} }, setAttribute(name, value) { this.attributes[name] = value; } };
+  return { dataset: {}, attributes: {}, classList: { toggle(name, enabled) { this[name] = enabled; } }, setAttribute(name, value) { this.attributes[name] = value; } };
 }
 
 function harness({ installed = [{ name: "custom:latest", thinking: levels }], catalog = [], selected = "custom:latest", showRouter = false } = {}) {
@@ -50,7 +51,7 @@ function harness({ installed = [{ name: "custom:latest", thinking: levels }], ca
   const state = { installedModels: installed, activeProfileId: 1, selectedLlmModel: selected, modelSettingsState: { overrides: { output_tokens: 1024, thinking_tokens: 8192 } } };
   const calls = [];
   const context = vm.createContext({
-    state, els, calls, thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels,
+    state, els, calls, renderThinkingSegments, thinkingMetadata, thinkingOptions, thinkingSelection, hasNamedThinkingLevels,
     AUTO_MODEL_ID: "__auto_router__",
     MODEL_SETTINGS_OVERRIDE_KEYS: ["ollama_think", "output_tokens", "thinking_tokens"],
     getModelId: (item) => item?.id || item?.name,
@@ -115,13 +116,14 @@ test("unsupported models hide controls; Auto visibility remains profile-controll
   }
 });
 
-test("quick picker offers named level menus and retains Qwen-style boolean switches", () => {
+test("desktop and mobile model pickers only select models", () => {
   const { context, els } = harness({ installed: [{ name: "custom:latest", thinking: levels }, { name: "qwen3:8b", thinking: { values: [true, false] } }, { name: "unknown" }] });
   context.renderQuickThinkingControl("medium");
   context.renderQuickModelPicker();
-  assert.match(els.quickModelMenu.innerHTML, /data-quick-thinking-open="custom:latest"/);
-  assert.match(els.quickModelMenu.innerHTML, /data-quick-thinking-toggle data-quick-thinking-model="qwen3:8b"/);
-  assert.doesNotMatch(els.quickModelMenu.innerHTML, /data-quick-thinking-(?:open|model)="unknown"/);
+  assert.doesNotMatch(els.quickModelMenu.innerHTML, /data-quick-thinking|type="checkbox"/);
+  for (const name of ["custom:latest", "qwen3:8b", "unknown"]) {
+    assert.ok(els.quickModelMenu.innerHTML.includes(`data-quick-model="${name}"`));
+  }
   assert.equal(els.quickModelMenu.innerHTML, els.quickModelMobileMenu.innerHTML);
 });
 
@@ -143,4 +145,40 @@ test("settings select uses AppSelect, labels mode separately from trace, and sav
   assert.match(css, /#ollamaThinkField\[hidden\]\s*\{\s*display: none/);
   assert.match(source, /thinkingSelection\(els\.ollamaThinkSelect\?\.value, getModelThinkingMetadata\(modelName\)\)/);
   assert.doesNotMatch(source, /THINKING_MODEL_PATTERNS/);
+});
+
+test("header buttons show explicit modes and Auto has no enabled appearance", () => {
+  const { context, els } = harness({ installed: [{ name: "qwen3:8b", thinking: { values: [true, false], default: true } }], selected: "qwen3:8b" });
+  for (const [mode, label] of [["auto", "Auto"], ["on", "On"], ["off", "Off"]]) {
+    context.renderQuickThinkingControl(mode);
+    assert.equal(els.quickThinkingButton.textContent, `Thinking: ${label}`);
+    assert.equal(els.quickThinkingMobileButton.textContent, `Thinking: ${label}`);
+    assert.equal(els.quickThinkingControl.classList["thinking-mode-control--enabled"], mode === "on");
+    assert.match(els.quickThinkingMenu.innerHTML, new RegExp(`data-thinking-mode="${mode}"[^>]*aria-checked="true"`));
+  }
+});
+
+test('one segmented control exposes Auto plus every declared boolean or named value',()=>{
+ for(const [metadata,values] of [[{values:[true,false]},['auto','on','off']],
+   [{values:['low','medium','high']},['auto','low','medium','high']]]) {
+  const h=harness({installed:[{name:'custom:latest',thinking:metadata}]});
+  for(const mode of values){
+   h.context.renderQuickThinkingControl(mode);
+   const markup=h.els.quickThinkingMenu.innerHTML;
+   assert.equal((markup.match(/role="radio"/g)||[]).length,values.length);
+   assert.equal((markup.match(/aria-checked="true"/g)||[]).length,1);
+   assert.match(markup,new RegExp(`data-thinking-mode="${mode}"[^>]*aria-checked="true"`));
+   assert.equal(h.els.quickThinkingMenu.innerHTML,h.els.quickThinkingMobileMenu.innerHTML);
+  }
+ }
+});
+
+test('boolean saves preserve Auto, forced On and forced Off without resetting budgets',async()=>{
+ const h=harness({installed:[{name:'custom:latest',thinking:{values:[true,false]}}]});
+ for(const mode of ['auto','on','off']){
+  h.els.quickThinkingControl.dataset.thinkingMode=mode;
+  await h.context.saveQuickThinkingModeFlow();
+  assert.equal(h.calls.at(-1).body.ollama_think,mode);
+  assert.equal(h.calls.at(-1).body.thinking_tokens,8192);
+ }
 });

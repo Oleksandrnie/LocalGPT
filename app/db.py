@@ -623,6 +623,9 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_document_chunks_profile
             ON document_chunks (profile_id, document_id, chunk_index);
 
+            CREATE INDEX IF NOT EXISTS idx_document_embeddings_chunk_model
+            ON document_embeddings (chunk_id, embedding_model);
+
             CREATE INDEX IF NOT EXISTS idx_document_embeddings_profile_model
             ON document_embeddings (profile_id, embedding_model);
             """

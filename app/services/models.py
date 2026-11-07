@@ -413,6 +413,20 @@ def _show_json_details(payload: dict[str, Any]) -> dict[str, Any]:
         details["capabilities"] = capabilities
         details["capabilities_confirmed"] = True
     thinking = _normalize_thinking(payload.get("thinking"))
+    if thinking is None and "thinking" not in payload:
+        # Native Ollama /api/show exposes capabilities + template, not a
+        # thinking.values descriptor. A template that explicitly branches on
+        # .IsThinkSet/.Think confirms a boolean control without model-name
+        # guessing. Older qwen3-architecture templates only expose IsThinkSet;
+        # their hybrid boolean contract is the same. Unknown templates stay unknown.
+        template = payload.get("template")
+        if (
+            "thinking" in capabilities
+            and isinstance(template, str)
+            and re.search(r"\.IsThinkSet\b", template)
+            and (re.search(r"\.Think\b", template) or architecture.casefold() == "qwen3")
+        ):
+            thinking = {"values": [True, False], "default": None}
     if thinking is not None:
         details["thinking"] = thinking
     return details

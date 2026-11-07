@@ -24,6 +24,16 @@ class ChatAttachmentResponse(BaseModel):
     error: str | None = None
 
 
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=4000)
+    profile_id: int = Field(gt=0)
+    session_id: str | None = Field(default=None, max_length=128)
+    model_name: str = Field(default="", max_length=200)
+    top_k: int = Field(default=8, ge=1, le=20)
+
+    model_config = {"extra": "forbid"}
+
+
 class ChatAttachmentListResponse(BaseModel):
     attachments: list[ChatAttachmentResponse]
 

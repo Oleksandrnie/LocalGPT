@@ -79,7 +79,7 @@ def split_query_facets(query: str) -> list[dict[str, Any]]:
     if not compact:
         return []
     raw_parts = re.split(
-        r"(?:\n+|[;?]+|\s+(?:и|and)\s+(?=(?:как|где|какие|какими|какой|что|how|where|what|which)\b))",
+        r"(?:\n+|[;?]+|,\s+(?=[A-Za-zА-Яа-яЁё#])|\s+(?:и|and)\s+(?=(?:как|где|какие|какими|какой|что|how|where|what|which)\b))",
         compact,
         flags=re.IGNORECASE,
     )
@@ -158,35 +158,40 @@ def rank_hybrid(
     dense_score: Callable[[list[float]], float],
     dense_facet_scores: Callable[[list[float]], dict[str, float]] | None = None,
     strategy: str = "hybrid_v2",
+    corpus_cache: dict[int, Any] | None = None,
 ) -> list[dict[str, Any]]:
     facets = split_query_facets(query)
     query_tokens = sorted({token for facet in facets for token in facet["tokens"]})
     if not query_tokens or top_k <= 0:
         return []
 
-    eligible: list[tuple[dict[str, Any], list[str]]] = []
+    eligible = []
     for chunk in raw_chunks:
         metadata = chunk.get("document_metadata") or {}
         if chunk.get("source_type") == "chat_context" and metadata.get("message_role") == "assistant":
             continue
-        content_tokens = tokens(
-            " ".join(str(value or "") for value in (chunk.get("content"), chunk.get("source_id"), chunk.get("title"))),
-            significant=True,
-        )
-        eligible.append((chunk, content_tokens))
+        cached = corpus_cache.get(id(chunk)) if corpus_cache is not None else None
+        if cached is None:
+            content_tokens = tokens(
+                " ".join(str(value or "") for value in (chunk.get("content"), chunk.get("source_id"), chunk.get("title"))),
+                significant=True,
+            )
+            cached = (content_tokens, Counter(content_tokens), repetition_ratio(str(chunk.get("content") or "")))
+            if corpus_cache is not None:
+                corpus_cache[id(chunk)] = cached
+        eligible.append((chunk, *cached))
 
     document_frequency = Counter()
     for query_token in query_tokens:
         document_frequency[query_token] = sum(
-            1 for _, content_tokens in eligible if any(token_matches(query_token, token) for token in set(content_tokens))
+            1 for _, content_tokens, _, _ in eligible if any(token_matches(query_token, token) for token in set(content_tokens))
         )
     corpus_size = max(1, len(eligible))
-    average_length = sum(len(content_tokens) for _, content_tokens in eligible) / corpus_size
+    average_length = sum(len(content_tokens) for _, content_tokens, _, _ in eligible) / corpus_size
     query_lower = query.lower()
     candidates: list[dict[str, Any]] = []
 
-    for chunk, content_tokens in eligible:
-        term_counts = Counter(content_tokens)
+    for chunk, content_tokens, term_counts, repeated in eligible:
         bm25 = 0.0
         idf_total = 0.0
         for query_token in query_tokens:
@@ -203,7 +208,6 @@ def rank_hybrid(
             for facet in facets
         }
         overall_coverage = token_coverage(query_tokens, content_tokens)
-        repeated = repetition_ratio(str(chunk.get("content") or ""))
         lexical_score = (
             bm25_normalized * 0.56
             + overall_coverage * 0.44
@@ -253,6 +257,9 @@ def rank_hybrid(
                 "source_id": chunk.get("source_id"),
                 "chunk_id": chunk.get("chunk_id"),
                 "chunk_index": chunk.get("chunk_index"),
+                **({k: (chunk.get("chunk_metadata") or {}).get(k)
+                    for k in ("message_id", "timestamp", "author", "ordinal")}
+                   if (chunk.get("chunk_metadata") or {}).get("format") == "telegram_html" else {}),
             },
         }
         candidates.append(item)

@@ -313,3 +313,60 @@ Model-transfer tests используют только temporary synthetic files
 - vision output зависит от модели; smoke должен проверять заранее известные признаки изображения, а не точную формулировку ответа;
 - LAN требует проверки в реальной сети;
 - manual accessibility и mobile regression остаются обязательными для заметных UI-изменений.
+
+
+Telegram HTML parser и интеграция в RAG (искусственные данные, без модели):
+
+```bash
+RAG_EMBEDDING_PROVIDER=local_hash venv/bin/python -m unittest tests.test_telegram_search -v
+```
+
+Проверяются provenance/даты, joined-авторы, длинные сообщения, загрузка, поиск и уточнения, profile isolation, удаление, отказ от внешнего provider и безопасная повторная индексация. Live ответ модели этим набором не проверяется.
+
+Проверка 28 октября 2026: 457 Python-тестов и 50 Node-тестов прошли; `node --check` и `git diff --check` прошли. Использовался доступный Python 3.12/FastAPI 0.141.1 с временными QA-зависимостями; штатный project venv с закреплённым FastAPI 0.136.1 отсутствовал. Чистый запуск на закреплённых requirements, ручной браузерный сценарий и свободный ответ локальной LLM не проверены. Пример HTML локально разобран: 173 блока, 146 обычных, без предупреждений дат; исходные сообщения в фикстуры не переносились.
+
+
+Проверка 29 октября 2026 после доработки Telegram:
+
+- В штатном `venv`: 466 Python-тестов и 50 Node-тестов прошли; compileall, JS syntax и diff whitespace прошли. Фикстуры искусственные, реальное содержимое архивов в Git не переносилось.
+- Локальное приложение с `qwen2.5:7b-instruct`: импорт пяти HTML-файлов, 16 079 фрагментов/embeddings, индекс ready. Все пять файлов и тестовые чаты сохранены в тестовом профиле для ручной проверки.
+- Независимый read-only review сверил записи потокового и полного парсера на четырёх больших страницах: 5027/5047/5049/438 блоков; записи и предупреждения совпали.
+- Извлечение четырёх фактов из текста, уточнение даты и ответ not-found для даты вне архива проверены live. Пользователь подтвердил нахождение целевого WhoIs-сообщения. Прямое дословное извлечение по ID+имени источника дало точное совпадение с полным исходным текстом.
+- После индекса chunk/model поиск по ID на большом архиве занимает около 1,5 с вместо ранее измеренных 49,6 с на меньшем архиве. Это локальный замер, а не универсальная гарантия скорости.
+- Во время разработки один QA polling-скрипт продолжал опрашивать потерянную при reload задачу. Скрипт остановлен; прерванный ответ сохранён с отметкой об остановке, итоговые проверки выполнены новыми запросами. Ошибки JavaScript при исходной браузерной проверке не выявлены.
+- Дополнительные live-прогоны остановлены по просьбе пользователя; полнота произвольных LLM-сводок сверх контекстного бюджета по-прежнему не гарантируется. Дословный режим читает источник напрямую и не зависит от top_k.
+
+
+Пакетный upload RAG проверен отдельно: `node --test tests/rag_upload.test.mjs` и `venv/bin/python -m unittest tests.test_telegram_search -q`. Синтетические 34 HTML общим объёмом 69 MiB отправлены через изолированный FastAPI TestClient партиями; все сохранены. Node-проверки покрывают последовательность запросов, прогресс, per-file отказ, сетевой сбой, большой одиночный HTML и сохранение исходного profile_id при смене профиля в UI. Итог:20 Python-тестов Telegram/upload и58 Node-тестов прошли, JS syntax/diff checks прошли. Персональные экспорты и профили при этой проверке не читались; live LLM не запускалась.
+
+
+Thinking/history fixes (29 October 2026): 473 Python and67 Node tests passed, JavaScript syntax and diff checks clean. Native installed Qwen3:4b/:8b metadata yielded boolean thinking values without inference. Explicit named/default/unsupported metadata regressions passed. New behavior tests cover auxiliary history failure, stale-session/profile races, pending request visibility and composer restore; switch view tests cover named/binary values, Auto and escaping. Headless installed Chrome with completely synthetic API responses verified history before/after reload, auxiliary500, saving bool/named choices, keyboard selection and mobile popup bounds. No private message bodies or files were inspected; metadata-only DB checks confirmed the reported latest chat had completed user/assistant records. Exact past cause of that user's blank screen was not reproduced on real content; current related failure scenarios were reproduced synthetically and fixed. Layout was delegated explicitly to GPT-6 Luna with high effort; parent integrated runtime/persistence behavior.
+
+Knowledge-only and transport recovery (29 October 2026): tests/test_knowledge_search.py uses an isolated temporary SQLite/index to verify profile/session ownership, zero generation/embedding calls, local-only policy, literal evidence, limits and failures. tests/knowledge_search_ui.test.mjs covers no-model submission, cancellation and stale-response races. tests/test_chat_transport_recovery.py covers history/summary filtering, bounded recovery, privacy retention and no mixed streaming output. Full Python suite: 500 passed. Synthetic Chrome checked the actual button/help layout at 1280px and 390px without reading private data or calling a model.
+Final frontend suite: 86 tests passed, including real session-list flow for a search started in an unsaved chat and delayed refresh after a chat switch. JavaScript syntax and diff checks passed.
+
+Smart search completion: 513 Python tests and89 Node tests passed. New synthetic cases cover synonym expansion, semantic-only vector matches without lexical overlap, immutable original filters, invalid planner JSON/native response shapes, query-only planner input (no history/corpus), timeout, proxy/redirect/remote endpoint rejection, opt-in links, own-message permalink provenance, and inert profile/session-scoped local evidence viewing. Semantic vectors and LLM outputs are mocked; no private export ingestion, actual inference or live index migration was performed. Chrome at1280/390px verified RAG menu checkbox/help and the indicator to the right of dictation, visibility switching and menu reopening. Layout was delegated to GPT-6 Luna High; parent connected logic and completed interrupted planner tests.
+
+
+Waiting/search control verification:527 Python and108 Node tests passed. Synthetic tests cover render-only3dots, handoff without duplicates, actual reasoning/answer suppression, cancellation failure recovery, unchanged scroll behavior, repeated30s monitors, no cancellation while a confirmation is pending, restored input on decline, modal ownership/replacement, late initial task replies, task profile/session isolation, no late persistence, capacity/retention, and request-local corpus scope. Synthetic Chrome verified dots/reduced motion and Continue/repeat/completion/Cancel dialog paths with accelerated timers. No private prompt/source text was printed.
+
+With user authorization, one controlled nonmatching search ran on retained profile2 (`Telegram QA local review`) through the real8002 task API: completed with0results in approximately3seconds. The test session remains (`24bc60b0-28f4-4eca-a5a5-5c8ba83396a6`); existing sources/chats were not removed. It used no planner model and does not measure LLM or semantic search latency. Real30s dialog behavior was validated using fake timers, not by repeatedly running long private searches.
+
+Streaming manual-scroll fix:115 frontend tests passed, including small upward input within96px, queued forced-jump cancellation, strict/user-intended bottom resume, scrollbar movement before delayed scroll events, completion/cancellation preservation and new-chat/profile resets. A synthetic Chrome session grew the rendered response every8ms while receiving native wheel(-4/-240), CDP touch gestures, PageUp, End and a large downward wheel return. Reading positions remained stable through125 wheel/75+ touch growth updates; intentional return resumed follow. No live model or private data was used. Python tests skipped because changes are frontend-only.
+
+
+Embedding UI setup: full Python suite534 passed, plus7 targeted setup tests after metadata readiness hardening; full Node suite120 passed. Isolated temporary DB tests cover shared download reuse without activation, profile-specific deferred provider change, missing/remote model rejection, synthetic probe failure, changed-weight digest rejection, real background worker success/failure with old-index preservation and lexical rollback. Five UI tests cover consent/no automatic POST, install-vs-activate, late profile responses, one-time startup offer without interrupting typing, and progress/failure states. Synthetic Chrome verified the card at1280/390px, download progress/cancel and activation labels. Read-only live metadata confirmed retained QA profile2 has no installed embeddinggemma and no active semantic override; no source content was inspected, no weights downloaded and no private index rebuilt.
+
+
+Thinking/bubble review:123 Node tests and77 focused Python thinking/metadata/runtime tests passed, with no real inference or private data reads. Native installed Qwen3 metadata reports both true/false; unknown/Qwen2.5 thinking remains unsupported. Synthetic browser verified a single3-position Auto/On/Off selector and4-position Auto/low/medium/high selector on desktop/mobile, each value selectable and sent through mocked settings saves. User-card CSS mitigation was inspected in synthetic Chrome dark/light/mobile scenes at multiple scroll offsets; the original GPU artifact was not reproduced, so confirmation on the reporting device is still required.
+
+
+Search repair:36 targeted Python search/embedding setup tests passed. Structured Qwen3 synthetic plan with native think=false completed in3.53s versus incomplete ~28s under the previous general-chat policy; full JSON schema/length validation is preserved. A local Russian paraphrase fixture gave embeddinggemma cosine0.5897 for the speech-transcription target versus0.4172/0.32 for distractors, while all local_hash similarities were0.0. QA actual semantic reindex completed15889chunks; async QA search reported planner=ready, semantic=ready, strategy=hybrid_v2 and3source results. Private text was not printed. Personal reindex is a separate ongoing operation; these checks do not certify relevance of every Personal result.
+
+Console diagnostics:130 Node tests pass, including console snapshot allowlisting, budget-stage reporting from known backend codes, unknown/null semantics, reported effective versus requested settings and stale-profile search events. Synthetic Chrome verified valid JSON on budget/degraded/service-format failures, duplicate suppression and exclusion of private body sentinels. No live user generation was triggered for console testing.
+
+
+Diagnostics follow-up review:135 Node tests passed after regression checks for cross-profile/model snapshot isolation, console-sink failure tolerance, server-created session correlation and preservation of original request metadata. JS syntax and diff checks passed. Read-only backend probes confirmed two remaining limitations: wrapped URLError(TimeoutError) yields planner.reason=unavailable, and the Auto planner router is not installed on the running instance. No Python source edits, live inference or backend restart were performed during Personal reindex for this review.
+
+
+Post-index follow-up:39 focused Python knowledge-search/embedding-setup tests passed after adding installed Auto completion-model selection (embedding excluded/no completion fallback) and wrapped-timeout diagnostics. Synthetic local Auto planning selected qwen3:4b and returned ready in4.63s with no warnings. QA and Personal semantic generations completed15889/15889 and165096/165096 respectively; missing_chunks=0. Activation persisted across backend auto-reload. No private source content or history was printed. These checks verify indexing/planning readiness, not exhaustive relevance of all search results. Independent configurable planner reasoning remains a documented future improvement.

@@ -58,7 +58,9 @@
                                 <button class="thinking-mode-control__button" id="quickThinkingButton" type="button"
                                     aria-label="Режим thinking текущей LLM" aria-haspopup="menu"
                                     aria-expanded="false">Thinking</button>
-                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden></div>
+                                <div class="thinking-mode-menu" id="quickThinkingMenu" role="menu" hidden>
+                                    <div id="quickThinkingSegments" hidden></div>
+                                </div>
                             </div>
                             <div class="quick-model-switch quick-model-switch--inline">
                                 <span class="quick-model-switch__label">Модель</span>
@@ -118,7 +120,9 @@
                             </svg>
                         </button>
                         <div class="thinking-mode-menu thinking-mode-menu--mobile" id="quickThinkingMobileMenu"
-                            role="menu" hidden></div>
+                            role="menu" hidden>
+                            <div id="quickThinkingMobileSegments" hidden></div>
+                        </div>
                     </div>
                     <button class="button button--ghost topbar-icon-button rag-status-button" id="openRagButton"
                         type="button" aria-pressed="false" aria-label="Открыть RAG, выключен"
@@ -181,6 +185,7 @@
                 </div>
 
                 <div class="message-list" id="messageList"></div>
+                <span id="chatWaitingStatus" class="chat-waiting-status" role="status" aria-live="polite" aria-atomic="true"></span>
                 <div id="messageScrollEnd" class="message-scroll-end" aria-hidden="true"></div>
             </section>
 
@@ -217,6 +222,15 @@
                             <path
                                 d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V7a3.75 3.75 0 0 0-7.5 0v4.5A3.75 3.75 0 0 0 12 15.25Zm6.25-3.75a.75.75 0 0 0-1.5 0 4.75 4.75 0 1 1-9.5 0 .75.75 0 0 0-1.5 0 6.26 6.26 0 0 0 5.5 6.21V20H9.5a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-1.75v-2.29a6.26 6.26 0 0 0 5.5-6.21Z">
                             </path>
+                        </svg>
+                    </button>
+                    <button class="knowledge-search-indicator" id="knowledgeSearchIndicator" type="button"
+                        aria-label="Поиск по базе включён. Открыть настройки RAG" title="Поиск по базе включён"
+                        aria-haspopup="menu" aria-controls="ragQuickMenu" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="10.8" cy="10.8" r="6.3"></circle>
+                            <path d="m15.4 15.4 4.2 4.2"></path>
+                            <path d="M8.2 10.8h5.2M10.8 8.2v5.2"></path>
                         </svg>
                     </button>
                     <div class="voice-model-menu" id="voiceModelMenu" hidden role="menu"
@@ -1145,6 +1159,14 @@
                     <p class="inline-status" id="pluginsStatus"></p>
                 </section>
 
+                <section class="settings-group" data-settings-tab-panel="system">
+                    <label class="field">
+                        <span class="field__label">Тайм-аут ожидания поиска в базе (секунды)</span>
+                        <input id="knowledgeSearchWaitSeconds" class="field__control" type="number" min="1" max="86400" step="1" value="30">
+                        <span class="field__hint">Через этот интервал спросим, продолжать ли ожидание. Поиск продолжается до результата или вашей отмены. Сохраняется автоматически в этом браузере; применяется к следующему поиску.</span>
+                    </label>
+                </section>
+
                 <section class="settings-group model-transfer" data-settings-tab-panel="system">
                     <div class="settings-group__header">
                         <div>
@@ -1312,6 +1334,17 @@
                         </div>
                         <p class="subtle" id="ragEmbeddingDetails">Параметры generation появятся после выбора профиля.</p>
                         <progress id="ragReindexProgress" max="100" value="0" hidden></progress>
+                        <section class="info-card" aria-labelledby="embeddingSetupTitle">
+                            <strong id="embeddingSetupTitle">Настроить семантический поиск</strong>
+                            <p class="subtle" id="embeddingSetupDetails" role="status" aria-live="polite">Проверяем локальную модель…</p>
+                            <progress id="embeddingSetupProgress" max="100" value="0" hidden></progress>
+                            <div class="button-row">
+                                <button class="button button--primary" id="embeddingSetupAction" type="button" disabled>Проверка…</button>
+                                <button class="button button--ghost" id="embeddingSetupRefresh" type="button">Проверить модель</button>
+                                <button class="button button--ghost" id="embeddingSetupCancel" type="button" hidden>Отменить загрузку</button>
+                                <button class="button button--ghost" id="embeddingSetupLexical" type="button" hidden>Вернуться к поиску по словам</button>
+                            </div>
+                        </section>
                     </div>
 
                     <label class="field field--checkbox">
@@ -1329,10 +1362,12 @@
                             список</button>
                     </div>
                     <input id="ragFileInput" type="file"
-                        accept=".md,text/markdown" multiple hidden />
+                        accept=".md,.html,text/markdown,text/html" multiple hidden />
 
-                    <p class="inline-status" id="ragStatusText">Добавляйте Markdown-файлы и индексируйте их для активного профиля.</p>
+                    <p class="inline-status" id="ragStatusText">Добавляйте Markdown или HTML-выгрузки Telegram и индексируйте их для активного профиля.</p>
                     <p class="subtle">Переиндексация запускается только вручную и может временно загрузить локальную embedding-модель.</p>
+                    <p class="subtle">Embedding-модель устанавливается через Ollama. Настройка выше не требует редактирования .env: веса загружаются отдельно, затем строится семантический индекс только текущего профиля. Файлы и предыдущий индекс сохраняются.</p>
+                    <div id="ragUploadReport" class="inline-status" role="status" aria-live="polite" style="white-space: pre-wrap; overflow-wrap: anywhere" hidden></div>
                     <div class="rag-file-list" id="ragFileList"></div>
                 </section>
             </div>
@@ -1345,7 +1380,18 @@
             <input id="ragQuickEnabledToggle" type="checkbox" />
             <span>Подмешивать RAG-контекст</span>
         </label>
+        <div class="knowledge-search-menu-row">
+            <label class="rag-quick-menu__item knowledge-search-menu-toggle">
+                <input id="knowledgeSearchToggle" type="checkbox" />
+                <span>Поиск по базе</span>
+            </label>
+            <button class="knowledge-search-info" type="button" aria-label="Как работает поиск по базе"
+                aria-describedby="knowledgeSearchHelp"><span class="knowledge-search-info__mark"
+                    aria-hidden="true">?</span></button>
+            <span class="knowledge-search-help" id="knowledgeSearchHelp" role="tooltip">Локальная выбранная модель составляет план поиска. Ищем по словам и семантически, если embeddings настроены. В ответе — дословные цитаты из найденных источников с ID.</span>
+        </div>
     </div>
+    <span class="knowledge-search-status" id="knowledgeSearchStatus" role="status" aria-live="polite"></span>
 
     <div class="modal-backdrop" id="confirmBackdrop" hidden>
         <section class="settings-panel settings-panel--confirm" role="dialog" aria-modal="true"

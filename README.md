@@ -10,7 +10,7 @@ LocalGPT — local-first приложение для чата, транскри�
 - анализ транскриптов: быстрое саммари, умное саммари и явно разрешаемый полный pipeline;
 - Voice Studio на базе Piper с локальной библиотекой голосов и историей;
 - OCR изображений через Tesseract;
-- profile-scoped RAG для Markdown-файлов, включая ASR context и явно сохраняемый text-only Vision context;
+- profile-scoped RAG для Markdown и HTML-выгрузок Telegram, включая ASR context и явно сохраняемый text-only Vision context;
 - перенос complete Ollama, faster-whisper, whisper.cpp и Piper моделей между установками через один `.localgpt-models` bundle;
 - metadata-only Plugin Registry v0;
 - локальный доступ по умолчанию и явно включаемый LAN-доступ.
@@ -202,3 +202,8 @@ Copyright (C) 2025–2026 Oleksandr Niemchenko.
 - [Зависимости и setup](docs/DEPENDENCIES.md)
 
 Подробности подсистем находятся в [`docs/knowledge/`](docs/knowledge/). Runtime prompt остаётся рядом с кодом: [`app/prompts/system_base.md`](app/prompts/system_base.md).
+
+
+## Настройка поиска по смыслу
+
+В панели «Знания» доступна установка локальной embedding-модели через Ollama: «Установить модель» → дождаться загрузки → «Включить семантический поиск». Последний шаг строит индекс только выбранного профиля. До успешного завершения работает прежний индекс; другие профили не переключаются. При первом запуске интерфейс предложит эту настройку, но загрузка весов и обработка источников выполняются после подтверждения. Редактировать `.env` или добавлять веса модели в Python requirements не требуется.
