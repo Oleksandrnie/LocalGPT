@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+HOOK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$HOOK_DIR/../scripts/run_repo_safety_hook.sh" commit

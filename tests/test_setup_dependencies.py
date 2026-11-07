@@ -127,6 +127,32 @@ class SetupDependencyTests(unittest.TestCase):
         self.assertEqual(setup.VENV_DIR, ROOT / "venv")
         self.assertEqual(setup.DOT_VENV_DIR, ROOT / ".venv")
 
+    def test_developer_safety_setup_is_scoped_to_git_checkouts(self) -> None:
+        source = (ROOT / "setup" / "setup_localgpt.py").read_text(encoding="utf-8")
+        self.assertIn("install_developer_safety()", source)
+        self.assertIn('"install", "--install-tools"', source)
+        self.assertIn('"git", "rev-parse", "--show-toplevel"', source)
+        self.assertIn("No Git checkout detected; skipping developer-only repository safeguards.", source)
+
+    def test_development_checkout_detection_requires_checkout_root(self) -> None:
+        completed = subprocess.CompletedProcess([], 0, stdout=f"{ROOT}\n", stderr="")
+        with patch.object(setup.subprocess, "run", return_value=completed):
+            self.assertTrue(setup.is_development_checkout())
+        with patch.object(
+            setup.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([], 128, stdout="", stderr="fatal"),
+        ):
+            self.assertFalse(setup.is_development_checkout())
+
+    def test_developer_safety_setup_requires_confirmation(self) -> None:
+        with (
+            patch.object(setup, "is_development_checkout", return_value=True),
+            patch.object(setup, "ask", return_value=False),
+            self.assertRaisesRegex(setup.SetupError, "cannot complete without repository safeguards"),
+        ):
+            setup.install_developer_safety()
+
     def test_all_setup_entry_points_are_collocated(self) -> None:
         entry_points = (
             "setup_localgpt.command",

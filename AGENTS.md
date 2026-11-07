@@ -6,18 +6,18 @@ Before every commit, inspect all staged paths and review added text hunks. Befor
 
 ```sh
 python scripts/check_commit_data.py --staged
-python -m ai_repo_safety gate --when commit --target .
+python scripts/setup_repo_safety.py gate --when commit
 ```
 
 Before publishing a branch or opening/updating a PR, run:
 
 ```sh
 python scripts/check_commit_data.py --range origin/dev
-python -m ai_repo_safety gate --when push --target .
+python scripts/setup_repo_safety.py gate --when push
 gitleaks git . --log-opts='origin/dev..HEAD' --redact
 ```
 
-Use the repository's active Python environment for `ai_repo_safety` when `python` is not on `PATH`. Keep the installed fail-closed `pre-commit` and `pre-push` hooks enabled; never use `--no-verify` to bypass them.
+On every clone, run `python scripts/setup_repo_safety.py install` once to create the local safety environment and configure the tracked fail-closed hooks. The hooks use repository-relative paths and restore scanner discovery for GUI clients. Install required scanners as documented in `docs/repo-safety.md`. Never use `--no-verify` to bypass checks.
 
 ## Branches
 
@@ -31,6 +31,13 @@ Do not create or switch to a separate branch for every task. Create or switch br
 - Audits explicitly requested by the user: GPT-6 Astra or GPT-6.1 Sol, High. After a High audit provides findings or recommendations, bounded fixes may use GPT-6.1 Sol, Medium.
 
 Apply these routes to execution only. A direct user choice for a task takes precedence. When delegating, select the requested model and effort explicitly if the runtime supports it; report the effective executor only when runtime metadata exposes it. Do not start an independent audit automatically unless the user asks for it.
+
+## Parallel work and agents
+
+- For a request with multiple independent workstreams, delegate them to separate agents and run them in parallel when the runtime supports it. Prefer clear boundaries such as backend, frontend, tests, or disjoint file groups.
+- Before parallel edits, assign ownership so agents do not modify the same files. If workstreams are tightly coupled or share files, keep implementation under one coordinating agent and delegate only independent research or review.
+- The coordinating agent integrates the results, resolves conflicts, checks the combined diff, and runs the relevant validation before reporting completion.
+- Do not create agents for small, bounded tasks where coordination would cost more than the parallel work saves. Respect the model routes above and any explicit user choice.
 
 Only `.gitkeep` files may be proposed under `rag_sources/` or `app/data/`. Do not commit Telegram exports, user documents, databases, attachments, generated profile data, credentials, or other runtime files. Test fixtures must be synthetic and must not be copied from a user's real export.
 
