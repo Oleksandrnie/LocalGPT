@@ -17,6 +17,7 @@ REQUIREMENTS = ROOT / "app" / "requirements.txt"
 VENV_DIR = ROOT / "venv"
 DOT_VENV_DIR = ROOT / ".venv"
 WHISPER_CPP_SETUP_SCRIPT = ROOT / "tools" / "setup_whisper_cpp_macos.sh"
+REPO_SAFETY_SETUP_SCRIPT = ROOT / "scripts" / "setup_repo_safety.py"
 WHISPER_CPP_CLI = ROOT / "models" / "whisper_cpp" / "bin" / "whisper-cli"
 WHISPER_CPP_VAD_MODEL = ROOT / "models" / "whisper_cpp" / "ggml-silero-v6.2.0.bin"
 MIN_PYTHON = (3, 11)
@@ -330,6 +331,41 @@ def install_project_dependencies() -> None:
         info("Skipped Python package installation by request.")
 
 
+def is_development_checkout() -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    try:
+        return Path(result.stdout.strip()).resolve() == ROOT.resolve()
+    except OSError:
+        return False
+
+
+def install_developer_safety() -> None:
+    if not is_development_checkout():
+        info("No Git checkout detected; skipping developer-only repository safeguards.")
+        return
+    if not REPO_SAFETY_SETUP_SCRIPT.is_file():
+        raise SetupError(f"Repository safety setup script is missing: {REPO_SAFETY_SETUP_SCRIPT}")
+
+    step("Developer setup — repository safeguards")
+    if not ask(
+        "This Git checkout is for development. Set up commit/push checks and install missing security tools?",
+        default=True,
+    ):
+        raise SetupError(
+            "Developer setup cannot complete without repository safeguards. "
+            "Rerun setup and approve their installation."
+        )
+    run([sys.executable, str(REPO_SAFETY_SETUP_SCRIPT), "install", "--install-tools"])
+
+
 def verify_environment(system: str) -> bool:
     step("Phase 3/3 — final verification")
     failures: list[str] = []
@@ -376,6 +412,26 @@ def verify_environment(system: str) -> bool:
             failures.append("whisper.cpp Silero VAD")
             warn(f"whisper.cpp Silero VAD: missing ({WHISPER_CPP_VAD_MODEL})")
 
+    if is_development_checkout():
+        hooks_path = subprocess.run(
+            ["git", "config", "--local", "--get", "core.hooksPath"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        safety_python = (
+            ROOT / ".repo-safety-venv" / "Scripts" / "python.exe"
+            if os.name == "nt"
+            else ROOT / ".repo-safety-venv" / "bin" / "python"
+        )
+        if hooks_path.stdout.strip() != ".githooks" or not safety_python.is_file():
+            failures.append("repository safeguards")
+            warn("repository safeguards: not installed (run setup again and approve developer safeguards)")
+        elif missing_commands(["gitleaks", "trufflehog"]):
+            failures.append("repository safety scanners")
+            warn("repository safety scanners are missing from PATH")
+
     if failures:
         warn("Setup is incomplete: " + ", ".join(failures))
         if system == "windows":
@@ -408,6 +464,7 @@ def main() -> int:
         if not args.verify_only:
             install_system_dependencies(system)
             install_project_dependencies()
+            install_developer_safety()
         return 0 if verify_environment(system) else 1
     except (SetupError, OSError) as exc:
         warn(str(exc))

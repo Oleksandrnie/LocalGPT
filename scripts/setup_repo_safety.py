@@ -68,7 +68,7 @@ def safety_python() -> Path:
     return path
 
 
-def setup() -> int:
+def setup(*, install_tools: bool = False) -> int:
     if not (ROOT / ".git").exists():
         raise RuntimeError("Run this script from a Git checkout of LocalGPT.")
     if not HOOKS.is_dir() or not (HOOKS / "pre-commit").is_file() or not (HOOKS / "pre-push").is_file():
@@ -86,6 +86,25 @@ def setup() -> int:
         raise RuntimeError(f"The existing safety environment uses Python {version}; recreate it with Python 3.12+.")
 
     run([str(python), "-m", "pip", "install", "-r", str(REQUIREMENTS)])
+    if install_tools:
+        tool_result = subprocess.run(
+            [str(python), "-m", "ai_repo_safety", "install-tools", "--target", str(ROOT), "--yes"],
+            cwd=ROOT,
+            check=False,
+        )
+        missing_scanners = [name for name in ("gitleaks", "trufflehog") if shutil.which(name) is None]
+        if missing_scanners:
+            raise RuntimeError(
+                "Required safety scanners are still missing after installation: "
+                + ", ".join(missing_scanners)
+                + ". See docs/repo-safety.md."
+            )
+        if tool_result.returncode:
+            print(
+                "[repo-safety] some optional developer tools could not be installed; "
+                "required scanners are available and commit/push gates can run.",
+                file=sys.stderr,
+            )
     configured_hooks = subprocess.run(
         ["git", "config", "--local", "--get", "core.hooksPath"],
         cwd=ROOT,
@@ -117,13 +136,18 @@ def gate(when: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("install", help="create the local environment and enable hooks")
+    install_parser = subparsers.add_parser("install", help="create the local environment and enable hooks")
+    install_parser.add_argument(
+        "--install-tools",
+        action="store_true",
+        help="install missing developer security tools through the safety tool's supported installers",
+    )
     gate_parser = subparsers.add_parser("gate", help="run an AI Repo Safety gate from the local environment")
     gate_parser.add_argument("--when", choices=("commit", "push", "tag", "auto"), required=True)
     args = parser.parse_args()
     try:
         if args.command == "install":
-            return setup()
+            return setup(install_tools=args.install_tools)
         return gate(args.when)
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"[repo-safety] {exc}", file=sys.stderr)

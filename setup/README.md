@@ -16,6 +16,8 @@
 
 Setup всегда читает канонический `app/requirements.txt` и создаёт `venv/`, который затем использует `run_localgpt.py`. Окружение `.venv/`, созданное вручную, не подменяется и не удаляется.
 
+В Git-клоне setup дополнительно один раз предлагает настроить developer safeguards. После подтверждения он создаёт отдельное окружение проверок, устанавливает недостающие инструменты безопасности и включает hooks для commit/push. В упакованной версии без Git-метаданных этот шаг автоматически пропускается. Требования и поведение описаны в [`docs/repo-safety.md`](../docs/repo-safety.md).
+
 На macOS setup также собирает native `models/whisper_cpp/bin/whisper-cli` и загружает небольшой Silero VAD runtime для отсечения тишины. Это не загружает GGML-модель или CoreML encoder: их по-прежнему добавляют отдельно в ASR Library.
 
 Подробный dependency inventory и правила установки: [`docs/DEPENDENCIES.md`](../docs/DEPENDENCIES.md).
