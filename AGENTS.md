@@ -6,18 +6,18 @@ Before every commit, inspect all staged paths and review added text hunks. Befor
 
 ```sh
 python scripts/check_commit_data.py --staged
-python -m ai_repo_safety gate --when commit --target .
+python scripts/setup_repo_safety.py gate --when commit
 ```
 
 Before publishing a branch or opening/updating a PR, run:
 
 ```sh
 python scripts/check_commit_data.py --range origin/dev
-python -m ai_repo_safety gate --when push --target .
+python scripts/setup_repo_safety.py gate --when push
 gitleaks git . --log-opts='origin/dev..HEAD' --redact
 ```
 
-Use the repository's active Python environment for `ai_repo_safety` when `python` is not on `PATH`. Keep the installed fail-closed `pre-commit` and `pre-push` hooks enabled; never use `--no-verify` to bypass them.
+On every clone, run `python scripts/setup_repo_safety.py install` once to create the local safety environment and configure the tracked fail-closed hooks. The hooks use repository-relative paths and restore scanner discovery for GUI clients. Install required scanners as documented in `docs/repo-safety.md`. Never use `--no-verify` to bypass checks.
 
 ## Branches
 

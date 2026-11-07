@@ -115,6 +115,7 @@ cython_debug/
 # Virtual environments
 venv/
 .venv/
+.repo-safety-venv/
 ENV/
 env/
 env.bak/
