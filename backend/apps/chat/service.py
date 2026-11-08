@@ -77,13 +77,19 @@ def contains_transport_envelope(text: str) -> bool:
     return DATA_ENVELOPE_START in text or DATA_ENVELOPE_END in text
 
 
-def enforce_protected_output(messages: list[dict[str, Any]], output: str) -> None:
+def enforce_protected_output(
+    messages: list[dict[str, Any]],
+    output: str,
+    *,
+    channel: str = "content",
+) -> None:
     if contains_transport_envelope(str(output or "")):
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "model_output_transport_envelope",
                 "message": "Модель вернула служебный формат вместо ответа. Повторите запрос.",
+                "channel": channel,
             },
         )
 
@@ -93,6 +99,7 @@ def enforce_protected_output(messages: list[dict[str, Any]], output: str) -> Non
             detail={
                 "code": "protected_prompt_literal_detected",
                 "message": "The local model response was blocked by the privacy guard.",
+                "channel": channel,
             },
         )
 
@@ -109,8 +116,8 @@ def guard_stream_events(
     for event in events:
         pending_content += event.content
         pending_reasoning += event.reasoning
-        enforce_protected_output(messages, pending_content)
-        enforce_protected_output(messages, pending_reasoning)
+        enforce_protected_output(messages, pending_content, channel="content")
+        enforce_protected_output(messages, pending_reasoning, channel="reasoning")
         emit_content = pending_content[:-holdback] if len(pending_content) > holdback else ""
         emit_reasoning = pending_reasoning[:-holdback] if len(pending_reasoning) > holdback else ""
         pending_content = pending_content[len(emit_content) :]
@@ -164,8 +171,8 @@ def guarded_completion(
     def checked_call(pass_messages: list[dict[str, Any]]) -> ollama_runtime.ChatCompletionResult:
         result = call(pass_messages)
         # Validate before a length-limited answer can become assistant continuation input.
-        enforce_protected_output(messages, result.content)
-        enforce_protected_output(messages, result.reasoning)
+        enforce_protected_output(messages, result.content, channel="content")
+        enforce_protected_output(messages, result.reasoning, channel="reasoning")
         return result
 
     for attempt in range(2):
@@ -173,8 +180,8 @@ def guarded_completion(
             result = continuation.complete(
                 messages if not attempt else transport_recovery_messages(messages), checked_call,
             )
-            enforce_protected_output(messages, result.content)
-            enforce_protected_output(messages, result.reasoning)
+            enforce_protected_output(messages, result.content, channel="content")
+            enforce_protected_output(messages, result.reasoning, channel="reasoning")
             return result
         except HTTPException as exc:
             if attempt or not _transport_failure(exc):
@@ -948,8 +955,8 @@ class ChatService:
             raise HTTPException(status_code=502, detail="Local model generation failed.") from exc
         think = _resolve_ollama_think(settings.get("ollama_think"))
         sanitized = replace(result, content=sanitize_reply(result.content))
-        enforce_protected_output(messages, sanitized.content)
-        enforce_protected_output(messages, sanitized.reasoning)
+        enforce_protected_output(messages, sanitized.content, channel="content")
+        enforce_protected_output(messages, sanitized.reasoning, channel="reasoning")
         completed = self.require_final_answer(sanitized)
         return replace(completed, reasoning="") if think is False else completed
 

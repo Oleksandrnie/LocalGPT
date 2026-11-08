@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import multiprocessing as mp
 import os
 import signal
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from secrets import token_hex
@@ -22,6 +24,8 @@ from backend.apps.chat.service import (
     sanitize_reply,
 )
 from backend.apps.chat.services import ollama_runtime, vision_context, vision_runtime
+
+LOGGER = logging.getLogger(__name__)
 
 TASKS_DIR = config.DATA_DIR / "chat_tasks"
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -228,7 +232,9 @@ def _chat_worker(
     vision_route: dict[str, Any] | None = None,
     rag_evidence_manifest: list[dict[str, Any]] | None = None,
     rag_diagnostics: dict[str, Any] | None = None,
+    task_id: str | None = None,
 ) -> None:
+    started_at = time.monotonic()
     attachment_descriptors = list(attachment_descriptors or [])
     attachment_ids = [str(item.get("id") or "") for item in attachment_descriptors if item.get("id")]
     image_paths = [str(item.get("path") or "") for item in attachment_descriptors if item.get("path")]
@@ -238,6 +244,15 @@ def _chat_worker(
     reasoning = ""
     done_reason: str | None = None
     eval_count: int | None = None
+    LOGGER.info(
+        "Chat task started task_id=%s model=%s thinking=%s budget_policy=%s provider_num_predict=%s stream=%s",
+        task_id or "unknown",
+        model_name,
+        settings.get("ollama_think", "auto"),
+        settings.get("generation_budget_policy", "unknown"),
+        settings.get("provider_num_predict", settings.get("max_tokens")),
+        bool(stream),
+    )
     try:
         service = ChatService()
         completion_model = model_name
@@ -311,7 +326,7 @@ def _chat_worker(
                         ),
                     )
                     enforce_protected_output(analysis_messages, vision_analysis_result.content)
-                    enforce_protected_output(analysis_messages, vision_analysis_result.reasoning)
+                    enforce_protected_output(analysis_messages, vision_analysis_result.reasoning, channel="reasoning")
                     service.require_final_answer(vision_analysis_result)
                     derived_vision_context = sanitize_reply(vision_analysis_result.content)
                     completion_model = response_model
@@ -424,7 +439,7 @@ def _chat_worker(
                 done_reason = completion_result.done_reason
                 eval_count = completion_result.eval_count
         enforce_protected_output(completion_messages, reply)
-        enforce_protected_output(completion_messages, reasoning)
+        enforce_protected_output(completion_messages, reasoning, channel="reasoning")
         service.require_final_answer(
             ollama_runtime.ChatCompletionResult(
                 content=reply,
@@ -475,6 +490,14 @@ def _chat_worker(
                     )
                 except Exception:
                     pass
+        LOGGER.info(
+            "Chat task completed task_id=%s model=%s elapsed_ms=%d done_reason=%s eval_count=%s",
+            task_id or "unknown",
+            completion_model,
+            int((time.monotonic() - started_at) * 1000),
+            done_reason or "unknown",
+            eval_count if eval_count is not None else "unknown",
+        )
     except Exception as exc:  # pragma: no cover - runtime path
         detail = getattr(exc, "detail", None)
         if isinstance(detail, dict):
@@ -486,9 +509,29 @@ def _chat_worker(
             "Thinking budget exhausted before the model produced a final answer.",
             "The model response reached its token limit before completion.",
             "The model completed without a final answer.",
+            "Модель вернула служебный формат вместо ответа. Повторите запрос.",
         }
         detail_message = str(detail.get("message") or "") if isinstance(detail, dict) else ""
-        if error_code == "chat_final_answer_incomplete" and detail_message in safe_messages:
+        safe_error_message = (
+            detail_message
+            if detail_message in safe_messages
+            else "Local model generation failed."
+        )
+        error_channel = str(detail.get("channel") or "unknown") if isinstance(detail, dict) else "unknown"
+        LOGGER.error(
+            "Chat task failed task_id=%s model=%s thinking=%s budget_policy=%s provider_num_predict=%s elapsed_ms=%d error_code=%s error_type=%s error_channel=%s message=%s",
+            task_id or "unknown",
+            model_name,
+            settings.get("ollama_think", "auto"),
+            settings.get("generation_budget_policy", "unknown"),
+            settings.get("provider_num_predict", settings.get("max_tokens")),
+            int((time.monotonic() - started_at) * 1000),
+            error_code,
+            type(exc).__name__,
+            error_channel,
+            safe_error_message,
+        )
+        if detail_message in safe_messages:
             message = detail_message
         if assistant_message_id:
             try:
@@ -846,6 +889,7 @@ def start_chat_task(
                 vision_route,
                 list(rag_evidence_manifest or []),
                 dict(rag_diagnostics or {}),
+                task_id,
             ),
             daemon=True,
             name=f"localgpt_chat_{task_id}",
