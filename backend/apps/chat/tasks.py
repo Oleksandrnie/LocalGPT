@@ -244,15 +244,17 @@ def _chat_worker(
     reasoning = ""
     done_reason: str | None = None
     eval_count: int | None = None
-    LOGGER.info(
-        "Chat task started task_id=%s model=%s thinking=%s budget_policy=%s provider_num_predict=%s stream=%s",
-        task_id or "unknown",
-        model_name,
-        settings.get("ollama_think", "auto"),
-        settings.get("generation_budget_policy", "unknown"),
-        settings.get("provider_num_predict", settings.get("max_tokens")),
-        bool(stream),
-    )
+    diagnostics_enabled = bool(settings.get("chat_console_diagnostics_enabled", False))
+    if diagnostics_enabled:
+        LOGGER.info(
+            "Chat task started task_id=%s model=%s thinking=%s budget_policy=%s provider_num_predict=%s stream=%s",
+            task_id or "unknown",
+            model_name,
+            settings.get("ollama_think", "auto"),
+            settings.get("generation_budget_policy", "unknown"),
+            settings.get("provider_num_predict", settings.get("max_tokens")),
+            bool(stream),
+        )
     try:
         service = ChatService()
         completion_model = model_name
@@ -490,14 +492,15 @@ def _chat_worker(
                     )
                 except Exception:
                     pass
-        LOGGER.info(
-            "Chat task completed task_id=%s model=%s elapsed_ms=%d done_reason=%s eval_count=%s",
-            task_id or "unknown",
-            completion_model,
-            int((time.monotonic() - started_at) * 1000),
-            done_reason or "unknown",
-            eval_count if eval_count is not None else "unknown",
-        )
+        if diagnostics_enabled:
+            LOGGER.info(
+                "Chat task completed task_id=%s model=%s elapsed_ms=%d done_reason=%s eval_count=%s",
+                task_id or "unknown",
+                completion_model,
+                int((time.monotonic() - started_at) * 1000),
+                done_reason or "unknown",
+                eval_count if eval_count is not None else "unknown",
+            )
     except Exception as exc:  # pragma: no cover - runtime path
         detail = getattr(exc, "detail", None)
         if isinstance(detail, dict):
@@ -518,19 +521,20 @@ def _chat_worker(
             else "Local model generation failed."
         )
         error_channel = str(detail.get("channel") or "unknown") if isinstance(detail, dict) else "unknown"
-        LOGGER.error(
-            "Chat task failed task_id=%s model=%s thinking=%s budget_policy=%s provider_num_predict=%s elapsed_ms=%d error_code=%s error_type=%s error_channel=%s message=%s",
-            task_id or "unknown",
-            model_name,
-            settings.get("ollama_think", "auto"),
-            settings.get("generation_budget_policy", "unknown"),
-            settings.get("provider_num_predict", settings.get("max_tokens")),
-            int((time.monotonic() - started_at) * 1000),
-            error_code,
-            type(exc).__name__,
-            error_channel,
-            safe_error_message,
-        )
+        if diagnostics_enabled:
+            LOGGER.error(
+                "Chat task failed task_id=%s model=%s thinking=%s budget_policy=%s provider_num_predict=%s elapsed_ms=%d error_code=%s error_type=%s error_channel=%s message=%s",
+                task_id or "unknown",
+                model_name,
+                settings.get("ollama_think", "auto"),
+                settings.get("generation_budget_policy", "unknown"),
+                settings.get("provider_num_predict", settings.get("max_tokens")),
+                int((time.monotonic() - started_at) * 1000),
+                error_code,
+                type(exc).__name__,
+                error_channel,
+                safe_error_message,
+            )
         if detail_message in safe_messages:
             message = detail_message
         if assistant_message_id:

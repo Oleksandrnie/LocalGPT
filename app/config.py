@@ -437,6 +437,7 @@ THINKING_TOKEN_BUDGET_DEFAULT = 4096
 
 DEFAULT_RUNTIME_SETTINGS = {
     "streaming_enabled": True,
+    "chat_console_diagnostics_enabled": False,
     "pipeline_enabled": True,
     "asr_full_analysis_enabled": False,
     "summary_memory_enabled": True,

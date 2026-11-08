@@ -1723,6 +1723,7 @@ def effective_settings(profile_id: int, model_name: str, defaults: dict[str, Any
     profile_runtime_keys = (
         "mem_turns",
         "streaming_enabled",
+        "chat_console_diagnostics_enabled",
         "max_resident_target_models",
         "allow_light_with_heavy",
         "single_large_target_model",

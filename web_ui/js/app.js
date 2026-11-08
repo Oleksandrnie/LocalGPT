@@ -443,6 +443,7 @@ const els = {
   ollamaThinkSelect: document.getElementById("ollamaThinkSelect"),
   numCtxInput: document.getElementById("numCtxInput"),
   streamingEnabledToggle: document.getElementById("streamingEnabledToggle"),
+  chatConsoleDiagnosticsToggle: document.getElementById("chatConsoleDiagnosticsToggle"),
   memTurnsInput: document.getElementById("memTurnsInput"),
   ollamaKeepAliveInput: document.getElementById("ollamaKeepAliveInput"),
   ollamaKeepAliveUnitSelect: document.getElementById("ollamaKeepAliveUnitSelect"),
@@ -740,6 +741,9 @@ function runtimeDiagnosticContext(overrides = {}) {
 }
 
 function logRuntimeDiagnostic(event, data = {}, context = null, level = "info", key = null) {
+  const isChatDiagnostic = String(event || "").startsWith("chat.")
+    || (event === "request.failed" && context?.diagnostic_scope === "chat");
+  if (isChatDiagnostic && !chatDiagnosticsEnabledForProfile(context?.profile_id ?? state.activeProfileId)) return;
   if (key) {
     if (runtimeDiagnosticSeen.has(key)) return;
     if (runtimeDiagnosticSeen.size >= 200) runtimeDiagnosticSeen.delete(runtimeDiagnosticSeen.values().next().value);
@@ -3452,6 +3456,15 @@ function activeProfileStreamingEnabled() {
   return value === undefined || value === null ? true : Boolean(value);
 }
 
+function activeProfileChatDiagnosticsEnabled() {
+  return chatDiagnosticsEnabledForProfile(state.activeProfileId);
+}
+
+function chatDiagnosticsEnabledForProfile(profileId) {
+  const profile = state.profiles.find((item) => Number(item.id) === Number(profileId));
+  return Boolean(profile?.preferences?.settings?.chat_console_diagnostics_enabled);
+}
+
 function activeChatImageSettings() {
   const settings = getActiveProfilePreferences()?.settings || {};
   const maxImages = Number.parseInt(settings.max_images_per_message, 10);
@@ -3859,6 +3872,7 @@ async function request(path, options = {}) {
       profile_id: Number(options.body?.profile_id || new URL(path, window.location.origin).searchParams.get("profile_id")) || Number(state.activeProfileId) || null,
       session_id: options.body?.session_id || null,
       model: options.body?.model_name || options.body?.model || state.selectedLlmModel,
+      diagnostic_scope: path.startsWith("/chat/") ? "chat" : "request",
     }), "error");
   }
   throw error;
@@ -5017,6 +5031,7 @@ function renderModelSettings() {
     num_ctx: overrides.num_ctx ?? effective.num_ctx ?? "",
     mem_turns: overrides.mem_turns ?? effective.mem_turns ?? "",
     streaming_enabled: activeProfileStreamingEnabled(),
+    chat_console_diagnostics_enabled: activeProfileChatDiagnosticsEnabled(),
     ollama_keep_alive: overrides.ollama_keep_alive ?? effective.ollama_keep_alive ?? defaultKeepAliveForModel(modelName),
     ollama_think: overrides.ollama_think ?? effective.ollama_think ?? "auto",
     max_resident_target_models: overrides.max_resident_target_models ?? effective.max_resident_target_models ?? RESIDENCY_DEFAULTS.max_resident_target_models,
@@ -5057,6 +5072,10 @@ function renderModelSettings() {
     els.streamingEnabledToggle.disabled = profileDisabled;
     els.streamingEnabledToggle.checked = Boolean(values.streaming_enabled);
     els.streamingEnabledToggle.title = "Применяется только к финальной answer-модели. Auto-router не отдаёт token delta.";
+  }
+  if (els.chatConsoleDiagnosticsToggle) {
+    els.chatConsoleDiagnosticsToggle.disabled = profileDisabled;
+    els.chatConsoleDiagnosticsToggle.checked = Boolean(values.chat_console_diagnostics_enabled);
   }
   if (els.ollamaKeepAliveInput) {
     const keepAlive = parseKeepAliveValue(values.ollama_keep_alive, defaultKeepAliveForModel(modelName));
@@ -9831,6 +9850,7 @@ async function saveModelSettingsFlow() {
     const profileSettingsPatch = {
       ...residencySettings,
       streaming_enabled: Boolean(els.streamingEnabledToggle?.checked),
+      chat_console_diagnostics_enabled: activeProfileChatDiagnosticsEnabled(),
     };
     if (memTurnsValue !== null) {
       profileSettingsPatch.mem_turns = memTurnsValue;
@@ -9875,6 +9895,28 @@ async function saveStreamingPreferenceFlow() {
   setInlineStatus(
     els.modelSettingsStatus,
     checked ? "Стриминг ответов включён. Следующее сообщение пойдёт через SSE." : "Стриминг ответов выключен. Следующее сообщение дождётся полного ответа.",
+    "success",
+  );
+  renderModelSettings();
+}
+
+async function saveChatConsoleDiagnosticsPreferenceFlow() {
+  if (!els.chatConsoleDiagnosticsToggle || !state.activeProfileId) return;
+  const checked = Boolean(els.chatConsoleDiagnosticsToggle.checked);
+  const previous = activeProfileChatDiagnosticsEnabled();
+  patchActiveProfileSettingsLocal({ chat_console_diagnostics_enabled: checked });
+  els.chatConsoleDiagnosticsToggle.disabled = true;
+  setInlineStatus(els.modelSettingsStatus, checked ? "Включаю диагностику чата…" : "Выключаю диагностику чата…", "warning");
+  const updatedProfile = await saveActiveProfilePreferences({ settings: { chat_console_diagnostics_enabled: checked } });
+  if (!updatedProfile) {
+    patchActiveProfileSettingsLocal({ chat_console_diagnostics_enabled: previous });
+    setInlineStatus(els.modelSettingsStatus, "Не удалось сохранить настройку диагностики чата.", "error");
+    renderModelSettings();
+    return;
+  }
+  setInlineStatus(
+    els.modelSettingsStatus,
+    checked ? "Диагностика чата включена для этого профиля." : "Диагностика чата выключена для этого профиля.",
     "success",
   );
   renderModelSettings();
@@ -11596,6 +11638,7 @@ function bindEvents() {
   els.saveModelSettingsButton?.addEventListener("click", async () => saveModelSettingsFlow());
   els.resetModelSettingsButton?.addEventListener("click", async () => resetModelSettingsFlow());
   els.streamingEnabledToggle?.addEventListener("change", async () => saveStreamingPreferenceFlow());
+  els.chatConsoleDiagnosticsToggle?.addEventListener("change", async () => saveChatConsoleDiagnosticsPreferenceFlow());
   els.showRouterThinkingToggle?.addEventListener("change", async () => saveShowRouterThinkingToggleFlow());
   els.ollamaThinkSelect?.addEventListener("change", () => {
     renderQuickThinkingControl(els.ollamaThinkSelect.value);

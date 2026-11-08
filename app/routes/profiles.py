@@ -196,6 +196,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
     allowed = {
         "mem_turns",
         "streaming_enabled",
+        "chat_console_diagnostics_enabled",
         "pipeline_enabled",
         "asr_full_analysis_enabled",
         "summary_memory_enabled",
@@ -299,6 +300,7 @@ def _normalize_runtime_settings(value: dict | None) -> dict:
                 ) from exc
     for key in (
         "streaming_enabled",
+        "chat_console_diagnostics_enabled",
         "asr_full_analysis_enabled",
         "rag_enabled",
         "allow_light_with_heavy",
