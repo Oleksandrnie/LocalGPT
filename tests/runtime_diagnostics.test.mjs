@@ -37,3 +37,12 @@ test('completed search uses server-created session ID without reassigning origin
  const d=runtimeDiagnostic('search.completed',{profile_id:2,session_id:null,task_id:'ks-original'},{result:{session_id:'created-session'}});
  assert.equal(d.profile_id,2);assert.equal(d.session_id,'created-session');assert.equal(d.task_id,'ks-original');
 });
+
+test('chat timeout retains runtime deadline and safe retrieval metadata without source text',()=>{
+ const d=runtimeDiagnostic('chat.task_terminal',{}, {task:{state:'failed',error_code:'chat_task_timeout',timeout_seconds:900,used_settings:{rag_evidence_status:'partial',rag_retrieval_strategy:'hybrid_v2',rag_chunks_used:5,rag_context_chars:4000,rag_context:'PRIVATE_SOURCE'}}});
+ assert.equal(d.configured_budgets.timeout_seconds,900);
+ assert.equal(d.error.code,'chat_task_timeout');
+ assert.equal(d.completion.token_budget_exhausted,null);
+ assert.deepEqual(d.chat_retrieval,{status:'partial',strategy:'hybrid_v2',chunks_used:5,context_chars:4000});
+ assert.equal(JSON.stringify(d).includes('PRIVATE_SOURCE'),false);
+});

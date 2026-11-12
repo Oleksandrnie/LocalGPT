@@ -857,22 +857,29 @@
                     </div>
 
                     <p class="inline-status" id="modelSettingsStatus"></p>
-                    <section class="ollama-installer" aria-labelledby="ollamaInstallerTitle">
-                        <p class="eyebrow">Установка · Только Ollama LLM</p>
-                        <h4 id="ollamaInstallerTitle">Добавить чат-модель</h4>
-                        <label class="field" for="downloadModelInput">
-                            <span class="field__label">Имя модели или команда установки Ollama</span>
-                            <textarea id="downloadModelInput" class="field__control" rows="3" maxlength="1024"
-                                spellcheck="false" aria-describedby="ollamaInstallerHelp ollamaInstallerStatus"
-                                placeholder="ollama pull model:tag"></textarea>
-                        </label>
-                        <p class="subtle" id="ollamaInstallerHelp">Укажите имя модели или команду ollama pull &lt;модель&gt;. Команду ollama run добавлять не нужно; если она есть во вставленном блоке, установщик её проигнорирует. После загрузки совместимая chat-модель появится в общем списке — выберите её вручную. Другие команды и shell-скрипты не поддерживаются.</p>
-                        <div class="button-row">
-                            <button class="button button--primary" id="downloadModelButton" type="button">Скачать модель</button>
+                    <details class="ollama-installer">
+                        <summary class="ollama-installer__summary" id="ollamaInstallerTitle">
+                            <span>
+                                <span class="eyebrow">Установка · Только Ollama LLM</span>
+                                <span class="ollama-installer__title">Добавить чат-модель</span>
+                            </span>
+                            <span class="subtle" id="ollamaInstallerActivity" aria-live="polite"></span>
+                        </summary>
+                        <div class="ollama-installer__content">
+                            <label class="field" for="downloadModelInput">
+                                <span class="field__label">Имя модели или команда установки Ollama</span>
+                                <textarea id="downloadModelInput" class="field__control" rows="3" maxlength="1024"
+                                    spellcheck="false" aria-describedby="ollamaInstallerHelp ollamaInstallerStatus"
+                                    placeholder="ollama pull model:tag"></textarea>
+                            </label>
+                            <p class="subtle" id="ollamaInstallerHelp">Укажите имя модели или команду ollama pull &lt;модель&gt;. Команду ollama run добавлять не нужно; если она есть во вставленном блоке, установщик её проигнорирует. После загрузки совместимая chat-модель появится в общем списке — выберите её вручную. Другие команды и shell-скрипты не поддерживаются.</p>
+                            <div class="button-row">
+                                <button class="button button--primary" id="downloadModelButton" type="button">Скачать модель</button>
+                            </div>
+                            <p class="inline-status" id="ollamaInstallerStatus" role="status"></p>
+                            <div class="ollama-installer__downloads" id="ollamaInstallerDownloads" aria-label="Загрузки Ollama"></div>
                         </div>
-                        <p class="inline-status" id="ollamaInstallerStatus" role="status"></p>
-                        <div class="ollama-installer__downloads" id="ollamaInstallerDownloads" aria-label="Загрузки Ollama"></div>
-                    </section>
+                    </details>
                 </section>
 
                 <section class="settings-group settings-group--vision" data-settings-tab-panel="vision">

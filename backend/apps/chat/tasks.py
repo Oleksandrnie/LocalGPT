@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import multiprocessing as mp
 import os
 import signal
@@ -38,7 +39,28 @@ _FINAL_STATES = {"completed", "failed", "error", "cancelled"}
 _ACTIVE_VISION_STATES = {"preparing", "analyzing", "loading_model", "generating", "streaming"}
 CHAT_TASK_MAX_ACTIVE_PER_PROFILE = max(1, int(os.getenv("CHAT_TASK_MAX_ACTIVE_PER_PROFILE", "2")))
 CHAT_TASK_MAX_ACTIVE_TOTAL = max(CHAT_TASK_MAX_ACTIVE_PER_PROFILE, int(os.getenv("CHAT_TASK_MAX_ACTIVE_TOTAL", "4")))
-CHAT_TASK_TIMEOUT_SECONDS = max(30, int(os.getenv("CHAT_TASK_TIMEOUT_SECONDS", "300")))
+CHAT_TASK_BASE_TIMEOUT_SECONDS = 300
+CHAT_TASK_MAX_TIMEOUT_SECONDS = 1800
+# A planning allowance, not a throughput measurement: leave time for model load
+# and prompt evaluation, then allow 10 generated tokens/second including thinking.
+CHAT_TASK_BUDGET_TOKENS_PER_SECOND = 10
+_timeout_override = os.getenv("CHAT_TASK_TIMEOUT_SECONDS", "").strip()
+CHAT_TASK_TIMEOUT_SECONDS = max(30, int(_timeout_override)) if _timeout_override else None
+
+
+def _task_timeout_seconds(settings: dict[str, Any]) -> int:
+    if CHAT_TASK_TIMEOUT_SECONDS is not None:
+        return CHAT_TASK_TIMEOUT_SECONDS
+    try:
+        tokens = max(0, int(settings.get("provider_num_predict") or settings.get("max_tokens") or 0))
+    except (TypeError, ValueError, OverflowError):
+        tokens = 0
+    # Bound before conversion/division as well as after, for malformed settings.
+    tokens = min(tokens, CHAT_TASK_MAX_TIMEOUT_SECONDS * CHAT_TASK_BUDGET_TOKENS_PER_SECOND)
+    return min(
+        CHAT_TASK_MAX_TIMEOUT_SECONDS,
+        CHAT_TASK_BASE_TIMEOUT_SECONDS + math.ceil(tokens / CHAT_TASK_BUDGET_TOKENS_PER_SECOND),
+    )
 
 
 class ChatTaskCapacityError(RuntimeError):
@@ -189,6 +211,7 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "streaming_enabled": bool(task.get("stream")),
         "attachment_ids": list(task.get("attachment_ids") or []),
         "vision_route": task.get("vision_route"),
+        "timeout_seconds": task.get("timeout_seconds"),
     }
 
 
@@ -663,13 +686,15 @@ def _refresh_task_locked(task: dict[str, Any]) -> None:
 
 def _monitor_task(task_id: str) -> None:
     process = None
+    timeout_seconds = CHAT_TASK_BASE_TIMEOUT_SECONDS
     with _LOCK:
         task = _TASKS.get(task_id)
         if task:
             process = task.get("_process")
+            timeout_seconds = task.get("timeout_seconds") or _task_timeout_seconds(task.get("used_settings") or {})
 
     if process is not None:
-        process.join(timeout=CHAT_TASK_TIMEOUT_SECONDS)
+        process.join(timeout=timeout_seconds)
         if process.is_alive():
             try:
                 process.terminate()
@@ -686,7 +711,7 @@ def _monitor_task(task_id: str) -> None:
                 task = _TASKS.get(task_id)
                 if task and task.get("state") not in _FINAL_STATES:
                     task["state"] = "failed"
-                    task["message"] = "Chat generation exceeded the runtime timeout."
+                    task["message"] = f"Chat generation exceeded the {timeout_seconds}-second runtime timeout."
                     task["error_code"] = "chat_task_timeout"
                     task["result"] = None
                     task["updated_at"] = _utc_now()
@@ -944,6 +969,7 @@ def start_chat_task(
         "attachment_ids": attachment_ids,
         "vision_route": vision_route,
         "_process": process,
+        "timeout_seconds": _task_timeout_seconds(used_settings),
     }
 
     monitor = threading.Thread(target=_monitor_task, args=(task_id,), daemon=True, name=f"localgpt_chat_monitor_{task_id}")

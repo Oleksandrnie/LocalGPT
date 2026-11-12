@@ -29,8 +29,10 @@ class _TimeoutProcess:
     def __init__(self) -> None:
         self.alive = True
         self.terminated = False
+        self.join_timeouts = []
 
     def join(self, timeout=None) -> None:
+        self.join_timeouts.append(timeout)
         return None
 
     def is_alive(self) -> bool:
@@ -363,6 +365,7 @@ class RuntimeSecurityTestCase(unittest.TestCase):
                 "profile_id": self.profile_id,
                 "session_id": self.session["id"],
                 "attachment_ids": [],
+                "timeout_seconds": 900,
                 "_process": process,
                 **{key: str(path) for key, path in paths.items()},
             }
@@ -371,9 +374,41 @@ class RuntimeSecurityTestCase(unittest.TestCase):
 
         task = chat_tasks.get_chat_task(task_id)
         self.assertTrue(process.terminated)
+        self.assertEqual(process.join_timeouts[0], 900)
+        self.assertEqual(task["timeout_seconds"], 900)
         self.assertEqual(task["state"], "failed")
         self.assertEqual(task["error_code"], "chat_task_timeout")
         self.assertTrue(all(not path.exists() for path in paths.values()))
+
+    def test_chat_timeout_scales_with_combined_provider_budget_and_stays_bounded(self) -> None:
+        with patch.object(chat_tasks, "CHAT_TASK_TIMEOUT_SECONDS", None):
+            self.assertEqual(chat_tasks._task_timeout_seconds({}), 300)
+            self.assertEqual(chat_tasks._task_timeout_seconds({"provider_num_predict": 10000}), 1300)
+            self.assertEqual(chat_tasks._task_timeout_seconds({"max_tokens": 2000}), 500)
+            self.assertEqual(chat_tasks._task_timeout_seconds({"provider_num_predict": 100000}), 1800)
+            self.assertEqual(chat_tasks._task_timeout_seconds({"provider_num_predict": "invalid"}), 300)
+            self.assertEqual(chat_tasks._task_timeout_seconds({"provider_num_predict": -1}), 300)
+
+    def test_explicit_chat_timeout_override_takes_precedence_over_token_budget(self) -> None:
+        with patch.object(chat_tasks, "CHAT_TASK_TIMEOUT_SECONDS", 60):
+            self.assertEqual(chat_tasks._task_timeout_seconds({"provider_num_predict": 10000}), 60)
+
+    def test_started_chat_task_advertises_its_worker_timeout(self) -> None:
+        with (
+            patch.object(chat_tasks, "CHAT_TASK_TIMEOUT_SECONDS", None),
+            patch.object(chat_tasks._PROCESS_CTX, "Process"),
+            patch.object(chat_tasks.threading, "Thread"),
+        ):
+            task = chat_tasks.start_chat_task(
+                session_id=self.session["id"],
+                profile_id=self.profile_id,
+                model_name="synthetic-model",
+                role="chat",
+                messages=[{"role": "user", "content": "Synthetic request"}],
+                used_settings={"provider_num_predict": 10000},
+            )
+        self.assertEqual(task["timeout_seconds"], 1300)
+        self.assertEqual(chat_tasks._TASKS[task["id"]]["timeout_seconds"], 1300)
 
     def test_rag_upload_limits_fail_without_writing_artifacts(self) -> None:
         too_many = [

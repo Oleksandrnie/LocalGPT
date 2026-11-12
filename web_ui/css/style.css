@@ -4564,13 +4564,50 @@ body.theme-light .settings-icon-button .settings-slider-knob {
 }
 
 .ollama-installer {
-    display: grid;
-    gap: 12px;
     margin-top: 8px;
     padding: 16px;
     border: 1px solid var(--border);
     border-radius: 16px;
     background: rgba(14, 20, 28, 0.42);
+}
+
+.ollama-installer__summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.ollama-installer__summary::-webkit-details-marker {
+    display: none;
+}
+
+.ollama-installer__summary::after {
+    content: "+";
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.ollama-installer[open] > .ollama-installer__summary::after {
+    content: "−";
+}
+
+.ollama-installer__summary > span:first-child {
+    display: grid;
+    gap: 6px;
+}
+
+.ollama-installer__title {
+    font-weight: 700;
+}
+
+.ollama-installer__content {
+    display: grid;
+    gap: 12px;
+    margin-top: 12px;
 }
 
 .ollama-installer h4,

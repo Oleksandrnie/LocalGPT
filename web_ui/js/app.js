@@ -390,6 +390,8 @@ const els = {
   deleteModelButton: document.getElementById("deleteModelButton"),
   downloadModelInput: document.getElementById("downloadModelInput"),
   downloadModelButton: document.getElementById("downloadModelButton"),
+  ollamaInstaller: document.querySelector(".ollama-installer"),
+  ollamaInstallerActivity: document.getElementById("ollamaInstallerActivity"),
   ollamaInstallerStatus: document.getElementById("ollamaInstallerStatus"),
   ollamaInstallerDownloads: document.getElementById("ollamaInstallerDownloads"),
   recommendedModels: document.getElementById("recommendedModels"),
@@ -2349,7 +2351,16 @@ function chatTaskScopedUrl(taskId, suffix = "", task = null) {
   return `/chat/tasks/${encodeURIComponent(taskId)}${suffix}?${params.toString()}`;
 }
 
-async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
+function chatTaskWaitTimeoutMs(task) {
+  const timeoutSeconds = Number(task?.timeout_seconds);
+  if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) return 300000;
+  const createdAt = Date.parse(task?.created_at || "");
+  const elapsedMs = Number.isFinite(createdAt) ? Math.max(0, Date.now() - createdAt) : 0;
+  // Let the backend publish its terminal state after terminating a timed-out worker.
+  return Math.max(1000, timeoutSeconds * 1000 - elapsedMs + 30000);
+}
+
+async function waitForChatTask(taskOrId, { timeoutMs = chatTaskWaitTimeoutMs(taskOrId) } = {}) {
   const taskId = typeof taskOrId === "object" ? (taskOrId?.id || taskOrId?.task_id || "") : taskOrId;
   const taskScope = typeof taskOrId === "object" ? taskOrId : null;
   const diagnosticScope = runtimeDiagnosticContext({profile_id: taskScope?.profile_id, session_id: taskScope?.session_id, model: taskScope?.model_name});
@@ -2371,7 +2382,7 @@ async function waitForChatTask(taskOrId, { timeoutMs = 300000 } = {}) {
   throw new Error("Истекло время ожидания генерации ответа.");
 }
 
-function waitForChatTaskEvents(task, { timeoutMs = 300000, replayBaseContent = null } = {}) {
+function waitForChatTaskEvents(task, { timeoutMs = chatTaskWaitTimeoutMs(task), replayBaseContent = null } = {}) {
   const taskId = task?.id || task?.task_id || "";
   const diagnosticScope = runtimeDiagnosticContext({profile_id: task?.profile_id, session_id: task?.session_id, model: task?.model_name});
   if (!taskId || typeof window.EventSource !== "function") {
@@ -8104,7 +8115,14 @@ function renderDownloads() {
 
 function renderOllamaInstallerDownloads() {
   if (!els.ollamaInstallerDownloads) return;
-  const items = (state.downloads || []).slice(0, 3);
+  const allItems = state.downloads || [];
+  const activeCount = allItems.filter((item) => isActiveDownloadState(item.state)).length;
+  if (els.ollamaInstallerActivity) {
+    els.ollamaInstallerActivity.textContent = activeCount
+      ? `Активных загрузок: ${activeCount}`
+      : "";
+  }
+  const items = allItems.slice(0, 3);
   if (!items.length) {
     els.ollamaInstallerDownloads.innerHTML = '<p class="subtle">Загрузок Ollama пока нет.</p>';
     return;
@@ -12157,6 +12175,7 @@ function bindEvents() {
       const parsed = parseOllamaInstallInput(els.downloadModelInput?.value || "");
       const started = await startModelDownload(parsed.model);
       if (started) {
+        if (els.ollamaInstaller) els.ollamaInstaller.open = true;
         setInlineStatus(els.ollamaInstallerStatus, `Загрузка ${parsed.model} запущена. Прогресс — ниже; модель не запускается автоматически.`, "success");
       } else if (started === false) {
         setInlineStatus(els.ollamaInstallerStatus, "Загрузка не запущена: подтверждение отменено.", "warning");
